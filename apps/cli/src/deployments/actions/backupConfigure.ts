@@ -1,9 +1,9 @@
-import type { ActionExecutorContext } from '@happier-dev/protocol';
+import type { ActionExecutorContext, EnvironmentSecretBindingV1 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { environmentSecretBindingIdentityV1, type DeploymentBackupConfigurationV1, type DeploymentEnvironmentBackupV1 } from '@happier-dev/deployment-protocol';
 import { prepareDeploymentBackupConfigurationV1, prepareDeploymentBackupNotNeededV1 } from '@happier-dev/deployments';
 import { resolveSshKnownHostTrust } from '@happier-dev/cli-common/systemTasks';
-import type { DeploymentBackupConfigurationNativeResultForHost } from '../targets/ownServer/backupConfigurationNative';
+import type { DeploymentBackupConfigurationNativeInputForHost, DeploymentBackupConfigurationNativeResultForHost } from '../targets/ownServer/backupConfigurationNative';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import type { DeploymentBackupConfigureInputV1, DeploymentBackupConfigureResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import type { ResolvedDeploymentCreationDefaultsV1, DeploymentCreationDefaultsV1 } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
@@ -21,8 +21,7 @@ export type DeploymentBackupConfigureHost<TRegistry extends Registry = Registry>
     serverId: string;
     readEnvironment(request: Readonly<{ environmentId: string; context: ActionExecutorContext }>): Promise<DeploymentBackupConfigurationEnvironmentForHost>;
     acquirePluginRuntimeRegistryLease(): Promise<Readonly<{ registry: TRegistry; release(): Promise<void> }>>;
-    executeNative(request: Readonly<{ environment: DeploymentBackupConfigurationEnvironmentForHost; configuration: DeploymentBackupConfigurationV1;
-        intent: 'test' | 'save' | 'initializeAndSave'; context: ActionExecutorContext }>, registry: TRegistry): Promise<DeploymentBackupConfigurationNativeResultForHost>;
+    executeNative(request: DeploymentBackupConfigurationNativeInputForHost, registry: TRegistry): Promise<DeploymentBackupConfigurationNativeResultForHost>;
     resolveCreationDefaults(environment: DeploymentBackupConfigurationEnvironmentForHost, explicit: DeploymentCreationDefaultsV1,
         context: ActionExecutorContext): Promise<ResolvedDeploymentCreationDefaultsV1>;
     readActiveBackupAutomationIds(environment: DeploymentBackupConfigurationEnvironmentForHost, context: ActionExecutorContext): Promise<readonly string[]>;
@@ -31,9 +30,15 @@ export type DeploymentBackupConfigureHost<TRegistry extends Registry = Registry>
     prepareAnotherMachine?(setup: DeploymentBackupAnotherMachineSetupV1, context: ActionExecutorContext,
         environment: DeploymentBackupConfigurationEnvironmentForHost): Promise<BackupAnotherMachinePreparation>;
     saveBackupBindings?(request: Readonly<{ environmentId: string; expectedRevision: number;
-        bindings: NonNullable<Exclude<DeploymentBackupConfigureInputV1, { intent: 'markNotNeeded' }>['backupBindings']>;
+        bindings: NonNullable<Extract<DeploymentBackupConfigureInputV1, { intent: 'save' }>['backupBindings']>;
         context: ActionExecutorContext }>): Promise<Readonly<{ ok: true; revision: number }> | ActionExecuteFailure>;
 }>;
+
+function withBackupBindings(environment: DeploymentBackupConfigurationEnvironmentForHost, bindings: readonly EnvironmentSecretBindingV1[]) {
+    const candidate = new Map(environment.content.bindings.map(binding => [environmentSecretBindingIdentityV1(binding), binding]));
+    for (const binding of bindings) candidate.set(environmentSecretBindingIdentityV1(binding), binding);
+    return { ...environment, content: { ...environment.content, bindings: [...candidate.values()] } };
+}
 
 /** Configuration owns the only backup-leaf mutation and settles native proof before publishing it. */
 export function createDeploymentBackupConfigureActionForHost<TRegistry extends Registry>(host: DeploymentBackupConfigureHost<TRegistry>) {
@@ -58,6 +63,25 @@ export function createDeploymentBackupConfigureActionForHost<TRegistry extends R
                 const saved = await host.saveBackup({ environment, backup: prepared.backup, context });
                 return saved.ok ? { kind: 'notNeeded', environmentId: saved.environmentId, revision: saved.revision } : saved;
             }
+            if (input.intent === 'rekeyAndSave') {
+                const current = environment.content.backup;
+                if (!current || 'notNeeded' in current) return failure('backup_required');
+                if (!host.saveBackupBindings) return failure('source_unavailable');
+                const bindings = [{ purpose: 'backupDestination' as const, configKey: 'destination' as const,
+                    role: 'repositoryPassword' as const, source: { kind: 'secret' as const, ...input.replacement } }];
+                const lease = await host.acquirePluginRuntimeRegistryLease();
+                try {
+                    const native = await host.executeNative({ environment: withBackupBindings(environment, bindings),
+                        previousEnvironment: environment, configuration: current, intent: input.intent, context }, lease.registry);
+                    if (native.test.kind !== 'reachable') return { kind: 'tested', test: native.test };
+                    const saved = await host.saveBackupBindings({ environmentId: input.environmentId,
+                        expectedRevision: input.expectedRevision, bindings, context });
+                    if (!saved.ok) return { ...saved, effectAttempted: true, details: {
+                        ...(saved.details && typeof saved.details === 'object' && !Array.isArray(saved.details) ? saved.details : {}),
+                        environmentId: input.environmentId, revision: input.expectedRevision, backupBindings: bindings } };
+                    return { kind: 'configured', environmentId: input.environmentId, revision: saved.revision, configuration: current };
+                } finally { await lease.release(); }
+            }
             let configuration = input.configuration;
             let bindings = input.backupBindings ?? [];
             if (input.destinationSetup) {
@@ -77,7 +101,7 @@ export function createDeploymentBackupConfigureActionForHost<TRegistry extends R
                     && !(binding.role === 'repositoryPassword' && setup.senderIdentity.repositoryPassword)),
                     { purpose: 'backupDestination', configKey: 'destination', role: 'sshPrivateKey', source: setup.senderIdentity.sshPrivateKey },
                     ...(setup.senderIdentity.repositoryPassword ? [{ purpose: 'backupDestination' as const,
-                        configKey: 'destination' as const, role: 'repositoryPassword', source: setup.senderIdentity.repositoryPassword }] : [])];
+                        configKey: 'destination' as const, role: 'repositoryPassword' as const, source: setup.senderIdentity.repositoryPassword }] : [])];
             }
             const current = environment.content.backup;
             const creationDefaults = !current || 'notNeeded' in current ? await host.resolveCreationDefaults(environment, {
@@ -87,9 +111,7 @@ export function createDeploymentBackupConfigureActionForHost<TRegistry extends R
             const review = creationDefaults ? { creationDefaults } : undefined;
             const selectedRetention = configuration.retention ?? (current && !('notNeeded' in current) ? current.retention
                 : creationDefaults?.values.backupRetention);
-            const candidateBindings = new Map(environment.content.bindings.map(binding => [environmentSecretBindingIdentityV1(binding), binding]));
-            for (const binding of bindings) candidateBindings.set(environmentSecretBindingIdentityV1(binding), binding);
-            const candidateEnvironment = { ...environment, content: { ...environment.content, bindings: [...candidateBindings.values()] } };
+            const candidateEnvironment = withBackupBindings(environment, bindings);
             const lease = await host.acquirePluginRuntimeRegistryLease();
             try {
                 const descriptor = lease.registry.contributes.backupDestinations.find(entry =>

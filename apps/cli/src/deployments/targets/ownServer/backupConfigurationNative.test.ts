@@ -120,3 +120,53 @@ it.each([
         }
     });
 });
+
+
+it('retains both password captures for an explicit repository re-key and retires their files after native settlement', async () => {
+    await withFiniteComposeFixture(async ({ docker, source, root, exec, io, project }) => {
+        await docker.registerRecordedImage('restic', RESTIC_RUNTIME_V1.image, nativeRestic0191);
+        await installRestoreBoundary(root, 'repositoryOnly');
+        const seed = new Uint8Array(32).fill(48);
+        const signal = new AbortController().signal;
+        const destination = (resourceId: string) => {
+            const binding: Extract<EnvironmentSecretBindingV1, { purpose: 'backupDestination' }> = {
+                purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword',
+                source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 },
+            };
+            const grants = [sealMachineSecretGrant({ subject: { v: 1, kind: 'secret',
+                environmentId: source.environmentId, machineId: source.machineId, installationId: source.installationId,
+                resourceId, resourceRevision: 1 }, installationPublicKey: nacl.sign.keyPair.fromSeed(seed).publicKey,
+                content: { kind: 'secret', value: `private-${resourceId}` } })];
+            return createDeploymentBackupEnvironmentForHost({ repository: 's3:https://fixture.invalid/backup',
+                signal, isCurrent: () => true, preparation: { environmentId: source.environmentId,
+                    machineId: source.machineId, installationId: source.installationId, installationPrivateSeed: seed,
+                    bindings: [binding], backupDestinationUses: [binding], grants, backupConfigBaseDir: root,
+                    async assertCurrent() {} } });
+        };
+        const files: string[] = [];
+        const result = await withNativeBackupRepositoryForHost({ cwd: source.rootPath, directory: root,
+            environmentInstanceId: source.environmentInstanceId, projectName: 'configuration-only',
+            operation: { operationId: 'rekey-test', kind: 'deployments.backups.configure', signal },
+            runtime: { exec, nativeIo: io, settleNative: project.settleNative },
+            async prepareDestination() { return destination('old-password'); },
+            async prepareSuccessorDestination() { return destination('new-password'); } },
+        async native => {
+            expect(native.successorAccess).toBeDefined();
+            if (!native.successorAccess) throw new Error('Expected successor custody');
+            expect(native.access.passwordFilePath).not.toBe(native.successorAccess.passwordFilePath);
+            expect(native.access.credentialFiles).toHaveLength(2);
+            for (const file of native.access.credentialFiles) {
+                await expect(access(file.hostPath)).resolves.toBeUndefined();
+                files.push(file.hostPath);
+            }
+            return native.execute(buildResticRequestV1({ access: native.successorAccess,
+                environmentId: source.environmentId, command: { kind: 'config' } }));
+        });
+        expect(result).toMatchObject({ kind: 'completed', exitCode: 0 });
+        for (const file of files) await expect(access(file)).rejects.toThrow();
+        const commands = (await docker.readInvocations()).filter(invocation => invocation.args.includes('--repo'));
+        expect(commands).toHaveLength(1);
+        expect(commands[0]!.args).toContain('RESTIC_PASSWORD_FILE=/run/happier/backup/new-repository-password');
+        for (const file of files) expect(commands[0]!.args.some(arg => arg.includes(`source=${file},`))).toBe(true);
+    });
+});

@@ -97,7 +97,7 @@ import { readStoredPromotionCandidateForHost, createStoredPromotionReceiptConten
 import { preparePromotionForHost } from './preparePromotionForHost';
 import { isDeploymentPromoteActionIdV1, isDeploymentMembershipActionIdV1,
     DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
-    DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1,
+    DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1,
     DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { admitStoredComposeDefinition } from '@/workspaces/projectSetup/nativeComposeSource';
 import { createPrepareDeploymentBindingsForHost } from './secrets/prepareDeploymentBindingsForHost';
@@ -130,6 +130,10 @@ import { readDeploymentCreationDefaultInputsForHost, prepareDeploymentCreationDe
 import { createPrepareEnvironmentCreateForHost, resolveEnvironmentCreateCopyForHost,
     resolveEnvironmentCreatePreviewForHost } from './prepareEnvironmentCreateForHost';
 import { COPY_ENVIRONMENT_BINDINGS_ROLE, createEnvironmentWithCopyForHost } from './copyEnvironmentForHost';
+import { copyEnvironmentDataProvisionRole, copyEnvironmentDataLinkRole } from './copyEnvironmentDataForHost';
+import { readDeploymentTargetV1 } from './targets/deploymentTargetCatalog';
+import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { prepareServiceAdoptionForHost } from './serviceAdoptionForHost';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
@@ -143,6 +147,8 @@ import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/contro
 import { createContributedDeploymentTargetForHost, deploymentTeardownDetachPreview } from './targets/contributedDeploymentTargetForHost';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
 import { prepareTargetLinkForHost, TargetLinkPreparationError } from './prepareTargetLinkForHost';
+import { prepareRuntimeTargetCreateForHost, createRuntimeTargetForHost, RuntimeTargetCreationCheckpointError } from './runtimeTargetCreateForHost';
+import { DeploymentTargetLinkProvisionedResultV1Schema, type DeploymentTargetLinkProviderIntentInputV1, type DeploymentTargetLinkCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentInvalidV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createOwnServerDomainActions, createOwnServerDomainContentWriter,
     prepareOwnServerDomainReviewedChildren, prepareOwnServerTeardownDomainReviewedChildren,
@@ -260,9 +266,11 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             // A retained child spends its admitted root, not a new sub-read
             // Action. The projection and Home still admit the exact purpose.
             const child = readRequesterAccountActionContext(context.externalActionExecutionAuthorization)?.deploymentChild;
-            // An Environment-creating root (Create, adoption) spends its create preparation as itself.
+            // Create preparation spends its root; a reviewed Create keeps its
+            // Action identity so the signer retains the child's role and digest.
             const root = context.externalActionExecutionAuthorization?.binding.actionId;
             const effectActionId = child?.actionId ?? (actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && root
+                && readHostAdmittedReviewedChildV1(context)?.actionId !== actionId
                 && deploymentPreparationOperationForActionV1(root) === 'create' ? root : actionId);
             const signed = await captureRequesterCurrentnessRefusal(() => projection.createRequestHeaders({
                 ...request, effectActionId,
@@ -566,8 +574,10 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         body: JSON.stringify(content), beforeWrite: () => assertCurrent(request.context) }));
                 })() : null;
                 if (prepared && !prepared.ok) return prepared;
+                const binding = request.context.externalActionExecutionAuthorization?.binding;
+                const restoring = binding?.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1;
                 const settled = ['succeeded', 'running_unverified', 'failed', 'cancelled', 'outcome_unknown'].includes(request.state);
-                const environment = receipt.operation !== 'teardown' && (request.state === 'succeeded' || request.state === 'running_unverified')
+                const environment = !restoring && receipt.operation !== 'teardown' && (request.state === 'succeeded' || request.state === 'running_unverified')
                     ? await readEnvironmentMetadata(request) : null;
                 const link = environment?.targetLinks.find(item => item.id === receipt.targetLinkId);
                 if (environment && !link) return failure('target_mismatch');
@@ -595,9 +605,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 const wire = DeploymentTransitionInputV1Schema.parse({ ...body, proof });
                 const path = `/v1/deployments/environments/${encodeURIComponent(request.environmentId)}/deployments/${encodeURIComponent(request.deploymentId)}/transitions`;
                 if (prepared) await atHome(() => prepared.assertCurrent());
-                const binding = request.context.externalActionExecutionAuthorization?.binding;
                 const rootOperation = binding && deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission);
-                const effectActionId = binding?.actionId === 'deployments.receipts.observe'
+                const effectActionId = restoring || binding?.actionId === 'deployments.receipts.observe'
                     ? binding.actionId : `deployments.${rootOperation ?? receipt.operation}`;
                 const admittedHeaders = await headers(request.context, effectActionId,
                     { method: 'POST', path, body: wire });
@@ -787,6 +796,20 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             if ('errorCode' in preview) return preview;
             const copy = await resolveEnvironmentCreateCopyForHost({ input: preview.input, context }, {
                 ...createHost, readMetadata: readEnvironmentMetadata,
+                async readDataProvisionDeclaration(source) {
+                    const lease = host.acquirePluginRuntimeRegistryLease
+                        ? await host.acquirePluginRuntimeRegistryLease() : tryAcquireAuthoritativePluginRuntimeRegistryLease();
+                    if (!lease) return null;
+                    try {
+                        const target = readDeploymentTargetV1(source, lease.registry.contributes.deploymentTargets);
+                        if (!target || target.role !== 'data') return null;
+                        const reference = target.dataV1?.projects?.provision;
+                        const action = reference?.kind === 'plugin' ? parseQualifiedPluginActionId(reference.actionId) : null;
+                        const declaration = action ? readResolvedActionContribution(lease.registry.contributes, action) : null;
+                        return action && declaration?.definition.inputSchema
+                            ? { target, action, inputSchema: declaration.definition.inputSchema } : null;
+                    } finally { await lease.release(); }
+                },
             });
             if ('errorCode' in copy) return copy;
             const authored = copy.input;
@@ -928,6 +951,13 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         },
         dispatchReceipt,
     });
+    async function readRuntimeCreateTarget(input: DeploymentTargetLinkCreateIntentInputV1) {
+        const lease = host.acquirePluginRuntimeRegistryLease
+            ? await host.acquirePluginRuntimeRegistryLease() : tryAcquireAuthoritativePluginRuntimeRegistryLease();
+        if (!lease) return null;
+        try { return readDeploymentTargetV1(input.source, lease.registry.contributes.deploymentTargets); }
+        finally { await lease.release(); }
+    }
     const failureEnrollment = createPlatformFailureEnrollmentForHost({ ...host,
         readEnvironment: targetHostReaders.readEnvironment });
     const previewEnrollment = createPreviewEnrollmentForHost({ ...host,
@@ -1472,10 +1502,13 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 const input = DeploymentBackupConfigureInputV1Schema.safeParse(request.input);
                 if (!input.success) return failure('invalid_parameters');
                 if (input.data.intent === 'markNotNeeded') return null;
-                const setup = input.data.destinationSetup ? prepareBackupAnotherMachineChildrenForHost({
-                    serverId: input.data.serverId, setup: input.data.destinationSetup }) : null;
+                const destinationSetup = 'destinationSetup' in input.data ? input.data.destinationSetup : undefined;
+                const setup = destinationSetup ? prepareBackupAnotherMachineChildrenForHost({
+                    serverId: input.data.serverId, setup: destinationSetup }) : null;
+                const hasBindings = input.data.intent === 'rekeyAndSave'
+                    || ('backupBindings' in input.data && Boolean(input.data.backupBindings?.length));
                 const children = [...(setup?.children ?? []),
-                    ...(input.data.backupBindings?.length || input.data.destinationSetup ? [{ action: 'deployments.bindings.set' as const,
+                    ...(hasBindings || destinationSetup ? [{ action: 'deployments.bindings.set' as const,
                         role: 'backup.bindings' }] : [])];
                 return children.length ? { children } : null;
             }
@@ -1500,7 +1533,11 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             });
             if (request.actionId === 'deployments.targets.link') {
                 const input = DeploymentActionInputSchemasV1['deployments.targets.link'].safeParse(request.input);
-                return input.success ? failureEnrollment.prepare(input.data, request.context) : failure('invalid_parameters');
+                if (!input.success) return failure('invalid_parameters');
+                const enrollment = await failureEnrollment.prepare(input.data, request.context);
+                if (!('providerCreate' in input.data)) return enrollment;
+                const creation = prepareRuntimeTargetCreateForHost(input.data, await readRuntimeCreateTarget(input.data));
+                return { children: [...creation.children, ...(enrollment?.children ?? [])] };
             }
             if (request.actionId === 'deployments.environments.update') {
                 const input = DeploymentActionInputSchemasV1[request.actionId].safeParse(request.input);
@@ -1571,9 +1608,16 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         }
                     } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
                 }
-                return copy.success && copy.data.copyPlan?.bindings.length ? { children: [{
-                    action: 'deployments.bindings.set' as const, role: COPY_ENVIRONMENT_BINDINGS_ROLE,
-                }] } : null;
+                if (!copy.success || !copy.data.copyPlan) return null;
+                const plan = copy.data.copyPlan;
+                const children = [
+                    ...(plan.bindings.length ? [{ action: 'deployments.bindings.set' as const, role: COPY_ENVIRONMENT_BINDINGS_ROLE }] : []),
+                    ...(plan.data ?? []).flatMap(row => [
+                        { action: row.provision.action, role: copyEnvironmentDataProvisionRole(row.targetLinkId) },
+                        { action: 'deployments.targets.link' as const, role: copyEnvironmentDataLinkRole(row.targetLinkId) },
+                    ]),
+                ];
+                return children.length ? { children } : null;
             }
             if (request.actionId !== DEPLOYMENT_TEARDOWN_ACTION_ID_V1) return null;
             // The Action owner classifies volume inventory as a preview. It has
@@ -1709,14 +1753,27 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 return result;
             }
             if (actionId === 'deployments.targets.link' && !('contentArtifactId' in input)) {
+                let recovery: DeploymentTargetLinkProviderIntentInputV1 | undefined;
                 try {
-                    const intent = DeploymentActionInputSchemasV1[actionId].parse(input);
+                    let intent = DeploymentActionInputSchemasV1[actionId].parse(input);
+                    if ('provider' in intent && intent.provisioned === true) recovery = intent;
+                    if ('providerCreate' in intent) {
+                        if (!context.operationOwnerUpdate || !context.hostReviewedChild) return failure('source_unavailable');
+                        const created = await createRuntimeTargetForHost(intent, await readRuntimeCreateTarget(intent), context);
+                        if (!created.ok) return created;
+                        recovery = created.recovery;
+                        intent = recovery;
+                    }
                     const prepared = await prepareTargetLinkForHost({ input: intent, context }, {
                         serverHttpBaseUrl: host.serverHttpBaseUrl, artifacts,
                         readMetadata: readEnvironmentMetadata, assertCurrent, artifactAuthorization,
                     });
                     if ('contentArtifactId' in prepared) {
                         const linked = await storage(actionId, prepared, context);
+                        if (recovery && 'ok' in linked && linked.ok === false) return DeploymentTargetLinkProvisionedResultV1Schema.parse({
+                            ok: false, error: 'deployment_link_incomplete', recovery,
+                            failure: 'errorCode' in linked ? linked : failure(linked.error, linked),
+                        });
                         if ('ok' in linked && linked.ok === false && ('errorCode' in linked ? linked.errorCode : linked.error) === 'deployment_content_unavailable') {
                             return { ...failure('deployment_content_unavailable'),
                                 error: 'deployment_content_unavailable (target_link.content_associate: storage_refused)' };
@@ -1725,14 +1782,19 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     }
                     return prepared;
                 } catch (error) {
-                    const cause = error instanceof TargetLinkPreparationError ? error.cause : error;
+                    if (error instanceof RuntimeTargetCreationCheckpointError) recovery = error.recovery;
+                    const cause = error instanceof TargetLinkPreparationError || error instanceof RuntimeTargetCreationCheckpointError ? error.cause : error;
                     const refused = failure(context.signal?.aborted ? 'cancelled'
                         : cause instanceof ArtifactEncryptionMaterialUnavailableError ? 'client_required' : errorCode(cause), cause);
                     const httpStatus = readHttpStatus(cause);
                     const invalid = DeploymentInvalidV1Schema.safeParse(cause instanceof Error && 'details' in cause ? cause.details : undefined);
-                    return error instanceof TargetLinkPreparationError
+                    const preparedFailure = error instanceof TargetLinkPreparationError
                         ? { ...refused, ...(invalid.success && invalid.data.error === refused.errorCode ? { details: invalid.data } : {}),
                             error: `${refused.error} (target_link.${error.step}: ${error.reason}${httpStatus === null ? '' : `, http_status=${httpStatus}`})` } : refused;
+                    if (recovery) return DeploymentTargetLinkProvisionedResultV1Schema.parse({
+                        ok: false, error: 'deployment_link_incomplete', recovery, failure: preparedFailure,
+                    });
+                    return preparedFailure;
                 }
             }
             if (actionId === 'deployments.environments.create' && !('contentArtifactId' in input)) {

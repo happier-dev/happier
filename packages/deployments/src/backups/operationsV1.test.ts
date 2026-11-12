@@ -54,6 +54,47 @@ const input = (native: ReturnType<typeof boundary>) => ({ environmentId, operati
 const verification = { kind: 'verified' as const, level: 'manifestReadBack' as const, manifest };
 
 describe('selected repository backup operations', () => {
+    it.each(['success', 'wrongSuccessor', 'foreignRepository', 'addFailed', 'unknownAdd', 'cancelled'] as const)(
+        'adds and verifies a successor repository key without removing old access (%s)', async mode => {
+        const controller = new AbortController();
+        if (mode === 'cancelled') controller.abort();
+        const successorFile = { hostPath: '/protected/successor-password',
+            containerPath: '/run/happier/backup/new-repository-password', readOnly: true } as const;
+        const sharedAccess = { ...access, credentialFiles: [
+            { hostPath: '/protected/current-password', containerPath: access.passwordFilePath, readOnly: true } as const, successorFile] };
+        const successorAccess = { ...sharedAccess, passwordFilePath: successorFile.containerPath };
+        const requests: ResticRequestV1[] = [];
+        const execute: DeploymentBackupRunInputV1['execute'] = async request => {
+            requests.push(request);
+            if (request.argv.includes('key')) {
+                expect(request.passwordFilePath).toBe(access.passwordFilePath);
+                expect(request.credentialFiles).toContainEqual(successorFile);
+                expect(request.argv).toEqual(['--repo', access.repository, '--json', 'key', 'add',
+                    '--new-password-file', successorFile.containerPath]);
+                return mode === 'unknownAdd' ? { kind: 'outcome_unknown' } : {
+                    kind: 'completed', exitCode: mode === 'addFailed' ? 1 : 0,
+                    stdout: 'saved new key with ID opaque-native-output', stdoutTruncated: false };
+            }
+            const successor = request.passwordFilePath === successorFile.containerPath;
+            return { kind: 'completed', exitCode: successor && mode === 'wrongSuccessor' ? 12 : 0,
+                stdout: JSON.stringify({ version: 2, id: successor && mode === 'foreignRepository' ? otherId : repositoryId }),
+                stdoutTruncated: false };
+        };
+        const effect = operation('addDeploymentBackupRepositoryKeyV1')({ environmentId, access: sharedAccess,
+            successorAccess, execute, signal: controller.signal });
+        if (mode === 'foreignRepository') {
+            await expect(effect).rejects.toMatchObject({ code: 'backup_integrity_failed', step: 'repository' });
+        } else {
+            expect(await effect).toMatchObject(mode === 'success' ? { kind: 'reachable', repositoryId }
+                : { kind: 'failed', reason: mode === 'wrongSuccessor' ? 'repository_password_incorrect'
+                    : mode === 'cancelled' ? 'cancelled' : mode === 'unknownAdd' ? 'outcome_unknown' : 'native_failed' });
+        }
+        expect(requests.some(request => request.argv.includes('remove'))).toBe(false);
+        expect(requests.map(request => request.passwordFilePath)).toEqual(mode === 'cancelled' ? []
+            : mode === 'addFailed' || mode === 'unknownAdd' ? [access.passwordFilePath, access.passwordFilePath]
+                : [access.passwordFilePath, access.passwordFilePath, successorFile.containerPath]);
+    });
+
     it('lists encoded canonical source IDs and legacy percent-containing IDs without conflating them', async () => {
         const sourceId = JSON.stringify(['dump', 'database-2']);
         const encoded = { ...rawSnapshot(), tags: ['happier', `env:${environmentId}`, 'kind:dump',

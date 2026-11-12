@@ -55,6 +55,49 @@ function fixture() {
 }
 
 describe('backup configure coordinator', () => {
+
+    it('re-keys with old repository custody before publishing only the successor password binding', async () => {
+        const f = fixture();
+        f.environment.content.backup = configuration;
+        const oldBindings = structuredClone(f.environment.content.bindings);
+        const backupBindings = [{ purpose: 'backupDestination' as const, configKey: 'destination' as const,
+            role: 'repositoryPassword' as const, source: { kind: 'secret' as const,
+                ref: formatSharedSavedSecretRefV1('successor-password'), resourceRevision: 1 } }];
+        let published = false;
+        const result = await createDeploymentBackupConfigureActionForHost({ ...f.host,
+            async executeNative(request) {
+                expect(published).toBe(false);
+                expect(request.previousEnvironment?.content.bindings).toEqual(oldBindings);
+                expect(request.environment.content.bindings).toEqual(backupBindings);
+                return { test: { kind: 'reachable', repositoryId: 'a'.repeat(64) } };
+            },
+            async saveBackupBindings(request) {
+                published = true;
+                expect(request.expectedRevision).toBe(f.input.expectedRevision);
+                expect(request.bindings).toEqual(backupBindings);
+                return { ok: true, revision: f.input.expectedRevision + 1 };
+            },
+        })({ ...f.input, intent: 'rekeyAndSave', replacement: { ref: backupBindings[0]!.source.ref, resourceRevision: 1 } }, {});
+        expect(result).toMatchObject({ kind: 'configured', revision: f.input.expectedRevision + 1 });
+        expect(published).toBe(true);
+        expect(f.counts.saves).toBe(0);
+    });
+
+    it('preserves the old password binding when successor repository proof fails', async () => {
+        const f = fixture(); f.environment.content.backup = configuration; f.failNative();
+        const previousBindings = structuredClone(f.environment.content.bindings);
+        const backupBindings = [{ purpose: 'backupDestination' as const, configKey: 'destination' as const,
+            role: 'repositoryPassword' as const, source: { kind: 'secret' as const,
+                ref: formatSharedSavedSecretRefV1('successor-password'), resourceRevision: 1 } }];
+        let published = false;
+        const result = await createDeploymentBackupConfigureActionForHost({ ...f.host,
+            async saveBackupBindings() { published = true; return { ok: true, revision: 2 }; },
+        })({ ...f.input, intent: 'rekeyAndSave', replacement: { ref: backupBindings[0]!.source.ref, resourceRevision: 1 } }, {});
+        expect(result).toMatchObject({ kind: 'tested', test: { kind: 'failed' } });
+        expect(published).toBe(false);
+        expect(f.environment.content.bindings).toEqual(previousBindings);
+    });
+
     it('tests the prepared candidate without persisting or replacing the previous configuration', async () => {
         const f = fixture();
         f.environment.content.backup = { ...configuration, configRevision: 7 };

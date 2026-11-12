@@ -70,7 +70,7 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema, EXTERNAL_ACTION_EF
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
     EXTERNAL_ACTION_REVIEWED_CHILD_HEADER,
     EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1, projectDeploymentPreparationAdmissionV1,
-    projectExternalActionDeploymentNativeEnvelopeAdmissionV1, projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1, projectDeploymentReadAdmissionV1,
+    projectExternalActionDeploymentNativeEnvelopeAdmissionV1, projectDeploymentNativeAdmissionV1, projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1, projectDeploymentReadAdmissionV1,
     projectRegistryAppUpdateAdmissionV1, createDeploymentDomainContentArtifactIdV1,
     createDeploymentEnvironmentContentArtifactIdV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1,
     type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -81,20 +81,22 @@ import type { ExternalActionDaemonDispatchRequest, ExternalActionRequestEnvelope
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import type { DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import type { DeploymentBackupConfigureInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
-import { DEPLOYMENT_BACKUP_ACTION_IDS_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_BACKUP_ACTION_IDS_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { buildDeploymentBackupActionInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { DirectRouteGrantRequestV2Schema } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { DEPLOYMENT_ACTION_SPECS_V1 } from '@happier-dev/protocol/actions/specs/deployments';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { auth } from '@/app/auth/auth';
 import { verifyExternalActionMachineRpcExecution, verifyExternalActionDomainExecutionRequest,
-    isDeploymentNativeHttpPurpose } from '@/app/auth/externalActionExecutionAuthorization';
-import { isDeploymentPreparationHttpPurposeInTx } from './deploymentPreparationAuthorization';
+    isDeploymentNativeHttpPurpose, isDeploymentReadPreparation } from '@/app/auth/externalActionExecutionAuthorization';
+import { isDeploymentPreparationHttpPurposeInTx, isDeploymentReadOperandInAdmittedScopeInTx,
+    isDeploymentEnvironmentHttpReadInAdmittedScopeInTx, readDeploymentSourceReadOperands } from './deploymentPreparationAuthorization';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
@@ -110,7 +112,10 @@ import { registerPeerMediationGrantRoutes } from '@/app/api/routes/machines/peer
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
 import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerExternalActionRoutes';
 import { registerAccountEncryptionRoutes } from '@/app/api/routes/account/registerAccountEncryptionRoutes';
-import { createExternalActionDaemonDispatcher } from '@/app/api/socket/externalActionDispatcher';
+import { sessionRoutes } from '@/app/api/routes/session/sessionRoutes';
+import { sessionPendingRoutes } from '@/app/api/routes/session/pendingRoutes';
+import { createExternalActionDaemonDispatcher, resolveCurrentSessionMachineFromServer } from '@/app/api/socket/externalActionDispatcher';
+import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
 import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
 import { projectSourceRoutes } from '@/app/api/routes/projects/projectSourceRoutes';
 import { registerProjectAccountRowRoutes } from '@/app/api/routes/projects/registerProjectAccountRowRoutes';
@@ -121,6 +126,10 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import { createAuthenticatedFakeSocket, createSocketRoomDiscoveryHarness, triggerSocketHandler } from '@/app/api/testkit/socketHarness';
 import { qualifyCurrentAccountStoredContentSocket, currentAccountStoredContentCompatibilityHeaders } from '@/app/api/testkit/accountStoredContentCompatibility';
 import { registerSocketRpcHandlers } from '@/app/api/socket/rpc/registerSocketRpcHandlers';
+import { machineUpdateHandler } from '@/app/api/socket/machineUpdateHandler';
+import { VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY } from '@/app/api/socket/machineSocketInstallationProof';
+import { SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1, SessionPendingEnqueueByMachineRequestV1Schema,
+    SessionPendingEnqueueByMachineResponseV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
 import { createDeploymentInTx, transitionDeploymentInTx } from './deploymentService';
 import { setDeploymentEnvironmentControllerInTx } from './deploymentControllerService';
 import { readDeploymentMachineReferencesInTx, readDeploymentReceiptInTx } from './deploymentReadService';
@@ -131,7 +140,7 @@ import { readEnvironmentSecretLaunchAdmissionInTx } from './environmentSecretLau
 import { readDeploymentReadAuthorizationInTx } from './deploymentReadAuthorization';
 import { createDeploymentDomainInTx, removeDeploymentDomainInTx, prepareDeploymentDomainContentInTx } from './deploymentDomainService';
 import { isCurrentDeploymentChildInTx, readDeploymentChildAdmissionInTx, readDeploymentChildMachineReadInTx } from './deploymentChildAuthorization';
-import { isDeploymentPreparationAuthorizedInTx } from './deploymentPreparationAuthorization';
+import { isDeploymentPreparationAuthorizedInTx, readDeploymentBackupConfigureHttpPurpose } from './deploymentPreparationAuthorization';
 import { isDeploymentChildHttpPurposeInTx } from '@/app/auth/deploymentChildHttpPurpose';
 import { registerManagedMachineRoutes } from '@/app/machines/managed/managedRoutes';
 import { managedQb56Input } from '@/app/api/routes/actions/managedQb56Input.testkit';
@@ -382,6 +391,109 @@ describe('deployment children retain their controller Action authority', () => {
             originalActionEnvelope, templateInput, rpc, verify, content, admissionInput, admissionHeaders, admissionPath, reviewedChild, workflowActionOrigin,
             accountKeys, memberContentKeys, artifactKeys };
     }
+
+    it('classifies every deployment root and admits its generated declared read demands only inside its scope', async () => {
+        expect([...DEPLOYMENT_ACTION_IDS_V1].sort()).toEqual(DEPLOYMENT_ACTION_SPECS_V1.map(spec => spec.id).sort());
+        const f = await fixture('account', 'account', { templateRoot: true });
+        const foreign = await fixture();
+        const source = await db.projectSource.findUniqueOrThrow({ where: { id: f.environment.projectSourceId } });
+        const domain = await db.deploymentDomain.create({ data: { environmentId: f.environment.id,
+            targetLinkId: f.link.id, createdByAccountId: f.account.id, state: 'pending', ...await f.content('deployment-domain.v1') } });
+        const foreignDomain = await db.deploymentDomain.create({ data: { environmentId: foreign.environment.id,
+            targetLinkId: foreign.link.id, createdByAccountId: foreign.account.id, state: 'pending', ...await foreign.content('deployment-domain.v1') } });
+        const reads = DEPLOYMENT_ACTION_IDS_V1.map(getActionSpec)
+            .filter(spec => spec.sideEffectClass === 'read' && spec.serverTransport !== undefined);
+        expect(reads.length).toBeGreaterThan(0);
+        // These are generated declared demands at the admission owner, not an
+        // execution trace of every daemon branch. Root-specific preparation has
+        // its real projection; direct Account reads carry no auxiliary scope.
+        const { deploymentPreparationAdmission: _preparation, deploymentChildRoot: _child,
+            environmentId: _environment, ...base } = f.authorization.binding;
+        const workspace = { kind: 'workspace-ref', serverId, id: 'catalog-coverage-checkout' } as const;
+        const sourceInput = { projectSourceId: source.id, sourceRevision: source.revision };
+        const demands = [
+            { actionId: 'deployments.environments.get', own: { environmentId: f.environment.id }, foreign: { environmentId: foreign.environment.id } },
+            { actionId: 'deployments.receipts.get', own: { environmentId: f.environment.id, deploymentId: f.receipt.id },
+                foreign: { environmentId: f.environment.id, deploymentId: foreign.receipt.id } },
+            { actionId: 'deployments.receipts.list', own: { environmentId: f.environment.id }, foreign: { environmentId: foreign.environment.id } },
+            { actionId: 'deployments.domains.get', own: { environmentId: f.environment.id, domainId: domain.id },
+                foreign: { environmentId: f.environment.id, domainId: foreignDomain.id } },
+            { actionId: 'deployments.domains.list', own: { environmentId: f.environment.id }, foreign: { environmentId: foreign.environment.id } },
+        ] as const;
+        for (const actionId of DEPLOYMENT_ACTION_IDS_V1) {
+            const root = getActionSpec(actionId);
+            if (root.sideEffectClass === 'read' && root.serverTransport === undefined) {
+                expect(isDeploymentReadPreparation({ ...f.authorization.binding, actionId }, actionId),
+                    `${actionId} must retain its native purpose for non-storage preparation`).toBe(false);
+            }
+            for (const read of reads) {
+                expect(isDeploymentReadPreparation({ ...f.authorization.binding, actionId }, read.id),
+                    `${actionId} must send sibling ${read.id} to the scope owner and retain its own transport`).toBe(actionId !== read.id);
+            }
+            const preparation = projectDeploymentPreparationAdmissionV1(actionId,
+                actionId === 'deployments.templates.instantiate' ? { ...f.templateInput, deploy: undefined,
+                    destination: { kind: 'repositoryPullRequest', workspace } }
+                : actionId === 'deployments.environments.create' ? { ...sourceInput, mode: 'preview', requestKey: crypto.randomUUID(),
+                    protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', definition: { from: 'compose' } }
+                : { ...sourceInput, environmentId: f.environment.id, workspace,
+                    machineId: f.controller.id, installationId: f.controller.installationId });
+            const directRead = actionId === 'deployments.environments.get' || actionId === 'deployments.environments.list';
+            const sourceOnly = actionId === 'deployments.publish.prepare' || actionId === 'deployments.environments.create';
+            const binding = { ...base, actionId,
+                ...(!preparation && !directRead ? { environmentId: f.environment.id } : {}),
+                ...(preparation ? { deploymentPreparationAdmission: preparation } : {}),
+                ...(actionId === 'deployments.targets.link' ? { deploymentLinkAdmission: {
+                    environmentId: f.environment.id, owner: { kind: 'account' as const, accountId: f.account.id } } } : {}) };
+            const expected = directRead ? null : !sourceOnly;
+            for (const [sourceId, admitted] of [[source.id, directRead ? null : actionId !== 'deployments.teardown'],
+                [foreign.environment.projectSourceId, directRead ? null : false]] as const) {
+                const proof = { method: 'GET',
+                    path: `/v1/projects/sources/${encodeURIComponent(sourceId)}?serverId=${encodeURIComponent(serverId)}`,
+                    routeInput: { serverId, id: sourceId } };
+                const operands = readDeploymentSourceReadOperands(serverId, proof);
+                expect(operands, `${actionId} must decode its exact Source HTTP demand`).not.toBeNull();
+                expect(await inTx(tx => isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, operands,
+                    undefined, undefined, 'projects.sources.read')), `${actionId} Source read: ${sourceId}`).toBe(admitted);
+                expect(readDeploymentSourceReadOperands(serverId, { ...proof,
+                    path: `/v1/projects/sources/${encodeURIComponent(sourceId)}?serverId=foreign-home` })).toBeNull();
+            }
+            for (const demand of demands) {
+                const spec = getActionSpec(demand.actionId);
+                if (!spec.serverTransport) throw new Error(`${demand.actionId} has no declared transport`);
+                for (const [input, admitted] of [
+                    [{ serverId, ...demand.own }, expected],
+                    [{ serverId, ...demand.foreign }, directRead ? null : false],
+                    [{ serverId: 'foreign-home', ...demand.own }, false],
+                ] as const) {
+                    const parsed = spec.inputSchema.parse(input);
+                    const request = bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema, input: parsed });
+                    const proof = { ...request, routeInput: parsed };
+                    expect(await inTx(tx => isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, parsed,
+                        undefined, undefined, demand.actionId)), `${actionId} → ${demand.actionId}: ${request.path}`).toBe(admitted);
+                    if (demand.actionId === 'deployments.environments.get') {
+                        expect(await inTx(tx => isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(tx, binding, proof)),
+                            `${actionId} exact Environment HTTP purpose: ${request.path}`).toBe(admitted === true);
+                        expect(await inTx(tx => isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(tx, binding,
+                            { ...proof, path: `${request.path}&unexpected=operand` })), `${actionId} must bind the declared HTTP path`).toBe(false);
+                    }
+                }
+            }
+            // An unfiltered Environment inventory is not a substitute for the
+            // exact selected-row reads above. Only the existing preview/update
+            // projection owns a positive list demand (covered by its scenarios).
+            expect(await inTx(tx => isDeploymentReadOperandInAdmittedScopeInTx(tx, binding,
+                { serverId }, undefined, undefined, 'deployments.environments.list'))).toBe(false);
+            if (preparation?.operation === 'template' || preparation?.operation === 'prepare') {
+                const body = { key: workspace };
+                const proof = { method: 'POST', path: '/v1/account/project-rows/read', body, routeInput: body };
+                expect(await inTx(tx => isDeploymentPreparationHttpPurposeInTx(tx, binding, actionId, proof, {})),
+                    `${actionId} must reopen its projected workspace`).toBe(true);
+                const wrongHome = { key: { ...workspace, serverId: 'foreign-home' } };
+                expect(await inTx(tx => isDeploymentPreparationHttpPurposeInTx(tx, binding, actionId,
+                    { ...proof, body: wrongHome, routeInput: wrongHome }, {}))).toBe(false);
+            }
+        }
+    });
 
     it.each([['plain', 'attach'], ['e2ee', 'attach'], ['plain', 'create'], ['e2ee', 'create']] as const)(
         'admits Move on its selected workspace without a runtime Link and scopes signed reads (%s, %s)', async (contentMode, repositoryIntent) => {
@@ -1210,6 +1322,7 @@ describe('deployment children retain their controller Action authority', () => {
 
     it('binds template receipt history to the deploy intent present at Home mint', async () => {
         const f = await fixture('account', 'account', { templateRoot: true, readableEnvironment: true });
+        const foreign = await fixture('account', 'account', { readableEnvironment: true });
         const { deploy, ...unprepared } = f.templateInput;
         const actionId = 'deployments.templates.instantiate';
         const effectActionId = 'deployments.receipts.list';
@@ -1229,7 +1342,8 @@ describe('deployment children retain their controller Action authority', () => {
             domainBindings: [{ templateDomainId: 'web', hostname: 'web.example.test' }] };
         const cases = [{ templateInput: unprepared, environmentId: f.environment.id, admitted: false },
             { templateInput: { ...unprepared, deploy }, environmentId: f.environment.id, admitted: true },
-            { templateInput: selectedDomainInput, environmentId: created.environmentId, admitted: true }];
+            { templateInput: selectedDomainInput, environmentId: created.environmentId, admitted: true },
+            { templateInput: { ...unprepared, deploy }, environmentId: foreign.environment.id, admitted: false }];
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             for (const { templateInput, environmentId, admitted } of cases) {
                 const input = spec.inputSchema.parse({ serverId, environmentId });
@@ -1252,6 +1366,9 @@ describe('deployment children retain their controller Action authority', () => {
                 if (admitted) {
                     const response = await read();
                     expect(response.statusCode, response.body).toBe(200);
+                } else if (environmentId === foreign.environment.id) {
+                    const response = await read();
+                    expect(response.statusCode, response.body).toBe(401);
                 } else {
                     // The refusal names its public catalog root and effect so a live 401 can be attributed.
                     await expectHttpRefusalWarning({ phase: 'effect_family', method: 'GET', path: path.split('?')[0],
@@ -1390,6 +1507,221 @@ describe('deployment children retain their controller Action authority', () => {
             await expect(mint()).rejects.toThrow();
             await db.automationRun.update({ where: { id: f.workflowActionOrigin.runId }, data: { state: 'cancelled' } });
             expect(await verify(listPath, listInput, 'deployments.receipts.list')).toBeNull();
+        }
+    });
+
+    it('allows signed teardown Environment metadata without spending its captured Source as a read purpose', async () => {
+        const f = await fixture();
+        const foreign = await fixture();
+        const actionId = 'deployments.teardown';
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const input = getActionSpec(actionId).inputSchema.parse({ serverId, environmentId: f.environment.id,
+            targetLinkId: f.link.id, expectedRevision: f.environmentRevision,
+            expectedTargetLinkRevision: f.link.revision, requestKey: crypto.randomUUID(), reason: 'manual' });
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const deploymentNativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId, machineId: f.controller.id, target, requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input, deploymentNativeAdmission });
+        expect(authorization.binding.deploymentCandidatePublication?.source.id).toBe(f.environment.projectSourceId);
+        await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); projectSourceRoutes(app); }, async app => {
+            for (const [effectActionId, operand, statusCode] of [
+                ['deployments.environments.get', { serverId, environmentId: f.environment.id }, 200],
+                ['projects.sources.read', { serverId, id: f.environment.projectSourceId }, 401],
+                ['projects.sources.read', { serverId, id: foreign.environment.projectSourceId }, 401],
+            ] as const) {
+                const spec = getActionSpec(effectActionId);
+                // Source reads use the native Source client route rather than a
+                // Home-domain ActionSpec transport (the source Action is a CLI composition).
+                const bound = effectActionId === 'projects.sources.read'
+                    ? { path: `/v1/projects/sources/${encodeURIComponent(operand.id)}?serverId=${encodeURIComponent(serverId)}` }
+                    : bindHomeDomainHttpRequestV1({ transport: spec.serverTransport!,
+                        inputSchema: spec.inputSchema, input: spec.inputSchema.parse(operand) });
+                const response = await app.inject({ method: 'GET', url: bound.path, headers: {
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                        authorizationToken: authorization.token, effectActionId, target,
+                        installationId: f.controller.installationId, requestId: envelope.requestId,
+                        method: 'GET', path: bound.path, privateKey: f.controller.keys.secretKey }),
+                } });
+                expect(response.statusCode, `${effectActionId}: ${response.body}`).toBe(statusCode);
+                if (statusCode === 401) expect(response.json()).toMatchObject({ error: 'invalid_token' });
+            }
+        }, { authentication: 'real' });
+    });
+
+    it.each([
+        { origin: 'session', contentMode: 'plain', placement: 'same', active: true },
+        { origin: 'session', contentMode: 'e2ee', placement: 'same', active: true },
+        { origin: 'workflow', contentMode: 'plain', placement: 'same', active: true },
+        { origin: 'workflow', contentMode: 'e2ee', placement: 'same', active: true },
+        { origin: 'session', contentMode: 'plain', placement: 'distinct', active: true },
+        { origin: 'workflow', contentMode: 'e2ee', placement: 'distinct', active: true },
+        { origin: 'session', contentMode: 'e2ee', placement: 'distinct', active: false },
+        { origin: 'workflow', contentMode: 'plain', placement: 'distinct', active: false },
+    ] as const)('admits the reviewed Prepare Session handoff through real Session routes ($origin, $contentMode, $placement, active=$active)', async ({ origin, contentMode, placement, active }) => {
+        const storagePolicy = process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY;
+        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = 'optional';
+        try {
+        const f = await fixture('account', 'account', { workflowOrigin: origin === 'workflow', contentMode });
+        const foreign = await fixture('account', 'account', { contentMode });
+        const runtimeMachine = placement === 'same' ? f.controller : f.member;
+        expect(runtimeMachine.id === f.controller.id).toBe(placement === 'same');
+        const sourceSession = await db.session.create({ data: { accountId: f.account.id, tag: crypto.randomUUID(),
+            metadata: contentMode === 'plain' ? '{}' : 'opaque-encrypted-session-metadata', encryptionMode: contentMode } });
+        const destination = await db.session.create({ data: { accountId: f.account.id, tag: crypto.randomUUID(),
+            metadata: contentMode === 'plain' ? '{}' : 'opaque-encrypted-session-metadata', encryptionMode: contentMode, active } });
+        const inaccessible = await db.session.create({ data: { accountId: foreign.account.id, tag: crypto.randomUUID(),
+            metadata: contentMode === 'plain' ? '{}' : 'opaque-encrypted-session-metadata', encryptionMode: contentMode } });
+        for (const [sessionId, machineId] of [[sourceSession.id, f.controller.id], [destination.id, runtimeMachine.id]]) await db.accessKey.create({ data: {
+            accountId: f.account.id, machineId, sessionId, data: 'opaque-session-access-key' } });
+        await db.machine.updateMany({ where: { id: { in: [f.controller.id, runtimeMachine.id] } }, data: {
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1 } });
+        await db.session.update({ where: { id: destination.id }, data: { runtimeMachineTarget: {
+            homeId: serverId, accountId: f.account.id, sessionId: destination.id,
+            machineId: runtimeMachine.id, installationId: runtimeMachine.installationId } } });
+        const publisher = createAuthenticatedFakeSocket({ data: { clientType: 'session-scoped',
+            userId: f.account.id, sessionId: sourceSession.id } });
+        const presence = createSessionPublisherPresence();
+        expect((await presence.registerPublisher({ socket: publisher as unknown as Socket,
+            binding: { accountId: f.account.id, machineId: f.controller.id, sessionId: sourceSession.id },
+            completeActivitySnapshot: { state: 'idle', activeCount: 0 } })).status).toBe('registered');
+        const publisherIo = createSocketRoomDiscoveryHarness(async () => [publisher]);
+        const resolveCurrentSessionMachine = (operand: Readonly<{ accountId: string; sessionId: string }>) =>
+            resolveCurrentSessionMachineFromServer({ io: publisherIo, presence, ...operand });
+        const actionId = 'deployments.prepare' as const;
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const baseInput = { projectSourceId: f.environment.projectSourceId, sourceRevision: 1,
+            repository: { kind: 'github' as const, deployment: 'https://github.com', repository: 'child/app' },
+            baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref' as const, serverId, id: 'prepare-workspace' } };
+        const mint = async (existing: boolean) => {
+            const input = getActionSpec(actionId).inputSchema.parse({ ...baseInput,
+                ...(existing ? { sessionRef: { serverId, sessionId: destination.id } } : {}) });
+            const requestId = crypto.randomUUID(), envelope = { v: 1 as const, requestId, target, input };
+            return auth.mintExternalActionExecutionAuthorization({ accountId: f.account.id, serverIdentityId: serverId,
+                authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch }, actionId,
+                machineId: f.controller.id, target, requestId, admittedMachineRole: 'use',
+                ...(origin === 'workflow' ? { workflowActionOrigin: { ...f.workflowActionOrigin!, requestId } }
+                    : { sessionActionOrigin: { v: 1 as const, caller: { kind: 'session' as const, sessionId: sourceSession.id,
+                        starterDepth: 0, turnDepth: 0 }, sourceTurnId: 'prepare-turn', callerPermissionMode: null, requestId },
+                        sessionActionSource: { machineId: f.controller.id, installationId: f.controller.installationId } }),
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, input) }, {
+                input, resolveCurrentSessionMachine });
+        };
+        const sendAuthorization = await mint(true), spawnAuthorization = await mint(false);
+        const sendChild = { actionId: 'session.message.send', role: 'prepare-session',
+            inputDigest: computeActionInputApprovalDigestV1('session.message.send', {
+                sessionId: destination.id, message: 'Prepare the reviewed repository', reply: 'none' }) };
+        const spawnChild = { actionId: 'session.spawn_new', role: 'prepare-session',
+            inputDigest: computeActionInputApprovalDigestV1('session.spawn_new', {
+                executionTarget: { serverId, machineId: f.controller.id }, directory: { kind: 'path', path: '/repo' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } }) };
+        const resolvedSession = { kind: 'session' as const, sessionId: destination.id };
+        const headers = (authorization: ExternalActionExecutionAuthorizationV1, child: ReviewedActionChildHttpProofV1,
+            path: string, method = 'GET', body?: unknown,
+            resolved: ExternalActionExecutionAuthorizationV1['binding']['target'] = resolvedSession, effectActionId = child.actionId) => ({
+            ...currentAccountStoredContentCompatibilityHeaders,
+            [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+            [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+            [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(resolved),
+            [EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]: encodeReviewedActionChildHttpProofV1(child),
+            [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                effectActionId, target: resolved, reviewedChild: child, installationId: f.controller.installationId,
+                requestId: authorization.binding.requestId, method, path, body, privateKey: f.controller.keys.secretKey }) });
+        await withAuthenticatedTestApp(app => { app.decorate('resolveCurrentSessionMachine', resolveCurrentSessionMachine);
+            registerAccountEncryptionRoutes(app); registerAccountProfileRoute(app); sessionRoutes(app); sessionPendingRoutes(app); }, async app => {
+            const currentness = '/v1/account/encryption/currentness';
+            for (const [authorization, child, resolved] of [[sendAuthorization, sendChild, resolvedSession]] as const) {
+                const read = await app.inject({ method: 'GET', url: currentness,
+                    headers: headers(authorization, child, currentness, 'GET', undefined, resolved) });
+                expect.soft(read.statusCode, read.body).toBe(200);
+                expect((await app.inject({ method: 'GET', url: currentness,
+                    headers: headers(authorization, { ...child, role: 'foreign-role' }, currentness, 'GET', undefined, resolved) })).statusCode).toBe(401);
+                expect((await app.inject({ method: 'GET', url: currentness,
+                    headers: headers(authorization, child, currentness, 'GET', undefined, resolved, 'session.transcript.get') })).statusCode).toBe(401);
+                expect((await app.inject({ method: 'GET', url: currentness, headers: headers(authorization, child, currentness,
+                    'GET', undefined, { kind: 'machine', machineId: f.outsider.id }) })).statusCode).toBe(401);
+            }
+            // Prepare retains captured Account currentness through its reviewed
+            // spawn child; its optional uncaptured-currentness fallback is unreachable.
+            expect((await app.inject({ method: 'GET', url: currentness,
+                headers: headers(spawnAuthorization, spawnChild, currentness, 'GET', undefined, target) })).statusCode).toBe(401);
+            expect((await app.inject({ method: 'GET', url: '/v1/account/profile',
+                headers: headers(sendAuthorization, sendChild, '/v1/account/profile') })).statusCode).toBe(401);
+            const sessionPath = `/v2/sessions/${destination.id}`;
+            const read = await app.inject({ method: 'GET', url: sessionPath, headers: headers(sendAuthorization, sendChild, sessionPath) });
+            expect.soft(read.statusCode, read.body).toBe(200);
+            if (origin === 'session') {
+                const mutePath = `${sessionPath}/delivery-mutes`;
+                const mutes = await app.inject({ method: 'GET', url: mutePath, headers: headers(sendAuthorization, sendChild, mutePath) });
+                expect.soft(mutes.statusCode, mutes.body).toBe(200);
+            }
+            const pendingPath = `${sessionPath}/pending`;
+            // Protected Prepare input always uses the installed Machine socket.
+            // Substitute only that network edge; verification and Pending custody stay real.
+            const socket = createAuthenticatedFakeSocket({ nsp: { server: createSocketRoomDiscoveryHarness(async () => []) }, data: {
+                clientType: 'machine-scoped', machineId: f.controller.id,
+                [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: f.controller.installationId } });
+            qualifyCurrentAccountStoredContentSocket(socket);
+            machineUpdateHandler(f.account.id, socket as unknown as Socket, { operationSocketBatchLimits: {
+                ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 } },
+                resolveCurrentSessionMachine });
+            const enqueue = async (sessionId = destination.id, resolved = { kind: 'session' as const, sessionId },
+                targetMachineId = runtimeMachine.id, effectActionId = 'session.message.send') => {
+                const body = SessionPendingEnqueueByMachineRequestV1Schema.parse({ v: 1, sessionId, targetMachineId,
+                    localId: crypto.randomUUID(), content: contentMode === 'plain'
+                        ? { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Prepare the reviewed repository' } } }
+                        : { t: 'encrypted', c: 'opaque-encrypted-preparation-brief' },
+                    requestedAction: { v: 1, kind: !active ? 'send_now' : origin === 'session' ? 'enqueue' : 'steer_if_active' } });
+                const event = SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1;
+                let response: unknown;
+                const request = SessionPendingEnqueueByMachineRequestV1Schema.parse({ ...body, externalAction: { v: 1, authorization: sendAuthorization,
+                    effectActionId, target: resolved, installationId: f.controller.installationId,
+                    machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: sendAuthorization.token,
+                        effectActionId, target: resolved, installationId: f.controller.installationId,
+                        event, method: event, requestId: sendAuthorization.binding.requestId, params: body,
+                        privateKey: f.controller.keys.secretKey }) } });
+                expect(request.externalAction, 'signed Machine input must retain its authorization at the network boundary').toBeDefined();
+                await triggerSocketHandler(socket, event, request, (value: unknown) => { response = value; });
+                return { localId: body.localId, result: SessionPendingEnqueueByMachineResponseV1Schema.parse(response).result };
+            };
+            const sent = await enqueue();
+            expect.soft(sent.result).toEqual({ status: 'accepted', localId: sent.localId });
+            expect.soft(await db.sessionPendingMessage.count({ where: { sessionId: destination.id, localId: sent.localId } })).toBe(1);
+            const foreignInput = await enqueue(inaccessible.id);
+            expect.soft(foreignInput.result, 'inaccessible resolved Session').toMatchObject({ status: 'rejected' });
+            const refused = [foreignInput, await enqueue(destination.id, { kind: 'session', sessionId: inaccessible.id }),
+                await enqueue(destination.id, resolvedSession, runtimeMachine.id, 'session.transcript.get')];
+            for (const result of refused.slice(1)) expect.soft(result.result, 'mismatched Session or effect').toMatchObject({
+                status: 'rejected', code: 'session_input_unauthorized' });
+            const wrongRuntime = await enqueue(destination.id, resolvedSession, f.outsider.id);
+            expect.soft(wrongRuntime.result, 'runtime Machine differs from the committed Session target').toMatchObject({
+                status: 'rejected', code: 'session_input_target_unavailable' });
+            expect(await db.sessionPendingMessage.count({ where: { localId: wrongRuntime.localId } })).toBe(0);
+            expect(await db.sessionPendingMessage.count({ where: { localId: { in: refused.map(result => result.localId) } } })).toBe(0);
+            // AlreadyAccepted retries read this exact status route before settling delivery.
+            const statuses = await app.inject({ method: 'GET', url: pendingPath, headers: headers(sendAuthorization, sendChild, pendingPath) });
+            expect.soft(statuses.statusCode, statuses.body).toBe(200);
+            const directBody = { localId: crypto.randomUUID(), content: contentMode === 'plain'
+                ? { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'unused direct delivery' } } }
+                : { t: 'encrypted', c: 'opaque-encrypted-preparation-brief' }, requestedAction: { v: 1, kind: 'enqueue' } };
+            expect((await app.inject({ method: 'POST', url: pendingPath, payload: directBody,
+                headers: headers(sendAuthorization, sendChild, pendingPath, 'POST', directBody) })).statusCode).toBe(401);
+            const foreignPath = `/v2/sessions/${inaccessible.id}`;
+            expect((await app.inject({ method: 'GET', url: foreignPath,
+                headers: headers(sendAuthorization, sendChild, foreignPath, 'GET', undefined,
+                    { kind: 'session', sessionId: inaccessible.id }) })).statusCode).toBe(404);
+            expect((await app.inject({ method: 'GET', url: foreignPath,
+                headers: headers(sendAuthorization, sendChild, foreignPath) })).statusCode).toBe(401);
+        }, { authentication: 'real' });
+        } finally {
+            if (storagePolicy === undefined) delete process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY;
+            else process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = storagePolicy;
         }
     });
 
@@ -1637,6 +1969,33 @@ describe('deployment children retain their controller Action authority', () => {
     it.each(['plain', 'e2ee'] as const)('spends configured backup admission in %s on the exact serving receipt', async contentMode => {
         const f = await fixture('team', 'account', { contentMode });
         const other = await fixture();
+        const historical = await db.deployment.create({ data: { ...f.receipt, id: crypto.randomUUID(),
+            requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), state: 'failed',
+            ...await f.content('deployment-receipt.v1') } });
+        const predecessorLink = await db.deploymentTargetLink.create({ data: { ...f.link, id: crypto.randomUUID(),
+            ...await f.content('deployment-target-link.v1') } });
+        await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { predecessorTargetLinkId: predecessorLink.id } });
+        const predecessorReceipt = await db.deployment.create({ data: { ...historical, id: crypto.randomUUID(),
+            targetLinkId: predecessorLink.id, requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(),
+            ...await f.content('deployment-receipt.v1') } });
+        const unrelatedLink = await db.deploymentTargetLink.create({ data: { ...f.link, id: crypto.randomUUID(),
+            ...await f.content('deployment-target-link.v1') } });
+        const unrelatedReceipt = await db.deployment.create({ data: { ...historical, id: crypto.randomUUID(),
+            targetLinkId: unrelatedLink.id, requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(),
+            ...await f.content('deployment-receipt.v1') } });
+        const domainContent = await f.content('deployment-domain.v1');
+        const retainedDomainContent = await f.content('deployment-domain.v1');
+        const unrelatedDomainContent = await f.content('deployment-domain.v1');
+        const capturedDomainId = crypto.randomUUID();
+        const domainCapture = { desired: true, content: retainedDomainContent, listener: 'privateOrigin', dockerEngineId: 'member-engine',
+            installationPublicKey: privacyKit.encodeBase64(new Uint8Array(f.member.keys.publicKey), 'base64url'),
+            placement: { serverId, accountId: f.account.id, environmentId: f.environment.id, targetLinkId: f.link.id,
+                machineId: f.member.id, installationId: f.member.installationId, nativeServer: 'private',
+                domainId: capturedDomainId, requestId: crypto.randomUUID(), actionOperationId: crypto.randomUUID() } };
+        await db.deploymentDomain.create({ data: { environmentId: f.environment.id, targetLinkId: f.link.id,
+            id: capturedDomainId, createdByAccountId: f.account.id, state: 'active', ...domainContent,
+            capturedPlacements: [domainCapture, { ...domainCapture, content: unrelatedDomainContent,
+                placement: { ...domainCapture.placement, targetLinkId: unrelatedLink.id } }] } });
         await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded' } });
         await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { activeDeploymentId: f.receipt.id } });
         const grant = { v: 1 as const, kind: 'environmentValues' as const, environmentId: f.environment.id,
@@ -1690,6 +2049,30 @@ describe('deployment children retain their controller Action authority', () => {
                     headers: headers('POST', verificationPath, verificationBody) }).finally(stop);
                 expect(verified.statusCode, verified.body).toBe(200);
                 expect(queries.filter(model => ['ProjectSource', 'Team', 'TeamMembership', 'MachineTeamGrant', 'MachineAccountGrant', 'Session', 'AccessKey'].includes(model))).toEqual([]);
+                // Quiescing capture publishes expected-down evidence from this Environment's Domains.
+                if (actionId === 'deployments.backups.run') {
+                    const read = (environmentId: string) => {
+                        const spec = getActionSpec('deployments.domains.list');
+                        if (!spec.serverTransport) throw new Error('Domain list transport missing');
+                        const bound = bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema,
+                            input: { serverId, environmentId } });
+                        return app.inject({ method: 'GET', url: bound.path,
+                            headers: headers('GET', bound.path, undefined, 'deployments.domains.list') });
+                    };
+                    const own = await read(f.environment.id);
+                    expect(own.statusCode, own.body).toBe(200);
+                    expect((await read(other.environment.id)).statusCode).toBe(401);
+                    const artifactPath = `/v1/artifacts/${retainedDomainContent.contentArtifactId}`;
+                    const artifact = await app.inject({ method: 'GET', url: artifactPath,
+                        headers: headers('GET', artifactPath) });
+                    expect(artifact.statusCode, `backup expected-down Domain Artifact: ${artifact.body}`).toBe(200);
+                    for (const content of [unrelatedDomainContent, unrelatedLink, other.receipt]) {
+                        const foreignArtifactPath = `/v1/artifacts/${content.contentArtifactId}`;
+                        const foreignArtifact = await app.inject({ method: 'GET', url: foreignArtifactPath,
+                            headers: headers('GET', foreignArtifactPath) });
+                        expect(foreignArtifact.statusCode, foreignArtifact.body).toBe(401);
+                    }
+                }
                 const path = `/v1/deployments/environments/${f.environment.id}/secret-launch-admission`;
                 const body = EnvironmentSecretLaunchAdmissionBodyV1Schema.parse({ serverId, environmentId: f.environment.id,
                     targetLinkId: f.link.id, machineId: f.member.id, installationId: f.member.installationId,
@@ -1712,6 +2095,22 @@ describe('deployment children retain their controller Action authority', () => {
                     expect(history.statusCode, history.body).toBe(200);
                     expect((await app.inject({ method: 'GET', url: listPath(other.environment.id),
                         headers: headers('GET', listPath(other.environment.id), undefined, 'deployments.receipts.list') })).statusCode).toBe(401);
+                    // Prune opens history to protect snapshots referenced by unsettled migration captures.
+                    for (const receipt of [historical, predecessorReceipt, unrelatedReceipt, other.receipt]) {
+                        const readSpec = getActionSpec('deployments.receipts.get');
+                        if (!readSpec.serverTransport) throw new Error('Receipt read transport unavailable');
+                        const readPath = bindHomeDomainHttpRequestV1({ transport: readSpec.serverTransport,
+                            inputSchema: readSpec.inputSchema, input: { serverId, environmentId: receipt.environmentId,
+                                deploymentId: receipt.id } }).path;
+                        const expected = receipt.id === historical.id || receipt.id === predecessorReceipt.id ? 200 : 401;
+                        const metadata = await app.inject({ method: 'GET', url: readPath,
+                            headers: headers('GET', readPath, undefined, 'deployments.receipts.get') });
+                        expect(metadata.statusCode, metadata.body).toBe(expected);
+                        const artifactPath = `/v1/artifacts/${receipt.contentArtifactId}`;
+                        const artifact = await app.inject({ method: 'GET', url: artifactPath,
+                            headers: headers('GET', artifactPath) });
+                        expect(artifact.statusCode, artifact.body).toBe(expected);
+                    }
                 }
                 const foreignPath = `/v1/artifacts/${other.receipt.contentArtifactId}`;
                 expect((await app.inject({ method: 'GET', url: foreignPath, headers: headers('GET', foreignPath) })).statusCode).toBe(401);
@@ -2416,7 +2815,7 @@ describe('deployment children retain their controller Action authority', () => {
                 [`/v1/artifacts/${f.environment.contentArtifactId}`, actionId],
                 [`/v1/artifacts/${f.receipt.contentArtifactId}`, actionId],
                 [`/v1/machines/${f.outsider.id}`, actionId],
-            ]) await expectHttpRefusalWarning({ phase: effect === actionId ? 'deployment_restart_purpose' : 'effect_family', method: 'GET', path: url.split('?')[0] },
+            ]) await expectHttpRefusalWarning({ phase: 'deployment_restart_purpose', method: 'GET', path: url.split('?')[0] },
                 async () => { expect((await app.inject({ method: 'GET', url, headers: headers('GET', url, undefined, effect) })).statusCode).toBe(401); },
                 [authorization.token]);
             expect((await app.inject({ method: 'POST', url: path, payload: body,
@@ -2845,6 +3244,35 @@ describe('deployment children retain their controller Action authority', () => {
                 } finally { await requester?.dispose(); await channel.close(); }
             });
         }, { authentication: 'real' });
+    });
+
+    it('reads backup setup defaults only in the preview child for a reviewed Configure preparation (C7)', async () => {
+        const f = await fixture();
+        const foreign = await fixture();
+        const parent = await db.deploymentEnvironment.create({ data: { ...f.environment, id: crypto.randomUUID(),
+            ...await f.content('deployment-environment.v1') } });
+        const preview = { templateEnvironmentId: parent.id, expectedTemplateRevision: parent.revision,
+            pullRequestId: crypto.randomUUID(), runtimeTargetLinkId: f.link.id };
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { purpose: 'preview',
+            previewTemplateEnvironmentId: parent.id, previewRepositoryId: f.environment.projectSourceId,
+            previewPullRequestId: preview.pullRequestId, previewTargetLinkId: f.link.id } });
+        const actionId = 'deployments.backups.configure';
+        const input = { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision,
+            intent: 'markNotNeeded' as const };
+        const reviewedChild = { actionId, role: 'preview.backup', inputDigest: computeActionInputApprovalDigestV1(actionId, input),
+            deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(actionId, input) };
+        const binding = { ...f.authorization.binding, actionId: 'deployments.environments.create', environmentId: parent.id,
+            deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1('deployments.environments.create', {
+                mode: 'apply', projectSourceId: f.environment.projectSourceId, requestKey: crypto.randomUUID(), preview,
+                protection: 'nonProduction', purpose: 'preview', deployerMode: 'managers',
+            }) };
+        const read = (environmentId: string, home = serverId) => readDeploymentBackupConfigureHttpPurpose(db, binding, actionId,
+            { method: 'GET', path: `/v1/deployments/environments/${environmentId}?serverId=${encodeURIComponent(home)}`,
+                routeInput: { serverId: home, environmentId }, reviewedChild }, f.environment.id);
+        expect(await read(f.environment.id)).toBe(true);
+        expect(await read(parent.id), 'Configure preparation must not borrow its root parent Environment').toBe(false);
+        expect(await read(foreign.environment.id)).toBe(false);
+        expect(await read(f.environment.id, `srv_${'f'.repeat(32)}`)).toBe(false);
     });
 
     it('reads backup setup defaults under its exact signed Environment preview root', async () => {
@@ -3632,6 +4060,41 @@ describe('deployment children retain their controller Action authority', () => {
             expect(settled.statusCode, settled.body).toBe(200);
             expect(settled.json()).toMatchObject({ ok: true, domain: { state: 'active' } });
         }, { authentication: 'real' });
+    });
+
+
+    it('publishes only the re-key password binding at the reviewed Environment revision', async () => {
+        const f = await fixture('account', 'account', { readableEnvironment: true });
+        const actionId = 'deployments.backups.configure';
+        const native = projectDeploymentNativeAdmissionV1(actionId, { serverId,
+            environmentId: f.environment.id, expectedRevision: f.environmentRevision, intent: 'markNotNeeded' });
+        if (!native || !('kind' in native) || native.kind !== 'backupConfigure') throw new Error('Expected configure admission');
+        const binding = { ...f.authorization.binding, actionId, environmentId: f.environment.id,
+            deploymentNativeAdmission: { ...native, intent: 'rekeyAndSave' as const } };
+        const bindingAction = 'deployments.bindings.set';
+        const reviewedChild = { actionId: bindingAction, role: 'backup.bindings' as const,
+            inputDigest: computeActionInputApprovalDigestV1(bindingAction, { serverId, environmentId: f.environment.id,
+                expectedRevision: f.environmentRevision, set: [], remove: [] }) };
+        const artifactId = createDeploymentEnvironmentContentArtifactIdV1({ ...binding,
+            actionId: bindingAction, environmentId: f.environment.id });
+        const storage = DeploymentBindingsSetStorageInputV1Schema.parse({ serverId, environmentId: f.environment.id,
+            expectedRevision: f.environmentRevision, contentArtifactId: artifactId,
+            contentHeaderVersion: 1, contentBodyVersion: 1, referencedSavedSecretRevisions: [], grants: [] });
+        const path = `/v1/deployments/environments/${f.environment.id}/bindings`;
+        expect(await readDeploymentBackupConfigureHttpPurpose(db, binding, bindingAction,
+            { method: 'POST', path, body: storage, routeInput: storage, reviewedChild })).toBe(true);
+        const stale = { ...storage, expectedRevision: storage.expectedRevision + 1 };
+        expect(await readDeploymentBackupConfigureHttpPurpose(db, binding, bindingAction,
+            { method: 'POST', path, body: stale, routeInput: stale, reviewedChild })).toBe(false);
+        const configArtifactId = createDeploymentEnvironmentContentArtifactIdV1({ ...binding, environmentId: f.environment.id });
+        const backup = { ...storage, contentArtifactId: configArtifactId };
+        expect(await readDeploymentBackupConfigureHttpPurpose(db, binding, actionId, { method: 'POST',
+            path: `/v1/deployments/environments/${f.environment.id}/backup`, body: backup, routeInput: backup })).toBe(false);
+        const preparation = { kind: 'clientBindings', serverId, environmentId: f.environment.id,
+            expectedRevision: f.environmentRevision };
+        expect(await readDeploymentBackupConfigureHttpPurpose(db, binding, bindingAction, { method: 'POST',
+            path: `/v1/deployments/environments/${f.environment.id}/secret-launch-admission`,
+            body: preparation, routeInput: preparation, reviewedChild })).toBe(true);
     });
 
     it.each(['plain', 'e2ee'] as const)('admits backup configure on the exact %s Environment controller and reviewed revision', async mode => {
@@ -5257,6 +5720,29 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
+    it('admits only the signed template repository workspace at its own Home', async () => {
+        const f = await fixture('account', 'account', { templateRoot: true });
+        const actionId = 'deployments.templates.instantiate';
+        const { deploy: _deploy, ...templateInput } = f.templateInput;
+        const input = getActionSpec(actionId).inputSchema.parse({ ...templateInput, mode: 'preview',
+            destination: { kind: 'repositoryPullRequest', workspace: { kind: 'workspace-ref', serverId, id: 'checkout' },
+                sourceRevision: 1, repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
+                baseCommit: 'a'.repeat(40), baseBranch: 'main', branchName: 'add-database', composePath: 'compose.yaml', title: 'Add database' } });
+        const binding = { ...f.authorization.binding,
+            deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, input) };
+        const key = { kind: 'workspace-ref', serverId, id: 'checkout' } as const;
+        const purpose = (body: unknown, routeInput: unknown = body) => inTx(tx => isDeploymentPreparationHttpPurposeInTx(
+            tx, binding, actionId, { method: 'POST', path: '/v1/account/project-rows/read', body, routeInput }, {}));
+        expect(await purpose({ key })).toBe(true);
+        expect(await purpose({ key: { ...key, id: 'foreign-checkout' } })).toBe(false);
+        expect(await purpose({ key: { ...key, serverId: 'foreign-home' } })).toBe(false);
+        expect(await purpose({ key }, { key: { ...key, id: 'foreign-checkout' } })).toBe(false);
+        const stored = { ...binding, deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId,
+            { ...input, destination: { kind: 'stored' } }) };
+        expect(await inTx(tx => isDeploymentPreparationHttpPurposeInTx(tx, stored, actionId,
+            { method: 'POST', path: '/v1/account/project-rows/read', body: { key }, routeInput: { key } }, {}))).toBe(false);
+    });
+
     it.each([
         { withdrawal: 'machine', workflowOrigin: false, templateRoot: true }, { withdrawal: 'team', workflowOrigin: false, templateRoot: true },
         { withdrawal: 'machine', workflowOrigin: true, templateRoot: true }, { withdrawal: 'team', workflowOrigin: true, templateRoot: true },
@@ -5647,6 +6133,105 @@ describe('deployment children retain their controller Action authority', () => {
                     privateKey: f.controller.keys.secretKey }) })).toBeNull();
         }
         expect(await db.deployment.count({ where: { environmentId: f.environment.id } })).toBe(1);
+    });
+
+    it.each(['plain', 'e2ee'] as const)('spends configured backup admission / standalone restore admission: persists only admitted restore content on its serving generation without changing lifecycle (%s)', async contentMode => {
+        const f = await fixture('account', 'account', { contentMode });
+        const settledAt = new Date('2026-11-12T12:00:00.000Z');
+        await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded', settledAt } });
+        await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { activeDeploymentId: f.receipt.id } });
+        const previous = await db.deployment.create({ data: { ...f.receipt, id: crypto.randomUUID(),
+            requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), state: 'succeeded',
+            ...await f.content('deployment-receipt.v1') } });
+        const otherLink = await db.deploymentTargetLink.create({ data: { ...f.link, id: crypto.randomUUID(),
+            ...await f.content('deployment-target-link.v1'), machines: { create: [{ machineId: f.member.id,
+                installationId: f.member.installationId, position: 0, state: 'active' }] } } });
+        const otherTarget = await db.deployment.create({ data: { ...previous, id: crypto.randomUUID(),
+            targetLinkId: otherLink.id, requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(),
+            ...await f.content('deployment-receipt.v1') } });
+        await db.deploymentTargetLink.update({ where: { id: otherLink.id }, data: { activeDeploymentId: otherTarget.id } });
+        const foreign = await fixture();
+        const actionId = 'deployments.backups.restore' as const;
+        const target = { kind: 'machine' as const, machineId: f.member.id };
+        const input: DeploymentBackupRestoreInputV1 = { mode: 'confirm', serverId, environmentId: f.environment.id,
+            targetLinkId: f.link.id, deploymentId: previous.id, machineId: f.member.id,
+            installationId: f.member.installationId, expectedRevision: f.environmentRevision,
+            source: { kind: 'repository', snapshotId: 'volume-snapshot' }, prepareOperationId: crypto.randomUUID() };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const deploymentNativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId, machineId: f.member.id, target, requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input, deploymentNativeAdmission });
+        const updatedContent = { ownServer: { sources: [{ environmentInstanceId: 'restored-volume',
+            namedVolumes: [{ volume: 'data', physicalName: 'restore-stage-data' }] }] } };
+        const updatedBody = { body: JSON.stringify(updatedContent) };
+        const body = { serverId, environmentId: f.environment.id, deploymentId: f.receipt.id,
+            actionOperationId: f.receipt.actionOperationId, expectedRevision: f.receipt.revision,
+            machineId: f.member.id, installationId: f.member.installationId, kind: 'settle' as const, state: 'succeeded' as const,
+            contentArtifactId: f.receipt.contentArtifactId, contentHeaderVersion: f.receipt.contentHeaderVersion,
+            contentBodyVersion: f.receipt.contentBodyVersion,
+            contentUpdate: ArtifactJsonUpdateHttpInputV1Schema.parse({ expectedBodyVersion: f.receipt.contentBodyVersion,
+                body: contentMode === 'plain' ? encodePlainArtifactStoredContent(updatedBody)
+                    : privacyKit.encodeBase64(new Uint8Array(await sealSessionDataKeyBundleV0(updatedBody,
+                        f.artifactKeys.get(f.receipt.contentArtifactId)!))) }) };
+        const sign = (body: Omit<DeploymentTransitionInputV1, 'proof'>) => DeploymentTransitionInputV1Schema.parse({ ...body,
+            proof: signMachineInstallationProof({ payload: { version: 1, accountId: f.account.id,
+                machineId: f.member.id, installationId: f.member.installationId,
+                deploymentTransition: { serverId: body.serverId, environmentId: body.environmentId, deploymentId: body.deploymentId,
+                    actionOperationId: body.actionOperationId, expectedRevision: body.expectedRevision,
+                    requestBodyDigest: computeDeploymentTransitionRequestDigestV1(body) } }, privateKey: f.member.keys.secretKey }) });
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const send = async (body: Omit<DeploymentTransitionInputV1, 'proof'>, effectActionId: string = actionId) => {
+                const wire = sign(body);
+                const path = `/v1/deployments/environments/${body.environmentId}/deployments/${body.deploymentId}/transitions`;
+                return app.inject({ method: 'POST', url: path, payload: wire, headers: {
+                    ...currentAccountStoredContentCompatibilityHeaders,
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                        effectActionId, target, installationId: f.member.installationId, requestId: authorization.binding.requestId,
+                        method: 'POST', path, body: wire, privateKey: f.member.keys.secretKey }),
+                } });
+            };
+            // These signatures remain valid: purpose, generation custody and lifecycle must reject them.
+            for (const invalid of [{ ...body, serverId: 'another-home' }, { ...body, environmentId: foreign.environment.id },
+                { ...body, state: 'failed' as const },
+                { ...body, kind: 'stage' as const, state: 'running' as const },
+                { ...body, expectedTargetLinkRevision: f.link.revision }]) {
+                const denied = await send(invalid);
+                expect(denied.statusCode, denied.body).toBe(401);
+            }
+            expect((await send(body, 'deployments.deploy')).statusCode).toBe(401);
+            for (const unselected of [previous, otherTarget]) {
+                const denied = await send({ ...body, deploymentId: unselected.id, actionOperationId: unselected.actionOperationId,
+                    contentArtifactId: unselected.contentArtifactId });
+                expect(denied.statusCode, denied.body).toBe(409);
+            }
+            await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { activeDeploymentId: previous.id } });
+            const superseded = await send(body);
+            expect(superseded.statusCode, superseded.body).toBe(409);
+            await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { activeDeploymentId: f.receipt.id } });
+            const changed = await send(body);
+            expect(changed.statusCode, changed.body).toBe(200);
+            expect(changed.json()).toMatchObject({ ok: true, state: 'succeeded', deploymentRevision: f.receipt.revision + 1 });
+            const stored = await db.deployment.findUniqueOrThrow({ where: { id: f.receipt.id } });
+            expect(stored).toMatchObject({ state: 'succeeded', settledAt, revision: f.receipt.revision + 1,
+                actionOperationId: f.receipt.actionOperationId, contentArtifactId: f.receipt.contentArtifactId,
+                contentBodyVersion: f.receipt.contentBodyVersion + 1 });
+            expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } }))
+                .toMatchObject({ activeDeploymentId: f.receipt.id, revision: f.link.revision, state: f.link.state });
+            const artifact = await inTx(tx => readArtifactForCallerInTx(tx, {
+                actorAccountId: f.account.id, artifactId: stored.contentArtifactId }));
+            if (!artifact.ok) throw new Error(artifact.error);
+            if (contentMode === 'plain') expect(decodePlainArtifactStoredContent(privacyKit.encodeBase64(artifact.artifact.body))).toEqual(updatedBody);
+            else expect(await openSessionDataKeyBundleV0(artifact.artifact.body, f.artifactKeys.get(stored.contentArtifactId)!))
+                .toMatchObject({ status: 'authenticated', value: updatedBody });
+            const stale = await send(body);
+            expect(stale.statusCode, stale.body).toBe(409);
+            expect((await db.deployment.findUniqueOrThrow({ where: { id: f.receipt.id } })).revision).toBe(stored.revision);
+        }, { authentication: 'real' });
     });
 
     function signedStage(f: Awaited<ReturnType<typeof fixture>>, machine: Awaited<ReturnType<typeof fixture>>['controller'],

@@ -1,3 +1,4 @@
+import { combineDeploymentBackupAttachmentsForHost } from '@/deployments/secrets/deploymentExecEnvPort';
 import { posix, relative, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { access, mkdir, realpath, stat } from 'node:fs/promises';
@@ -329,6 +330,7 @@ export type NativeBackupRepositoryForHostInput = Readonly<{
     projectName: string;
     operation: MachineNativeEffectOperation & Readonly<{ signal: AbortSignal }>;
     runtime: Readonly<{ exec: ExecService; nativeIo: ProjectNativeToolchainIo; settleNative(): Promise<void> }>;
+    prepareSuccessorDestination?: NativeBackupRepositoryForHostInput['prepareDestination'];
     prepareDestination(signal: AbortSignal): Promise<Readonly<{
         execEnv: DeploymentExecEnvPortV1;
         readAccess(): ResticAccessV1;
@@ -341,7 +343,7 @@ export type NativeBackupRepositoryForHostInput = Readonly<{
  * generation. The pinned image, process supervision and P42 loans remain owned
  * by the same native restic command used for deployed backups and restores. */
 export async function withNativeBackupRepositoryForHost<T>(input: NativeBackupRepositoryForHostInput,
-    effect: (native: Readonly<{ access: ResticAccessV1; signal: AbortSignal; capacity?: StoragePathCapacityV1;
+    effect: (native: Readonly<{ access: ResticAccessV1; successorAccess?: ResticAccessV1; signal: AbortSignal; capacity?: StoragePathCapacityV1;
         execute(request: ResticRequestV1): Promise<DeploymentBackupNativeResultV1> }>) => Promise<T>): Promise<T> {
     const { exec, nativeIo } = input.runtime;
     const tool = await exec.systemTools.resolve({ toolId: 'docker', purpose: 'deployment-native-compose',
@@ -374,11 +376,26 @@ export async function withNativeBackupRepositoryForHost<T>(input: NativeBackupRe
             return image;
         });
         const destination = await input.prepareDestination(signal);
+        let successor: Awaited<ReturnType<NativeBackupRepositoryForHostInput['prepareDestination']>> | undefined;
+        let successorAttachment: DeploymentExecEnvAttachmentV1 | undefined;
         let attachment: DeploymentExecEnvAttachmentV1 | undefined;
         try {
             attachment = await destination.execEnv.prepare({ backupDestination: { configKey: 'destination' } }, { signal });
-            const destinationAttachment = attachment;
-            return await effect({ access: destination.readAccess(), signal, ...(destination.capacity ? { capacity: destination.capacity } : {}),
+            let destinationAttachment = attachment;
+            let access = destination.readAccess();
+            let successorAccess: ResticAccessV1 | undefined;
+            if (input.prepareSuccessorDestination) {
+                successor = await input.prepareSuccessorDestination(signal);
+                successorAttachment = await successor.execEnv.prepare({ backupDestination: { configKey: 'destination' } }, { signal });
+                const next = successor.readAccess();
+                const password = next.credentialFiles.find(file => file.containerPath === next.passwordFilePath);
+                if (!password) return refuse();
+                const newPassword = { ...password, containerPath: '/run/happier/backup/new-repository-password' };
+                access = { ...access, credentialFiles: [...access.credentialFiles, newPassword] };
+                successorAccess = { ...access, passwordFilePath: newPassword.containerPath };
+                destinationAttachment = combineDeploymentBackupAttachmentsForHost(attachment, successorAttachment);
+            }
+            return await effect({ access, ...(successorAccess ? { successorAccess } : {}), signal, ...(destination.capacity ? { capacity: destination.capacity } : {}),
                 execute: request => machineNativeEffectAdmission.runStage(context, async () =>
                     executeAdmittedServiceCommand(await admitNativeResticCommand({
                         render: { engine, platform, projectName: input.projectName }, context, runtimeImage,
@@ -390,7 +407,13 @@ export async function withNativeBackupRepositoryForHost<T>(input: NativeBackupRe
             });
         } finally {
             try { await input.runtime.settleNative(); }
-            finally { try { attachment?.dispose(); } finally { await destination.release?.(); } }
+            finally {
+                try { attachment?.dispose(); } finally {
+                    try { successorAttachment?.dispose(); } finally {
+                        try { await successor?.release?.(); } finally { await destination.release?.(); }
+                    }
+                }
+            }
         }
     });
 }

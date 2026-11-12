@@ -47,7 +47,7 @@ export function createDeploymentBackupConfigureForHost(host: Host) {
         const resolveAuthorCustody = () => resolveRequesterSavedSecretActionCustody({
             authorization: context.externalActionExecutionAuthorization, credentials: host.credentials,
             operationContext: host.savedSecretOperationContext });
-        let authorCustody = input.intent === 'markNotNeeded' || input.destinationSetup ? undefined : resolveAuthorCustody();
+        let authorCustody = input.intent === 'markNotNeeded' || ('destinationSetup' in input && input.destinationSetup) ? undefined : resolveAuthorCustody();
         const configure = createDeploymentBackupConfigureActionForHost({
             ...host,
             acquirePluginRuntimeRegistryLease: () => host.acquirePluginRuntimeRegistryLease?.() ?? refuse('unsupported_action'),
@@ -78,15 +78,8 @@ export function createDeploymentBackupConfigureForHost(host: Host) {
                 authorCustody ??= resolveAuthorCustody();
                 const prepareDestination = createPrepareDeploymentBackupConfigurationDestinationForHost({ ...host, authorCustody,
                     async acquirePluginRuntimeRegistryLease() { return { registry, async release() {} }; } });
-                let release: (() => Promise<void>) | undefined;
-                try {
-                    return await executeDeploymentBackupConfigurationNativeForHost(request, { serverId: host.serverId,
-                        async prepareDestination(native) {
-                            const prepared = await prepareDestination(native);
-                            release = () => prepared.release();
-                            return prepared;
-                        } });
-                } finally { await release?.(); }
+                return await executeDeploymentBackupConfigurationNativeForHost(request, {
+                    serverId: host.serverId, prepareDestination });
             },
             async saveBackup({ environment, backup, context: currentContext }) {
                 const environmentId = environment.environment.id;

@@ -306,3 +306,31 @@ export async function consumeDeploymentExecEnvForHost(
     if (!attachment) refuse();
     return await attachment.consume(signal, delivery);
 }
+
+/** Re-key commands borrow both existing finite captures, keeping both values
+ * redacted and both password files alive until their native command settles. */
+export function combineDeploymentBackupAttachmentsForHost(
+    current: DeploymentExecEnvAttachmentV1,
+    successor: DeploymentExecEnvAttachmentV1,
+): DeploymentExecEnvAttachmentV1 {
+    const handle = Object.freeze({ dispose() { current.dispose(); successor.dispose(); } }) as DeploymentExecEnvAttachmentV1;
+    attachments.set(handle, { async consume(signal) {
+        const oldLoan = await consumeDeploymentExecEnvForHost(current, signal);
+        try {
+            const newLoan = await consumeDeploymentExecEnvForHost(successor, signal);
+            const redaction = createProviderRedactionLease({ values: [...oldLoan.redaction.values(), ...newLoan.redaction.values()] });
+            return { ...oldLoan, redaction,
+                refs: [...oldLoan.refs, ...newLoan.refs],
+                referenceAddresses: [...oldLoan.referenceAddresses, ...newLoan.referenceAddresses],
+                async recheck() { await oldLoan.recheck(); await newLoan.recheck(); },
+                retireEnvironment() { oldLoan.retireEnvironment(); newLoan.retireEnvironment(); },
+                async dispose() {
+                    try { await oldLoan.dispose(); } finally {
+                        try { await newLoan.dispose(); } finally { redaction.close(); }
+                    }
+                },
+            };
+        } catch (error) { await oldLoan.dispose(); throw error; }
+    } });
+    return handle;
+}

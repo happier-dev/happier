@@ -177,3 +177,18 @@ it.each(['single', 'missing', 'multiple'] as const)('uses admitted %s runtime pl
     expect(environmentReads).toBe(1);
     expect(writes).toEqual([]);
 });
+
+
+it('declares the existing password-binding child for a header-only re-key before native effects', async () => {
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };
+    const deps = createDaemonDeploymentActionDeps({ credentials,
+        accountArtifacts: createCredentialedAccountArtifactStore(credentials), serverId: 'home',
+        serverHttpBaseUrl: 'https://home.test', machineId: 'controller',
+        resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
+        runtime: { async acquire() { throw new Error('Child review cannot acquire native custody'); } } });
+    const input = DeploymentBackupConfigureInputV1Schema.parse({ serverId: 'home', environmentId: 'environment',
+        expectedRevision: 1, intent: 'rekeyAndSave',
+        replacement: { ref: 'happier:shared-secret:v1:successor', resourceRevision: 1 } });
+    expect(await deps.prepareHostReviewedChildren?.({ actionId: 'deployments.backups.configure', input, context: {} }))
+        .toEqual({ children: [{ action: 'deployments.bindings.set', role: 'backup.bindings' }] });
+});

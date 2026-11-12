@@ -10,14 +10,15 @@ import { ManagedControlAdmissionInputV1Schema, ManagedListInputV1Schema,
     managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { Tx } from '@/storage/inTx';
 import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, resolveProjectSourceAccessInTx, canManageProjectSourceOwnerInTx } from '@/app/projects/sources/projectSourceService';
-import { MACHINE_SERVICE_ADOPT_ACTION_ID } from '@happier-dev/protocol/local/services/actionIdsV1';
+import { MACHINE_SERVICE_ADOPT_ACTION_ID, MACHINE_SERVICE_ADOPT_CREATE_ROLE_V1,
+    MACHINE_SERVICE_ADOPT_BINDINGS_ROLE_V1 } from '@happier-dev/protocol/local/services/actionIdsV1';
 import { loadDeploymentEnvironmentInTx, lockDeploymentEnvironmentInTx, readCreatedDeploymentEnvironmentIdInTx,
     type DeploymentEnvironmentRow } from './deploymentEnvironmentService';
 import { admitDeploymentMachineInTx, type DeploymentAuthentication } from './deploymentAdmission';
 import { readPreviewCompanionMainInTx } from './previewEnvironmentRelation';
 import { DeploymentDomainAddAdmissionInputV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema, DeploymentTargetLinkInputV1Schema,
     DeploymentDeployAdmissionInputV1Schema, DeploymentEnvironmentGetInputV1Schema, DeploymentEnvironmentListInputV1Schema, DeploymentReceiptGetInputV1Schema, DeploymentReceiptListInputV1Schema,
-    DeploymentDomainGetInputV1Schema, DeploymentDomainListInputV1Schema,
+    DeploymentDomainGetInputV1Schema, DeploymentDomainListInputV1Schema, DeploymentDomainCapturedPlacementsV1Schema,
     DeploymentTargetLinksListInputV1Schema,
     ArtifactJsonCreateHttpInputV1Schema, ArtifactJsonUpdateHttpInputV1Schema, DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1,
     DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1,
@@ -25,10 +26,11 @@ import { DeploymentDomainAddAdmissionInputV1Schema, DeploymentEnvironmentCreateS
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
     DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1,
-    DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1,
+    DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1,
     DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1,
     DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1, isDeploymentDomainAddActionIdV1,
-    isDeploymentDomainMetadataReadActionIdV1, isDeploymentMembershipActionIdV1,
+    isDeploymentDomainMetadataReadActionIdV1, isDeploymentMembershipActionIdV1, isDeploymentTemplateStorageActionIdV1,
+    isDeploymentReceiptReadActionIdV1,
     type DeploymentDomainMetadataReadActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentCandidatePublicationV1, createDeploymentLinkContentArtifactIdV1,
     createDeploymentDomainContentArtifactIdV1, isDeploymentDomainNativeAdmissionV1,
@@ -37,7 +39,7 @@ import { createDeploymentCandidatePublicationV1, createDeploymentLinkContentArti
 import { DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { DeploymentEnvironmentTemplateSetInputV1Schema, DeploymentBindingsSetStorageInputV1Schema,
     DeploymentEnvironmentUpdateStorageInputV1Schema, DeploymentEnvironmentBackupSetInputV1Schema, EnvironmentSecretLaunchAdmissionInputV1Schema,
-    EnvironmentSecretAdmissionRequestV1Schema } from '@happier-dev/deployment-protocol';
+    EnvironmentSecretAdmissionRequestV1Schema, getDeploymentTargetLinkLineageV1 } from '@happier-dev/deployment-protocol';
 import { ProjectAccountRowReadRequestV1Schema, ProjectAccountRowListRequestV1Schema, ProjectAccountRowMutationRequestV1Schema,
     PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -102,7 +104,8 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1,
     acceptedEnvironmentId?: string, readActionId?: string, setupReceiverMachineId?: string, operands?: unknown, preparationEffectRead = false,
 ): Promise<Readonly<{ environmentIds: ReadonlySet<string>; sourceIds: ReadonlySet<string>;
-    artifactIds: ReadonlySet<string>; machineIds: ReadonlySet<string>; deploymentIds?: ReadonlySet<string>; receiptTargets?: readonly { environmentId: string; targetLinkId: string }[]; preparationSource?: ProjectSourceV1 }> | null> {
+    artifactIds: ReadonlySet<string>; machineIds: ReadonlySet<string>;
+    deploymentIds?: ReadonlySet<string>; receiptTargets?: readonly { environmentId: string; targetLinkId: string }[]; preparationSource?: ProjectSourceV1 }> | null> {
     const seeds = { environment: new Set<string>(), source: new Set<string>(), artifact: new Set<string>(),
         deployment: new Set<string>(), targetLink: new Set<string>(), domain: new Set<string>(), machine: new Set<string>() };
     const preparation = binding.deploymentPreparationAdmission;
@@ -121,7 +124,8 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
     // A template's children (bindings, link, update) read the Environment mint admitted or this root
     // created, with or without a deploy intent; deploy-only reads gate on the intent at their own arm.
     const resolvedEnvironmentId = preparationEffectRead ? preparation?.operation === 'template'
-        ? await readTemplateEnvironmentId(tx, binding, preparation) : await readTemplateDeploymentEnvironmentIdInTx(tx, binding)
+        ? await readTemplateEnvironmentId(tx, binding, preparation)
+        : preparation?.operation === 'create' ? await readPreviewCreateEnvironmentIdInTx(tx, binding, preparation) : null
         : binding.environmentId ?? (preparation?.operation === 'create'
         ? await readPreviewCreateEnvironmentIdInTx(tx, binding, preparation)
         : preparation?.operation === 'template' ? await readTemplateEnvironmentId(tx, binding, preparation) : null);
@@ -137,6 +141,7 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
     }
     const native = binding.deploymentNativeAdmission;
     const backup = native && 'kind' in native && (native.kind === 'backup' || native.kind === 'restore') ? native : undefined;
+    const pruneHistory = backup?.kind === 'backup' && backup.actionId === DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1;
     // Environment identity is already signed; expand owned rows only when the read needs them.
     if (readActionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 && !backup) {
         if (preparation?.operation === 'template' || preparation?.operation === 'create' && preparationEffectRead) {
@@ -160,8 +165,9 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
     let environments = await tx.deploymentEnvironment.findMany({ where: { id: { in: [...seeds.environment] } },
         select: { id: true, projectSourceId: true, contentArtifactId: true, controllerMachineId: true, buildMachineId: true,
             previewTemplateEnvironmentId: true, purpose: true, deletedAt: true,
-            targetLinks: { select: { id: true, contentArtifactId: true, activeDeploymentId: true, machineId: true, machines: { select: { machineId: true } } } },
-            domains: { select: { id: true, contentArtifactId: true } } } });
+            targetLinks: { select: { id: true, predecessorTargetLinkId: true, contentArtifactId: true, activeDeploymentId: true, machineId: true, machines: { select: { machineId: true } } } },
+            domains: { select: { id: true, contentArtifactId: true,
+                ...(backup ? { capturedPlacements: true, state: true, deletedAt: true } : {}) } } } });
     let deploymentIds: Set<string> | undefined;
     let receiptTargets: { environmentId: string; targetLinkId: string }[] | undefined;
     if (backup) {
@@ -170,16 +176,24 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
             targets.push({ environmentId: backup.source.origin.environmentId, targetLinkId: backup.source.origin.targetLinkId });
         }
         receiptTargets = targets;
-        deploymentIds = new Set([backup.deploymentId]);
+        deploymentIds = pruneHistory ? undefined : new Set([backup.deploymentId]);
         environments = environments.filter(environment => {
             const destination = environment.id === backup.environmentId
                 ? environment.targetLinks.find(link => link.id === backup.targetLinkId) : undefined;
-            if (destination?.activeDeploymentId) deploymentIds!.add(destination.activeDeploymentId);
+            if (destination?.activeDeploymentId) deploymentIds?.add(destination.activeDeploymentId);
             return targets.some(target => target.environmentId === environment.id
                 && environment.targetLinks.some(link => link.id === target.targetLinkId));
         });
+        if (pruneHistory) {
+            const environment = environments.find(environment => environment.id === backup.environmentId);
+            const links = environment?.targetLinks.map(link => ({ id: link.id, environmentId: environment.id,
+                predecessorTargetLinkId: link.predecessorTargetLinkId ?? undefined })) ?? [];
+            const selected = links.find(link => link.id === backup.targetLinkId);
+            receiptTargets = selected ? [...getDeploymentTargetLinkLineageV1(selected, links)]
+                .map(targetLinkId => ({ environmentId: backup.environmentId, targetLinkId })) : [];
+        }
     }
-    const receiptRead = readActionId === 'deployments.receipts.get' || readActionId === 'deployments.receipts.list';
+    const receiptRead = readActionId !== undefined && isDeploymentReceiptReadActionIdV1(readActionId);
     if (preparation?.operation === 'create' && (receiptRead || preparationEffectRead)) {
         const environmentId = await readPreviewCreateEnvironmentIdInTx(tx, binding, preparation);
         environments = environments.filter(environment => environment.id === environmentId);
@@ -197,6 +211,20 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
     const sourceIds = new Set(seeds.source);
     const artifactIds = new Set(seeds.artifact);
     const machineIds = new Set(seeds.machine);
+    if (pruneHistory && receiptTargets && receiptTargets.length > 0) {
+        const requestedArtifactIds = new Set<string>();
+        collectDeploymentOperands(operands, (kind, id) => { if (kind === 'artifact') requestedArtifactIds.add(id); });
+        if (requestedArtifactIds.size > 0) {
+            // Prune opens only demanded history documents, never the entire receipt inventory.
+            const receipts = await tx.deployment.findMany({ where: { environmentId: backup.environmentId,
+                targetLinkId: { in: receiptTargets.map(target => target.targetLinkId) },
+                contentArtifactId: { in: [...requestedArtifactIds] } },
+                select: { contentArtifactId: true } });
+            for (const receipt of receipts) {
+                artifactIds.add(receipt.contentArtifactId);
+            }
+        }
+    }
     for (const environment of environments) {
         // A preview reads the template Environment it was derived from.
         if (environment.previewTemplateEnvironmentId && !receiptRead && !binding.deploymentReadAdmission && !binding.registryAppUpdateAdmission
@@ -209,12 +237,26 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
         machineIds.add(environment.controllerMachineId);
         if (environment.buildMachineId) machineIds.add(environment.buildMachineId);
         for (const link of environment.targetLinks) {
+            if (backup && !receiptTargets?.some(target => target.environmentId === environment.id && target.targetLinkId === link.id)) continue;
             artifactIds.add(link.contentArtifactId);
             if (link.machineId) machineIds.add(link.machineId);
             for (const member of link.machines) machineIds.add(member.machineId);
         }
-        for (const domain of environment.domains) artifactIds.add(domain.contentArtifactId);
+        for (const domain of environment.domains) {
+            if (!backup) { artifactIds.add(domain.contentArtifactId); continue; }
+            if (domain.deletedAt || domain.state === 'removing') continue;
+            const captures = DeploymentDomainCapturedPlacementsV1Schema.safeParse(domain.capturedPlacements);
+            if (!captures.success) continue;
+            for (const capture of captures.data) {
+                if (!capture.desired || !receiptTargets?.some(target => target.environmentId === capture.placement.environmentId
+                    && target.targetLinkId === capture.placement.targetLinkId)) continue;
+                artifactIds.add(capture.content.contentArtifactId);
+            }
+        }
     }
+    // Teardown consumes captured workload content, not repository Source preparation.
+    if (readActionId === PROJECT_SOURCE_READ_ACTION_ID_V1
+        && deploymentOperationForRootActionV1(binding.actionId, preparation) === 'teardown') sourceIds.clear();
     if (selectedPreparation?.operation === 'setup' && readActionId === PROJECT_SOURCE_READ_ACTION_ID_V1) {
         sourceIds.clear();
         for (const selected of selectedPreparation.catalogSources ?? []) sourceIds.add(selected.source.id);
@@ -274,7 +316,8 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
         sourceIds.clear();
         if (source) sourceIds.add(source.id);
     }
-    return { environmentIds, sourceIds, artifactIds, machineIds, ...(deploymentIds ? { deploymentIds, receiptTargets } : {}),
+    return { environmentIds, sourceIds, artifactIds, machineIds,
+        ...(deploymentIds ? { deploymentIds } : {}), ...(receiptTargets ? { receiptTargets } : {}),
         ...(preparationSource ? { preparationSource } : {}) };
 }
 
@@ -843,7 +886,7 @@ export async function readDeploymentBackupConfigureHttpPurpose(tx: Tx, binding: 
         if (!bindings && await isDeploymentPreparationMachineReadHttpPurposeInTx(tx,
             { ...binding, deploymentNativeAdmission: admission }, effectActionId, proof)) return true;
         if (await isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(tx,
-            { ...binding, deploymentNativeAdmission: admission }, proof)) return true;
+            { ...binding, deploymentNativeAdmission: admission }, proof, false, undefined, true)) return true;
         if (effectActionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1) return false;
         if (bindings || effectActionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1) {
             if (proof.path === '/v1/account/encryption' || proof.path === '/v1/account/encryption/currentness') return matches({});
@@ -862,6 +905,8 @@ export async function readDeploymentBackupConfigureHttpPurpose(tx: Tx, binding: 
         if (defaults.ok && defaults.content && proof.path === `/v1/artifacts/${encodeURIComponent(defaults.content.contentArtifactId)}`)
             return matches({ id: defaults.content.contentArtifactId });
     }
+    if (admission.intent === 'rekeyAndSave' && !bindings) return false;
+    const bindingRevision = admission.expectedRevision + (admission.intent === 'rekeyAndSave' ? 0 : 1);
     if (admission.intent === 'test' || effectActionId !== DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 && !bindings) return false;
     const id = createDeploymentEnvironmentContentArtifactIdV1({ ...binding, environmentId: admission.environmentId,
         actionId: bindings ? DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 : DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 });
@@ -874,16 +919,16 @@ export async function readDeploymentBackupConfigureHttpPurpose(tx: Tx, binding: 
         const parsed = EnvironmentSecretAdmissionRequestV1Schema.safeParse(proof.body);
         return parsed.success && parsed.data.serverId === binding.serverIdentityId && parsed.data.environmentId === admission.environmentId
             && ('kind' in parsed.data
-                ? parsed.data.expectedRevision === admission.expectedRevision + 1 && parsed.data.buildMachineId === undefined
+                ? parsed.data.expectedRevision === bindingRevision && parsed.data.buildMachineId === undefined
                 : parsed.data.machineId === binding.machineId && parsed.data.installationId === binding.installationId
-                    && parsed.data.materialization.kind === 'bindings' && parsed.data.materialization.expectedRevision === admission.expectedRevision + 1
+                    && parsed.data.materialization.kind === 'bindings' && parsed.data.materialization.expectedRevision === bindingRevision
                     && parsed.data.materialization.buildMachineId === undefined) && matches(parsed.data);
     }
     const parsed = bindings ? DeploymentBindingsSetStorageInputV1Schema.safeParse(proof.body)
         : DeploymentEnvironmentBackupSetInputV1Schema.safeParse(proof.body);
     return parsed.success && proof.path === `${base}/${bindings ? 'bindings' : 'backup'}`
         && parsed.data.serverId === binding.serverIdentityId && parsed.data.environmentId === admission.environmentId
-        && parsed.data.expectedRevision === admission.expectedRevision + (bindings ? 1 : 0)
+        && parsed.data.expectedRevision === (bindings ? bindingRevision : admission.expectedRevision)
         && parsed.data.contentArtifactId === id && parsed.data.contentHeaderVersion === 1 && parsed.data.contentBodyVersion === 1
         && matches(parsed.data);
 }
@@ -910,6 +955,18 @@ export function isDeploymentWorkspaceListHttpPurpose(serverId: string,
     return selection.success && selection.data.serverId === serverId
         && selection.data.kinds?.length === 1 && selection.data.kinds[0] === 'workspace-ref'
         && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, selection.data));
+}
+
+/** Prepare and repository template authoring reopen only their signed checkout reference. */
+function isDeploymentWorkspaceReadHttpPurpose(serverId: string,
+    workspace: Extract<DeploymentPreparationAdmissionV1, { operation: 'prepare' }>['workspace'],
+    proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>,
+): boolean {
+    if (proof.method.toUpperCase() !== 'POST' || proof.path !== `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`) return false;
+    const request = ProjectAccountRowReadRequestV1Schema.safeParse(proof.body);
+    return request.success && sameStrictJsonValue(request.data, {
+        key: { ...workspace, serverId },
+    }) && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, request.data));
 }
 
 /** Signed authoring publishes one private candidate and retains its reviewed patch and CAS. */
@@ -1042,7 +1099,7 @@ export async function readDeploymentTargetRetentionHttpPurpose(tx: Tx, binding: 
         const row = await tx.managedMachine.findFirst({ where: { homeId: binding.serverIdentityId, enrolledMachineId: native.machineId } });
         return { kind: 'restore-read', machines: row ? [redactManagedMachineCredentialReferences(projectManagedMachine(row))] : [] };
     }
-    if (binding.actionId !== 'deployments.environments.create' && binding.actionId !== 'deployments.targets.link'
+    if (deploymentPreparationOperationForActionV1(binding.actionId) !== 'create' && binding.actionId !== 'deployments.targets.link'
         && binding.actionId !== 'deployments.templates.instantiate'
         || proof.method.toUpperCase() !== 'POST'
         || proof.routeInput !== undefined && !sameStrictJsonValue(proof.routeInput, proof.body)) return null;
@@ -1050,6 +1107,8 @@ export async function readDeploymentTargetRetentionHttpPurpose(tx: Tx, binding: 
         const parsed = ManagedListInputV1Schema.safeParse(proof.body);
         return !proof.reviewedChild && proof.path === managedMachineActionEndpointPathV1(effectActionId)
             && parsed.success && parsed.data.homeId === binding.serverIdentityId && parsed.data.enrolledMachineId !== undefined
+            && (binding.actionId !== MACHINE_SERVICE_ADOPT_ACTION_ID
+                || binding.deploymentPreparationAdmission?.operation === 'create' && parsed.data.enrolledMachineId === binding.machineId)
             ? { kind: 'preparation-read' } : null;
     }
     if (effectActionId !== 'machines.managed.retention.update'
@@ -1081,7 +1140,8 @@ export function isDeploymentPreviewPreparationReadEffect(binding: ExternalAction
 export function isDeploymentCreateHttpEffect(binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string): boolean {
     return deploymentPreparationOperationForActionV1(binding.actionId) === 'create' && binding.deploymentPreparationAdmission?.operation === 'create'
         && (isDeploymentPreviewPreparationReadEffect(binding, effectActionId)
-            || effectActionId === binding.actionId || effectActionId === 'projects.sources.read'
+            || effectActionId === binding.actionId || effectActionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
+            || effectActionId === 'projects.sources.read'
             || effectActionId === 'deployments.environments.get' || effectActionId === 'deployments.bindings.set'
             || binding.deploymentPreparationAdmission.preview !== undefined && binding.deploymentPreparationAdmission.mode === 'apply'
                 && effectActionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1
@@ -1115,14 +1175,18 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     }
     const domainEffect = effectActionId === 'deployments.domains.add';
     const deployEffect = effectActionId === 'deployments.deploy';
-    const receiptRead = effectActionId === 'deployments.receipts.get' || effectActionId === 'deployments.receipts.list';
+    const receiptRead = isDeploymentReceiptReadActionIdV1(effectActionId);
     const configureEffect = effectActionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1;
     const backupBindings = effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && proof.reviewedChild?.role === 'backup.bindings';
+    const adoptBindings = binding.actionId === MACHINE_SERVICE_ADOPT_ACTION_ID
+        && effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
+        && proof.reviewedChild?.actionId === effectActionId && proof.reviewedChild.role === MACHINE_SERVICE_ADOPT_BINDINGS_ROLE_V1;
     const childEffect = effectActionId === 'deployments.bindings.set' || configureEffect || domainEffect || deployEffect;
     if (domainEffect && proof.reviewedChild?.actionId !== effectActionId) return null;
     const environmentId = childEffect || receiptRead || effectActionId === 'deployments.environments.get' || proof.path.startsWith('/v1/artifacts/')
         ? await readPreviewCreateEnvironmentIdInTx(tx, binding, admission) : null;
-    if (childEffect && (admission.mode !== 'apply' || !admission.copyFrom && !admission.catalogApp && !admission.preview || !environmentId)) return null;
+    if (childEffect && (admission.mode !== 'apply'
+        || !admission.copyFrom && !admission.catalogApp && !admission.preview && !adoptBindings || !environmentId)) return null;
     if (admission.preview && childEffect && (proof.reviewedChild?.actionId !== effectActionId
         || proof.reviewedChild.role !== (configureEffect ? 'preview.backup' : backupBindings ? 'backup.bindings'
             : deployEffect ? 'preview.deploy' : domainEffect ? 'template.domain:preview' : 'preview.bindings'))) return null;
@@ -1179,7 +1243,9 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     if (effectActionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1)
         return admit(await isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(tx, binding, proof));
     if (method === 'GET' && proof.body === undefined) {
-        if (await isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(tx, binding, proof, false, undefined, true)) return admit(true);
+        // The root prepares its captured preview template before allocation;
+        // a reviewed storage child reads only the Environment this root creates.
+        if (await isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(tx, binding, proof, false, undefined, childEffect)) return admit(true);
         if ((proof.path === '/v1/account/encryption' || proof.path === '/v1/account/encryption/currentness') && matches({})) return admit(true);
         if (!childEffect && admission.source && (proof.path === `/v1/projects/sources/${encodeURIComponent(admission.source.id)}?serverId=${encodeURIComponent(binding.serverIdentityId)}`
             || proof.path === `/v1/projects/${encodeURIComponent(admission.source.id)}/deployment-defaults?serverId=${encodeURIComponent(binding.serverIdentityId)}`)
@@ -1218,7 +1284,12 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     }
     if (method === 'POST' && proof.path === '/v1/deployments/environments') {
         const parsed = DeploymentEnvironmentCreateStorageInputV1Schema.safeParse(proof.body);
-        return admit(binding.actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
+        const reviewedCreate = binding.actionId === MACHINE_SERVICE_ADOPT_ACTION_ID
+            && effectActionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
+            && proof.reviewedChild?.actionId === effectActionId
+            && proof.reviewedChild.role === MACHINE_SERVICE_ADOPT_CREATE_ROLE_V1
+            && parsed.success && computeActionInputApprovalDigestV1(effectActionId, parsed.data) === proof.reviewedChild.inputDigest;
+        return admit((binding.actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || reviewedCreate)
             && !childEffect && admission.mode === 'apply' && parsed.success && parsed.data.serverId === binding.serverIdentityId
             && parsed.data.projectSourceId === admission.source?.id && sameStrictJsonValue(parsed.data.newProject, admission.newProject)
             && parsed.data.requestKey === admission.requestKey
@@ -1643,8 +1714,10 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
         const environmentId = await readTemplateEnvironmentId(tx, binding, admission);
         if (effectActionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1)
             return isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(tx, binding, proof);
-        const child = ['deployments.environments.create', 'deployments.environments.update', 'deployments.targets.link', 'deployments.bindings.set'].includes(effectActionId);
+        const child = isDeploymentTemplateStorageActionIdV1(effectActionId);
         if (effectActionId !== binding.actionId && !child) return false;
+        if (effectActionId === binding.actionId && admission.workspace
+            && isDeploymentWorkspaceReadHttpPurpose(binding.serverIdentityId, admission.workspace, proof)) return true;
         if (method === 'GET' && proof.body === undefined) {
             if (await isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(tx, binding, proof, false, undefined, true)) return true;
             if (await isDeploymentPreparationMachineReadHttpPurposeInTx(tx, binding, effectActionId, proof)) return true;
@@ -1726,10 +1799,6 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
             && routeMatches({})) return true;
         return false;
     }
-    if (admission.operation !== 'prepare' || method !== 'POST'
-        || proof.path !== `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`) return false;
-    const request = ProjectAccountRowReadRequestV1Schema.safeParse(proof.body);
-    return request.success && sameStrictJsonValue(request.data, {
-        key: { kind: 'workspace-ref', serverId: binding.serverIdentityId, id: admission.workspace.id },
-    }) && routeMatches(request.data);
+    return admission.operation === 'prepare'
+        && isDeploymentWorkspaceReadHttpPurpose(binding.serverIdentityId, admission.workspace, proof);
 }

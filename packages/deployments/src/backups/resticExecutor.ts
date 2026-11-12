@@ -23,6 +23,7 @@ export type ResticAccessV1 = Readonly<{
 }>;
 export type ResticCommandV1 =
     | Readonly<{ kind: 'init' | 'config' | 'prune' | 'check' }>
+    | Readonly<{ kind: 'keyAdd'; newPasswordFilePath: string }>
     | Readonly<{ kind: 'probe'; operationId: string; payload: Uint8Array }>
     | Readonly<{ kind: 'backupStdin'; sourceId: string; filename: string }>
     | Readonly<{ kind: 'backupPaths'; sourceId: string; paths: readonly [string, ...string[]] }>
@@ -80,6 +81,9 @@ export function buildResticRequestV1(input: Readonly<{
         case 'probe':
             argv.push('backup', '--host', `happier-probe-${ownershipId(command.operationId)}`,
                 '--tag', 'happier-probe', '--stdin', '--stdin-filename', 'destination-probe');
+            break;
+        case 'keyAdd':
+            argv.push('key', 'add', '--new-password-file', command.newPasswordFilePath);
             break;
         case 'backupStdin': case 'backupPaths': {
             const sourceTag = buildResticSourceTagV1(command.sourceId);
