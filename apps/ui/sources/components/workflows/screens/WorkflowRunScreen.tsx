@@ -2301,7 +2301,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
                 onReattach={whenEvidenceConfirmed(selectedInvocationId !== null && selectedRecovery?.canReattach === true
                     ? () => { void reattachSelected(); }
                     : undefined)}
-                onDelete={canEdit && isTerminalWorkflowRunState(summary.state) && summary.workflowCustodyState === 'settled' ? () => { void deleteRun(); } : undefined}
+                onDelete={canEdit && isTerminalWorkflowRunState(summary.state) ? () => { void deleteRun(); } : undefined}
                 deleteBlockedByCustody={isTerminalWorkflowRunState(summary.state) && summary.workflowCustodyState === 'pending'}
                 publicationRequests={publicationRequests}
                 onOpenPublicationRequest={(href) => router.push(href as never)}

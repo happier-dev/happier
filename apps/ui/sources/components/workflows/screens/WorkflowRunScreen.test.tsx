@@ -3438,12 +3438,22 @@ describe('WorkflowRunScreen', () => {
         expect(readContentProps()?.pendingControl).toBeNull();
         expect(again ? readContentProps()?.errorLabel : readContentProps()?.cancelRequested).toBeTruthy();
     });
-    it('withholds settled Run actions while accepted Stop custody is pending', async () => {
-        const run = createWorkflowRunSummaryFixture({ state: 'cancelled', workflowCustodyState: 'pending',
+    it.each(['cancelled', 'outcome_uncertain'] as const)('lets confirmed Delete rejoin pending %s custody without removing history', async (state) => {
+        const run = createWorkflowRunSummaryFixture({ state, workflowCustodyState: 'pending',
             availability: { cancel: false, pause: false } });
-        await renderRunScreen({ run });
-        expect(readContentProps()?.onRunAgain).toBeUndefined();
-        expect(readContentProps()?.onDelete).toBeUndefined();
+        detailActions.deleteRun.mockRejectedValueOnce(new WorkflowActionError({ message: 'Recovery pending', rawCode: 'custody_pending' }));
+        const screen = await renderRunScreen({ run });
+        expect(readContentProps()?.onDelete).toBeDefined();
+        if (state === 'cancelled') expect(readContentProps()?.onRunAgain).toBeUndefined();
+        act(() => { readContentProps()?.onDelete?.(); });
+        await act(async () => {});
+        expect(detailActions.deleteRun).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+        await vi.waitFor(() => expect(detailActions.deleteRun).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(readContentProps()?.pendingControl).toBeNull());
+        expect(storeState.state.workflowRunsById[workflowRunStoreKey(run.id)]).toBeDefined();
+        expect(routerSpy.back).not.toHaveBeenCalled();
+        if (state === 'cancelled') expect(readContentProps()?.onRunAgain).toBeUndefined();
         await act(async () => getStorage().getState().upsertWorkflowRuns([workflowRunRowFromSummary({ ...run,
             revision: run.revision + 1, workflowCustodyState: 'settled' })]));
         expect(readContentProps()?.onRunAgain).toBeDefined();
