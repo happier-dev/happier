@@ -132,13 +132,15 @@ describe('managed acquire guest-host private reader producer', () => {
             }), requestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(), resolveRequestAuthHttpPort: () => 43123,
             createRedactionLease: () => ({ add() {}, close() {} }),
         });
-        vi.spyOn(axios, 'get').mockImplementation(async url => {
+        vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
             if (url === 'https://vault.test/bootstrap') {
                 nativeVaultReads++;
                 return { status: 200, data: { value } };
             }
             const path = new URL(String(url)).pathname;
-            if (path.endsWith('/account/profile')) return { status: 200, data: { id: custodianAccountId } };
+            if (path.endsWith('/account/profile')) return { status: 200, data: {
+                id: config?.headers?.Authorization === `Bearer ${requesterToken}` ? 'owner' : custodianAccountId,
+            } };
             if (path.endsWith('/encryption/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
                 settingsVersion: 0, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 } };
             if (path.endsWith('/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
