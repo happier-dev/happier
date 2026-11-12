@@ -5,8 +5,6 @@ import { collectRenderedTestIds, createSessionListRenderableSessionFixture, flus
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
-import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -57,6 +55,17 @@ async function waitForTestId(
 }
 
 beforeEach(async () => {
+    const { Modal } = await import('@/modal');
+    // Modal is the host boundary. Reuse this fixture's person-choice controller
+    // for both ordinary confirmations and the real Action review dialog.
+    vi.mocked(Modal.show).mockReset().mockImplementation(config => {
+        if (config.chrome?.kind === 'card' && config.chrome.testID === 'actions.confirmation-review.modal') {
+            const props = config.props as { onAnswer(confirmed: boolean): void };
+            queueMicrotask(() => { void Modal.confirm('Action review', '').then(props.onAnswer); });
+        }
+        return 'action-review';
+    });
+    vi.mocked(Modal.confirm).mockReset().mockResolvedValue(false);
     const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
     const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
     const { resetTeamActionClientForTests } = await import('@/sync/ops/teams/teamActionClient');
@@ -180,8 +189,9 @@ describe('TeamOverviewScreen Team identity', () => {
         expect(header.includes(t('teams.role.member'))).toBe(viewTeam);
         expect(header.includes(t('teams.overview.suspendedBody'))).toBe(!viewTeam);
     });
-    it.each([false, true])('confirms leave, removes the Team and returns to the directory with viewTeam=%s', async (viewTeam) => {
+    it.each([false, true])('confirms an explicit Ask leave locally and returns to the directory with viewTeam=%s', async (viewTeam) => {
         const serverId = await addHome({ viewerRole: 'member', capabilities: teamCapabilitiesFixture({ viewTeam, viewRoster: viewTeam, leave: true }) });
+        await harness.requireUiApproval(serverId, 'teams.members.leave');
         const { Modal } = await import('@/modal');
         const confirm = vi.spyOn(Modal, 'confirm');
         confirm.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
@@ -190,6 +200,8 @@ describe('TeamOverviewScreen Team identity', () => {
         const screen = await renderOverview(serverId);
         await waitForTestId(screen, 'team-overview-leave');
         await screen.pressByTestIdAsync('team-overview-leave');
+        await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(screen.findByTestId('team-overview-leave')?.props.accessibilityState?.busy).toBe(false));
         expect(harness.requestsFor('/v1/teams/members/leave')).toHaveLength(0);
         expect(routerReplace).not.toHaveBeenCalled();
         harness.answer(serverId, TEAM_GET_PATH, { status: 403, body: { error: 'team_forbidden' } });
@@ -203,38 +215,8 @@ describe('TeamOverviewScreen Team identity', () => {
         expect(getTeamsDirectorySnapshot({ serverId, accountId: 'account-ada' }, teamDirectoryQueryKeyV1({ v: 1, scope: 'member', archived: 'active' }))?.data).toEqual([]);
     });
 
-    it('finishes leave after deferred UI approval without redispatching', async () => {
-        const serverId = await addHome({ viewerRole: 'member', capabilities: teamCapabilitiesFixture({ leave: true }) });
-        const { Modal } = await import('@/modal');
-        vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
-        await harness.requireUiApproval(serverId, 'teams.members.leave');
-        harness.answer(serverId, '/v1/teams/members/leave', { body: { status: 'removed', membershipId: 'membership-1' } });
-        harness.answer(serverId, '/v1/teams/list', { body: { items: [], nextCursor: null } });
-        const screen = await renderOverview(serverId);
-        await waitForTestId(screen, 'team-overview-leave');
-        await screen.pressByTestIdAsync('team-overview-leave');
-        await waitForTestId(screen, 'team-approval');
-        expect(harness.requestsFor('/v1/teams/members/leave')).toHaveLength(0);
-        expect(routerReplace).not.toHaveBeenCalled();
-        const create = harness.requestsFor('/v1/artifacts').find((request) => {
-            const input = request.input;
-            return input !== null && typeof input === 'object' && 'id' in input;
-        });
-        const input = create?.input;
-        if (!input || typeof input !== 'object' || !('id' in input) || typeof input.id !== 'string') {
-            throw new Error('leave_approval_artifact_missing');
-        }
-        await expect(decideApprovalAsInbox(serverId, input.id, 'approve')).resolves.toMatchObject({ ok: true });
-        expect(harness.requestsFor('/v1/teams/members/leave')).toHaveLength(1);
-        const settled = harness.artifacts(serverId).readPlainBody(input.id);
-        if (settled === null) throw new Error('leave_approval_body_missing');
-        expect(ApprovalRequestV2Schema.parse(JSON.parse(settled))).toMatchObject({
-            status: 'executed',
-            execution: { ok: true, result: { status: 'removed', membershipId: 'membership-1' } },
-        });
-        await vi.waitFor(() => expect(routerReplace).toHaveBeenCalledWith('/settings/teams'));
-        expect(routerReplace).toHaveBeenCalledTimes(1);
-    });
+    // Own-UI Ask approval is local; both visible and suspended leave journeys above
+    // keep the decline, once-only dispatch and final navigation coverage.
 
     it.each([{ leave: false }, { leave: true, manageMembers: true }])('withholds Overview leave when not projected or for a manager: %j', async (capabilities) => {
         const serverId = await addHome({ capabilities: teamCapabilitiesFixture(capabilities) });

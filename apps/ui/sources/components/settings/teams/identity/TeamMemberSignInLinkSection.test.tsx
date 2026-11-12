@@ -4,12 +4,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Keep this tiny presentation contract independent of unrelated app-state
 // testkit exports, while still consuming the canonical render/cleanup owners.
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { installBrowserClipboardBoundary } from '@/dev/testkit/harness/browserClipboardBoundary';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
 const pushMock = vi.hoisted(() => vi.fn());
-const copyMock = vi.hoisted(() => vi.fn(async () => true));
+const copyMock = vi.hoisted(() => vi.fn(async (_value: string) => true));
 
 vi.mock('expo-router', () => ({ useRouter: () => ({ push: pushMock }) }));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: copyMock }));
 vi.mock('@/utils/ui/shareText', () => ({
@@ -27,6 +32,8 @@ beforeEach(() => {
     standardCleanup();
     pushMock.mockReset();
     copyMock.mockClear();
+    // The web copy keeps the platform clipboard write in the click gesture.
+    installBrowserClipboardBoundary(async value => { await copyMock(value); });
 });
 
 describe('TeamMemberSignInLinkSection', () => {
