@@ -6,7 +6,8 @@ import { createServer } from 'node:http';
 import { Server } from 'socket.io';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
-import { RawIngressStructuredInputV1Schema } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { RawIngressStructuredInputV1Schema, readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { verifySessionStructuredImageInput } from './resolveTrustedSessionAttachmentLocalImagePaths';
 import { SessionAttachmentHandleV1Schema } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentHandleV1';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ApiClient } from '@/api/api';
@@ -344,6 +345,16 @@ describe('issued Session attachments at target intake', () => {
       if (mimeType) expect(admitted.structuredInput).toMatchObject({ imageInputs: [{
         path: finalized.path, mimeType, sha256: createHash('sha256').update(bytes).digest('hex'),
       }] });
+      if (mimeType) {
+        const retained = readAdmittedHappierStructuredInputV1FromMeta(JSON.parse(JSON.stringify(admitted.meta)));
+        expect(retained.status).toBe('admitted');
+        if (retained.status !== 'admitted') throw new Error('Uploaded input was not retained');
+        const image = retained.structuredInput.imageInputs![0]!;
+        expect(await verifySessionStructuredImageInput({ cwd: directory, sessionId: 'session-1',
+          image, maxBytes: bytes.length })).toMatchObject({ status: 'verified', bytes, mimeType });
+        expect(await verifySessionStructuredImageInput({ cwd: directory, sessionId: 'session-1',
+          image: { ...image, sha256: '0'.repeat(64) }, maxBytes: bytes.length })).toEqual({ status: 'untrusted' });
+      }
       expect(projected.text).toBe(text);
       expect(await readFile(join(directory, finalized.path))).toEqual(bytes);
       const published = projected.meta.happier as { payload: { attachments: { attachmentHandle: { id: string } }[] } };

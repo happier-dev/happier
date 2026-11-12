@@ -151,6 +151,15 @@ describe('readSessionAttachmentEnvelopeRecordsV1', () => {
       content: { ...attachment.content, handle: { ...attachment.content.handle, sha256: 'invalid' } } }] }).success).toBe(false);
   });
 
+  it.each(['sessionAttachmentUpload', 'browserSessionMedia', 'sessionMediaArtifact'])('retains %s image verification evidence across stored reads', kind => {
+    const image = { id: 'image', kind: 'localImage', path: '.happier/uploads/messages/input/image.png',
+      mimeType: 'image/png', sizeBytes: 306, sha256: 'a'.repeat(64),
+      provenance: { kind, sessionId: 'session-1', storage: 'session' } };
+    const canonical = { v: 1, imageInputs: [image] };
+    expect(readAdmittedHappierStructuredInputV1FromMeta({ happierStructuredInputV1: canonical }))
+      .toEqual({ status: 'admitted', structuredInput: canonical });
+  });
+
   it('opens retained declared structured fields while preserving the explicitly open native reference bags', () => {
     const source = { kind: 'discussion', serverId: 'home-a', discussionId: 'discussion-a', messageIds: ['message-a'] };
     const mention = { kind: 'future.reference', ref: 'future:opaque', token: '@future', nativeAnnotation: { keep: true } };

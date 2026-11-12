@@ -13,6 +13,11 @@ export const StructuredImageInputV1Schema = lazyZodSchema(() => z.looseObject({
   url: z.optional(z.string().check(z.trim(), z.minLength(1))),
   mimeType: z.optional(z.string().check(z.trim(), z.minLength(1))),
   label: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  // Stored readers retain declared fields only. Keep the host's verification
+  // evidence through persistence; the host still owns path and byte trust.
+  sha256: z.optional(z.string()),
+  sizeBytes: z.optional(z.number()),
+  provenance: z.optional(z.record(z.string(), z.unknown())),
 }).check(z.superRefine((value, ctx) => {
   if (value.kind === 'localImage' && !value.path) {
     ctx.addIssue({
