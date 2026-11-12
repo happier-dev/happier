@@ -29,7 +29,7 @@ export function ActionFailureDetails({ code, message, details, requestId, detail
     });
     return () => { active = false; };
   }, [host, code, message, details, requestId]);
-  const presentation = presented?.code === code && presented.message === message
+  const presentation = presented != null && presented.code === code && presented.message === message
     && presented.details === details && presented.requestId === requestId ? presented.value : null;
   const lines = [
     ...(code === undefined ? [] : [{ key: 'code', label: text('plugins.triage.sourceFailure.code', 'Code'), value: code }]),
