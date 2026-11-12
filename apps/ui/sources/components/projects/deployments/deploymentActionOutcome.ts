@@ -58,7 +58,10 @@ export function deploymentPartialRecoveryTab(progress: DeploymentPartialResult):
     case 'generation':
     case 'bindings': return 'variables';
     case 'domains': return 'domains';
-    case 'target':
+    case 'target': {
+      const input = progress.continuation?.input;
+      return input && 'role' in input && input.role === 'data' ? 'overview' : 'settings';
+    }
     case 'metadata': return 'settings';
     case 'environment':
     case 'repository':

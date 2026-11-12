@@ -40,7 +40,10 @@ export async function createEnvironmentWithCopyForHost(request: Readonly<{
         requiredFact: plan.data.map(row => `data:${row.targetLinkId}:createEmpty`).join(', '),
         remedy: 'This Create already allocated its Environment. Inspect its database attachments and provider outcomes. Open the Environment Overview and add/manage a managed database. Link exact resources already created or explicitly create/configure remaining resources. Do not replay Duplicate.',
     } satisfies PartialResult };
-    const finish = (revision: number) => copyEnvironmentDataForHost({ input, context, environmentId: created.environmentId, revision });
+    const finish = async (revision: number) => {
+        const finished = await copyEnvironmentDataForHost({ input, context, environmentId: created.environmentId, revision });
+        return finished.ok ? { ...created, ...finished } : finished;
+    };
     if (!plan.bindings.length) return finish(created.revision);
     let continuation: Continuation | undefined;
     const partial = (cause: string | ActionExecuteFailure): ActionExecuteFailure => {

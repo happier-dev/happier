@@ -4,7 +4,8 @@ import { standardCleanup } from '@/dev/testkit';
 
 import { HappyError } from '@/utils/errors/errors';
 
-import { runDeploymentAction, useDeploymentChangePress } from './deploymentActionOutcome';
+import { deploymentPartialRecoveryTab, runDeploymentAction, useDeploymentChangePress } from './deploymentActionOutcome';
+import { DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 
 afterEach(standardCleanup);
 
@@ -25,6 +26,26 @@ it('refreshes a successful save while preserving unavailable preview enrollment 
 });
 
 describe('deployment press outcome', () => {
+  it('opens managed data recovery at Overview when the failed link identifies its data role', () => {
+    const progress = DeploymentTemplateInstantiationPartialV1Schema.parse({
+      kind: 'partial', phase: 'target', errorCode: 'credential_unavailable', savedSecrets: [], environmentId: 'copied', revision: 1,
+      continuation: { actionId: 'deployments.targets.link', input: {
+        serverId: 'home', environmentId: 'copied', expectedRevision: 1, requestKey: 'link-created-data',
+        targetId: 'database', targetKind: 'database', role: 'data', machines: [],
+        source: { kind: 'plugin', contribution: { pluginId: 'example.data', localId: 'database' } },
+        provider: {
+          credentialPrincipal: { kind: 'account', accountId: 'owner',
+            purpose: { consumer: { pluginId: 'example.data', localId: 'provision' }, purpose: 'manage' },
+            target: { kind: 'account', account: { service: { pluginId: 'example.data', localId: 'account' }, accountId: 'selected' } } },
+          providerIdentity: { providerAccountId: 'selected', providerResourceId: 'created', providerEnvironment: 'new' },
+          providerEnvironment: { kind: 'custom', id: 'new' },
+        },
+      } },
+    });
+    expect(deploymentPartialRecoveryTab(progress)).toBe('overview');
+    expect(deploymentPartialRecoveryTab({ ...progress, continuation: undefined })).toBe('settings');
+  });
+
   it('keeps Domain recovery facts for returned and thrown failures outside template creation', async () => {
     const details = { environmentId: 'environment-a', domainId: 'domain-a', step: 'native_execution',
       requiredFact: 'domainIngress', remedy: 'Restore the ingress controller and retry Stop and remove.' };

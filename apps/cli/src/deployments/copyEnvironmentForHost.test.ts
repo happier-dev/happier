@@ -22,6 +22,8 @@ describe('Copy acknowledged step result', () => {
             requestKey: 'copy', protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
             controllerMachineId: 'controller', contentArtifactId: base.environment.contentArtifactId,
             contentHeaderVersion: base.environment.contentHeaderVersion, contentBodyVersion: base.environment.contentBodyVersion,
+            ...(outcome === 'created' ? { firstTargetLink: { contentArtifactId: 'runtime-content', contentHeaderVersion: 1,
+                contentBodyVersion: 1, machines: [{ machineId: 'controller', installationId: 'controller-installation' }] } } : {}),
             copyIntentCommitment: 'A'.repeat(43), copyFrom: { environmentId: 'source', expectedRevision: 7,
                 choices: { secrets: [], values: [], data: data.map(row => ({ targetLinkId: row.targetLinkId,
                     kind: 'createEmpty', provision: row.provision })) } }, copyPlan: { bindings: [], data } });
@@ -45,7 +47,8 @@ describe('Copy acknowledged step result', () => {
         } } };
         let environmentsCreated = 0;
         const result = await createEnvironmentWithCopyForHost({ input, context: outcome === 'noChild' ? {} : context }, {
-            async create() { environmentsCreated++; return { ok: true, environmentId: base.environment.id, revision: 1 }; },
+            async create() { environmentsCreated++; return { ok: true, environmentId: base.environment.id, revision: 1,
+                ...(outcome === 'created' ? { projectSourceId: 'destination', runtimeTargetLinkId: 'created-runtime' } : {}) }; },
             async readEnvironment() { return { environment: { ...base.environment, revision: 1 }, content: base.content,
                 targetLinks: base.targetLinks.map(link => link.targetLink) }; },
         });
@@ -58,7 +61,8 @@ describe('Copy acknowledged step result', () => {
         expect(invoked[0]).toMatchObject({ action: provision.action,
             input: { ...provision.input, environmentId: base.environment.id, expectedRevision: 1 } });
         if (outcome === 'created') {
-            expect(result).toEqual({ ok: true, environmentId: base.environment.id, revision: 2 });
+            expect(result).toEqual({ ok: true, environmentId: base.environment.id, revision: 2,
+                projectSourceId: 'destination', runtimeTargetLinkId: 'created-runtime' });
             expect(invoked).toHaveLength(2);
             return;
         }

@@ -2,6 +2,10 @@ import { environmentSecretBindingIdentityV1, type ActionExecutorContext, type De
     type DeploymentEnvironmentCopyPlanV1, type DeploymentEnvironmentCopyReviewV1,
     type EnvironmentSecretBindingV1 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { DeploymentEnvironmentCopyProvisionV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentCopyV1';
+import type { ResolvedActionContribution } from '@/plugins/projection/registry/types';
+import type { DeploymentTargetV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
 import { ArtifactEncryptionMaterialUnavailableError, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -16,6 +20,10 @@ export type EnvironmentCreateCopyResolution = Readonly<{
 }>;
 export type EnvironmentCreateCopyHost = EnvironmentCreateHost & Readonly<{
     readMetadata: Parameters<typeof readDeploymentEnvironmentForHost>[1]['readMetadata'];
+    readDataProvisionDeclaration?(source: DeploymentTargetV1['source']): Promise<Readonly<{
+        target: DeploymentTargetV1; action: DeploymentEnvironmentCopyProvisionV1['action'];
+        inputSchema: NonNullable<ResolvedActionContribution['definition']['inputSchema']>;
+    }> | null>;
 }>;
 
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
@@ -80,9 +88,43 @@ export async function resolveEnvironmentCreateCopyForHost(
             bindings.push(selected as EnvironmentSecretBindingV1);
             review.included.push(`binding:${identity}:${choice.kind}`);
         }
-        for (const choice of data.values()) {
-            if (choice.kind !== 'omit') return refuse('unsupported_action');
-            review.omitted.push(`data:${choice.targetLinkId}`);
+        const copiedData: NonNullable<DeploymentEnvironmentCopyPlanV1['data']> = [];
+        const selectedConnections = new Set(bindings.filter(binding => binding.purpose === 'variable'
+            && binding.source.kind === 'secret').map(environmentSecretBindingIdentityV1));
+        for (const [index, choice] of [...data.values()].entries()) {
+            if (choice.kind === 'omit') { review.omitted.push(`data:${choice.targetLinkId}`); continue; }
+            if (choice.kind === 'reuse') {
+                const connections = choice.bindings?.map(environmentSecretBindingIdentityV1) ?? [];
+                if (connections.length === 0 || new Set(connections).size !== connections.length
+                    || connections.some(identity => !selectedConnections.has(identity))) {
+                    const { actionInputIssueFailure } = await import('@happier-dev/protocol/actions/executor/actionInputValidation');
+                    return actionInputIssueFailure({ code: 'custom', path: ['copyFrom', 'choices', 'data', index, 'bindings'] });
+                }
+                // Share only explicitly selected Saved Secret connections. The source
+                // provider resource stays attached to its original Environment.
+                review.included.push(`data:${choice.targetLinkId}:reuse`);
+                continue;
+            }
+            if (choice.kind === 'createEmpty') {
+                const link = source.targetLinks.find(row => row.id === choice.targetLinkId)!;
+                if (link.source.kind !== 'plugin') return refuse('unsupported_action');
+                const declaration = await host.readDataProvisionDeclaration?.(link.source);
+                if (!declaration) return refuse('unsupported_action');
+                if (declaration.target.role !== 'data' || declaration.target.targetKind !== link.targetKind
+                    || !sameStrictJsonValue(declaration.action, choice.provision.action)) return refuse('target_mismatch');
+                const { compilePluginJsonSchema } = await import('@happier-dev/protocol/plugins/actions/json-schema-validation');
+                const validate = compilePluginJsonSchema(declaration.inputSchema);
+                if (!validate(choice.provision.input)) {
+                    const { actionInputIssueFailure, projectActionInputJsonSchemaIssues } = await import('@happier-dev/protocol/actions/executor/actionInputValidation');
+                    return actionInputIssueFailure(...projectActionInputJsonSchemaIssues(validate, declaration.inputSchema, choice.provision.input)
+                        .map(issue => ({ ...issue, path: ['copyFrom', 'choices', 'data', index, 'provision', 'input', ...issue.path] })));
+                }
+                copiedData.push({ targetLinkId: link.id, targetId: declaration.target.id, targetKind: link.targetKind,
+                    contribution: link.source.contribution, provision: choice.provision });
+                review.included.push(`data:${choice.targetLinkId}:createEmpty`);
+                continue;
+            }
+            return refuse('unsupported_action');
         }
         const definition = source.content.definition;
         const authoredDefinition: NonNullable<DeploymentEnvironmentCreateIntentInputV1['definition']> = definition.kind === 'repository'
@@ -99,7 +141,7 @@ export async function resolveEnvironmentCreateCopyForHost(
         return { input: { ...input, definition: authoredDefinition,
             ...(retention === undefined ? {} : { retainPreviousDeployments: retention }) },
             content: { ownServer: source.content.ownServer }, review,
-            copyPlan: { bindings, ...(source.environment.runtimeTargetLinkId === undefined ? {}
+            copyPlan: { bindings, ...(copiedData.length ? { data: copiedData } : {}), ...(source.environment.runtimeTargetLinkId === undefined ? {}
                 : { sourceRuntimeTargetLinkId: source.environment.runtimeTargetLinkId }) } };
     } catch (error) {
         const code = context.signal?.aborted ? 'cancelled' : error instanceof ArtifactEncryptionMaterialUnavailableError ? 'client_required'
