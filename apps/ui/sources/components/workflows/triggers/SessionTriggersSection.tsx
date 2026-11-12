@@ -496,16 +496,17 @@ function SessionTriggersContent(props: SessionTriggersSectionProps) {
                     {...(row === null && boundWhen !== undefined ? { initialWhen: boundWhen } : {})}
                     workflowOptions={thenOptions.workflowOptions}
                     onSubmit={async (value, write) => {
-                        if (write.target === null || write.trigger === null) return;
+                        if (write.target === null) return;
                         if (row === null) {
+                            if (write.trigger === null) return;
                             await read.add({ target: write.target, trigger: write.trigger, inputs: write.inputs });
                             return;
                         }
-                        const { enabled: _enabled, ...definition } = write.trigger;
+                        const definition = write.trigger === null ? null : (({ enabled: _enabled, ...definition }) => definition)(write.trigger);
                         await read.update({
                             triggerId: row.triggerId,
                             expectedRevision: row.revision,
-                            patch: { target: write.target, trigger: definition, enabled: value.enabled, inputs: write.inputs },
+                            patch: { target: write.target, ...(definition === null ? {} : { trigger: definition }), enabled: value.enabled, inputs: write.inputs },
                         });
                     }}
                     machineId={read.machineId}

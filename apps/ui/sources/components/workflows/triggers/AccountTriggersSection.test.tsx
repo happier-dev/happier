@@ -493,6 +493,46 @@ describe('Account Workflow Library and settings', () => {
         expect(writes().at(-1)?.triggers[0]).toMatchObject({ kind: 'existing', triggerId: rows[0]?.triggers[0]?.id });
     });
 
+    it('reopens a saved executable Event with Done enabled and saves only its edited notification', async () => {
+        const { AutomationTriggerDefinitionInputSchema } = await import('@happier-dev/protocol/automations/automationTriggerDefinition');
+        const { addWorkflowTrigger } = await import('@/sync/domains/workflows/workflowTriggerActions');
+        const { buildTriggerTarget } = await import('./sessionTriggerForm');
+        const trigger = AutomationTriggerDefinitionInputSchema.parse({ kind: 'pluginEvent', enabled: true,
+            eventRef: { pluginId: 'acme.monitor', localId: 'machine-offline' }, sourceInstanceId: 'machine:m1',
+            sourceContractVersion: 1, sourceConfig: {}, displayLabel: 'Machine went offline', filter: null,
+            maximumObservationAgeMs: null, observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+                machineId: 'observer-machine', pluginId: 'acme.monitor', materializationId: 'monitor-1',
+            } } });
+        const target = buildTriggerTarget({ kind: 'notifyMe', title: 'Machine offline', message: 'Check this machine', channels: [] }, 'account');
+        if (!target) throw new Error('Expected a notification target');
+        await addWorkflowTrigger({ trigger, target, project });
+        const saved = rows[0]!;
+        const screen = await renderAccountScreen(<AccountTriggersSection />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`workflows-column:trigger:${saved.id}`)).not.toBeNull());
+        await screen.pressByTestIdAsync(`workflows-column:trigger:${saved.id}`);
+        expect(screen.findByType(TriggerPopover).props.initial.when).toMatchObject({ kind: 'pluginEvent', value: null });
+        expect(screen.findByType(TriggerRunsOnRow).props.target).toEqual(project);
+        expect(screen.findByTestId('workflows-column-trigger-popover-submit')?.props.disabled).toBe(false);
+        await act(async () => screen.findByType(TriggerRunsOnRow).props.onChange({ ...project }));
+        expect(screen.findByTestId('workflows-column-trigger-popover-submit')?.props.disabled).toBe(false);
+        await act(async () => screen.findByProps({ accessibilityLabel: 'workflows.triggers.then.message', value: 'Check this machine' })
+            .props.onChangeText('The machine needs attention'));
+        await act(async () => screen.findByProps({ accessibilityLabel: 'workflows.triggers.then.message', value: 'The machine needs attention' })
+            .props.onBlur());
+        expect(screen.findByTestId('workflows-column-trigger-popover-submit')?.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync('workflows-column-trigger-popover-submit');
+        await waitForHomeGovernance(() => expect(writes()).toHaveLength(1));
+        expect(writes()[0]?.triggers).toEqual([{ kind: 'existing', triggerId: saved.triggers[0]!.id, expectedRevision: 1 }]);
+        expect(rows[0]?.triggers).toEqual(saved.triggers);
+        expect(writtenContext(writes()[0]!)).toMatchObject({ inlineDefinition: { blocks: [{ input: {
+            message: { kind: 'literal', value: 'The machine needs attention' },
+        } }] } });
+        await screen.pressByTestIdAsync(`workflows-column:trigger:${saved.id}`);
+        expect(screen.findByTestId('workflows-column-trigger-popover-submit')?.props.disabled).toBe(false);
+        expect(screen.findByType(TriggerRunsOnRow).props.target).toEqual(project);
+        expect(screen.findByProps({ accessibilityLabel: 'workflows.triggers.then.message', value: 'The machine needs attention' })).toBeTruthy();
+    });
+
     it.each(['ambiguous', 'unavailable'] as const)('refuses to replace an %s saved source with a new draft', async (condition) => {
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const credentials = await TokenStorage.getCredentialsForServerUrl(getActiveServerSnapshot().serverUrl);

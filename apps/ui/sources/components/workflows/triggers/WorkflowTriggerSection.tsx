@@ -339,7 +339,12 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                         </>
                     )}
                     onSubmit={async (value, write) => {
-                        if (write.trigger === null) return;
+                        if (write.trigger === null) {
+                            if (row?.kind === 'saved') {
+                                change(editWorkflowTriggerDraft(props.draft, { kind: 'update', triggerId: row.triggerId, enabled: value.enabled }));
+                            }
+                            return;
+                        }
                         if (row === null) {
                             change(editWorkflowTriggerDraft(props.draft, { kind: 'add', clientId: createClientId(), trigger: write.trigger }));
                         } else if (row.kind === 'new') {

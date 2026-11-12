@@ -367,6 +367,15 @@ describe('Run a workflow trigger inputs', () => {
         expect(screen.findByTestId('event-step-then')).not.toBeNull();
         expect(screen.findByProps({ accessibilityLabel: 'workflows.triggers.then.message', value: 'Edited draft' })).toBeTruthy();
     });
+    it('requires a new Event to be configured before Done', async () => {
+        const submit = vi.fn<ExistingTriggerSubmit>(async () => {});
+        const screen = await renderScreen(<TriggerPopover testID="new-event-validity" anchorRef={React.createRef()}
+            onRequestClose={vi.fn()} whenKinds={['pluginEvent']} sessionId={null} showThen={false}
+            initial={null} workflowOptions={[]} onSubmit={submit} />);
+        expect(screen.findByTestId('new-event-validity-submit')?.props.disabled).toBe(true);
+        await screen.pressByTestIdAsync('new-event-validity-submit');
+        expect(submit).not.toHaveBeenCalled();
+    });
     it('opens an exact saved Event row for editing its private source instead of leaving it informational', async () => {
         const { WorkflowTriggerSetV1Schema} = await import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1');
         const set = WorkflowTriggerSetV1Schema.parse({ automationId: 'event-set', revision: 7, enabled: true,
@@ -381,6 +390,10 @@ describe('Run a workflow trigger inputs', () => {
             stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
         await screen.pressByTestIdAsync('event-workflow-trigger:saved:event-row');
         expect(screen.findByTestId('event-workflow-trigger-popover-configure-event')).toBeTruthy();
+        expect(screen.findByTestId('event-workflow-trigger-popover-submit')?.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync('event-workflow-trigger-popover-submit');
+        expect(change).toHaveBeenCalledWith({ adds: [], updates: { 'event-row': { enabled: true } }, removes: [] });
+
         await act(async () => { screen.findByTestId('event-workflow-trigger:saved:event-row-switch')!.props.onValueChange(false); });
         expect(change).toHaveBeenCalledWith({ adds: [], updates: { 'event-row': { enabled: false } }, removes: [] });
     });

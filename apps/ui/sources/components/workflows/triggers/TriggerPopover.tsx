@@ -365,7 +365,8 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
     const scope = useActiveServerAccountScope();
     const originServerId = props.serverId ?? scope?.serverId;
     const isNew = props.initial === null && props.submitRefusal === undefined;
-    const [when, setWhen] = React.useState<TriggerWhenValue>(() => props.initial?.when ?? props.initialWhen
+    const [savedWhen] = React.useState(() => props.initial?.when);
+    const [when, setWhen] = React.useState<TriggerWhenValue>(() => savedWhen ?? props.initialWhen
         ?? createDefaultWhen(props.whenKinds[0] ?? 'turnEnds', props.pullRequestLinks));
     const triggerScope = props.creatingSession ? 'session' : props.scope ?? (props.sessionId !== null ? 'session' : 'account');
     // Standalone Account enrollment has no executable target. A Session or
@@ -416,11 +417,10 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
     );
     const unavailableWhen = when.kind === 'runLifecycle' ? undefined : props.unavailableKinds?.[when.kind];
     const refused = props.submitRefusal !== undefined || failure?.code === 'legacy_conversion_unsupported';
-    // A saved observation has no execution fields. Until Edit event changes its When,
-    // Done only dismisses it; the private definition stays with its existing reader.
-    const unchangedObservation = observationOnly !== undefined && props.initial?.kind === 'observationOnly'
-        && when === props.initial.when;
-    const complete = !refused && props.pushedPage === undefined && (unchangedObservation || props.manual || displayedTrigger !== null) && (!needsTarget || (target !== null && !promptDestination.deleted)) && unavailableWhen === undefined
+    // Saved forms may omit the private definition. Retain their When until the user
+    // changes it; only a changed When needs to build a replacement definition.
+    const whenUnchanged = when === savedWhen;
+    const complete = !refused && props.pushedPage === undefined && (whenUnchanged || props.manual || displayedTrigger !== null) && (!needsTarget || (target !== null && !promptDestination.deleted)) && unavailableWhen === undefined
         && (observationOnly || props.hostComplete !== false) && (!needsTarget || then.kind !== 'runWorkflow'
             || (workflow.status === 'ready' && !inputFields.some((field) => field.blocking)))
         && (inlineDefinition === null || !inputFields.some((field) => field.blocking));
@@ -443,7 +443,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
 
     const submit = (context?: ActionExecutorContext) => {
         if (!complete) return;
-        if (unchangedObservation) {
+        if (observationOnly && whenUnchanged) {
             props.onRequestClose();
             return;
         }
@@ -451,7 +451,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
         // workflow's later Save retain this instant rather than starting the delay again.
         const submittedTrigger = props.manual || props.creatingSession ? null : buildTriggerDefinition({ when, enabled, sessionId: props.sessionId });
         const submittedInitialTrigger = props.creatingSession ? buildInitialTriggerDefinition({ when, enabled }) : null;
-        if (!props.manual && (props.creatingSession ? submittedInitialTrigger : submittedTrigger) === null) return;
+        if (!props.manual && !whenUnchanged && (props.creatingSession ? submittedInitialTrigger : submittedTrigger) === null) return;
         const submittedSchedule = submittedTrigger?.kind === 'schedule' ? submittedTrigger.schedule
             : submittedInitialTrigger?.kind === 'schedule' ? submittedInitialTrigger.schedule : null;
         const submittedWhen = submittedSchedule?.kind === 'once' ? readScheduleWhen(submittedSchedule) : when;
@@ -466,7 +466,6 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
             ? props.onSubmit(value, { trigger: submittedInitialTrigger, target, inputs }, context)
             : props.onSubmit(value, { trigger: submittedTrigger, target, inputs, ...(observationOnly ? { observationOnly } : {}) }, context));
     };
-    const savedWhen = props.initial?.when;
     const scheduleUnchanged = when.kind === 'schedule' && savedWhen?.kind === 'schedule'
         && when.expression === savedWhen.expression && when.timezone === savedWhen.timezone && when.everyMs === savedWhen.everyMs
         && when.once?.scheduledAt === savedWhen.once?.scheduledAt && when.once?.date === savedWhen.once?.date
