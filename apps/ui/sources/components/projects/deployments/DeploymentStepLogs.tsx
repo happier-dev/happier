@@ -8,6 +8,7 @@ import { formatElapsedDuration } from '@/components/machines/durationWords';
 import {
   createNativeLogView,
   NativeLogLines,
+  isNativeLogBlank,
 } from '@/components/machines/services/MachineServiceLogs';
 import { NativeLogToolbar } from '@/components/machines/services/NativeLogToolbar';
 import { PlanChecklistCard } from '@/components/systemTasks/planChecklist/PlanChecklistCard';
@@ -440,7 +441,7 @@ function StepLogBody(
           {t('machineServices.logs.truncated')}
         </Text>
       ) : null}
-      {viewer.lines.length === 0 ? (
+      {isNativeLogBlank(viewer.lines) ? (
         <SurfaceStateCard
           testID={`${id}.empty`}
           kind="empty"

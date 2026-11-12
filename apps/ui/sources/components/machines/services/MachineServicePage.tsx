@@ -414,13 +414,17 @@ function ServiceMoreMenu(props: Readonly<{
       ...(props.shellMembers.length > 0 ? { submenu: {
         items: props.shellMembers.map(member => ({ id: `shell:${member}`, testID: `machine-service-shell:${member}`, title: member })),
       } } : {}) }] : []),
-    ...(props.onUnwatch ? [{ id: 'unwatch', testID: 'machine-service-unwatch', title: t('machineServices.actions.unwatch'),
-      icon: <Icon name="stop" size={16} color={theme.colors.text.secondary} /> }] : []),
     ...(props.start ? [{ id: 'start', testID: 'machine-service-start', title: t('machineServices.control.start'),
       icon: <Icon name="play" size={16} color={theme.colors.text.secondary} /> }] : []),
+    // Unwatching only stops Happier following the service; it keeps running, so it reads as "stop looking".
+    ...(props.onUnwatch ? [{ id: 'unwatch', testID: 'machine-service-unwatch', title: t('machineServices.actions.unwatch'),
+      icon: <Icon name="eye-slash" size={16} color={theme.colors.text.secondary} /> }] : []),
+    // Stop interrupts what the service serves: the one destructive item, last and set apart.
     ...(props.stop ? [{ id: 'stop', testID: 'machine-service-stop', title: t('machineServices.control.stop'),
-      icon: <Icon name="stop" size={16} color={theme.colors.text.secondary} /> }] : []),
-  ], [props.onRunCommand, props.onOpenShell, props.shellMembers, props.onUnwatch, props.start, props.stop, theme.colors.text.secondary]);
+      category: 'stop', destructive: true,
+      icon: <Icon name="stop" size={16} color={theme.colors.state.danger.foreground} /> }] : []),
+  ], [props.onRunCommand, props.onOpenShell, props.shellMembers, props.onUnwatch, props.start, props.stop,
+    theme.colors.text.secondary, theme.colors.state.danger.foreground]);
   return (
     <DropdownMenu
       open={open}
@@ -428,6 +432,7 @@ function ServiceMoreMenu(props: Readonly<{
       items={items}
       matchTriggerWidth={false}
       placement="bottom"
+      separateCategories
       popoverAccessibilityLabel={t('common.more')}
       onSelect={(id) => {
         if (id === 'command') props.onRunCommand?.();

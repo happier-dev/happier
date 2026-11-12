@@ -171,12 +171,22 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
     // A bounded card keeps the tallest height it has shown while it is presented, so a pushed child (a
     // folder browser) or a narrowed list never shrinks the container under the person; it still grows.
     const [shownHeight, setShownHeight] = React.useState(0);
+    const [frameHeight, setFrameHeight] = React.useState(0);
     const dragLayout = dismiss ? drag.onLayout : null;
     const onFrameLayout = React.useCallback((event: LayoutChangeEvent) => {
         const height = event.nativeEvent.layout.height;
-        if (bounded) setShownHeight(previous => (height > previous ? height : previous));
+        if (bounded) {
+            setShownHeight(previous => (height > previous ? height : previous));
+            const rounded = Math.round(height);
+            setFrameHeight(previous => (previous === rounded ? previous : rounded));
+        }
         dragLayout?.(event);
     }, [bounded, dragLayout]);
+    // A bounded body may grow by the room its card still has under its bound (a row that stacks its control,
+    // a command's output); held to its first height, a phone sheet clipped the rest under its footer.
+    const bodyCap = bounded && frameHeight > 0
+        ? bodyHeight + Math.max(0, Math.round(dimensions.maxHeight) - frameHeight)
+        : bodyHeight;
 
     const hasHeader = framed && props.header !== 'none' && (props.leading != null
         || props.title != null
@@ -261,7 +271,7 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                             : fixedHeight || bounded ? styles.bodyBounded : styles.bodyUnscrolled}
                         onLayout={boundsContent ? onBodyLayout : undefined}
                         contentContainerStyle={bodyScroll === 'auto' ? styles.bodyScrollContent
-                            : boundsContent ? [styles.bodyBounded, bodyHeight > 0 ? (fixedHeight ? { height: bodyHeight } : { maxHeight: bodyHeight }) : null] : undefined}
+                            : boundsContent ? [styles.bodyBounded, bodyHeight > 0 ? (fixedHeight ? { height: bodyHeight } : { maxHeight: bodyCap }) : null] : undefined}
                         scrollEnabled={bodyScroll === 'auto'}
                         keyboardShouldPersistTaps="handled"
                         nestedScrollEnabled={bodyScroll === 'auto'}

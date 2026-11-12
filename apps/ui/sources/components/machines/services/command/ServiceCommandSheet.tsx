@@ -7,7 +7,7 @@ import type { WorkflowMachineCommandOutputV1 } from '@happier-dev/protocol/workf
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { NativeLogLines } from '@/components/machines/services/MachineServiceLogs';
+import { NativeLogLines, isNativeLogBlank } from '@/components/machines/services/MachineServiceLogs';
 import { MachineSetupReviewFooter } from '@/components/settings/machines/managed/MachineSetupPlanReview';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
@@ -350,7 +350,7 @@ function CommandOutput(
             : 'machineServices.command.redacted',
         )}
       </Text>
-      {lines.length === 0 ? (
+      {isNativeLogBlank(lines) ? (
         <SurfaceStateCard
           testID="service-command.empty"
           kind="empty"

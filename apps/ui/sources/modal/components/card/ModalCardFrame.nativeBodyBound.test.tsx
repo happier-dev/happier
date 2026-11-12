@@ -65,6 +65,39 @@ describe('ModalCardFrame body on native', () => {
     },
   );
 
+  // VISUAL-131 V9: content that grows after its first layout (a row that stacks its control under the label, a
+  // command's output) was held to the body's first height, so a phone sheet clipped it under its footer.
+  it('lets a bounded body grow into the room its card still has, and no further', async () => {
+    const screen = await renderScreen(
+      <ModalCardFrame
+        testID="card"
+        presentation="sheet"
+        scrollHost="bounded"
+        bodyScroll="none"
+        title="Run a command"
+        dimensions={{ size: 'md' }}
+      >
+        {React.createElement('Form')}
+      </ModalCardFrame>,
+    );
+    const frame = () => screen.findByTestId('card')!;
+    const body = () => screen.findAllByType('ScrollView')[0]!;
+    const frameMax = flattenStyle(frame().props.style).maxHeight as number;
+    expect(frameMax).toBeGreaterThan(420);
+    const layout = (height: number) => ({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height } } });
+    act(() => {
+      body().props.onLayout?.(layout(300));
+      frame().props.onLayout?.(layout(420));
+    });
+    expect(flattenStyle(body().props.contentContainerStyle).maxHeight).toBe(300 + frameMax - 420);
+    act(() => {
+      body().props.onLayout?.(layout(300 + frameMax - 420));
+      frame().props.onLayout?.(layout(frameMax));
+    });
+    // At its bound the card hands its content exactly the body it has, as before.
+    expect(flattenStyle(body().props.contentContainerStyle).maxHeight).toBe(300 + frameMax - 420);
+  });
+
   it('leaves a scrolling body unbounded: there the body is the one scroller', async () => {
     const screen = await renderScreen(
       <ModalCardFrame

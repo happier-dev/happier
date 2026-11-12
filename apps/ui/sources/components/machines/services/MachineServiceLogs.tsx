@@ -253,7 +253,7 @@ export function MachineServiceLogs(
           }}
         />
       ) : null}
-      {viewer.lines.length === 0 ? (
+      {isNativeLogBlank(viewer.lines) ? (
         <SurfaceStateCard
           testID="machine-service-logs-empty"
           kind="empty"
@@ -276,6 +276,14 @@ export function MachineServiceLogs(
       ) : null}
     </View>
   );
+}
+
+/**
+ * Whether a native log has nothing to show yet: no lines, or only blank ones (a program that has
+ * printed nothing but line breaks). Every native log shows its empty state instead of numbered blanks.
+ */
+export function isNativeLogBlank(lines: readonly ForgeCiLogLineV1[]): boolean {
+  return lines.every((line) => line.plainText.trim().length === 0);
 }
 
 /**

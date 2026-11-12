@@ -97,6 +97,64 @@ describe('Machine service shared log viewer', () => {
         } finally { await screen.unmount(); }
     });
 
+    it.each([
+        { label: 'only line breaks', text: '\n\n\n\n\n' },
+        { label: 'only spaces', text: '   \n\t\n' },
+    ])('says there is no output yet for a log of $label instead of numbering blank lines', async ({ text }) => {
+        const actionId = 'machines.services.logs.read';
+        const actionPath = `/v1/actions/${actionId}`;
+        const page: ManagedServiceNativeLogResultV1 = { kind: 'page', page: {
+            sourceRevision: 'native-source', text, nextCursor: null, truncated: false,
+        } };
+        const bytes = Buffer.from(JSON.stringify(page));
+        const content = { contentType: 'application/json' as const, bytesBase64: bytes.toString('base64'),
+            digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}` };
+        const row = { ...createPlainMachineRowFixture({ id: 'machine', accountId: 'account' }), installationId: 'installation' };
+        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+            body: await createMachineReadBatchResponseFixture(body, () => row).json(),
+        }) });
+        homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
+            return { body: { v: 1, token: 'home-service-log-proof', binding: {
+                serverIdentityId: 'srv_service_logs', accountId: 'account', authentication: { kind: 'account', tokenEpoch: 0 },
+                actionId, requestId: envelope.requestId, target: { kind: 'machine', machineId: 'machine' },
+                machineId: 'machine', installationId: 'installation', custodianAccountId: 'account', accountEncryptionMode: 'plain',
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            } } };
+        } });
+        homes.answer(serverId, actionPath, { select: (body, request) => {
+            const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(authorized.success ? authorized.data.envelope : body);
+            const reply = (result: unknown): HomeDomainAnswer => ({ body: {
+                v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result },
+            } });
+            const continuation = envelope.resourceContinuation;
+            if (!continuation) return reply(page);
+            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ)
+                return reply({ ok: true, resource: continuation.params.resource, ...content });
+            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN)
+                return reply({ ok: true, subscriptionId: continuation.params.subscriptionId, digest: content.digest });
+            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE)
+                return reply({ ok: true, closed: true });
+            // The follow stays quiet until the page closes it.
+            return new Promise<HomeDomainAnswer>(resolve => {
+                const idle = () => resolve(reply({ ok: true, status: 'idle' }));
+                if (request.signal?.aborted) idle();
+                else request.signal?.addEventListener('abort', idle, { once: true });
+            });
+        } });
+        const service: MachineServiceRowV1 = { serviceId: 'service', name: 'Worker', authority: 'machine',
+            lifecyclePurpose: 'deployment', generation: 'generation-a', state: 'running', watchId: 'watch', watchRevision: 'watch-revision',
+            capabilities: { start: false, stop: true, restart: false, logs: true, accounting: false } };
+        const screen = await renderScreen(<MachineServiceLogs serverId={serverId} machineId="machine"
+            machineName="Development machine" service={service} active />);
+        try {
+            await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-logs')).not.toBeNull());
+            expect(screen.findHostByTestId('machine-service-logs-empty')).not.toBeNull();
+            expect(screen.findHostByTestId('machine-service-logs-lines')).toBeNull();
+        } finally { await screen.unmount(); }
+    });
+
     it('retains admitted redacted lines through follow, pause, resume and a source change, then releases hidden demand', async () => {
         const actionId = 'machines.services.logs.read';
         const actionPath = `/v1/actions/${actionId}`;

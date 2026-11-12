@@ -383,7 +383,15 @@ export function DropdownMenu(props: DropdownMenuProps) {
     const hasHardwareKeyboard = useHardwareKeyboard();
     const reducedMotion = useReducedMotionPreference();
     const anchorRef = React.useRef<View>(null);
-    const resolvedAnchorRef = props.popoverAnchorRef ?? anchorRef;
+    // Configuration selects keep one bordered field treatment at every width. Item's measured
+    // adaptive layout moves the field below the label when the row has no room beside it.
+    // Menus, sheets and grouped lists retain their grouped trigger.
+    const isPagePresentation = useListPresentation() === 'page';
+    const pageTrigger = isPagePresentation ? 'field' : null;
+    // A page field's choices hang from the drawn field box at its width, not from the whole row around it.
+    const fieldBoxRef = React.useRef<View>(null);
+    const fieldAnchored = Boolean(props.itemTrigger) && pageTrigger === 'field' && !props.popoverAnchor;
+    const resolvedAnchorRef = props.popoverAnchorRef ?? (fieldAnchored ? fieldBoxRef : anchorRef);
     const selection = React.useMemo<DropdownMenuSelection>(() => ({ anchor: props.popoverAnchor ?? { kind: 'view', ref: resolvedAnchorRef } }),
         [props.popoverAnchor, resolvedAnchorRef]);
     const submenuAnchorsRef = React.useRef(new Map<string, React.RefObject<unknown>>());
@@ -430,6 +438,9 @@ export function DropdownMenu(props: DropdownMenuProps) {
         return { vertical: 8, horizontal: 8 } as const;
     }, [matchTriggerWidth, props.connectToTrigger, requestedPlacement]);
 
+    // A select (an item trigger naming a value) checks its current value as the one choice among its rows.
+    const selectCheckedId = props.itemTrigger && typeof props.selectedId === 'string' && props.selectedId.trim()
+        ? props.selectedId.trim() : null;
     const toSelectableItem = (item: DropdownMenuItem): SelectableMenuItem => {
             const hasSubmenu = Boolean(item.submenu && (item.submenu.items.length > 0 || item.submenu.renderContent));
             return {
@@ -440,7 +451,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 accessibilityLabel: item.accessibilityLabel,
                 category: item.category,
                 disabled: item.disabled,
-                checked: item.checked,
+                checked: item.checked ?? (selectCheckedId === null ? undefined : item.id === selectCheckedId),
                 multiSelect: item.multiSelect,
                 swatch: item.swatch,
                 left: item.icon ?? null,
@@ -461,7 +472,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
     // A shut menu is a trigger: its rows are built when it opens (a row menu per list row would otherwise
     // build and group every row's items at rest). The trigger reads the raw items only for the selected one.
     const selectableItems = React.useMemo(() => props.open ? menuItems.map(toSelectableItem) : NO_SELECTABLE_ITEMS,
-        [hasHardwareKeyboard, menuItems, props.open, theme.colors.state.danger.foreground, theme.colors.text.secondary]);
+        [hasHardwareKeyboard, menuItems, props.open, selectCheckedId, theme.colors.state.danger.foreground, theme.colors.text.secondary]);
     const selectableItemSource: SelectableMenuItemSource | undefined = props.open && props.itemSource ? {
         items: selectableItems,
         indexById: props.itemSource.indexById,
@@ -532,11 +543,6 @@ export function DropdownMenu(props: DropdownMenuProps) {
         }
     }, [activeSubmenu, props.open]);
 
-    // Configuration selects keep one bordered field treatment at every width. Item's measured
-    // adaptive layout moves the field below the label when the row has no room beside it.
-    // Menus, sheets and grouped lists retain their grouped trigger.
-    const isPagePresentation = useListPresentation() === 'page';
-    const pageTrigger = isPagePresentation ? 'field' : null;
     const fieldInvalid = props.itemTrigger?.field?.invalid === true;
     const fieldColors = React.useMemo(
         () => (pageTrigger === 'field' ? resolveFieldBoxColors(theme, fieldInvalid ? 'invalid' : 'idle') : undefined),
@@ -583,6 +589,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                         chevronColor: theme.colors.text.secondary,
                         detailDensity: resolvedTriggerDensity,
                         field: fieldColors,
+                        boxRef: fieldAnchored ? fieldBoxRef : undefined,
                         placeholder: pageTrigger ? cfg.placeholder ?? t('common.choose') : undefined,
                         placeholderColor: theme.colors.input.placeholder,
                         // A field its row places under the label spans the row, like every stacked control.
@@ -620,7 +627,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
             }), props.open);
         }
         return withExpandedTriggerState(props.trigger, props.open);
-    }, [closeMenu, fieldColors, openMenu, pageSelectedItem, pageTrigger, props.itemTrigger, props.open, props.trigger, resolvedTriggerDensity, selectedItemForTrigger, theme.colors.input.placeholder, theme.colors.text.secondary, theme.colors.text.tertiary, toggle]);
+    }, [closeMenu, fieldAnchored, fieldColors, openMenu, pageSelectedItem, pageTrigger, props.itemTrigger, props.open, props.trigger, resolvedTriggerDensity, selectedItemForTrigger, theme.colors.input.placeholder, theme.colors.text.secondary, theme.colors.text.tertiary, toggle]);
 
     const resultsRef = React.useRef<SelectableMenuResultsHandle>(null);
     // The highlighted row scrolls into view only when the keyboard moves it (or on opening its current choice):

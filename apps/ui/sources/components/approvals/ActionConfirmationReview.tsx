@@ -5,12 +5,13 @@ import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMe
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { Modal } from '@/modal';
+import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
 
-import { ApprovalDecisionBar } from './ApprovalDecisionBar';
 import {
   ApprovalIncludedSteps,
   readApprovalIncludedSteps,
@@ -79,7 +80,8 @@ export const ActionConfirmationReviewFacts = React.memo(
             testID={`${props.testID}.deployment`}
           />
         ) : projectCommand ? (
-          <ItemGroup title={t('approvals.details')}>
+          // The dialog's title already names the Action: the command stands as its one block, unheaded.
+          <ItemGroup>
             <SectionContentRow>
               <ProjectCommandApprovalFacts
                 presentation={projectCommand}
@@ -122,14 +124,20 @@ function ConfirmationReviewModal(props: ConfirmationReviewModalProps) {
     setChrome?.({
       kind: 'card',
       footer: (
-        <ApprovalDecisionBar
-          testID="actions.confirmation-review.decision"
-          irreversible={irreversible}
-          approve={{ label: confirmLabel, onPress: () => answer(true),
-            testID: 'actions.confirmation-review.decision-approve' }}
-          reject={{ label: t('common.cancel'), onPress: () => answer(false),
-            testID: 'actions.confirmation-review.decision-reject' }}
-        />
+        // The same footer as every other confirmation card: Cancel, then the Action's verb, trailing.
+        <ModalCardFooterActions
+          cancel={{ onPress: () => answer(false), testID: 'actions.confirmation-review.decision-reject' }}
+          note={irreversible ? t('approvals.irreversibleNote') : null}
+          noteTestID="approvals.irreversible-note"
+        >
+          <RoundButton
+            testID="actions.confirmation-review.decision-approve"
+            size="normal"
+            display={irreversible ? 'destructive' : 'default'}
+            title={confirmLabel}
+            onPress={() => answer(true)}
+          />
+        </ModalCardFooterActions>
       ),
     });
   }, [answer, confirmLabel, irreversible, setChrome]);

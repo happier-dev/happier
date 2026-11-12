@@ -42,6 +42,8 @@ export function renderDropdownItemTriggerRightElement(params: Readonly<{
     loading?: boolean;
     /** Field only: `row` when the field is stacked under its label, so it spans the row. */
     fieldSpan?: 'content' | 'column' | 'row' | 'intrinsic';
+    /** Field only: the drawn box, which the select's choices hang from and match in width. */
+    boxRef?: React.Ref<unknown>;
     /** Field only: `chip` draws the compact borderless pill (pair it with soft `field` colours). */
     fieldDensity?: 'field' | 'chip';
 }>) {
@@ -64,7 +66,7 @@ export function renderDropdownItemTriggerRightElement(params: Readonly<{
             colors: params.field,
         });
         return (
-            <HappierFieldBoxTrigger colors={params.field} leading={params.leading} trailing={chevron}
+            <HappierFieldBoxTrigger colors={params.field} leading={params.leading} trailing={chevron} boxRef={params.boxRef}
                 {...(params.fieldSpan === undefined ? {} : { span: params.fieldSpan })}
                 {...(params.fieldDensity === undefined ? {} : { density: params.fieldDensity })}>
                 {params.loading ? (
