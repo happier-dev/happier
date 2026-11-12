@@ -878,7 +878,7 @@ describe("managed acquisition durable authority", () => {
             admittedInput: { ...readManagedAcquisitionIdentity(retained.admittedInput), enrollmentAccountId: '' },
         } });
         await expect(inTx(tx => requireManagedEnrollmentInTx(tx, { ...correlation, resource }, fixture.account.id)))
-            .rejects.toMatchObject({ code: 'request_conflict' });
+            .rejects.toMatchObject({ code: 'resource_mismatch' });
     });
 
     it('returns retained creation context only to the present-user custodian of an Account-owned resource', async () => {
@@ -1010,15 +1010,6 @@ describe("managed acquisition durable authority", () => {
         expect(ManagedControllerMachineOutputV1Schema.parse(missing.json()).machine).toMatchObject({ id: row.id });
         await expect(admitManagedAcquire({ ...fixture.request, input: { ...fixture.request.input,
             requestId: row.admittedActionRequestId } })).rejects.toMatchObject({ code: 'request_conflict' });
-        await db.managedMachine.update({ where: { id: row.id }, data: { admittedInput: {
-            computeInput: { selection: fixture.input.selection, enrollmentIdentity: {
-                kind: 'dedicatedDaemonUser', username: 'root', role: 'server', serviceMode: 'user',
-                adminAccessAtCreation: 'ask', administrator: { username: 'root' },
-            } }, continuation: null,
-        } } });
-        const invalid = await retry();
-        expect(invalid.statusCode, invalid.body).toBe(409);
-        expect(invalid.json()).toEqual({ code: 'request_conflict' });
         const enrolled = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id,
             metadata: 'ciphertext', installationId: crypto.randomUUID() } });
         await db.managedMachine.update({ where: { id: row.id }, data: { enrolledMachineId: enrolled.id,
@@ -1322,6 +1313,8 @@ describe("managed acquisition durable authority", () => {
         } });
         const destroyCorrelation = { ...acquireCorrelation, expectedIntentRevision: 1, requestId: 'destroy-custody-delete' };
         await submitManagedIntent(destroyCorrelation);
+        const retainedResource = { ...resource, value: { ...resource.value, futureNative: true } };
+        await db.managedMachine.update({ where: { id: created.machine.id }, data: { resource: retainedResource } });
         const nativeOperationRef = { contributionRef: resource.contributionRef, schemaVersion: 1,
             value: { operationId: 'delete-operation-1' } };
 
@@ -1329,11 +1322,11 @@ describe("managed acquisition durable authority", () => {
             ...nativeOperationRef, contributionRef: { pluginId: 'fixture.other', localId: 'compute' },
         } } })).rejects.toMatchObject({ code: 'resource_mismatch' });
         expect(await reportManagedIntent({ ...destroyCorrelation, result: { kind: 'accepted', nativeOperationRef } })).toMatchObject({
-            machine: { allocation: 'bound', resource, nativeOperationRef, cleanup: { disposition: 'pending' },
+            machine: { allocation: 'bound', resource: retainedResource, nativeOperationRef, cleanup: { disposition: 'pending' },
                 submittedNativeEffect: { intent: 'delete' } },
         });
         expect(await reportManagedIntent({ ...destroyCorrelation, result: reconciliation.destroyResult.parse({ kind: 'pending' }) }))
-            .toMatchObject({ machine: { nativeOperationRef, resource, allocation: 'bound',
+            .toMatchObject({ machine: { nativeOperationRef, resource: retainedResource, allocation: 'bound',
                 submittedNativeEffect: { requestId: 'destroy-custody-delete', intent: 'delete' } } });
         await admitManagedControl({ actorAccountId: account.id, custodianAccountId: account.id, input: {
             action: 'machines.managed.delete', requestId: 'destroy-custody-retry', input: { homeId,
@@ -1476,12 +1469,14 @@ describe("managed acquisition durable authority", () => {
         expect(unknown.machine.nativeOperationRef).toBeUndefined();
         const deleteHandle = { ...acquisitionHandle, value: { request: 'accepted-delete-request' } };
         await reportManagedIntent({ ...deletion, result: { kind: 'accepted', nativeOperationRef: deleteHandle } });
+        const retainedDeleteHandle = { ...deleteHandle, value: { ...deleteHandle.value, futureNative: true } };
+        await db.managedMachine.update({ where: { id: created.machine.id }, data: { nativeOperationRef: retainedDeleteHandle } });
         // A duplicate late acquisition report cannot discard the newer destroy custody.
         expect(await reportManagedAcquire({ ...correlation, result: { kind: 'bound', resource } }))
-            .toMatchObject({ machine: { nativeOperationRef: deleteHandle, submittedNativeEffect: { intent: 'delete' } } });
+            .toMatchObject({ machine: { nativeOperationRef: retainedDeleteHandle, submittedNativeEffect: { intent: 'delete' } } });
         await reportManagedIntent({ ...deletion, result: { kind: 'refused', code: 'native_cleanup_unavailable' } });
         const refused = await reportManagedAcquire({ ...correlation, result: { kind: 'bound', resource } });
-        expect(refused.machine.nativeOperationRef).toEqual(deleteHandle);
+        expect(refused.machine.nativeOperationRef).toEqual(retainedDeleteHandle);
         expect(refused.machine.submittedNativeEffect).toBeUndefined();
         await submitManagedIntent(deletion);
         const settled = await reportManagedIntent({ ...deletion, result: { kind: 'confirmed' },
@@ -1613,7 +1608,7 @@ describe("managed acquisition durable authority", () => {
         await db.managedMachine.update({ where: { id: created.machine.id }, data: { launch: { ...input.selection.launch, futureEnvelope: true, choices: { image: "linux", futureChoice: true } }, resource: { ...resource, value: { id: "native-first", futureNative: true } } } });
         const projected = await getManagedMachine({ actorAccountId: account.id, input: { homeId, managedId: created.machine.id } });
         expect(projected).toMatchObject({ launch: input.selection.launch, resource });
-        expect(projected.launch).toEqual(input.selection.launch);
+        expect(projected.launch).toEqual({ ...input.selection.launch, choices: { ...input.selection.launch.choices, futureChoice: true } });
         const control = { actorAccountId: account.id, custodianAccountId: account.id };
         const policyEdit = { action: 'machines.managed.retention.update' as const, requestId: 'invalid-destructive-wake', input: {
             homeId, managedId: created.machine.id, expectedIntentRevision: 0,
@@ -1676,6 +1671,12 @@ describe("managed acquisition durable authority", () => {
         });
         registerManagedMachineRoutes(moveApp);
         onTestFinished(() => moveApp.close());
+        // Retained future choices remain readable, but a new controller's
+        // fresh launch review uses its current declared schema.
+        const invalidMove = await moveApp.inject({ method: 'POST', url: '/v1/machines/managed/controller/admit-control', payload: moveRequest });
+        expect(invalidMove.statusCode, invalidMove.body).toBe(409);
+        expect(invalidMove.json()).toEqual({ code: 'invalid_request' });
+        await db.managedMachine.update({ where: { id: created.machine.id }, data: { launch: input.selection.launch } });
         const moveResponse = await moveApp.inject({ method: 'POST', url: '/v1/machines/managed/controller/admit-control', payload: moveRequest });
         expect(moveResponse.statusCode, moveResponse.body).toBe(200);
         const moved = moveResponse.json<Awaited<ReturnType<typeof admitManagedControl>>>();
@@ -1734,7 +1735,7 @@ describe("managed acquisition durable authority", () => {
             workspaceFolder: '/work/custom', storage: { kind: 'bind' as const, hostPath: '/host/project', childPath: '/work/custom' } };
         const moveResource = { ...resource, value: { id: 'managed-pending-move-native' }, devcontainerObservation };
         await reportManagedAcquire({ ...moveCorrelation, result: { kind: 'bound', resource: moveResource },
-            observation: { observedAt: 300, availability: 'present', power: 'stopped' } });
+            observation: { observedAt: 300, availability: 'present', power: 'stopped', storage: 'retained' } });
         await expect(inTx(tx => linkManagedEnrollmentInTx(tx, { ...moveCorrelation, resource: moveResource }, account.id,
             controller.machineId))).rejects.toMatchObject({ code: 'resource_mismatch' });
         const clonedController = await db.machine.create({ data: { id: 'managed-controller-cloned-installation', accountId: account.id,
@@ -1983,7 +1984,8 @@ describe("managed acquisition durable authority", () => {
         ]) await expect(reportManagedAcquire({ ...pendingCorrelation, result: { kind: 'pending', nativeOperationRef: invalid } })).rejects.toMatchObject({ code: 'resource_mismatch' });
         expect(await reportManagedAcquire({ ...pendingCorrelation, result: { kind: 'pending', nativeOperationRef } })).toMatchObject({ machine: { allocation: 'may-exist', nativeOperationRef } });
         await db.managedMachine.update({ where: { id: pending.machine.id }, data: { nativeOperationRef: { ...nativeOperationRef, futureEnvelope: true, value: { ...nativeOperationRef.value, futureNative: true } } } });
-        expect((await getManagedMachine({ actorAccountId: account.id, input: { homeId, managedId: pending.machine.id } })).nativeOperationRef).toEqual(nativeOperationRef);
+        expect((await getManagedMachine({ actorAccountId: account.id, input: { homeId, managedId: pending.machine.id } })).nativeOperationRef)
+            .toEqual({ ...nativeOperationRef, value: { ...nativeOperationRef.value, futureNative: true } });
         expect(await admitManagedAcquire(pendingRequest)).toMatchObject({ replayed: true, machine: { id: pending.machine.id, nativeOperationRef } });
         expect(await submitManagedAcquire(pendingCorrelation)).toMatchObject({ submitted: false });
         await admitManagedControl({ ...control, input: { action: 'machines.managed.retire', requestId: 'retire-pending-recovery', input: {

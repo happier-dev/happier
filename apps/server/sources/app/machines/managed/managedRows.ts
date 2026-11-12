@@ -13,7 +13,7 @@ import { SupportedNativeIntentSchema, ManagedResourceV1Schema, type ManagedRefus
 import { deriveManagedDevcontainerChildProjectionV1, type DevcontainerChildProjectionV1, managedDevcontainerChildProjectionsEqualV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { resolvePluginActionConnectedAccountUseRequestsV2, type PluginActionConnectedAccountUseRequestV2 } from "@happier-dev/protocol/plugins/manifest/v2";
 import { MachineProvisionerContributionV1Schema, type MachineProvisionerContributionV1 } from "@happier-dev/protocol/plugins/contributions/machineProvisioners";
-import type { PluginJsonSchemaV2 } from "@happier-dev/protocol/plugins/contributions/jsonSchema";
+import { PluginJsonValueV2Schema, type PluginJsonSchemaV2 } from "@happier-dev/protocol/plugins/contributions/jsonSchema";
 import { createPluginJsonSchemaZodValueAdapter } from "@happier-dev/protocol/plugins/actions/json-schema-validation";
 import { pluginJsonValuesEqual } from "@happier-dev/protocol/plugins/actions/protocol-composable-schema";
 import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication, markAccountsChanged } from "@/app/changes/markAccountChanged";
@@ -93,9 +93,10 @@ export function createManagedMachineDeclaredSchema(launch: PluginJsonSchemaV2, n
     return createManagedMachineV1Schema(createPluginJsonSchemaZodValueAdapter(launch), createPluginJsonSchemaZodValueAdapter(native),
         nativeOperation ? createPluginJsonSchemaZodValueAdapter(nativeOperation) : undefined);
 }
-/** Native values use their declared schema without re-admitting the retained launch. */
-export function createManagedMachineRetainedSchema(native: PluginJsonSchemaV2, nativeOperation?: PluginJsonSchemaV2) {
-    return createManagedMachineV1Schema(RetainedManagedLaunchSnapshotV1Schema.shape.choices, createPluginJsonSchemaZodValueAdapter(native),
+/** Validate incoming native values by declaration; other retained values stay opaque. */
+export function createManagedMachineRetainedSchema(native: PluginJsonSchemaV2 | undefined, nativeOperation?: PluginJsonSchemaV2) {
+    return createManagedMachineV1Schema(RetainedManagedLaunchSnapshotV1Schema.shape.choices,
+        native ? createPluginJsonSchemaZodValueAdapter(native) : PluginJsonValueV2Schema,
         nativeOperation ? createPluginJsonSchemaZodValueAdapter(nativeOperation) : undefined);
 }
 export function readManagedLaunchSnapshot(value: unknown): RetainedManagedLaunchSnapshotV1 {

@@ -384,7 +384,7 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
                 throw new ManagedMachineError('provider_unavailable');
             }
             const previous = projectManagedMachine(row);
-            const parsed = createManagedMachineRetainedSchema(declaration.resourceSchema,
+            const parsed = createManagedMachineRetainedSchema(undefined,
                 declaration.reconciliation.nativeOperationSchema).safeParse({ ...previous,
                 nativeOperationRef: canonical.result.nativeOperationRef });
             if (!parsed.success) throw new ManagedMachineError('resource_mismatch');
@@ -406,7 +406,7 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
                 || previousNativeId === canonical.result.resource.devcontainerObservation.nativeResourceId)) {
                 throw new ManagedMachineError('resource_mismatch');
             }
-            const parsed = createManagedMachineRetainedSchema(declaration.resourceSchema, declaration.reconciliation?.nativeOperationSchema)
+            const parsed = createManagedMachineRetainedSchema(declaration.resourceSchema)
                 .safeParse({ ...previous, enrolledMachineId: undefined, devcontainerChild: undefined, resource: canonical.result.resource });
             if (!parsed.success) throw new ManagedMachineError('resource_mismatch');
             const { submittedEffect: _settled, bootstrapInstalled: _installed, ...retained } = admitted;
@@ -521,7 +521,7 @@ export async function reportManagedAcquire(input: ManagedControllerReportV1, opt
         const factsUpdate = configurationFacts ? { reviewedFacts: { ...configurationFacts, provisioner: declaration } } : {};
         if (canonical.result.kind === "bound") {
             if (row.allocation !== "may-exist" && row.allocation !== "bound") throw new ManagedMachineError("intent_changed");
-            const parsed = createManagedMachineRetainedSchema(declaration.resourceSchema, declaration.reconciliation?.nativeOperationSchema).safeParse({ ...current, allocation: "bound", resource: canonical.result.resource });
+            const parsed = createManagedMachineRetainedSchema(declaration.resourceSchema).safeParse({ ...current, allocation: "bound", resource: canonical.result.resource });
             if (!parsed.success) throw new ManagedMachineError("resource_mismatch");
             const projected = ManagedMachineV1Schema.parse(parsed.data);
             if (row.resource !== null && !sameManagedInput(current.resource, projected.resource)) throw new ManagedMachineError("resource_mismatch");
@@ -545,7 +545,7 @@ export async function reportManagedAcquire(input: ManagedControllerReportV1, opt
         const result = canonical.result;
         if (result.kind === "pending") {
             if (!declaration.reconciliation) throw new ManagedMachineError("provider_unavailable");
-            const parsed = createManagedMachineRetainedSchema(declaration.resourceSchema, declaration.reconciliation.nativeOperationSchema)
+            const parsed = createManagedMachineRetainedSchema(undefined, declaration.reconciliation.nativeOperationSchema)
                 .safeParse({ ...projectManagedMachine(row), nativeOperationRef: result.nativeOperationRef });
             if (!parsed.success) throw new ManagedMachineError("resource_mismatch");
         }
@@ -636,7 +636,7 @@ export async function requireManagedEnrollmentInTx(tx: Tx, input: ManagedEnrollm
     const declaration = await resolveManagedRowDeclarationInTx(tx, row);
     if (!declaration || declaration.schemaVersion !== readManagedLaunchSnapshot(row.launch).schemaVersion) throw new ManagedMachineError("provider_unavailable");
     const stored = projectManagedMachine(row);
-    const incoming = createManagedMachineRetainedSchema(declaration.resourceSchema, declaration.reconciliation?.nativeOperationSchema).safeParse({ ...stored, resource: canonical.resource });
+    const incoming = createManagedMachineRetainedSchema(declaration.resourceSchema).safeParse({ ...stored, resource: canonical.resource });
     if (!incoming.success || !sameManagedInput(stored.resource, incoming.data.resource)) throw new ManagedMachineError("resource_mismatch");
     return row;
 }
