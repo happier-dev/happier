@@ -4000,7 +4000,7 @@ describe('managed-services SVC09 owner', () => {
         }
     });
 
-    it('cancels an explicitly interactive exact-handle response when its authority retires', async () => {
+    it.each(['revoke', 'retire', 'pending-revoke'] as const)('closes an explicitly interactive exact-handle response on %s', async reason => {
         const cancel = vi.fn(async () => undefined);
         let sourceController:
             | ReadableStreamDefaultController<Uint8Array>
@@ -4032,14 +4032,19 @@ describe('managed-services SVC09 owner', () => {
         };
         const response = await handle.request(request);
 
-        harness.authorization.current = false;
+        const reader = response.body!.getReader();
         sourceController!.enqueue(new Uint8Array([1]));
-        retirement.abort('Authority retired');
-
-        await expect(response.body!.getReader().read()).rejects
-            .toMatchObject({
-                code: 'plugin_managed_service_unavailable',
-            });
+        await expect(reader.read()).resolves.toMatchObject({ done: false, value: new Uint8Array([1]) });
+        const pending = reason === 'pending-revoke'
+            ? reader.read().then(value => ({ value }), error => ({ error })) : undefined;
+        if (reason === 'retire') await handle.dispose();
+        else {
+            harness.authorization.current = false;
+            retirement.abort('Authority revoked');
+        }
+        if (pending) await expect(pending).resolves.toMatchObject({ error: { code: 'plugin_managed_service_unavailable' } });
+        else await expect(reader.read()).rejects.toMatchObject({ code: 'plugin_managed_service_unavailable' });
+        await expect(handle.request(request)).rejects.toMatchObject({ code: 'plugin_managed_service_unavailable' });
         await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
         await handle.dispose();
     });
@@ -6834,10 +6839,7 @@ describe('managed-services SVC09 owner', () => {
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
         });
-        const spec = lifecycleSpec({
-            id: 'gateway',
-            port: 43_120,
-        });
+        const spec = lifecycleSpec({ id: 'gateway' });
 
         const first = await harness.owner.bindWithExec!(
             seed('catalog-probe:one'),
@@ -7461,12 +7463,10 @@ describe('managed-services SVC09 owner', () => {
         });
         const pSpec = lifecycleSpec({
             id: 'provider-gateway',
-            port: 43_125,
             args: Object.freeze(['serve', '--occurrenceId=P']),
         });
         const gSpec = lifecycleSpec({
             id: 'generic-agent-service',
-            port: 43_126,
         });
         const pHandle = await harness.owner.bindScope(
             pScope,
@@ -7510,7 +7510,6 @@ describe('managed-services SVC09 owner', () => {
             operationId: 'session-demand:session-current-q:provider-q',
         }), harness.exec).supervise(lifecycleSpec({
             id: 'provider-gateway',
-            port: 43_127,
             args: Object.freeze(['serve', '--occurrenceId=Q']),
         }));
         const pStateAfterOrdinaryPublication = pHandle.snapshot().state;

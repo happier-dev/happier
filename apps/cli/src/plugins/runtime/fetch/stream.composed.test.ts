@@ -37,16 +37,14 @@ async function fixture(declaredOrigin?: string) {
     if (!address || typeof address === 'string') throw new Error('Expected TCP listener');
     const origin = `http://127.0.0.1:${address.port}`;
     const cancellation = new AbortController();
-    const revocation = new AbortController();
-    let current = true;
     const binding = createPluginInvocationServiceBinding('stream-occurrence', 'stream-binding');
     const service = createStablePluginHttpHost({ adapter: createGlobalFetchRuntime() }).bind({
         plugin: { id: 'example.stream', version: '1.0.0' }, contribution: { id: 'logs', qualifiedId: 'example.stream/actions/logs' },
         occurrenceId: 'stream-occurrence', correlationId: 'stream-call', surface: 'cli', signal: cancellation.signal,
-        isOccurrenceCurrent: () => current,
-    }, { ...binding, networkRevocationSignal: revocation.signal });
-    return { service, origin, arrived, disconnected, cancellation, revocation, response: () => response,
-        requests: () => requests, retire: () => { current = false; } };
+        isOccurrenceCurrent: () => true,
+    }, binding);
+    return { service, origin, arrived, disconnected, cancellation, response: () => response,
+        requests: () => requests };
 }
 
 describe('admitted HTTP streaming through the native transport', () => {
@@ -118,37 +116,16 @@ describe('admitted HTTP streaming through the native transport', () => {
         expect(f.requests()).toBe(1);
     });
 
-    it.each(['cancel', 'revoke', 'retire'] as const)('closes open stream access on %s', async reason => {
+    it('closes open stream access on caller cancellation', async () => {
         const f = await fixture();
         const stream = await f.service.requestStream({ url: f.origin, redirect: 'error' });
         const iterator = stream.chunks[Symbol.asyncIterator]();
         await iterator.next();
-        if (reason === 'cancel') f.cancellation.abort();
-        if (reason === 'revoke') f.revocation.abort();
-        if (reason === 'retire') f.retire();
-        if (reason === 'cancel') {
-            await expect(iterator.next()).rejects.toMatchObject({ name: 'AbortError' });
-        } else {
-            await expect(iterator.next()).rejects.toMatchObject({ code: 'plugin_final_generation_retired' });
-            await expect(f.service.requestStream({ url: f.origin, redirect: 'error' }))
-                .rejects.toMatchObject({ code: 'plugin_final_generation_retired' });
-        }
+        f.cancellation.abort();
+        await expect(iterator.next()).rejects.toMatchObject({ name: 'AbortError' });
         await f.disconnected;
         await stream.dispose();
         expect(f.requests()).toBe(1);
-    });
-
-    it('closes an open native body read on authority revocation while a read is pending', async () => {
-        const f = await fixture();
-        const stream = await f.service.requestStream({ url: f.origin, redirect: 'error' });
-        const iterator = stream.chunks[Symbol.asyncIterator]();
-        await iterator.next();
-        const pending = iterator.next().then(value => ({ value }), error => ({ error }));
-        await nextIoTurn();
-        f.revocation.abort();
-        await expect(pending).resolves.toMatchObject({ error: { code: 'plugin_final_generation_retired' } });
-        await f.disconnected;
-        await stream.dispose();
     });
 
     it('settles a pending native body read when the consumer explicitly disposes it', async () => {
