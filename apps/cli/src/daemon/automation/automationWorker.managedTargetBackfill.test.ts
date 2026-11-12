@@ -19,6 +19,7 @@ async function harness(hold = false, withRecovery = false) {
     let selected: ServerResponse | undefined;
     let storageResponse: ServerResponse | undefined;
     let storageRequests = 0;
+    const storageOperations: unknown[] = [];
     const recoveryOutcomes: string[] = [];
     const summary = AutomationDefinitionListItemSchema.parse({ id: 'legacy-unindexed', name: 'retained',
         description: null, enabled: true, targetType: null, existingSessionId: null, templateVersion: 1,
@@ -41,6 +42,9 @@ async function harness(hold = false, withRecovery = false) {
         } else if (url.pathname === WORKFLOW_RUN_STORAGE_HTTP_PATH) {
             storageRequests++;
             storageResponse = response;
+            let body = '';
+            request.on('data', chunk => { body += String(chunk); });
+            request.on('end', () => { storageOperations.push(JSON.parse(body)); });
         } else if (url.pathname.startsWith('/v3/automations/worker/assignments')) {
             response.end(JSON.stringify({ assignments: [], settings: { maxActiveRunsPerMachine: DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE } }));
         } else if (url.pathname.endsWith('/worker/run-lifecycle')) response.end(JSON.stringify({ sources: [] }));
@@ -66,7 +70,7 @@ async function harness(hold = false, withRecovery = false) {
             catch { recoveryOutcomes.push('cancelled'); }
         } } satisfies Pick<Parameters<typeof startAutomationWorker>[0], 'recoverWorkflowRuns'> : {}) });
     return { worker, selections: () => selections, detailReads: () => detailReads,
-        storageRequests: () => storageRequests, storageClosed: () => storageResponse?.destroyed === true, recoveryOutcomes,
+        storageRequests: () => storageRequests, storageOperations, storageClosed: () => storageResponse?.destroyed === true, recoveryOutcomes,
         releaseRecovery: () => storageResponse?.end(JSON.stringify({ candidates: [] })),
         releasePage: () => selected?.end(JSON.stringify({ automations: [], nextCursor: 'remaining-page' })),
         selectionClosed: () => selected?.destroyed === true,
@@ -79,6 +83,26 @@ async function harness(hold = false, withRecovery = false) {
 }
 
 describe('Automation worker one-shot managed target migration', () => {
+    it('observes exact same-Account terminal custody after a deletion recovery wake', async () => {
+        const owner = await harness(false, true);
+        const wake = (targetMachineId: string) => owner.worker.handleServerUpdate({ id: 'terminal-custody', seq: 1, createdAt: 1,
+            body: { t: 'automation-run-updated', runId: 'uncertain-run', automationId: null,
+                state: 'outcome_uncertain', scheduledAt: 1, startedAt: 1, finishedAt: 2, updatedAt: 2,
+                machineId: 'backfill-machine', targetMachineId } });
+        try {
+            await vi.waitFor(() => expect(owner.selections()).toBe(1));
+            wake('another-machine');
+            expect(owner.storageRequests()).toBe(0);
+            wake('backfill-machine');
+            await vi.waitFor(() => expect(owner.storageOperations).toEqual([
+                expect.objectContaining({ operation: 'recovery.list', runId: 'uncertain-run' }),
+            ]));
+            expect(owner.storageRequests()).toBe(1);
+            owner.releaseRecovery();
+            await vi.waitFor(() => expect(owner.recoveryOutcomes).toEqual(['completed']));
+        } finally { await owner.close(); }
+    });
+
     it('retires credential-stale backfill without cancelling worker recovery, then cancels recovery on worker stop', async () => {
         const owner = await harness(true, true);
         const requestRecovery = (id: string) => owner.worker.handleServerUpdate({ id, seq: 1, createdAt: 1,

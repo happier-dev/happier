@@ -5,7 +5,7 @@ import { projectWorkflowBigIntV1, WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1, t
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { toAutomationRunExecutionInputV1Origin } from '@happier-dev/protocol/automations/automationApiV3';
 import { projectAutomationAccountCurrentnessWitnessV1, sameAutomationAccountContentIdentityV1, type AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
-import { WorkflowRunListRequestV1Schema, WorkflowRunAutomationSummariesRequestV1Schema,
+import { WorkflowRunListRequestV1Schema, WorkflowRunAutomationSummariesRequestV1Schema, workflowRunListRequiresAcceptedProgramV1,
     type WorkflowRunSummariesResultV1,
     type WorkflowRunSourceSummariesResultV1, type WorkflowRunAutomationSummariesResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { Prisma } from "@prisma/client";
@@ -146,7 +146,7 @@ type WorkflowRunProjectionRow = NarrowedWorkflowRunRow<typeof workflowRunProject
 type WorkflowRunRow = WorkflowRunProjectionRow & { invocationAttentionRequired: boolean };
 type WorkflowRunListRow = NarrowedWorkflowRunRow<typeof workflowRunListSelect>;
 type WorkflowRunListCapturedRow = Omit<WorkflowRunListRow, "workflowAcceptedSnapshotEnvelope">
-    & { workflowAcceptedSnapshotEnvelope?: string | null; invocationAttentionRequired: boolean };
+    & { workflowAcceptedSnapshotEnvelope?: string | null; workflowDisplaySummaryEnvelope?: string | null; invocationAttentionRequired: boolean };
 type WorkflowRunFullRow = NarrowedWorkflowRunRow<typeof workflowRunSelect>;
 
 export function deriveWorkflowRunAvailability(input: Readonly<{
@@ -333,6 +333,8 @@ export type AdmitWorkflowRunInput = Readonly<{
     origin: Extract<WorkflowRunOriginV1, { kind: "direct" }>;
     machineId: string;
     acceptedEnvelope: string;
+    /** Row display summary sealed with the snapshot; absent from writers that predate it. */
+    displayEnvelope?: string;
     accountCurrentness: AutomationAccountCurrentnessWitnessV1;
     sourceArtifactId?: string | null;
     visibleTeamId?: string | null;
@@ -343,6 +345,14 @@ export type AdmitWorkflowRunInput = Readonly<{
     discussionAuthentication?: SessionAccessAuthentication;
     discussionRoundPattern?: DiscussionRoundOutcomeV1['pattern'];
 }>;
+
+/** The display summary shares the snapshot's mode and Run binding; only its outer form is visible here. */
+function assertWorkflowDisplaySummaryEnvelopeForMode(params: Readonly<{ accountId: string; runId: string; displayEnvelope?: string }>,
+    mode: "plain" | "e2ee"): void {
+    if (params.displayEnvelope === undefined) return;
+    assertWorkflowStoredEnvelopeOuterForMode({ raw: params.displayEnvelope, mode,
+        binding: { v: 1, purpose: "display_summary", accountId: params.accountId, runId: params.runId } });
+}
 
 function isExactWorkflowAdmission(row: WorkflowRunListRow, params: AdmitWorkflowRunInput): boolean {
     const sameOrigin = row.originKind === "direct"
@@ -426,6 +436,7 @@ export async function admitWorkflowRunTx(tx: Tx, params: AdmitWorkflowRunInput):
         }) : undefined;
         if (managedBirth === false) throw new WorkflowRunServiceError('run_access_denied');
         assertWorkflowStoredEnvelopeOuterForMode({ raw: params.acceptedEnvelope, mode, binding: { v: 1, purpose: "accepted_snapshot", accountId: params.accountId, runId: params.runId } });
+        assertWorkflowDisplaySummaryEnvelopeForMode(params, mode);
         const machine = await tx.machine.findUnique({ where: { id: params.machineId },
             select: buildMachineAdmissionFactsSelect(params.accountId) });
         const admission = await resolveMachineAdmissionFromFactsInTx(tx, machine,
@@ -460,6 +471,7 @@ export async function admitWorkflowRunTx(tx: Tx, params: AdmitWorkflowRunInput):
                     scheduledAt: now,
                     dueAt: now,
                     workflowAcceptedSnapshotEnvelope: params.acceptedEnvelope,
+                    workflowDisplaySummaryEnvelope: params.displayEnvelope ?? null,
                     // The Automation claim corridor reads the frozen program
                     // from executionInputEnvelope for both origins. Direct
                     // admission therefore materializes the same immutable bytes
@@ -581,7 +593,7 @@ export async function attachAutomationWorkflowBodyTx(tx: Tx, params: Readonly<{
 export async function resolveAutomationWorkflowAcceptedSnapshot(params: Readonly<{
     accountId: string; runId: string; automationId: string; machineId: string;
     expectedAttempt: number; expectedRevision: number;
-    definitionEnvelope: string; acceptedEnvelope: string;
+    definitionEnvelope: string; acceptedEnvelope: string; displayEnvelope?: string;
     originSessionId?: string;
     resultDelivery?: AdmitWorkflowRunInput["resultDelivery"];
     sourceArtifactId?: string | null;
@@ -612,6 +624,7 @@ export async function resolveAutomationWorkflowAcceptedSnapshot(params: Readonly
             throw new WorkflowRunServiceError("invalid_input");
         }
         assertWorkflowStoredEnvelopeOuterForMode({ raw: params.acceptedEnvelope, mode, binding: { v: 1, purpose: "accepted_snapshot", accountId: params.accountId, runId: params.runId } });
+        assertWorkflowDisplaySummaryEnvelopeForMode(params, mode);
         const current = await tx.automationRun.findFirst({ where: {
             id: params.runId,
             accountId: params.accountId,
@@ -678,7 +691,8 @@ export async function resolveAutomationWorkflowAcceptedSnapshot(params: Readonly
             workflowCheckpointEnvelope: null,
             executionInputEnvelope: params.definitionEnvelope,
             assignments: { some: { machineId: params.machineId } },
-        }, data: { workflowAcceptedSnapshotEnvelope: params.acceptedEnvelope, workflowCustodyState: "pending", originSessionId,
+        }, data: { workflowAcceptedSnapshotEnvelope: params.acceptedEnvelope,
+            workflowDisplaySummaryEnvelope: params.displayEnvelope ?? null, workflowCustodyState: "pending", originSessionId,
             originDeliveryAckRevision: params.resultDelivery ? 0 : null,
             sourceArtifactId: params.sourceArtifactId ?? null, visibleTeamId, revision: { increment: 1 } } });
         if (changed.count !== 1) throw new WorkflowRunServiceError("currentness_conflict");
@@ -876,7 +890,11 @@ export async function admitWorkflowInvocations(params: Readonly<{
                 contentEnvelope: invocation.contentEnvelope,
             }, select: invocationSelect }) as InvocationRow);
         }
-        await markWorkflowRunChangedTx(tx, params.accountId, params.runId, deliveryBefore);
+        // Pending allocation is recovery state; publish when the step becomes
+        // visible, or when allocation itself changes capacity/review attention.
+        if (params.invocations.some(invocation => invocation.replaces || invocation.lifecycle === "waiting_for_capacity")) {
+            await markWorkflowRunChangedTx(tx, params.accountId, params.runId, deliveryBefore);
+        }
         return { invocations: created.map(projectInvocation), parentRevision: params.expectedRevision + 1, disposition: "created" as const };
     }, {
         // Ordered publication locks/replay and mode/control/row predicates fence this mutation.
@@ -1105,6 +1123,11 @@ async function workflowRunCallerScopeWhereTx(tx: Tx, scope: WorkflowRunCallerSco
     ] };
 }
 
+/** A summarized row ships its display summary in place of the snapshot; other rows keep the snapshot slot (null when absent). */
+function shipsAcceptedEnvelope(row: Readonly<{ workflowAcceptedSnapshotEnvelope: string | null; workflowDisplaySummaryEnvelope: string | null }>): boolean {
+    return row.workflowDisplaySummaryEnvelope === null || row.workflowAcceptedSnapshotEnvelope !== null;
+}
+
 export async function listWorkflowRuns(params: PageOptions & Readonly<{
     accountId: string; runId?: string; origin?: "automation" | "direct"; states?: readonly WorkflowRunState[]; attention?: "required";
     runIds?: readonly string[];
@@ -1114,6 +1137,9 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
 }>) {
     if (params.limit !== undefined && (!Number.isSafeInteger(params.limit) || params.limit <= 0)) throw new WorkflowRunServiceError("invalid_input");
     const membershipOnly = params.projection === "membership";
+    // A row reads its sealed display summary; the frozen program travels only
+    // to pages that name authored steps, or for Runs admitted before summaries.
+    const programRequired = !membershipOnly && workflowRunListRequiresAcceptedProgramV1(params);
     if (membershipOnly) {
         const { accountId: _accountId, pageByteLimit: _pageByteLimit, ...request } = params;
         if (!WorkflowRunListRequestV1Schema.safeParse(request).success) throw new WorkflowRunServiceError("invalid_input");
@@ -1167,9 +1193,18 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
                 ...(additionalWhere.length > 0 ? { AND: additionalWhere } : {}),
             },
             orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: batchSize + 1,
-            select: membershipOnly ? { ...workflowRunListSelect, workflowAcceptedSnapshotEnvelope: false } : workflowRunListSelect,
+            select: membershipOnly ? { ...workflowRunListSelect, workflowAcceptedSnapshotEnvelope: false }
+                : programRequired ? workflowRunListSelect
+                : { ...workflowRunListSelect, workflowAcceptedSnapshotEnvelope: false, workflowDisplaySummaryEnvelope: true },
         }) as WorkflowRunListCapturedRow[];
-        const candidateRows = rows.slice(0, batchSize);
+        const pageRows = rows.slice(0, batchSize);
+        // Runs admitted before display summaries list from their accepted snapshot.
+        const summaryless = membershipOnly || programRequired ? [] : pageRows.filter(row => row.workflowDisplaySummaryEnvelope == null);
+        const snapshots = summaryless.length === 0 ? null : new Map((await tx.automationRun.findMany({
+            where: { id: { in: summaryless.map(row => row.id) } }, select: { id: true, workflowAcceptedSnapshotEnvelope: true },
+        })).map(row => [row.id, row.workflowAcceptedSnapshotEnvelope]));
+        const candidateRows = snapshots === null ? pageRows
+            : pageRows.map(row => snapshots.has(row.id) ? { ...row, workflowAcceptedSnapshotEnvelope: snapshots.get(row.id) ?? null } : row);
         const roots = membershipOnly || candidateRows.length === 0 ? [] : await tx.workflowRunInvocation.findMany({
             where: { runId: { in: candidateRows.map((row) => row.id) }, parentRecordId: null,
                 sequence: 0n, memberOrdinal: 0n, attempt: 0n }, select: invocationSelect,
@@ -1211,7 +1246,7 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
             const wanted = params.limit ?? Number.POSITIVE_INFINITY;
             let pageAfterDate = afterDate;
             let pageAfterId = afterId;
-            let collected: Array<WorkflowRunListCapturedRow & { workflowAcceptedSnapshotEnvelope: string | null; keyCensus: WorkflowRunRecipientCensusResponseV1 | null;
+            let collected: Array<WorkflowRunListCapturedRow & { workflowAcceptedSnapshotEnvelope: string | null; workflowDisplaySummaryEnvelope: string | null; keyCensus: WorkflowRunRecipientCensusResponseV1 | null;
                 invocationProgress: Array<{ index: ReturnType<typeof projectInvocation>; contentEnvelope: string }>;
                 heldProgress: { index: ReturnType<typeof projectInvocation>; contentEnvelope: string } | null;
                 rootProgress: { index: ReturnType<typeof projectInvocation>; contentEnvelope: string } | null }> = [];
@@ -1224,7 +1259,7 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
                     const heldByRunId = new Map(heldRuns.map(row => [row.id, row.workflowInvocations[0]]));
                     const candidates = candidateRows.map((candidate) => {
                         if (membershipOnly) return { ...candidate, invocationAttentionRequired: attentionIds.has(candidate.id),
-                            workflowAcceptedSnapshotEnvelope: null, keyCensus: null, rootProgress: null, heldProgress: null, invocationProgress: [] };
+                            workflowAcceptedSnapshotEnvelope: null, workflowDisplaySummaryEnvelope: null, keyCensus: null, rootProgress: null, heldProgress: null, invocationProgress: [] };
                         const keyCensus = pageKeys?.get(candidate.id);
                         if (!keyCensus) throw new WorkflowRunServiceError("run_not_found");
                         const root = rootsByRunId.get(candidate.id);
@@ -1248,19 +1283,21 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
                         const held = heldByRunId.get(candidate.id);
                         const heldProgress = held ? projectPrivateInvocation(held) : null;
                         const row = { ...candidate, workflowAcceptedSnapshotEnvelope: candidate.workflowAcceptedSnapshotEnvelope ?? null,
+                            workflowDisplaySummaryEnvelope: candidate.workflowDisplaySummaryEnvelope ?? null,
                             invocationAttentionRequired: attentionIds.has(candidate.id), keyCensus, rootProgress, invocationProgress, heldProgress };
-                        if (row.workflowAcceptedSnapshotEnvelope === null) return row;
-                        try {
-                            assertWorkflowStoredEnvelopeOuterForMode({
-                                raw: row.workflowAcceptedSnapshotEnvelope,
-                                mode: keyCensus.encryptionMode,
-                                binding: { v: 1, purpose: "accepted_snapshot", accountId: keyCensus.ownerAccountId, runId: row.id },
-                            });
-                            return row;
-                        } catch (error) {
-                            if (!(error instanceof WorkflowStoredContentError)) throw error;
-                            return { ...row, workflowAcceptedSnapshotEnvelope: null };
-                        }
+                        const readable = (raw: string | null, purpose: "accepted_snapshot" | "display_summary") => {
+                            if (raw === null) return null;
+                            try {
+                                assertWorkflowStoredEnvelopeOuterForMode({ raw, mode: keyCensus.encryptionMode,
+                                    binding: { v: 1, purpose, accountId: keyCensus.ownerAccountId, runId: row.id } });
+                                return raw;
+                            } catch (error) {
+                                if (!(error instanceof WorkflowStoredContentError)) throw error;
+                                return null;
+                            }
+                        };
+                        return { ...row, workflowAcceptedSnapshotEnvelope: readable(row.workflowAcceptedSnapshotEnvelope, "accepted_snapshot"),
+                            workflowDisplaySummaryEnvelope: readable(row.workflowDisplaySummaryEnvelope, "display_summary") };
                     });
                     const bounded = appendBoundedPage({
                         existing: collected,
@@ -1271,7 +1308,8 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
                         // sidecar object, so it contributes both exact members.
                         serializeMembers: (row) => membershipOnly ? [JSON.stringify(projectRun(row as WorkflowRunRow, params.accountId))] : [
                             JSON.stringify(projectRun(row as WorkflowRunRow, params.accountId)),
-                            `${JSON.stringify(row.id)}:${JSON.stringify(row.workflowAcceptedSnapshotEnvelope)}`,
+                            ...(shipsAcceptedEnvelope(row) ? [`${JSON.stringify(row.id)}:${JSON.stringify(row.workflowAcceptedSnapshotEnvelope)}`] : []),
+                            ...(row.workflowDisplaySummaryEnvelope !== null ? [`${JSON.stringify(row.id)}:${JSON.stringify(row.workflowDisplaySummaryEnvelope)}`] : []),
                             `${JSON.stringify(row.id)}:${JSON.stringify(row.keyCensus)}`,
                             `${JSON.stringify(row.id)}:${JSON.stringify(row.rootProgress)}`,
                             ...(params.attention === "required" ? [`${JSON.stringify(row.id)}:${JSON.stringify(row.heldProgress)}`] : []),
@@ -1300,10 +1338,12 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
         },
     }, { transactionClass: "workflow-list-runs" });
     const last = page.rows.at(-1);
+    const displayEnvelopes = page.rows.flatMap(row => row.workflowDisplaySummaryEnvelope !== null ? [[row.id, row.workflowDisplaySummaryEnvelope] as const] : []);
     return {
         ...(membershipOnly ? { projection: "membership" as const } : {}),
         runs: page.rows.map(row => projectRun(row as WorkflowRunRow, params.accountId)),
-        acceptedEnvelopesByRunId: Object.fromEntries(membershipOnly ? [] : page.rows.map((row) => [row.id, row.workflowAcceptedSnapshotEnvelope])),
+        acceptedEnvelopesByRunId: Object.fromEntries(membershipOnly ? [] : page.rows.flatMap((row) => shipsAcceptedEnvelope(row) ? [[row.id, row.workflowAcceptedSnapshotEnvelope] as const] : [])),
+        ...(displayEnvelopes.length > 0 ? { displayEnvelopesByRunId: Object.fromEntries(displayEnvelopes) } : {}),
         keyCensusByRunId: Object.fromEntries(page.rows.flatMap(row => row.keyCensus ? [[row.id, row.keyCensus] as const] : [])),
         rootProgressByRunId: Object.fromEntries(membershipOnly ? [] : page.rows.map((row) => [row.id, row.rootProgress])),
         ...(params.attention === "required" ? { heldProgressByRunId: Object.fromEntries(membershipOnly ? [] : page.rows.map(row => [row.id, row.heldProgress])) } : {}),
@@ -2099,7 +2139,16 @@ export async function commitWorkflowInvocationFact(params: WorkflowInvocationFac
         });
         if (changed.count !== 1) throw new WorkflowRunServiceError("currentness_conflict");
         const updated = await tx.workflowRunInvocation.findUniqueOrThrow({ where: { id: current.id }, select: invocationSelect }) as InvocationRow;
-        await markWorkflowRunChangedTx(tx, params.accountId, params.runId, deliveryBefore, current.lifecycle !== "admitting" && params.lifecycle === "admitting");
+        const inputDeliverable = current.lifecycle !== "admitting" && params.lifecycle === "admitting";
+        if (current.parentRecordId !== null
+            && (current.lifecycle === "pending" || current.lifecycle === "admitting")
+            && (params.lifecycle === "pending" || params.lifecycle === "admitting")) {
+            // Preparation remains durable without refreshing every Run viewer.
+            // Input delivery still owns its existing Session hint and wake.
+            await reconcileWorkflowRunAttentionAndHintTx(tx, params.accountId, params.runId, deliveryBefore, inputDeliverable);
+        } else {
+            await markWorkflowRunChangedTx(tx, params.accountId, params.runId, deliveryBefore, inputDeliverable);
+        }
         return await acknowledge(updated);
     }, {
         // Ordered publication locks fence the audience before the mode/parent
@@ -2720,7 +2769,7 @@ export async function recoverWorkflowInvocations(params: Readonly<{
 }
 
 export async function deleteWorkflowRun(params: Readonly<{ accountId: string; runId: string; expectedRevision: number }>) {
-    return await inTx(async (tx) => {
+    const result = await inTx(async (tx) => {
         await loadAccountModeTx(tx, params.accountId, params.runId);
         // A settled ancestor still supplies causality to actual live Run/turn
         // publishers. The same retained-history owner governs clear and delete.
@@ -2743,10 +2792,25 @@ export async function deleteWorkflowRun(params: Readonly<{ accountId: string; ru
         if (deleted.count !== 1) {
             const exists = await tx.automationRun.findFirst({
                 where: { id: params.runId, accountId: params.accountId },
-                select: { state: true, workflowCustodyState: true },
+                select: { id: true, state: true, workflowCustodyState: true, revision: true,
+                    automationId: true, triggerId: true, scheduledAt: true, startedAt: true, finishedAt: true,
+                    updatedAt: true, claimedByMachineId: true, attempt: true, account: { select: { seq: true } } },
             });
             if (!exists) throw new WorkflowRunServiceError("run_not_found");
-            if (exists.workflowCustodyState === "pending") throw new WorkflowRunServiceError("custody_pending");
+            if (exists.workflowCustodyState === "pending") {
+                if (exists.revision === params.expectedRevision
+                    && AUTOMATION_RUN_TERMINAL_STATES.some(state => state === exists.state)) {
+                    // A person retrying Delete can rejoin custody observation after
+                    // storage recovers. Preserve the outcome and deletion guard;
+                    // only the admitted Machine may prove that custody settled.
+                    await publishWorkflowRunMachineWakeInTx(tx, { accountId: params.accountId,
+                        run: { ...exists, state: projectAutomationRunState(exists.state) },
+                        cursor: { resolveCursor: () => exists.account.seq } });
+                    // Commit the wake before returning the existing typed refusal.
+                    return null;
+                }
+                throw new WorkflowRunServiceError("custody_pending");
+            }
             if (AUTOMATION_RUN_TERMINAL_STATES.some((candidate) => candidate === exists.state)) {
                 const custodyTerminal = await tx.automationRun.findFirst({
                     where: {
@@ -2771,4 +2835,6 @@ export async function deleteWorkflowRun(params: Readonly<{ accountId: string; ru
         isolationLevel: "ReadCommitted",
         transactionClass: "workflow-delete-run",
     });
+    if (result === null) throw new WorkflowRunServiceError("custody_pending");
+    return result;
 }

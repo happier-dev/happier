@@ -902,8 +902,8 @@ export function startAutomationWorker(params: {
 
       if (body.t === 'automation-run-updated' && body.targetMachineId === params.machineId
         && isTerminalAutomationRunStateV3(body.state)
-        && body.requesterScope?.kind === 'workflow_trigger' && !activeExecutions.has(body.runId)) {
-        recoverWorkflowCustody(body.runId, body.requesterScope.id);
+        && !activeExecutions.has(body.runId)) {
+        recoverWorkflowCustody(body.runId, body.requesterScope?.kind === 'workflow_trigger' ? body.requesterScope.id : undefined);
         return;
       }
 

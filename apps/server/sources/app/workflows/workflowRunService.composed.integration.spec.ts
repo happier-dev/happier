@@ -29,6 +29,7 @@ import {
     sealWorkflowCheckpointStoredEnvelopeV1,
     sealWorkflowFinalResultStoredEnvelopeV1,
     sealWorkflowProgressStoredEnvelopeV1,
+    sealWorkflowRunAcceptedEnvelopesV1,
     serializeWorkflowStoredContentEnvelopeV1,
     type WorkflowReviewV1,
     WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1,
@@ -115,8 +116,15 @@ const e2eeWorkflowContent = {
     randomBytes: (length: number) => new Uint8Array(length).fill(3),
 };
 async function acceptedEnvelope(params: { accountId: string; runId: string; machineId: string; originSessionId?: string; automationId?: string; mode?: "plain" | "e2ee"; deliver?: boolean; permission?: "default" | "read-only"; definition?: WorkflowDefinitionV1 }) {
+    return serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+        ...(params.mode === "e2ee" ? e2eeWorkflowContent : { mode: "plain" as const }),
+        binding: { v: 1, purpose: "accepted_snapshot", accountId: params.accountId, runId: params.runId },
+        acceptedSnapshot: await acceptedSnapshotFixture(params),
+    }));
+}
+async function acceptedSnapshotFixture(params: { machineId: string; originSessionId?: string; automationId?: string; deliver?: boolean; permission?: "default" | "read-only"; definition?: WorkflowDefinitionV1 }) {
     const origin = { kind: "direct" as const, ...(params.originSessionId ? { originSessionId: params.originSessionId } : {}) };
-    const acceptedSnapshot = await materializeWorkflowAcceptedSnapshotFixture({
+    return await materializeWorkflowAcceptedSnapshotFixture({
         definition: params.definition ?? (params.permission ? { ...definition, defaults: { ...definition.defaults, permissionMode: params.permission } } : definition),
         context: {
             source: params.automationId ? { kind: "automation", automationId: params.automationId } : { kind: "inline" },
@@ -129,11 +137,6 @@ async function acceptedEnvelope(params: { accountId: string; runId: string; mach
             authorization: { principal: { kind: "host" } },
         },
     });
-    return serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
-        ...(params.mode === "e2ee" ? e2eeWorkflowContent : { mode: "plain" as const }),
-        binding: { v: 1, purpose: "accepted_snapshot", accountId: params.accountId, runId: params.runId },
-        acceptedSnapshot,
-    }));
 }
 async function encryptedAcceptedEnvelope(params: { accountId: string; runId: string; machineId: string }) {
     return serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
@@ -1715,8 +1718,7 @@ describe("workflowRunService (integration)", () => {
     it("wakes the committed cold Session placement for origin input or result without unrelated pending input", async () => {
         process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
         const seeded = await seedPendingAdmission(true);
-        const homeId = `srv_${"e".repeat(32)}`;
-        process.env.HAPPIER_SERVER_IDENTITY_ID = homeId;
+        const homeId = await getOrCreateServerIdentityId();
         const controller = await db.machine.create({ data: { id: randomUUID(), accountId: seeded.accountId,
             metadata: "{}", installationId: "origin-controller-installation" } });
         await db.machine.update({ where: { id: seeded.machineId }, data: {
@@ -1778,7 +1780,29 @@ describe("workflowRunService (integration)", () => {
             expect(contextTargets()).toMatchObject([{ managedId: managed.id, enrolledMachineId: seeded.machineId,
                 origin: { kind: "context-delivery", session: { homeId, sessionId: seeded.sessionId },
                     delivery: { runId: seeded.runId, revision: 2 } } }]);
+            const { readWorkflowRunOriginWakeCandidatesInTx } = await import('./workflowRunAttention');
+            const { resolveCurrentMachineRecipientAccountIdsInTx } = await import('@/app/machines/machineAccess');
+            console.info('W1_WAKE_DIAGNOSTIC', JSON.stringify(await inTx(async tx => ({
+                audience: await resolveCurrentMachineRecipientAccountIdsInTx(tx, controller.id),
+                candidates: await readWorkflowRunOriginWakeCandidatesInTx(tx, { originSessionId: seeded.sessionId }),
+                session: await tx.session.findUnique({ where: { id: seeded.sessionId }, select: { runtimeMachineTarget: true } }),
+                run: await tx.automationRun.findUnique({ where: { id: seeded.runId }, select: { originSessionId: true,
+                    workflowCustodyState: true, revision: true,
+                    workflowInvocations: { select: { lifecycle: true } } } }),
+            }))));
+            const { readCurrentCommittedSessionInputMachineTargetInTx } = await import('@/app/session/messages/sessionInputAdmission');
+            const { resolveMachineAdmissionInTx } = await import('@/app/machines/machineAccess');
+            const { resolveManagedWakeTargetInTx } = await import('@/app/machines/managed/managedWake');
+            console.info('W1_WAKE_PREREQUISITE', JSON.stringify(await inTx(async tx => ({
+                candidates: (await readWorkflowRunOriginWakeCandidatesInTx(tx, { accountIds: await resolveCurrentMachineRecipientAccountIdsInTx(tx, controller.id) })).length,
+                placement: Boolean(await readCurrentCommittedSessionInputMachineTargetInTx(tx, seeded.sessionId)),
+                admission: await resolveMachineAdmissionInTx(tx, { actorAccountId: seeded.accountId, machineId: seeded.machineId }),
+                binding: Boolean(await resolveManagedWakeTargetInTx(tx, { actorAccountId: seeded.accountId, machineId: seeded.machineId,
+                    origin: { kind: 'context-delivery', session: { homeId, sessionId: seeded.sessionId }, delivery: { runId: seeded.runId, revision: 2 } } })),
+            }))));
+            const directReconnect = await readManagedWakeTargets({ actorAccountId: seeded.accountId, request });
             const admitted = await measureReconnect();
+            console.info('W1_WAKE_RECONNECT', JSON.stringify({ direct: directReconnect, measured: admitted }));
             expect(admitted.value.targets)
                 .toContainEqual(expect.objectContaining({ origin: expect.objectContaining({ kind: 'context-delivery' }) }));
             // managedWake.ts reads only actual origin work; its canonical committed
@@ -2529,6 +2553,43 @@ describe("workflowRunService (integration)", () => {
         expect((await getWorkflowRun({ accountId: seeded.accountId, runId })).run.revision).toBe(1);
         const rows = await listWorkflowRunInvocations({ accountId: seeded.accountId, runId, pageByteLimit: 4096 });
         expect(rows.invocations).toEqual([expect.objectContaining({ id: rootId, sequence: "0", memberOrdinal: "0", attempt: "0", lifecycle: "completed" })]);
+    });
+
+    it.each([false, true])("keeps preparation facts private while publishing completed steps (running=%s)", async (running) => {
+        const seeded = await seed();
+        const runId = randomUUID(), rootId = randomUUID(), leafId = randomUUID();
+        await admitWorkflowRun({ ...seeded, runId, origin: { kind: "direct" },
+            acceptedEnvelope: await acceptedEnvelope({ ...seeded, runId }) });
+        await initializeWorkflowRunExecution({ accountId: seeded.accountId, runId, expectedRevision: 0,
+            checkpointEnvelope: checkpointEnvelope(seeded.accountId, runId, rootId, 1n),
+            rootInvocation: { id: rootId, contentEnvelope: progressEnvelope({ ...seeded, runId, id: rootId,
+                sequence: 0n, parentRecordId: null, memberOrdinal: 0n }) } });
+        const cursor = async () => (await db.account.findUniqueOrThrow({ where: { id: seeded.accountId }, select: { seq: true } })).seq;
+        const before = await cursor();
+        const leaf = { ...seeded, runId, id: leafId, sequence: 1n, parentRecordId: rootId, memberOrdinal: 0n };
+        await admitWorkflowInvocationsWithClaim({ ...seeded, runId, expectedRevision: 1,
+            checkpointEnvelope: checkpointEnvelope(seeded.accountId, runId, rootId, 2n),
+            invocations: [{ id: leafId, sequence: 1n, parentRecordId: rootId, memberOrdinal: 0n,
+                contentEnvelope: progressEnvelope(leaf) }] });
+        expect(await cursor()).toBe(before);
+        const fact = { ...seeded, runId, machineId: seeded.machineId, parentAttempt: 1,
+            invocationId: leafId, invocationAttempt: 0n };
+        await commitWorkflowInvocationFact({ ...fact, expectedLifecycle: "pending", lifecycle: "pending",
+            contentEnvelope: progressEnvelope({ ...leaf, reason: "workspace_prepared" }) });
+        await commitWorkflowInvocationFact({ ...fact, expectedLifecycle: "pending", lifecycle: "admitting",
+            contentEnvelope: progressEnvelope({ ...leaf, reason: "workspace_prepared" }) });
+        expect(await cursor()).toBe(before);
+        // Session execution publishes running; a direct leaf can finish at admission.
+        if (running) {
+            await commitWorkflowInvocationFact({ ...fact, expectedLifecycle: "admitting", lifecycle: "running",
+                contentEnvelope: progressEnvelope(leaf) });
+            expect(await cursor()).toBe(before + 1);
+        }
+        await commitWorkflowInvocationFact({ ...fact, expectedLifecycle: running ? "running" : "admitting", lifecycle: "completed",
+            contentEnvelope: progressEnvelope({ ...leaf, result: "done" }) });
+        expect(await cursor()).toBe(before + (running ? 2 : 1));
+        expect(await db.workflowRunInvocation.findMany({ where: { runId, parentRecordId: rootId },
+            select: { id: true, lifecycle: true } })).toEqual([{ id: leafId, lifecycle: "completed" }]);
     });
 
     it("allows unrelated Account version changes but rejects same-mode content-key rotation before storing private workflow bytes", async () => {
@@ -3379,6 +3440,34 @@ describe("workflowRunService (integration)", () => {
         expect(selected.runs).toHaveLength(2);
         expect(selected.invocationProgressByRunId?.[runId]).toEqual([{ index: expect.objectContaining({ id: ids[1], runId }), contentEnvelope: envelopes[1] }]);
         expect(selected.invocationProgressByRunId?.[otherRunId]).toEqual([]);
+    });
+
+    it("lists a summarized Run by its sealed display summary and a pre-summary Run by its accepted snapshot", async () => {
+        const seeded = await seed();
+        const summarized = [randomUUID(), randomUUID(), randomUUID()];
+        const presummary = randomUUID();
+        const displayByRunId: Record<string, string> = {};
+        for (const runId of summarized) {
+            const sealed = sealWorkflowRunAcceptedEnvelopesV1({ mode: "plain", accountId: seeded.accountId, runId,
+                acceptedSnapshot: await acceptedSnapshotFixture(seeded) });
+            displayByRunId[runId] = sealed.displayEnvelope;
+            await admitWorkflowRun({ accountId: seeded.accountId, runId, origin: { kind: "direct" }, machineId: seeded.machineId, ...sealed });
+        }
+        await admitWorkflowRun({ accountId: seeded.accountId, runId: presummary, origin: { kind: "direct" }, machineId: seeded.machineId,
+            acceptedEnvelope: await acceptedEnvelope({ ...seeded, runId: presummary }) });
+
+        const page = await listWorkflowRuns({ accountId: seeded.accountId, pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES });
+        expect(page.runs).toHaveLength(4);
+        // One opaque row source per member: the summary, or the snapshot for a Run admitted before summaries.
+        expect(Object.keys(page.acceptedEnvelopesByRunId)).toEqual([presummary]);
+        expect(page.displayEnvelopesByRunId).toEqual(displayByRunId);
+
+        // A page that names authored steps still carries every frozen program.
+        const named = await listWorkflowRuns({ accountId: seeded.accountId, runIds: [...summarized, presummary],
+            invocationProvenance: [{ runId: summarized[0]!, invocationRecordIds: ["missing-step"] }],
+            pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES });
+        expect(Object.keys(named.acceptedEnvelopesByRunId).sort()).toEqual([...summarized, presummary].sort());
+        expect(named.displayEnvelopesByRunId).toBeUndefined();
     });
 
     it("shortens Run and invocation pages for the complete external Action response envelope", async () => {
@@ -4399,6 +4488,40 @@ describe("workflowRunService (integration)", () => {
         await expect(retryWorkflowInvocation({ accountId: seeded.accountId, runId, expectedRevision: 1, invocationId: rootId, newInvocationId: retryId, newSequence: 1n,
             contentEnvelope: progressEnvelope({ ...seeded, runId, id: retryId, sequence: 1n, parentRecordId: null, memberOrdinal: 0n, attempt: 1n, previousAttemptRecordId: rootId, logicalInvocationRecordId: rootId }) }))
             .resolves.toMatchObject({ disposition: "accepted", invocation: { attempt: "1" } });
+    });
+
+    it("retries terminal pending custody through the assigned Machine when deletion is refused", async () => {
+        const seeded = await seed();
+        const other = await seed();
+        const runId = randomUUID();
+        const rootId = randomUUID();
+        await admitWorkflowRun({ accountId: seeded.accountId, runId, origin: { kind: "direct" }, machineId: seeded.machineId,
+            acceptedEnvelope: await acceptedEnvelope({ ...seeded, runId }) });
+        await initializeWorkflowRunExecution({ accountId: seeded.accountId, runId, expectedRevision: 0,
+            checkpointEnvelope: checkpointEnvelope(seeded.accountId, runId, rootId, 1n),
+            rootInvocation: { id: rootId, contentEnvelope: progressEnvelope({ ...seeded, runId, id: rootId,
+                sequence: 0n, parentRecordId: null, memberOrdinal: 0n }) } });
+        await db.workflowRunInvocation.update({ where: { id: rootId }, data: { lifecycle: "outcome_uncertain" } });
+        await db.automationRun.update({ where: { id: runId }, data: { state: "outcome_uncertain", finishedAt: new Date() } });
+        const before = await getWorkflowRun({ accountId: seeded.accountId, runId });
+        const executor = observeWorkflowMachineWake(seeded.accountId, seeded.machineId);
+        const otherMachine = observeWorkflowMachineWake(other.accountId, other.machineId);
+        const ui = observeWorkflowMachineWake(seeded.accountId);
+        try {
+            await expect(deleteWorkflowRun({ accountId: other.accountId, runId, expectedRevision: before.run.revision }))
+                .rejects.toMatchObject({ code: "run_not_found" });
+            expect(executor.updates).toEqual([]);
+            await expect(deleteWorkflowRun({ accountId: seeded.accountId, runId, expectedRevision: before.run.revision }))
+                .rejects.toMatchObject({ code: "custody_pending" });
+            expect(executor.updates.map(update => update.body)).toEqual([expect.objectContaining({
+                runId, targetMachineId: seeded.machineId, state: "outcome_uncertain",
+            })]);
+            expect(otherMachine.updates).toEqual([]);
+            expect(ui.updates).toEqual([]);
+            expect((await getWorkflowRun({ accountId: seeded.accountId, runId })).run).toMatchObject({
+                state: "outcome_uncertain", revision: before.run.revision, workflowCustodyState: "pending",
+            });
+        } finally { executor.close(); otherMachine.close(); ui.close(); }
     });
 
     it("keeps interrupted cancellation in stop custody instead of acknowledging terminal cancellation", async () => {

@@ -12,7 +12,7 @@ import { db, initDbPostgres } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { materializeWorkflowAcceptedSnapshotFixture } from "@/testkit/workflowAcceptedSnapshot";
 
-import { admitWorkflowRun, admitWorkflowRunTx, cancelWorkflowRun, listWorkflowRunsForRecovery } from "./workflowRunService";
+import { admitWorkflowRun, admitWorkflowRunTx, cancelWorkflowRun, deleteWorkflowRun, listWorkflowRunsForRecovery } from "./workflowRunService";
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Direct Workflow queued-work publication (PostgreSQL)", () => {
     beforeAll(async () => {
@@ -119,6 +119,31 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Direct Workflow
                 scope: "workflow", recipeFeaturePolicy: { workflowsEnabled: true } })).resolves.toMatchObject({ run: null });
             expect((await db.automationRun.findUniqueOrThrow({ where: { id: request.runId } })).state).toBe("cancelled");
         } finally { target.close(); }
+    });
+
+    it("wakes pending terminal custody on Delete without changing the Run or Account cursor", async () => {
+        const { account, machines, request } = await fixture();
+        await admitWorkflowRun(request);
+        await db.automationRun.update({ where: { id: request.runId }, data: {
+            state: "outcome_uncertain", revision: 9, claimedByMachineId: machines[0].id, finishedAt: new Date(),
+        } });
+        const before = await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } });
+        const target = observe(account.id, machines[0].id);
+        const peer = observe(account.id, machines[1].id);
+        const user = observe(account.id);
+        try {
+            await expect(deleteWorkflowRun({ accountId: account.id, runId: request.runId, expectedRevision: 9 }))
+                .rejects.toMatchObject({ code: "custody_pending" });
+            expect(target.updates.map(update => update.body)).toEqual([expect.objectContaining({
+                runId: request.runId, state: "outcome_uncertain", targetMachineId: machines[0].id,
+            })]);
+            expect(peer.updates).toEqual([]);
+            expect(user.updates).toEqual([]);
+            expect(await db.automationRun.findUniqueOrThrow({ where: { id: request.runId },
+                select: { state: true, revision: true, workflowCustodyState: true } }))
+                .toEqual({ state: "outcome_uncertain", revision: 9, workflowCustodyState: "pending" });
+            expect(await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } })).toEqual(before);
+        } finally { target.close(); peer.close(); user.close(); }
     });
 
     it("retains direct claimed work until its real lease expires, outside invocation-custody recovery", async () => {
