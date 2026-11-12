@@ -43,7 +43,7 @@ it.each(['workflowEditor', 'workflowRun'] as const)('reserves the %s primary on 
     }
 });
 
-it.each(['workflowEditor', 'workflowRun'] as const)('detail-navigation.%s resolves once; phone edits and equal renders add zero resolutions or effects', async pageKind => {
+it.each(['workflowEditor', 'workflowRun'] as const)('detail-navigation.%s resolves once; equal renders have no effects and Actions select the requested page', async pageKind => {
     const resolve = vi.spyOn(catalog, 'resolveDetailNavigationItems');
     const selectPage = vi.fn();
     const selectCompanion = vi.fn();
@@ -79,9 +79,11 @@ it.each(['workflowEditor', 'workflowRun'] as const)('detail-navigation.%s resolv
     const read = await invokeScopeAction('shell.column.get', { column: 'main' });
     expect(read).toMatchObject({ activeTab: activeId, items: expect.arrayContaining([{ id: 'steps', label: expect.any(String), available: true, pageKind, placement: pageKind === 'workflowEditor' ? 'pinned' : 'overflow' }]) });
     await invokeScopeAction('shell.column.set', { column: 'main', visible: true, tab: activeId });
-    expect(selectPage).not.toHaveBeenCalled();
+    // Selecting the retained page also returns from its companion (34ec23a793c).
+    expect(selectPage).toHaveBeenCalledExactlyOnceWith(activeId);
     await invokeScopeAction('shell.column.set', { column: 'main', visible: true, tab: activeId === 'steps' ? 'flow' : 'steps' });
-    expect(selectPage).toHaveBeenCalledTimes(1);
+    expect(selectPage).toHaveBeenCalledTimes(2);
+    expect(selectPage).toHaveBeenLastCalledWith(activeId === 'steps' ? 'flow' : 'steps');
     expect(selectCompanion).not.toHaveBeenCalled();
     expect(closeCompanion).not.toHaveBeenCalled();
     expect(resolve).toHaveBeenCalledTimes(1);

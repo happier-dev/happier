@@ -366,8 +366,8 @@ describe('workflow document mount scope', () => {
 
   it('mounts complete rows only where the viewport reaches and retains editing continuity as it scrolls', async () => {
     const intersections: Array<(visible: boolean) => void> = [];
-    vi.stubGlobal('window', { getComputedStyle: () => ({ overflowY: 'visible' }) });
-    vi.stubGlobal('document', {});
+    vi.stubGlobal('window', { getComputedStyle: () => ({ overflowY: 'visible' }), addEventListener() {}, removeEventListener() {} });
+    vi.stubGlobal('document', { addEventListener() {}, removeEventListener() {} });
     vi.stubGlobal('IntersectionObserver', class {
       private readonly report: (entries: ReadonlyArray<{ isIntersecting: boolean }>) => void;
       private readonly index: number;

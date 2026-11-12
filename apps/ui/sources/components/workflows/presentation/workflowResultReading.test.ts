@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { t } from '@/text';
 import { readWorkflowResultRows, readWorkflowValueText } from './workflowResultReading';
 
 describe('authored Workflow result JSON', () => {
@@ -14,7 +15,7 @@ describe('authored Workflow result JSON', () => {
 
     it('reads a loop or parallel container by its items only when its invocation says it is one', () => {
         const loop = readWorkflowResultRows([{ index: 0, status: 'completed', results: { check: 'passed' } }], undefined, 'loop');
-        expect(loop?.[0]).toMatchObject({ label: 'workflows.run.resultItem:{"n":1}', text: 'passed' });
+        expect(loop?.[0]).toMatchObject({ label: t('workflows.run.resultItem', { n: 1 }), text: 'passed' });
         const parallel = readWorkflowResultRows([{ branchId: 'docs', status: 'completed', results: { write: 'done' } }], undefined, 'parallel');
         expect(parallel?.[0]?.text).toBe('done');
         expect(parallel?.[0]?.label).not.toContain('resultItem');

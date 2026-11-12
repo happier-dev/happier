@@ -79,13 +79,13 @@ describe('WorkflowReviewCard', () => {
             { index: 0, status: 'completed', results: { answer: 'Cedar is ready' } },
             { index: 1, status: 'completed', results: { answer: 'Maple is ready' } },
         ];
-        const screen = await renderScreen(<WorkflowReviewValue value={value} contract={undefined} testIDPrefix="result" />);
+        const { screen } = await mount({ progress: progress({ blockKind: 'loop', result: value }), contract: undefined, readOnly: true });
         const read = screen.getTextContent();
         expect(read.includes('Cedar is ready')).toBe(true);
         expect(read.includes('Maple is ready')).toBe(true);
         for (const internal of ['"index"', 'status', 'results', '{', '[']) expect(read.includes(internal)).toBe(false);
-        expect(screen.findHostByTestId('result-value-0')).toBeTruthy();
-        expect(screen.findHostByTestId('result-value-1')).toBeTruthy();
+        expect(screen.findHostByTestId('review-value-0')).toBeTruthy();
+        expect(screen.findHostByTestId('review-value-1')).toBeTruthy();
     });
     it('reads object fields by their human names and nested values as words', async () => {
         const screen = await renderScreen(<WorkflowReviewValue value={{ releaseTitle: 'Happier 0.3', counts: { fixed: 491, reopened: 9 } }}

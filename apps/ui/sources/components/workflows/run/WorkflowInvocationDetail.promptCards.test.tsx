@@ -18,7 +18,6 @@ import { createWorkflowInvocationIndexFixture, createWorkflowRunSummaryFixture }
 
 import type { WorkflowInvocationDetailProps } from './WorkflowInvocationDetail';
 import type { WorkflowInvocationRecoveryPresentation } from './workflowRunDetailPresentation';
-import { projectWorkflowInvocationRecovery } from './workflowRunDetailPresentation';
 
 /**
  * A detached Workflow invocation's requests are answered through the SAME
@@ -68,6 +67,7 @@ const { AppSessionTranscriptSourceProvider } = await import('@/components/sessio
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 const { PermissionPromptCard } = await import('@/components/tools/shell/permissions/PermissionPromptCard');
 const { WorkflowInvocationDetail } = await import('./WorkflowInvocationDetail');
+const { projectWorkflowInvocationRecovery } = await import('./workflowRunDetailPresentation');
 const { AgentActionButton } = await import('@happier-dev/plugin-ui/components');
 const { AccountNoticeInvestigationBoundary } = await import('@/hooks/inbox/AccountNoticeInvestigationProvider');
 const { InvestigationOutcomeBanner } = await import('@/components/inbox/detail/InvestigationOutcomeBanner');
@@ -260,7 +260,8 @@ describe('WorkflowInvocationDetail canonical request cards', () => {
             run: createWorkflowRunSummaryFixture({ state: 'interrupted' }),
             invocation: createWorkflowInvocationIndexFixture({ lifecycle: 'needs_attention' }), progress, machineHomeDirectory: null,
         }) });
-        expect(screen.getTextContent()).not.toContain('database_transaction_timeout');
+        expect(screen.getTextContent()).not.toContain(progress.reason!.message);
+        expect(screen.getTextContent()).not.toContain('workflow.storage.invocations.admit');
         await screen.pressByTestIdAsync('workflow-run-invocation-technical.header');
         const text = screen.getTextContent();
         expect(text).toContain('workflow.storage.invocations.admit');

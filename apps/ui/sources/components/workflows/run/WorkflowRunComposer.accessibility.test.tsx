@@ -43,14 +43,14 @@ describe('workflow composer accessibility', () => {
         await screen.update(<WorkflowRunComposer {...props} autoFocusComposer values={{ qa_note: 'Edited' }} />);
         expect(focus).toHaveBeenCalledTimes(1);
     });
-    it('keeps admission status inside a permanent footer, separate from the editable chip row', async () => {
+    it('keeps admission status in the footer while Start stays with the composer', async () => {
         const props: WorkflowRunComposerProps = { inputs: [], values: {}, onChangeValues: () => {}, onRun: () => {}, onCancel: () => {} };
         const screen = await renderScreen(<WorkflowRunComposer {...props} />);
         expect(screen.findByTestId('workflow-run-inputs-status')).not.toBeNull();
-        expect(screen.findByTestId('workflow-run-inputs-footer')?.findAllByProps({ testID: 'workflow-run-inputs-run' }).length).toBeGreaterThan(0);
+        expect(screen.findByTestId('workflow-run-inputs-preview')?.findAllByProps({ testID: 'workflow-run-inputs-run' }).length).toBeGreaterThan(0);
         await screen.update(<WorkflowRunComposer {...props} pending reconciling />);
         expect(screen.findByTestId('workflow-run-inputs-status')?.findAllByProps({ testID: 'workflow-run-inputs-reconciling' }).length).toBeGreaterThan(0);
-        expect(screen.findByTestId('workflow-run-inputs-preview')?.findAllByProps({ testID: 'workflow-run-inputs-run' })).toHaveLength(0);
+        expect(screen.findByTestId('workflow-run-inputs-footer')?.findAllByProps({ testID: 'workflow-run-inputs-run' })).toHaveLength(0);
     });
     it('shows a status badge handed to it in the composer\'s own status row', async () => {
         const props: WorkflowRunComposerProps = { inputs: [], values: {}, onChangeValues: () => {}, onRun: () => {}, onCancel: () => {} };

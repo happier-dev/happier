@@ -20,7 +20,7 @@ import { DestinationInstanceHost } from '@/components/appShell/workspace/Destina
 import { WorkspaceProvider } from '@/components/appShell/workspace/WorkspaceProvider';
 import type { WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { hrefForDestinationRef, resolveCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
-import { ModalProvider, useModal } from '@/modal/ModalProvider';
+import { ModalProvider } from '@/modal/ModalProvider';
 import { installWorkflowActionHttpBoundary } from '@/dev/testkit/fixtures/workflowActionHttpBoundary';
 import { installShippedNativeFrameScheduler } from '@/dev/testkit/legend/shippedNativeLegendRuntime';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -30,7 +30,6 @@ import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 const execute = vi.hoisted(() => vi.fn());
 const routerPush = vi.hoisted(() => vi.fn());
 const machineRpcAck = vi.hoisted(() => vi.fn());
-const nativeAlert = vi.hoisted(() => vi.fn<typeof import('react-native')['Alert']['alert']>());
 const windowSize = vi.hoisted(() => ({ width: 800, height: 900 }));
 const rowCosts = vi.hoisted(() => new Map<string, {
     read(): { renders: number; commits: number }; reset(): void;
@@ -47,11 +46,10 @@ vi.mock('socket.io-client', async (importOriginal) => {
         return socket;
     } };
 });
-// Native Alert is the platform boundary. The real manager owns confirmation
-// settlement and the real provider retains any custom modal custody.
+// The real manager and app dialog own cancellable confirmation settlement.
 vi.mock('react-native', async () => {
     const native = await (await import('@/dev/testkit/mocks/reactNative'))
-        .createReactNativeNativeMock({ platformOS: 'ios' }, { Alert: { alert: nativeAlert }, Dimensions: { get: () => windowSize },
+        .createReactNativeNativeMock({ platformOS: 'ios' }, { Dimensions: { get: () => windowSize },
             useWindowDimensions: () => windowSize });
     const ReactRuntime = await import('react');
     const { createRenderCommitCounter, useRenderCommitCounter } = await import('@/dev/testkit/performance/counts');
@@ -86,28 +84,30 @@ let automationDefinitionResponse: ((url: URL, init?: RequestInit) => Promise<Res
 let machineRows: readonly FetchedMachineRow[] = [];
 let appliedSnapshot: typeof import('@/sync/domains/server/serverRuntime')['getActiveServerSnapshot'];
 const searchRuntime = { open: () => {}, buildCommands: () => [] };
-let modals: ReturnType<typeof useModal>['state']['modals'] = [];
-let answeredNativeConfirmations = 0;
-function ObserveModals() { modals = useModal().state.modals; return null; }
 function Wrapper({ children }: React.PropsWithChildren) {
-    return <ModalProvider><ObserveModals /><InjectedAuthProvider credentials={httpBoundary?.credentials ?? null}>
+    return <ModalProvider><InjectedAuthProvider credentials={httpBoundary?.credentials ?? null}>
         <UniversalSearchRuntimeProvider value={searchRuntime}>{children}</UniversalSearchRuntimeProvider>
     </InjectedAuthProvider></ModalProvider>;
 }
-async function confirmDeletion(accepted = true) {
-    await vi.waitFor(() => expect(nativeAlert.mock.calls.length).toBeGreaterThan(answeredNativeConfirmations));
-    const buttons = nativeAlert.mock.calls[answeredNativeConfirmations++]?.[2];
-    const confirm = buttons?.find(button => (accepted ? button.style !== 'cancel' : button.style === 'cancel')
-        && typeof button.onPress === 'function');
-    expect(confirm?.onPress).toBeTypeOf('function');
-    await act(async () => { confirm?.onPress?.(); });
+async function confirmDeletion(screen: Awaited<ReturnType<typeof renderScreen>>, accepted = true) {
+    const testID = accepted ? 'actions.confirmation-review.decision-approve' : 'actions.confirmation-review.decision-reject';
+    await vi.waitFor(async () => {
+        await act(async () => {});
+        expect(screen.findHostByTestId(testID)).not.toBeNull();
+    });
+    await screen.pressByTestIdAsync(testID);
 }
 async function deleteWithConsent(definitionId: string) {
-    const { deleteWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
-    const deletion = deleteWorkflowDefinition({ definitionId });
-    await confirmDeletion();
-    return await deletion;
+    // A cold editor still has the application's confirmation host after its list unmounts.
+    const screen = await renderScreen(<></>, { wrapper: Wrapper });
+    try {
+        const { deleteWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+        const deletion = deleteWorkflowDefinition({ definitionId });
+        await confirmDeletion(screen);
+        return await deletion;
+    } finally { await screen.unmount(); }
 }
+
 let previous = storage.getState();
 let previousAppliedSnapshot = getAppliedActiveServerSnapshot();
 let previousRuntimeAvailable = isAppliedActiveServerRuntimeAvailable();
@@ -116,9 +116,6 @@ let fixtureHome = 0;
 beforeEach(async () => {
     machineRows = [];
     installShippedNativeFrameScheduler();
-    nativeAlert.mockReset();
-    answeredNativeConfirmations = 0;
-    modals = [];
     previous = storage.getState();
     previousAppliedSnapshot = getAppliedActiveServerSnapshot();
     previousRuntimeAvailable = isAppliedActiveServerRuntimeAvailable();
@@ -206,7 +203,7 @@ describe('workflow library page anatomy', () => {
                 && Array.isArray(node.props.secondaryActions))[0]!;
             await act(async () => { row.findByType(ContextMenu).props.onSelect('delete'); });
             await vi.waitFor(async () => {
-                if (nativeAlert.mock.calls.length > answeredNativeConfirmations) await confirmDeletion();
+                if (screen.findHostByTestId('actions.confirmation-review.decision-approve')) await confirmDeletion(screen);
                 expect(deleted).toBe(true);
             });
             await vi.waitFor(() => expect(screen.findHostByTestId(`workflows-home:row:${definitionId}`)).toBeNull());
@@ -393,9 +390,9 @@ describe('workflow library page anatomy', () => {
         });
         await admitted.promise;
         await initial.unmount();
+        const confirmation = await renderScreen(<></>, { wrapper: Wrapper });
         const deletion = deleteWorkflowDefinition({ definitionId: removedId });
-        await vi.waitFor(() => expect(nativeAlert).toHaveBeenCalled());
-        await confirmDeletion();
+        await confirmDeletion(confirmation);
         await deletion;
         await act(async () => { projection.resolve({ ok: false, error: 'Daemon unavailable', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }); await projection.promise; });
         expect(execute.mock.calls.filter(call => call[0] === 'workflow.definition.list')).toHaveLength(1);
@@ -539,7 +536,7 @@ describe('workflow library page anatomy', () => {
         expect(listReads).toBe(2);
         if (unmounted) await screen.unmount();
         // The editor uses this same writer; no library-row removal callback runs.
-        await act(async () => { await deleteWithConsent(removedId); });
+        await deleteWithConsent(removedId);
         if (unmounted) {
             await act(async () => { staleRead.resolve({ ok: true, result: { definitions: rows } }); await staleRead.promise; });
             expect(listReads).toBe(2);
@@ -603,7 +600,7 @@ describe('workflow library page anatomy', () => {
         let observedRetirement = false;
         const retirementObservation = admittedLifetime?.onRetire(() => { observedRetirement = true; });
         await act(async () => { row('10000000-0000-4000-8000-000000000001').findByType(ContextMenu).props.onSelect('delete'); await Promise.resolve(); });
-        await confirmDeletion();
+        await confirmDeletion(screen);
         await deletionAdmitted;
         expect(row('10000000-0000-4000-8000-000000000001').props.busy).toBe(true);
         if (phase === 'receipt') {
@@ -681,12 +678,8 @@ describe('workflow library page anatomy', () => {
         const menu = row().findByType(ContextMenu);
         await act(async () => { menu.props.onSelect('delete'); await Promise.resolve(); });
         expect(execute.mock.calls.filter(call => call[0] === 'workflow.definition.delete')).toEqual([]);
-        expect(modals).toEqual([]); // This ordinary iOS confirmation belongs to native Alert.
-        await confirmDeletion();
-        await vi.waitFor(() => expect({
-            confirmations: nativeAlert.mock.calls.length,
-            deletions: execute.mock.calls.filter(call => call[0] === 'workflow.definition.delete').length,
-        }).toEqual({ confirmations: 1, deletions: 1 }));
+        await confirmDeletion(screen);
+        await vi.waitFor(() => expect(execute.mock.calls.filter(call => call[0] === 'workflow.definition.delete')).toHaveLength(1));
         await deletionAdmitted;
         expect(row().props.busy).toBe(true);
         expect(menu.props.items?.find((item: { id: string }) => item.id === 'delete')?.destructive).toBe(true);
@@ -720,7 +713,7 @@ describe('workflow library page anatomy', () => {
         // A prior completion must not masquerade as the next confirmed deletion's outcome.
         deletion = new Promise(resolve => { settleDelete = resolve; });
         await act(async () => { row(ids[1]).findByType(ContextMenu).props.onSelect('delete'); await Promise.resolve(); });
-        await confirmDeletion();
+        await confirmDeletion(screen);
         expect(row(ids[1]).props.busy).toBe(true);
         expect(screen.findHostByTestId('workflows-home:deleted')).toBeNull();
         await act(async () => {
@@ -728,7 +721,6 @@ describe('workflow library page anatomy', () => {
             settleDelete({ ok: true, result: { definitionId: ids[1], deleted: true } });
         });
         expect(screen.findHostByTestId('workflows-home:deleted')).not.toBeNull();
-        expect(nativeAlert).toHaveBeenCalledTimes(2);
         expect(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'workflows-home:deleted')?.props.reason)
             .toBe('Saved workflow');
         // Both deletions used the real Action/HTTP path. Let the reader's acknowledgement expire
@@ -760,11 +752,10 @@ describe('workflow library page anatomy', () => {
             && Array.isArray(node.props.secondaryActions))[0]!;
         await vi.waitFor(() => expect(row()).toBeDefined());
         await act(async () => { row().findByType(ContextMenu).props.onSelect('delete'); });
-        await confirmDeletion(false);
+        await confirmDeletion(screen, false);
         await vi.waitFor(() => expect(screen.findAllByType(Collection)[0]!.props.selection.focusRequest).toEqual({ key: definitionId }));
         expect(row().props.busy).toBe(false);
         expect(execute.mock.calls.filter(call => call[0] === 'workflow.definition.delete')).toEqual([]);
-        expect(nativeAlert).toHaveBeenCalledOnce();
         expect(screen.findHostByTestId('workflows-home:deleted')).toBeNull();
     });
     it('gives a phone one way to add (the column\'s "+" menu rows) and no second overflow in the title bar (DESIGN-9 N6)', async () => {
@@ -832,7 +823,7 @@ describe('workflow library page anatomy', () => {
             windowSize.width = 800;
         }
     });
-    it('opens a phone-sized page on its name, then the switch, then the scope line with its spaces, then search (R8)', async () => {
+    it('uses one phone main-screen header for the library title, scope and search', async () => {
         windowSize.width = 390;
         execute.mockImplementation(async (actionId: string) => {
             if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: [{
@@ -851,25 +842,16 @@ describe('workflow library page anatomy', () => {
                 <WorkflowsDestinationIndex />
             </DestinationInstanceHost>, { wrapper: Wrapper });
             await vi.waitFor(() => expect(screen.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000051')).not.toBeNull());
-            const ids: string[] = [];
-            screen.tree.root.findAll((node) => {
-                if (typeof node.type === 'string' && typeof node.props?.testID === 'string') ids.push(node.props.testID);
-                return false;
-            });
-            const at = (id: string) => ids.findIndex((candidate) => candidate === id || candidate.startsWith(id));
-            expect(at('workflows-column:header')).toBeGreaterThanOrEqual(0);
-            expect(at('workflows-column:header')).toBeLessThan(at('workflows-column:view'));
-            expect(at('workflows-column:view')).toBeLessThan(at('workflows-home-space-title'));
-            // One name on the page: the home under the column does not head itself a second time.
+            // The main-screen header lends the library its title, scope and search (b07a8cd698d).
+            const header = screen.findHostByTestId('workflows-column:header');
+            expect(header).not.toBeNull();
+            expect(header?.findAll(node => typeof node.type === 'string' && String(node.props.testID ?? '').startsWith('workflows-column-space-title')).length).toBeGreaterThan(0);
+            expect(screen.findHostByTestId('workflows-column:view:definitions')).not.toBeNull();
             expect(screen.findHostByTestId('workflows-home:header')).toBeNull();
-            // The strip shares the scope line; only the search takes a line of its own.
-            const line = screen.findHostByTestId('workflows-home:scope-line');
-            expect(line?.findAll((node) => typeof node.type === 'string' && String(node.props?.testID ?? '').startsWith('workflows-home-space-strip')).length).toBeGreaterThan(0);
-            expect(line?.findAll((node) => node.props?.testID === 'workflows-home:search')).toHaveLength(0);
-            // Actions sit on the name's line; the switch has its row to itself.
+            expect(screen.findHostByTestId('workflows-home:scope-line')).toBeNull();
+            expect(screen.findHostByTestId('workflows-home:search')).toBeNull();
             const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
-            expect(screen.findAllByType(DropdownMenu).some((menu) => menu.props.testID === 'workflows-column:add:menu')).toBe(true);
-            expect(screen.findHostByTestId('workflows-column:header')?.findAll((node) => node.props?.testID === 'workflows-column:add:menu').length).toBeGreaterThan(0);
+            expect(screen.findAllByType(DropdownMenu).some(menu => menu.props.testID === 'workflows-column:add:menu')).toBe(true);
         } finally {
             windowSize.width = 800;
         }
@@ -1367,7 +1349,7 @@ describe('workflow library summaries and filter', () => {
         await setView('all');
         expect(screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000003')).not.toBeNull();
         await setView('triggered');
-        await act(async () => { await deleteWithConsent('10000000-0000-4000-8000-000000000004'); });
+        await deleteWithConsent('10000000-0000-4000-8000-000000000004');
         expect(await action.execute('workflow.library.view.get', {}, context)).toMatchObject({ ok: true, result: { offeredViews: ['all'] } });
         expect(screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000003')).toBeNull();
     });

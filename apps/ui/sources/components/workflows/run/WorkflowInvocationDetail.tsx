@@ -907,6 +907,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                         {visibleResult !== undefined ? (
                             <>
                                 <WorkflowReviewValue value={visibleResult}
+                                    blockKind={props.finalResult != null ? undefined : props.progress?.blockKind}
                                     contract={props.finalResult != null ? undefined : resultContract}
                                     testIDPrefix={`${testIDPrefix}-invocation-result`} />
                                 {/* The exact structured value stays one Copy away, never printed as JSON. */}

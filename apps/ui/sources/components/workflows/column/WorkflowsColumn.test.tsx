@@ -429,9 +429,9 @@ describe('WorkflowsColumn', () => {
     it('selects only the exact open definition and clears that selection on the library home', async () => {
         answerLists();
         const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
-        const selected = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAll(node =>
+        const selected = (screen: Awaited<ReturnType<typeof renderScreen>>) => [...new Set(screen.findAll(node =>
             typeof node.props.testID === 'string' && node.props.testID.startsWith('workflows-column:')
-            && typeof node.props.href === 'string' && node.props.selected === true).map(node => node.props.testID);
+            && typeof node.props.href === 'string' && node.props.selected === true).map(node => node.props.testID))];
         const column = () => <DestinationInstanceHost tabId="workflow" ref={{ kind: 'workflows', params: {} }}
             pathname={routeState.pathname} focused visible navigation={{ push: routerPush, replace: () => {}, back: () => {} }}>
             <WorkflowsColumn /></DestinationInstanceHost>;
@@ -743,7 +743,8 @@ describe('WorkflowsColumn', () => {
         const filterTrigger = screen.findByTestId('session-list-filter-trigger');
         expect(filterTrigger?.props.accessibilityLabel).toContain('sessionsList.filtersShowRuns');
         expect(filterTrigger?.props.accessibilityLabel).not.toContain('sessionsList.filtersMyWork');
-        expect(screen.findByTestId('session-list-filter-summary-reset')).toBeTruthy();
+        // Runs is this list's base scope; only a user-added narrowing offers Reset.
+        expect(screen.findByTestId('session-list-filter-summary-reset')).toBeNull();
         await act(async () => { runRows[0]!.props.onPress(); });
         expect(routerPush).toHaveBeenCalledWith('/workflows/runs/run-waiting?serverId=unified-column.test');
 

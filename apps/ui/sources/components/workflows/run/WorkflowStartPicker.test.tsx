@@ -114,6 +114,16 @@ vi.mock('react-native', async () => {
     await import('@/dev/testkit/mocks/reactNative');
   return createReactNativeNativeMock({ platformOS: 'ios' });
 });
+// Test Renderer cannot measure a native page span. Keep the real windowing owner and supply its host geometry.
+vi.mock('@/components/widgets/nearViewport', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/components/widgets/nearViewport')>();
+  return { ...original, createScrollViewNearViewportTracker: (...args: Parameters<typeof original.createScrollViewNearViewportTracker>) => ({
+    ...original.createScrollViewNearViewportTracker(...args), measureSpan: async () => ({ top: 0 }),
+  }) };
+});
+// The native recycler is a platform boundary; Collection and its rows remain real.
+vi.mock('@legendapp/list/react-native', async (original) => (await import('@/dev/testkit/mocks/legendList'))
+  .createCapturingLegendListMock({ original: await original<Record<string, unknown>>() }).module);
 vi.mock('react-native-unistyles', async () => {
   const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
   return createUnistylesMock();

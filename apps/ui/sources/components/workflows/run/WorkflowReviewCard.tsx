@@ -159,7 +159,7 @@ function isLongTextField(schema: PluginJsonSchemaV2, value: unknown): boolean {
     return (schema.maxLength ?? 0) > 200 || (typeof value === 'string' && (value.includes('\n') || value.length > 80));
 }
 
-type ReviewValueProps = Readonly<{ value: JsonValue; contract: WorkflowResultContract | undefined; testIDPrefix: string }>;
+type ReviewValueProps = Readonly<{ value: JsonValue; contract: WorkflowResultContract | undefined; blockKind?: WorkflowProgressEnvelopeV1['blockKind']; testIDPrefix: string }>;
 
 /**
  * Provider rendering and resolved values belong to execution custody. The reading projection is the
@@ -175,7 +175,7 @@ function WorkflowAuthoredInputReading({ document, testID }: Readonly<{ document:
  * Both the bounded reading and full inspection render the same exact value with the established viewers;
  * a settled or stopped attempt's detail reads its answer through the same rows (DESIGN-16 D5).
  */
-export function WorkflowReviewValue({ value, contract, testIDPrefix: prefix }: ReviewValueProps): React.ReactElement {
+export function WorkflowReviewValue({ value, contract, blockKind, testIDPrefix: prefix }: ReviewValueProps): React.ReactElement {
     // A step's authored input reads as the words it was given, never as its wire envelope (DESIGN-17 R1).
     const authored = contract === undefined ? WorkflowAuthoredInputV1Schema.safeParse(value) : null;
     if (authored?.success) {
@@ -191,7 +191,7 @@ export function WorkflowReviewValue({ value, contract, testIDPrefix: prefix }: R
     // one row per item. Raw serialization is only ever behind Copy.
     const titles = contract?.kind === 'json' ? Object.fromEntries(Object.entries(contract.schema.properties ?? {})
         .map(([name, schema]) => [name, schema.title])) : undefined;
-    const rows = readWorkflowResultRows(value, titles);
+    const rows = readWorkflowResultRows(value, titles, blockKind);
     return rows ? <>{rows.map(row =>
         <Item key={row.key} title={row.label} showChevron={false} accessoryLayout="stacked"
             rightElement={<Text selectable style={styles.primary} testID={`${prefix}-value-${row.key}`}>{row.text}</Text>} />)}</>
@@ -368,7 +368,7 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
         {props.fillHeight === true ? null : <IconButton testID={`${prefix}-show-full`} variant="plain" iconName="arrows-out"
             accessibilityLabel={t(plan ? 'workflows.review.showFullPlan' : 'workflows.review.showFullResult')}
             tooltip={t(plan ? 'workflows.review.showFullPlan' : 'workflows.review.showFullResult')}
-            onPress={() => setFullValue({ value: shown, contract: props.contract, testIDPrefix: `${prefix}-full` })} />}
+            onPress={() => setFullValue({ value: shown, blockKind: props.progress.blockKind, contract: props.contract, testIDPrefix: `${prefix}-full` })} />}
     </View>;
     const heldReading = held && !props.waitForYou && !editing;
     const stateLine = heldReading ? <View testID={`${prefix}-state`} style={styles.stateLine}>
@@ -465,7 +465,7 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                         <ScrollView testID={`${prefix}-preview-scroll`} style={props.primaryActionPlacement === 'footer' ? undefined : styles.previewScroll} nestedScrollEnabled
                             keyboardShouldPersistTaps="handled" onLayout={previewFades.onViewportLayout}
                             onContentSizeChange={previewFades.onContentSizeChange} onScroll={previewFades.onScroll} scrollEventThrottle={16}>
-                            <WorkflowReviewValue value={shown} contract={props.contract} testIDPrefix={prefix} />
+                            <WorkflowReviewValue value={shown} blockKind={props.progress.blockKind} contract={props.contract} testIDPrefix={prefix} />
                         </ScrollView>
                         <ScrollEdgeFades color={held ? theme.colors.state.warning.background : theme.colors.surface.base}
                             edges={previewFades.visibility} />

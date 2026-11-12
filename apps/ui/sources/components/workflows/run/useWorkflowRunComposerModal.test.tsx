@@ -151,7 +151,8 @@ describe('useWorkflowRunComposerModal', () => {
         await mounted.update({ open: true, props: sheetProps({ pending: true }) });
         expect(mounted.visible().map((entry) => entry.id)).toEqual([id]);
         expect(mounted.screen.findAllByType(WorkflowRunComposer)).toHaveLength(1);
-        expect(mounted.screen.findHostByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
+        // Pending is busy, while declared-disabled keeps the unavailable visual (05c48b40fc3).
+        expect(mounted.screen.findHostByTestId('workflow-run-inputs-run')?.props.accessibilityState.busy).toBe(true);
     });
 
     it('presents nothing until the caller has both intent and a read definition', async () => {

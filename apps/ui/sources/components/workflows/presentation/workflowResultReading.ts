@@ -1,3 +1,4 @@
+import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { t } from '@/text';
 import { formatWorkflowFieldLabel } from './workflowValuePresentation';
@@ -56,8 +57,6 @@ export function readWorkflowValueText(value: JsonValue): string {
     return value.length === 0
       ? t('workflows.page.inspector.none')
       : value.map(readWorkflowValueText).join(', ');
-  const container = readContainerEntry(value);
-  if (container !== null) return readResults(container.results);
   const entries = Object.entries(value);
   if (entries.length === 0) return t('workflows.page.inspector.none');
   return entries
@@ -89,11 +88,12 @@ function readResults(results: JsonObject): string {
 export function readWorkflowResultRows(
   value: JsonValue,
   fieldTitles?: Readonly<Record<string, string | undefined>>,
+  blockKind?: WorkflowProgressEnvelopeV1['blockKind'],
 ): readonly WorkflowResultReadingRow[] | null {
   if (Array.isArray(value)) {
     if (value.length === 0) return null;
     return value.map((item, position) => {
-      const container = readContainerEntry(item);
+      const container = blockKind === 'loop' || blockKind === 'parallel' ? readContainerEntry(item) : null;
       return container !== null
         ? {
             key: String(position),
