@@ -981,15 +981,17 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // A free-form host (Cua, Lima) sizes itself from its form: at most one size row comes back, echoing what was asked.
     // The form is then the one Size choice; the fields that row assigns move into Size and no echo table is drawn.
     // A preset's sole size reads as that row (CPU, memory and disk in their units), like its image and place.
-    const formSized = !!draft && launchFields.length > 0 && (draft.options?.dimensions.size.length ?? 0) <= 1
-        && !(presetLocked && draft.options?.dimensions.size[0]?.nativeFacts?.size);
     const sizeAssigned = new Set(draft?.options?.dimensions.size.flatMap(row => row.assignments.map(assignment => assignment.path)) ?? []);
     // The fields that row assigns, and their siblings in the same input object (an optional disk the row only assigns
     // once given): the size is that object.
     const parentPath = (path: string) => path.includes('.') ? path.slice(0, path.lastIndexOf('.')) : null;
     const sizeObjects = new Set([...sizeAssigned].map(parentPath).filter((path): path is string => path !== null));
-    const sizeFields = formSized ? launchFields.filter(field => sizeAssigned.has(field.path)
+    const sizeFields = draft && (draft.options?.dimensions.size.length ?? 0) <= 1
+        && !(presetLocked && draft.options?.dimensions.size[0]?.nativeFacts?.size)
+        ? launchFields.filter(field => sizeAssigned.has(field.path)
         || sizeObjects.has(parentPath(field.path) ?? '')) : [];
+    // Only a form that authors the native size replaces its choice table.
+    const formSized = sizeFields.length > 0;
     // A field a choice section decides (every row of its image, place, network or size table assigns it) is that
     // section's choice: the form doesn't repeat it as a raw provider field.
     const choiceDimensions: readonly ('size' | 'image' | 'location' | 'network')[] = formSized

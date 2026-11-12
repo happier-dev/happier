@@ -6,6 +6,7 @@ import { Dimensions } from 'react-native';
 import { installApprovalCommonModuleMocks } from '../../../../ui/sources/components/approvals/approvalsTestHelpers';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, loadScopedHomeActionExecutorForTests, waitForHomeGovernance } from '../../../../ui/sources/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineFixture } from '../../../../ui/sources/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '../../../../ui/sources/dev/testkit/harness/machinePresence';
 import { renderScreen, standardCleanup } from '../../../../ui/sources/dev/testkit';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '../../../../ui/sources/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { PluginProjectedActionV2Schema } from '@happier-dev/protocol';
@@ -20,6 +21,7 @@ import { createCuaLocalProvisioner } from '../../../../../packages/plugins/machi
 import { createCuaByoc } from '../../../../../packages/plugins/machine-cua/src/machine/byoc';
 import { ByocOptionsQueryV1Schema } from '../../../../../packages/plugins/machine-cua/src/machine/remoteSchemas';
 import { MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { MachineProvisionersListResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 
@@ -92,9 +94,10 @@ describe('fresh Cua declarations through the mounted shared configurator', () =>
         const controller = { machineId: 'host', installationId: 'installation' };
         const contribution = { pluginId: CUA_PLUGIN.manifest.id, localId: id };
         const serverId = await home.addHome({ name: 'Cua', serverUrl: `https://${id}.example`, serverIdentityId: `srv_${id}`, accountId: 'owner', currentAccount: true });
-        const { storage } = await import('../../../../ui/sources/sync/domains/state/storage');
-        storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'host', installationId: 'installation' })] } });
-        const projected = PluginProjectedActionV2Schema.parse({ id: declaration.id, pluginId: contribution.pluginId, occurrenceId: 'options',
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
+            createMachineFixture({ id: 'host', installationId: 'installation' }),
+        ]);
+        const projected = PluginProjectedActionV2Schema.parse({ id: declaration.id, pluginId: contribution.pluginId, occurrenceId: id,
             title: declaration.title, scopes: declaration.scopes, surfaces: declaration.surfaces, execution: declaration.execution,
             dangerLevel: declaration.dangerLevel, inputHints: declaration.inputHints, available: true });
         const projection = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection: {
@@ -104,7 +107,10 @@ describe('fresh Cua declarations through the mounted shared configurator', () =>
         } });
         boundary.rpc.mockImplementation(async (request: { method: string }) => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
             ? projection : request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ ? { ok: true, inputSchema: declaration.inputSchema } : { ok: false, code: 'unsupported' });
-        for (const [actionId, result] of [['machines.provisioners.list', { controller, provisioners: [{ contribution, occurrenceId: id, descriptor, credentialPurposes: [] }] }],
+        const acquire = CUA_PLUGIN.manifest.contributes.actions?.find(value => value.id === descriptor.actions.acquire);
+        const catalog = MachineProvisionersListResultV1Schema.parse({ controller, provisioners: [{ contribution, occurrenceId: id,
+            acquireExecutionTarget: acquire?.execution.target, descriptor, credentialPurposes: [] }] });
+        for (const [actionId, result] of [['machines.provisioners.list', catalog],
             ['machines.provisioners.check', { available: true }]] as const) home.answer(serverId, `/v1/actions/${actionId}`, { select(value) {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
             return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
@@ -153,6 +159,8 @@ describe('fresh Cua declarations through the mounted shared configurator', () =>
         const validateLaunch = await compilePluginJsonSchema(descriptor.launchSchema);
         expect(validateLaunch(selected.launch)).toBe(true);
         for (const dimension of savedCloud ? [] : ['size', 'image', 'location'] as const) {
+            // Local Cua's size is authored by its declared fields; its sole native row echoes that form.
+            if (dimension === 'size' && id !== 'byoc') continue;
             phase = `selecting ${dimension}`;
             const option = options.dimensions[dimension][0];
             if (!option) continue;
