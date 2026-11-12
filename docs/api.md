@@ -1801,10 +1801,14 @@ read has seen more counted rows than the badge shows (one 500-row page for a lar
 the Inbox, its popover, Voice brief, Boards and the other row surfaces read the whole list
 while mounted. Built-in approval headers also carry
 `approvalListFacts` (`automationId` when an Automation Run asked, `discussionId` and
-`discussionDraftReview` for a Discussion Action), set by the header writer from the body
+`discussionDraftReview` for a Discussion Action, and optional `environmentSecretRequest`
+for the Environment id of a binding request needing a person to choose a Saved Secret), set by the header writer from the body
 and rejected on a read body that contradicts them. The Inbox groups rows and the
 Discussion list finds waiting requests from these header facts, so neither opens bodies:
-each mounted Inbox approval row reads its own body, and the remaining body readers are
+each mounted Inbox approval row reads its own body. Environment Variables uses the exact
+Environment relation to hydrate only its pending secret requests and opens the same approval
+review and reference-only picker. An older header without this optional relation remains
+reviewable in the Inbox but is unclassified for this inline view. The remaining body readers are
 plugin and managed-Machine pending requests and a Session's own open requests. A header
 written before these facts existed has no `approvalListFacts`; the daemon classifies such
 open rows once. Before that, the daemon also cancels older duplicate open plugin requests:

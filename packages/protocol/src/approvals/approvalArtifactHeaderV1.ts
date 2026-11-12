@@ -8,6 +8,8 @@ import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest
 import { ManagedDeleteInputV1Schema } from '../machines/managed/actionsV1.js';
 import { isApiTokenGrantTargetMemberV1, type ApiTokenGrantV1 } from '../auth/apiTokenGrant.js';
 import type { ExternalActionTargetV1 } from '../actions/externalActionApi.js';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { DeploymentBindingsPatchInputV1Schema } from '../deployments/deploymentBindingPatchV1.js';
 import { isDiscussionActionIdV1 } from '../discussions/actionIds.js';
 import type { InboxArtifactAdmissionDispositionV1 } from '../artifacts/artifactKindV1.js';
 export { APPROVAL_ARTIFACT_KINDS_V1 } from './approvalArtifactKindV1.js';
@@ -94,6 +96,8 @@ export type ApprovalArtifactListFactsV1 = Readonly<{
   /** The Discussion a Discussion Action publishes to. */
   discussionId?: string;
   discussionDraftReview?: true;
+  /** An Environment binding request that needs a person to select a Saved Secret. No names or values. */
+  environmentSecretRequest?: string;
 }>;
 
 export function deriveApprovalArtifactListFactsV1(request: ApprovalRequest): ApprovalArtifactListFactsV1 {
@@ -102,7 +106,12 @@ export function deriveApprovalArtifactListFactsV1(request: ApprovalRequest): App
   const args = request.actionArgs;
   const discussionId = isDiscussionActionIdV1(request.actionId) && args && typeof args === 'object' && !Array.isArray(args)
     && 'discussionId' in args && typeof args.discussionId === 'string' && args.discussionId ? args.discussionId : null;
+  const bindingPatch = request.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
+    ? DeploymentBindingsPatchInputV1Schema.safeParse(args) : null;
+  const environmentSecretRequest = bindingPatch?.success && bindingPatch.data.set.some(row =>
+    row.source.kind === 'secret' && row.source.ref === 'person_selects') ? bindingPatch.data.environmentId : null;
   return {
+    ...(environmentSecretRequest ? { environmentSecretRequest } : {}),
     ...(caller.kind === 'automationRun' ? { automationId: caller.automationId } : {}),
     ...(discussionId ? { discussionId, ...(request.discussionDraftReview === true ? { discussionDraftReview: true as const } : {}) } : {}),
   };
@@ -111,7 +120,10 @@ export function deriveApprovalArtifactListFactsV1(request: ApprovalRequest): App
 function listFactsEqual(actual: unknown, expected: ApprovalArtifactListFactsV1): boolean {
   if (!actual || typeof actual !== 'object' || Array.isArray(actual)) return false;
   const keys = Object.keys(actual);
-  return keys.length === Object.keys(expected).length
+  // This optional projection was added after the other list facts. Older headers remain
+  // readable in the Inbox; only a present Environment fact classifies an inline request.
+  const expectedKeys = Object.keys(expected).filter(key => key !== 'environmentSecretRequest' || Object.hasOwn(actual, key));
+  return keys.length === expectedKeys.length
     && keys.every(key => Reflect.get(actual, key) === Reflect.get(expected, key));
 }
 
@@ -126,7 +138,8 @@ export function readApprovalArtifactHeaderListFactsV1(header: ApprovalArtifactHe
   };
   const automationId = read('automationId');
   const discussionId = read('discussionId');
-  return { ...(automationId ? { automationId } : {}),
+  const environmentSecretRequest = read('environmentSecretRequest');
+  return { ...(environmentSecretRequest ? { environmentSecretRequest } : {}), ...(automationId ? { automationId } : {}),
     ...(discussionId ? { discussionId, ...(Reflect.get(facts, 'discussionDraftReview') === true ? { discussionDraftReview: true as const } : {}) } : {}) };
 }
 

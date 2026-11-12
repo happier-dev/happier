@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 
 import { ApprovalRequestV1Schema, ApprovalRequestV2Schema } from './approvalRequestV1.js';
 import {
@@ -79,6 +80,25 @@ describe('approval Artifact header correspondence', () => {
     },
     summary: 'Publish',
     decision: { kind: 'approve', decidedAtMs: 2 },
+  });
+
+  it('projects only the Environment id for a person-selects binding request and rejects invented header facts', () => {
+    const request = ApprovalRequestV2Schema.parse({ ...builtIn, status: 'open', decision: undefined,
+      actionId: 'deployments.bindings.set', summary: 'Choose a secret',
+      executionOriginV1: { ...builtIn.executionOriginV1, actionId: 'deployments.bindings.set' },
+      actionArgs: { serverId: 'profile-1', environmentId: 'staging', expectedRevision: 3,
+        set: [{ purpose: 'variable', phase: 'runtime', name: 'TOKEN', source: { kind: 'secret', ref: 'person_selects' } }], remove: [] } });
+    const header = buildApprovalRequestArtifactHeaderV1(request);
+    expect(header.approvalListFacts).toEqual({ environmentSecretRequest: 'staging' });
+    expect(approvalArtifactBodyMatchesHeaderV1(header, JSON.stringify(request))).not.toBeNull();
+    // Previous 0.3 headers remain reviewable in the Inbox without claiming an inline relation.
+    expect(approvalArtifactBodyMatchesHeaderV1({ ...header, approvalListFacts: {} }, JSON.stringify(request))).not.toBeNull();
+    expect(approvalArtifactBodyMatchesHeaderV1({ ...header,
+      approvalListFacts: { environmentSecretRequest: 'production' } }, JSON.stringify(request))).toBeNull();
+    const settled = { ...request, actionArgs: { ...request.actionArgs as Record<string, unknown>,
+      set: [{ purpose: 'variable', phase: 'runtime', name: 'TOKEN', source: { kind: 'secret', ref: formatSharedSavedSecretRefV1('saved-secret'), resourceRevision: 1 } }] } };
+    expect(buildApprovalRequestArtifactHeaderV1(settled).approvalListFacts).toEqual({});
+    expect(approvalArtifactBodyMatchesHeaderV1(header, JSON.stringify(settled))).toBeNull();
   });
 
   it('indexes Workflow Run custody separately from Automation run ids and admits older headers', () => {
