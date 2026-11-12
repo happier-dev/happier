@@ -1,11 +1,11 @@
-import axios from 'axios';
+import axios, { AxiosHeaders } from 'axios';
 import { validatePreparedDeploymentHead } from './prepareDeploymentValidation.composed.testkit';
 import childProcess from 'child_process';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { syncBuiltinESMExports } from 'node:module';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createActionExecutor, listActionSpecsForSurface, DeploymentPrepareResultV1Schema, FeaturesResponseSchema, type DeploymentPrepareInputV1, type ScmActionId } from '@happier-dev/protocol';
 import { emptyConnectedAccountCatalogRecordV1, sealConnectedAccountCatalogContentV1, ConnectedAccountCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
@@ -16,6 +16,13 @@ import { SessionMessageContentSchema, UserMessageSchema } from '@/api/types';
 import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
 import { createNativeAgentSessionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '@/api/machine/machineRpcAuthorization';
+import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import { registerSessionCreationTargetPreparationRpc } from '@/session/creation/registerSessionCreationTargetPreparationRpc';
+import { registerDaemonContributionRegistryProjectionHandler } from '@/rpc/handlers/daemonContributionRegistryProjection';
+import { registerCapabilitiesHandlers } from '@/rpc/handlers/capabilities';
+import { createProbeTempDir, writeExecutableScript } from '@/capabilities/probes/agentModelsProbe.testkit';
 import { openSessionStoredContent } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createBareGitRemoteFixture } from '@/testkit/scm/scmBackendContractFixtures';
@@ -48,15 +55,18 @@ import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionCon
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { deriveDeploymentPrepareSessionCreationIdentityV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { HomeGovernanceGetInputV1Schema } from '@happier-dev/protocol/home/governance/actionsV1';
+import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
 import { buildDeploymentPreparationBriefV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
 import { readSessionInputRequest } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { SessionLookupByTagsRequestV2Schema } from '@happier-dev/protocol/sessions/control/contract';
 import { managedMachineActionEndpointPathV1, ManagedListInputV1Schema, ManagedListOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 afterEach(() => {
-  vi.restoreAllMocks(); syncBuiltinESMExports(); vi.unstubAllGlobals();
+  vi.restoreAllMocks(); syncBuiltinESMExports(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
   resetActiveAccountSettingsSnapshotForTests(); withdrawActiveProjectAccountRowsSnapshot();
 });
 // Both composed suites publish into the same daemon controller lifetime.
@@ -76,6 +86,62 @@ function verifiesPrepareRead(read: BoundRead) {
       target: { kind: 'machine', machineId: 'workspace-daemon' }, installationId: 'workspace-installation',
       requestId: 'prepare-request', method: read.method, path: read.path, ...(read.body === undefined ? {} : { body: read.body }),
       signature: String(Reflect.get(headers, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER) ?? ''), publicKey: installationKeys.publicKey });
+}
+
+// The native RPC dispatcher and its owners stay real. Only the Agent executable
+// and Home network endpoint are substituted beside the existing runner boundary.
+async function createPreparationNativeRpc(input: Readonly<{
+  machineAdmission: SocketRpcMachineAdmissionContextV1;
+  serverId: string;
+  serverHttpBaseUrl: string;
+  daemonToken: string;
+  privateKey: Uint8Array;
+}>) {
+  const { machineAdmission } = input;
+  const machineId = machineAdmission.machineId;
+  const executable = await createProbeTempDir('happier-prepare-agent-');
+  onTestFinished(executable.cleanup);
+  await writeExecutableScript(join(executable.dir, process.platform === 'win32' ? 'claude.cmd' : 'claude'),
+    process.platform === 'win32' ? '@echo off\r\necho claude 2.0.0\r\n' : '#!/bin/sh\nprintf "claude 2.0.0\\n"\n');
+  vi.stubEnv('PATH', executable.dir + delimiter + (process.env.PATH ?? ''));
+  const native = new RpcHandlerManager({ scopePrefix: machineId, encryptionMode: 'plain', logger() {},
+    authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, {
+      machineId, resolveCustodianAccountId: async () => machineAdmission.custodianAccountId,
+      resolveInstallationId: () => machineAdmission.installationId,
+      resolveHomeServerIdentityId: async () => input.serverId,
+      verifyMachineAdmission: admission => verifyMachineRpcAdmissionCurrent({ ...admission,
+        privateKey: input.privateKey, daemonToken: input.daemonToken, serverHttpBaseUrl: input.serverHttpBaseUrl }),
+    }, source) });
+  registerSessionCreationTargetPreparationRpc({ rpcHandlerManager: native });
+  registerDaemonContributionRegistryProjectionHandler(native);
+  registerCapabilitiesHandlers(native, { filesystemEffectAdmission: createFilesystemEffectAdmission({
+    resolveHomeServerIdentityId: async () => input.serverId,
+    resolveHostIdentity: async () => ({ custodianAccountId: machineAdmission.custodianAccountId,
+      machineId, installationId: machineAdmission.installationId }),
+    // This fixture Machine uses daemon placement; requester identity remains
+    // with the real admission and execution-placement owners.
+    readAgentIsolation: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }),
+  }) });
+  return native;
+}
+
+function attachPreparationRpcPeer(socket: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>>,
+  machineAdmission: SocketRpcMachineAdmissionContextV1, native: RpcHandlerManager) {
+  const machineId = machineAdmission.machineId;
+  socket.server.on('connection', peer => peer.on('rpc-call', async (packet: unknown, acknowledge: (result: unknown) => void) => {
+    try {
+      if (!packet || typeof packet !== 'object' || !('method' in packet) || typeof packet.method !== 'string'
+        || !packet.method.startsWith(machineId + ':') || !('params' in packet)) throw new Error('Unexpected preparation RPC');
+      // Home is the substituted network boundary. Preserve the request carrier
+      // and add its authenticated Machine admission before real daemon ingress.
+      const result = await native.handleRequest({ ...packet, method: packet.method, params: packet.params,
+        machineAdmission }, undefined, 'authenticated_home_socket');
+      acknowledge({ ok: true, result });
+    } catch (error) {
+      const errorCode = readRpcErrorCode(error);
+      acknowledge({ ok: false, error: String(error), ...(errorCode ? { errorCode } : {}) });
+    }
+  }));
 }
 
 function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal?: AbortSignal; onSourceRead?: () => void }> = {}) {
@@ -111,6 +177,13 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
     repository: { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
       repository: { nameWithOwner: 'prepare/app', cloneUrl: 'https://github.com/prepare/app.git' }, protocol: 'https' } });
   vi.spyOn(axios, 'request').mockImplementation(async config => {
+    if (new URL(String(config.url)).pathname === '/v1/home/governance/get') {
+      expect(config.method).toBe('POST');
+      expect(new URL(String(config.url)).origin).toBe('https://prepare-home.test');
+      expect(AxiosHeaders.from(config.headers).get('Authorization')).toBe(`Bearer ${token}`);
+      expect(HomeGovernanceGetInputV1Schema.parse(config.data)).toEqual({ projection: 'session_defaults' });
+      return { status: 200, data: HomeSessionDefaultsProjectionV1Schema.parse({ homeDefaults: null }) };
+    }
     if (config.method === 'POST' && new URL(String(config.url)).pathname === managedMachineActionEndpointPathV1('machines.managed.list')) {
       ManagedListInputV1Schema.parse(config.data);
       return { status: 200, data: ManagedListOutputV1Schema.parse({ machines: [] }) };
@@ -225,8 +298,16 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
       workflowOrigin?: ExternalActionExecutionAuthorizationV1['binding']['workflowActionOrigin'],
       getCurrentTurnWorkDepth?: (turnId?: string) => number | undefined) => {
       machineCustodianAccountId = foreignCustodian ? 'daemon-owner' : 'prepare-account';
+      const daemonToken = foreignCustodian
+        ? `header.${Buffer.from(JSON.stringify({ sub: machineCustodianAccountId })).toString('base64url')}.signature` : token;
+      const machineAdmission: SocketRpcMachineAdmissionContextV1 = { actorAccountId: 'prepare-account',
+        custodianAccountId: machineCustodianAccountId, machineId: workspace.machineId,
+        installationId: 'workspace-installation', role: 'manage', encryptionMode: 'plain' };
       const socket = await createRequesterCurrentnessSocketHarness();
       onTestFinished(() => socket.close());
+      const native = await createPreparationNativeRpc({ machineAdmission, serverId: workspace.serverId,
+        serverHttpBaseUrl: 'https://prepare-home.test', daemonToken, privateKey: installationKeys.secretKey });
+      attachPreparationRpcPeer(socket, machineAdmission, native);
       let current = true;
       const envelope = ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: 'prepare-request',
         target: { kind: 'machine', machineId: workspace.machineId }, input: next });
@@ -256,8 +337,6 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
         privateKey: installationKeys.secretKey, isCurrent: admitted.isCurrent });
       if (!carrier) throw new Error('Prepare requester HTTP custody unavailable');
       requireBoundReads = true;
-      const daemonToken = foreignCustodian
-        ? `header.${Buffer.from(JSON.stringify({ sub: machineCustodianAccountId })).toString('base64url')}.signature` : token;
       const receiver = createCliActionDeps({ token: daemonToken, credentials: { token: daemonToken, encryption: null },
         sessionId: '', mode: 'plain', ctx: null, serverId: workspace.serverId, serverIdentityId: workspace.serverId,
         savedSecretOperationContext: admitted.savedSecretOperationContext,
@@ -278,11 +357,8 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
           return { status: 'accepted', localId: request.localId };
         },
         serverHttpBaseUrl: 'https://prepare-home.test', machineActionDirectTargetTransport: {
-          machineId: workspace.machineId, invoke: async () => { throw new Error('No remote native effect'); },
+          machineId: workspace.machineId, invoke: (method, request, options) => native.invokeLocal(method, request, options),
         } });
-      const machineAdmission: SocketRpcMachineAdmissionContextV1 = { actorAccountId: 'prepare-account',
-        custodianAccountId: machineCustodianAccountId, machineId: workspace.machineId,
-        installationId: 'workspace-installation', role: 'manage', encryptionMode: 'plain' };
       const ingress = { machineAdmission, verifyMachineAdmissionCurrent: async () => current };
       return { authorization: carrier, envelope, receiver, ingress, accountSettings: admitted.accountSettingsContext.settings,
         retire() { current = false; }, execute: () => receiver.deploymentPrepare!(next,
@@ -724,10 +800,18 @@ describe('Prepare Session source through the canonical SCM PR owner', () => {
     let rawSession = createSessionRecordFixture({ id: sessionId, active: true, encryptionMode: 'plain', machineId,
       metadata: JSON.stringify({ machineId, path: rootPath }), dataEncryptionKey: null });
     const accepted: ReturnType<typeof UserMessageSchema.parse>[] = [];
+    const preparationSocket = await createRequesterCurrentnessSocketHarness();
+    onTestFinished(() => preparationSocket.close());
+    const machineAdmission: SocketRpcMachineAdmissionContextV1 = { actorAccountId: accountId, custodianAccountId: accountId,
+      machineId, installationId: 'prepare-pr-installation', role: 'manage', encryptionMode: 'plain' };
+    const nativeRpc = await createPreparationNativeRpc({ machineAdmission, serverId,
+      serverHttpBaseUrl: 'https://prepare-pr-home.test', daemonToken: token, privateKey: installation.secretKey });
+    attachPreparationRpcPeer(preparationSocket, machineAdmission, nativeRpc);
     let launches = 0;
     let purposeReads = 0;
     const spawnDeps = createCliActionDeps({ token, credentials, sessionId: '', mode: 'plain', ctx: null, serverId,
-      machineActionDirectTargetTransport: { machineId, invoke: async () => { throw new Error('No Session native effect'); } },
+      serverHttpBaseUrl: 'https://prepare-pr-home.test',
+      machineActionDirectTargetTransport: { machineId, invoke: (method, request, options) => nativeRpc.invokeLocal(method, request, options) },
       sessionSpawnDirectTargetTransport: { machineId,
         prepare: (request, options) => prepareSessionCreationTarget({ request, signal: options?.signal }),
         // Runner launch and Home persistence are external boundaries. The actual
@@ -768,6 +852,13 @@ describe('Prepare Session source through the canonical SCM PR owner', () => {
         serverIdentity: { serverIdentityId: serverId }, encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' },
       } })) : Promise.reject(new Error('Unexpected fetch path: ' + new URL(String(url)).pathname))));
     vi.spyOn(axios, 'request').mockImplementation(async config => {
+      if (new URL(String(config.url)).pathname === '/v1/home/governance/get') {
+        expect(config.method).toBe('POST');
+        expect(new URL(String(config.url)).origin).toBe('https://prepare-pr-home.test');
+        expect(AxiosHeaders.from(config.headers).get('Authorization')).toBe(`Bearer ${token}`);
+        expect(HomeGovernanceGetInputV1Schema.parse(config.data)).toEqual({ projection: 'session_defaults' });
+        return { status: 200, data: HomeSessionDefaultsProjectionV1Schema.parse({ homeDefaults: null }) };
+      }
       expect(config.method).toBe('GET');
       expect(new URL(String(config.url)).pathname).toBe(`/v1/projects/sources/${workspace.source.sourceId}`);
       return { status: 200, data: { ok: true, canManage: true, source: { id: workspace.source.sourceId, revision: 1,
