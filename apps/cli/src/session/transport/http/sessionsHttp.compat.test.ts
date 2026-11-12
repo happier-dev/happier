@@ -6,9 +6,19 @@ import {
   createSessionRecordFixture,
 } from '@/testkit/backends/sessionFixtures';
 
-import { fetchSessionByIdCompat } from './sessionsHttp';
+import { fetchSessionById, fetchSessionByIdCompat } from './sessionsHttp';
 
 describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
+  it.each([fetchSessionById, fetchSessionByIdCompat])('rejects an inactive detail response for a different Session (%#)', async readSession => {
+    const get = vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 200, data: { session: createSessionRecordFixture({ id: 'different-session', active: false }) },
+    });
+    try {
+      await expect(readSession({ token: 'token', sessionId: 'requested-session', reason: 'prompt-dispatch-boundary' }))
+        .rejects.toThrow();
+    } finally { get.mockRestore(); }
+  });
+
   it('surfaces HTTP 426 as a typed terminal upgrade requirement', async () => {
     vi.spyOn(axios, 'get').mockResolvedValueOnce({
       status: 426,
