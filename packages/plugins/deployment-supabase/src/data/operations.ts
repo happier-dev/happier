@@ -43,7 +43,7 @@ async function readPassword(reference: Operands<'projects-provision'>['password'
 
 /** Official Management API v1/1.0.0, characterized 2026-10-30 (PROVIDER-API.md).
  * No provider response/error body crosses this boundary without a named projection. */
-export async function request(context: Context, path: string, method: HttpMethod = 'GET', payload?: unknown, readOnly = false) {
+export async function request(context: Pick<Context, 'signal'> & Readonly<{ services: Pick<Context['services'], 'http'> }>, path: string, method: HttpMethod = 'GET', payload?: unknown, readOnly = false) {
   const readOnlyRequest = method === 'GET' || readOnly;
   context.signal.throwIfAborted();
   if (!context.services.http) return failure('client_required');
@@ -59,7 +59,6 @@ export async function request(context: Context, path: string, method: HttpMethod
     if (code && beforeRequestRefusals.has(code)) throw error;
     throw new PluginError({ code: 'outcome_unknown', message: 'outcome_unknown', ...(code ? { details: { code } } : {}) });
   }
-  if (context.signal.aborted) return failure(readOnlyRequest ? 'operation_cancelled' : 'outcome_unknown');
   if (response.finalUrl !== `${origin}${path}`) return failure(readOnlyRequest ? 'provider_response_invalid' : 'outcome_unknown');
   if (readOnly && (response.status < 200 || response.status >= 300)) return failure(`provider_http_${response.status}`);
   if (response.status === 401 || response.status === 403) return failure('deployment_access_denied');

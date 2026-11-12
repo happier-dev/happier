@@ -7,6 +7,7 @@ import type { ConnectedAccountAuthenticationContext, ConnectedAccountPortableRun
 import type { PluginTestkitInvokeActionOptions } from '@happier-dev/plugin-sdk/testing';
 import * as entry from './index.js';
 import { dataActions } from './data/actions.js';
+import { request as requestSupabase } from './data/operations.js';
 
 const credentialRef = { service: { pluginId: 'happier.deploy.supabase', localId: 'supabase' }, accountId: 'connected' };
 function preparation(actionId: string) { return DeploymentTargetPreparationBaseV1ProtocolSchema.parse({ v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1,
@@ -139,6 +140,20 @@ describe('activated Supabase managed data target', () => {
       expect(JSON.parse(new TextDecoder().decode(request?.body))).toEqual({ organization_slug: 'org-example', name: 'Example', db_pass: 'private:p@ss/word', region_selection: { type: 'specific', code: 'eu-central-1' } });
       expect(JSON.stringify(result)).not.toMatch(/private|db_pass/u);
     } finally { await h.kit.dispose(); }
+  });
+
+  it('retains an acknowledged project response when cancellation arrives with the HTTP response', async () => {
+    const controller = new AbortController();
+    const requests: HttpRequest[] = [];
+    const http = createPluginHttpFixture({ async request(request) {
+      requests.push(request);
+      controller.abort();
+      return { status: 201, headers: {}, body: new TextEncoder().encode(JSON.stringify(project)) };
+    } });
+    expect(await requestSupabase({ signal: controller.signal, services: { http } }, '/v1/projects', 'POST',
+      { organization_slug: 'org-example', name: 'Example' })).toEqual(project);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ method: 'POST', url: 'https://api.supabase.com/v1/projects' });
   });
 
   it('retains a partial pair and retries only the missing name for the same exact resource', async () => {
