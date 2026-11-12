@@ -1,10 +1,13 @@
 import { readManagedMachineTriggerAction } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
 import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
+import { MachineServiceExecInputV1Schema } from '@happier-dev/protocol/local/services/serviceExecV1';
+
 import type { IconName } from '@/components/ui/icons/Icon';
 
 import { formatTriggerSetSummary } from './formatTriggerSummary';
 import { describeLegacyTriggerSet, describeTriggerTarget, isWorkflowTriggerSourceGone } from './sessionTriggerGroups';
+import { readTriggerThen } from './sessionTriggerForm';
 import { resolveTriggerEventGroup } from './triggerEventGroups';
 
 export type AccountTriggerRow = Readonly<{
@@ -26,8 +29,8 @@ export type AccountTriggerRow = Readonly<{
 /**
  * What a page's Triggers section is about, and where its new triggers run. A Machine's triggers are the
  * sets that run on it (their project or any placement), as does a deployed service's Machine view.
- * An Environment lists individual Events whose private source owner projects that exact subject;
- * execution placement does not establish what an Event watches.
+ * An Environment lists its observed Events, saved deployment triggers and commands for its admitted services;
+ * execution placement alone does not establish Environment membership.
  */
 export type TriggerSubject = Readonly<
     | { kind: 'machine'; machineId: string }
@@ -51,14 +54,27 @@ export function projectAccountTriggerRows(params: Readonly<{
     resolveMachineTitle?: (id: string) => string | null;
     /** A page's own section lists only the sets about its subject. */
     subject?: TriggerSubject;
+    /** The Environment-filtered service Resource supplies membership, independently of execution placement. */
+    services?: readonly Readonly<{ machineId: string; serviceId: string }>[];
 }>): readonly AccountTriggerRow[] {
     const subject = params.subject;
     const sets = subject && subject.kind !== 'environment'
         ? params.sets.filter((set) => runsOnSubject(set, subject)) : params.sets;
     return sets.flatMap((set) => {
+        const then = subject?.kind === 'environment' && set.target
+            ? readTriggerThen(set.target, set.context?.executionTarget, set.context?.inputs) : null;
+        const command = then?.kind === 'doAction' && then.actionId === 'machines.services.exec'
+            ? MachineServiceExecInputV1Schema.safeParse(then.input) : null;
+        const commandTarget = command?.success ? command.data.target : null;
+        const serviceCommandHere = command?.success && commandTarget?.kind === 'current'
+            && params.services?.some(service => service.machineId === command.data.machineId
+                && service.serviceId === commandTarget.serviceId) === true;
         const triggers = subject?.kind === 'environment'
             ? set.triggers.filter((trigger) => trigger.kind === 'pluginEvent'
-                && trigger.subject?.kind === 'environment' && trigger.subject.environmentId === subject.environmentId)
+                ? trigger.subject?.kind === 'environment' && trigger.subject.environmentId === subject.environmentId
+                    || set.context?.inputs?.environmentId === subject.environmentId
+                        && set.context.deploymentTriggers?.some(row => row.triggerId === trigger.id) === true
+                : trigger.kind === 'schedule' && serviceCommandHere)
             : set.triggers.length > 0 ? set.triggers : [null];
         return triggers.map((trigger) => {
         const legacy = describeLegacyTriggerSet(trigger ? { ...set, triggers: [trigger] } : set, params.resolveMachineTitle);

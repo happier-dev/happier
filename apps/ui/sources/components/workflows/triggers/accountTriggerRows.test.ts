@@ -82,6 +82,45 @@ describe('projectAccountTriggerRows', () => {
 });
 
 describe('projectAccountTriggerRows subject', () => {
+    it('keeps saved repository deployment triggers with their fixed destination Environment', () => {
+        const triggerId = 'repository-push';
+        const push = set('push', { project: { machineId: 'controller', directory: '~' },
+            target: inline([{ kind: 'action', id: 'deploy', actionId: 'deployments.deploy', input: {} }]),
+            context: { workspace: { directory: '~' }, executionTarget: { kind: 'detached_run' },
+                inputs: { serverId: 'home', environmentId: 'staging', targetLinkId: 'runtime' },
+                deploymentTriggers: [{ triggerId }] },
+            triggers: [{ id: triggerId, revision: 1, enabled: true, createdAt: 1, updatedAt: 1,
+                kind: 'pluginEvent', triggerDefinitionEnvelope: 'private',
+                sourceSelectorId: 'repository', sourceContractVersion: 1, observation: { kind: 'checkpointedPull', watcher: null },
+                sourceStatus: null, sourceCatalogStatus: null,
+                eventRef: { pluginId: 'happier.scm.forge.github', localId: 'automation/repository-pushed-v1' } }],
+        });
+        expect(projectAccountTriggerRows({ sets: [push], resolveWorkflowTitle: () => null,
+            subject: { kind: 'environment', machineId: 'controller', environmentId: 'staging' },
+        }).map(row => row.triggerId)).toEqual([triggerId]);
+        expect(projectAccountTriggerRows({ sets: [push], resolveWorkflowTitle: () => null,
+            subject: { kind: 'environment', machineId: 'controller', environmentId: 'production' },
+        })).toEqual([]);
+    });
+    it('keeps scheduled service commands with their exact Environment and excludes unrelated schedules on the same Machine', () => {
+        const command = set('app-job', { project: { machineId: 'app-host', directory: '~' },
+            target: inline([{ kind: 'action', id: 'job', actionId: 'machines.services.exec', input: {
+                serverId: { kind: 'literal', value: 'home' }, machineId: { kind: 'literal', value: 'app-host' },
+                target: { kind: 'literal', value: { kind: 'current', serviceId: 'instance/web', expectedGeneration: 'release' } },
+                mode: { kind: 'literal', value: 'exec' }, argv: { kind: 'literal', value: ['task', 'run'] },
+            } }]), triggers: [daily('job-schedule', '0 3 * * *')] });
+        const unrelated = set('other', { project: command.project, target: inline(['Investigate']),
+            triggers: [daily('unrelated-schedule', '0 3 * * *')] });
+        const rows = projectAccountTriggerRows({ sets: [command, unrelated], resolveWorkflowTitle: () => null,
+            subject: { kind: 'environment', machineId: 'controller', environmentId: 'production' },
+            services: [{ machineId: 'app-host', serviceId: 'instance/web' }],
+        });
+        expect(rows.map(row => row.triggerId)).toEqual(['job-schedule']);
+        expect(projectAccountTriggerRows({ sets: [command], resolveWorkflowTitle: () => null,
+            subject: { kind: 'environment', machineId: 'controller', environmentId: 'staging' }, services: [],
+        })).toEqual([]);
+    });
+
     it('lists only each Event\'s exact Environment subject, independently of its execution Machine', () => {
         const event = (id: string) => set('fixture', { triggers: [{ id, revision: 1, enabled: true, createdAt: 1, updatedAt: 1,
             kind: 'pluginEvent', eventRef: { pluginId: 'happier.machine.services', localId: 'deployment-failed' },

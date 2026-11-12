@@ -3,6 +3,8 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 
+import { useMachineServicesList } from '@/components/machines/services/useMachineServicesList';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -20,6 +22,9 @@ import {
   useAccountWorkflowEditor,
 } from './AccountTriggersSection';
 import { GuidedAutomationSetup } from './GuidedAutomationSetup';
+import { DeploymentPushTriggerSetup } from './DeploymentPushTriggerSetup';
+import type { DeploymentPushSetupConfig } from './deploymentPushSetup';
+import { ScheduledServiceJobSetup } from './ScheduledServiceJobSetup';
 import { guidedStarterEventSeed, type GuidedStarter } from './guidedAutomation';
 import {
   SUBJECT_TRIGGER_PERSISTENT_STARTERS,
@@ -34,6 +39,7 @@ const ACCOUNT_TRIGGER_QUERY = { scope: 'account_inline' } as const;
 
 type Opening =
   | Readonly<{ kind: 'custom' }>
+  | Readonly<{ kind: 'scheduledJob' | 'deployOnPush'; anchor: React.RefObject<View | null> }>
   /** Add a check: the New trigger editor opened at the subject's own health form (the bound health-setup seed). */
   | Readonly<{ kind: 'check'; anchor: React.RefObject<View | null> }>
   | Readonly<{
@@ -58,10 +64,20 @@ export const SubjectTriggersSection = React.memo(
       deploymentEnvironment?: DeploymentEnvironmentRefV1;
       deploymentSourceName?: string;
       controllerMachineId?: string;
+      pushSetup?: DeploymentPushSetupConfig;
+      active?: boolean;
     }>,
   ) {
-    const read = useWorkflowTriggerSets(ACCOUNT_TRIGGER_QUERY);
-    const editor = useAccountWorkflowEditor({ read });
+    const { binding } = useServerCredentialAccountScopeBinding(props.deploymentEnvironment?.serverId);
+    const accountLifetime = props.deploymentEnvironment ? binding : undefined;
+    const read = useWorkflowTriggerSets(ACCOUNT_TRIGGER_QUERY, accountLifetime);
+    const editor = useAccountWorkflowEditor({ read, accountLifetime });
+    const services = useMachineServicesList({ serverId: props.deploymentEnvironment?.serverId ?? '',
+      machineId: props.subject.machineId, environmentId: props.deploymentEnvironment?.environmentId,
+      active: props.active !== false && props.subject.kind === 'environment' && props.deploymentEnvironment !== undefined });
+    const environmentServices = React.useMemo(() => services.rows?.map(service => ({
+      machineId: props.subject.machineId, serviceId: service.serviceId,
+    })), [services.rows, props.subject.machineId]);
     const { sets, status } = read;
     const rows = React.useMemo(
       () =>
@@ -69,8 +85,9 @@ export const SubjectTriggersSection = React.memo(
           sets,
           resolveWorkflowTitle: editor.resolveWorkflowTitle,
           subject: props.subject,
+          services: environmentServices,
         }),
-      [sets, editor.resolveWorkflowTitle, props.subject],
+      [sets, editor.resolveWorkflowTitle, props.subject, environmentServices],
     );
     const addAnchor = React.useRef<View>(null);
     const [opening, setOpening] = React.useState<Opening | null>(null);
@@ -78,6 +95,8 @@ export const SubjectTriggersSection = React.memo(
       () => ({ machineId: props.subject.machineId, directory: '~' }),
       [props.subject.machineId],
     );
+    const starterAvailable = (starter: SubjectTriggerStarter) => starter === 'scheduledJob'
+      ? props.deploymentEnvironment !== undefined : starter !== 'deployOnPush' || props.pushSetup !== undefined;
     const empty = rows.length === 0;
     const close = () => setOpening(null);
     const section = rows.length === 0 && status !== 'ready' ? null : (
@@ -109,7 +128,7 @@ export const SubjectTriggersSection = React.memo(
         }
       >
         {empty
-          ? SUBJECT_TRIGGER_STARTERS[props.subject.kind].map((starter) => (
+          ? SUBJECT_TRIGGER_STARTERS[props.subject.kind].filter(starterAvailable).map((starter) => (
               <StarterRow key={starter} starter={starter} onOpen={(anchor) => setOpening(openStarter(starter, anchor))} />
             ))
           : rows.map((row) => (
@@ -125,7 +144,7 @@ export const SubjectTriggersSection = React.memo(
                 }}
               />
             ))}
-        {empty ? null : SUBJECT_TRIGGER_PERSISTENT_STARTERS[props.subject.kind].map((starter) => (
+        {empty ? null : SUBJECT_TRIGGER_PERSISTENT_STARTERS[props.subject.kind].filter(starterAvailable).map((starter) => (
           <StarterRow key={starter} starter={starter} onOpen={(anchor) => setOpening(openStarter(starter, anchor))} />
         ))}
         {rows.length > 0 && status === 'failed' ? (
@@ -151,6 +170,7 @@ export const SubjectTriggersSection = React.memo(
             anchorRef={addAnchor}
             onRequestClose={close}
             initialProject={project}
+            accountLifetime={accountLifetime}
           />
         ) : null}
         {opening?.kind === 'check' ? (
@@ -158,8 +178,18 @@ export const SubjectTriggersSection = React.memo(
             anchorRef={opening.anchor}
             onRequestClose={close}
             initialProject={project}
+            accountLifetime={accountLifetime}
             eventSeed={guidedStarterEventSeed('healthFailed', { subject: props.subject, controllerMachineId: props.controllerMachineId })}
           />
+        ) : null}
+        {opening?.kind === 'deployOnPush' && props.pushSetup ? (
+          <DeploymentPushTriggerSetup anchorRef={opening.anchor} onRequestClose={close}
+            config={props.pushSetup} accountLifetime={accountLifetime} />
+        ) : null}
+        {opening?.kind === 'scheduledJob' && props.deploymentEnvironment ? (
+          <ScheduledServiceJobSetup anchorRef={opening.anchor} onRequestClose={close}
+            serverId={props.deploymentEnvironment.serverId} environmentId={props.deploymentEnvironment.environmentId}
+            machineId={props.subject.machineId} project={project} />
         ) : null}
         {opening?.kind === 'guided' ? (
           <GuidedAutomationSetup
@@ -180,6 +210,7 @@ export const SubjectTriggersSection = React.memo(
 );
 
 function openStarter(starter: SubjectTriggerStarter, anchor: React.RefObject<View | null>): Opening {
+  if (starter === 'scheduledJob' || starter === 'deployOnPush') return { kind: starter, anchor };
   return starter === 'addCheck' ? { kind: 'check', anchor } : { kind: 'guided', starter, anchor };
 }
 
@@ -196,7 +227,9 @@ const StarterRow = React.memo(function StarterRow(
     <View ref={anchorRef} collapsable={false}>
       <Item
         testID={`subject-triggers-starter:${props.starter}`}
-        title={t(`workflows.triggers.guided.starter.${props.starter}`)}
+        title={props.starter === 'deployOnPush' ? t('workflows.examples.deployOnPush.title')
+          : props.starter === 'scheduledJob' ? t('workflows.examples.runJobOnSchedule.title')
+          : t(`workflows.triggers.guided.starter.${props.starter}`)}
         icon={
           <Icon
             name={SUBJECT_TRIGGER_STARTER_GLYPH[props.starter]}

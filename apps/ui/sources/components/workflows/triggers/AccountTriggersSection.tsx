@@ -43,6 +43,8 @@ import { accountTriggerRemoval, projectAccountTriggerRows, type AccountTriggerRo
 import { isWorkflowTriggerSourceGone } from './sessionTriggerGroups';
 import { TriggerPopover } from './TriggerPopover';
 import { TriggerRow } from './TriggerRow';
+import { DeploymentPushTriggerFields } from './DeploymentPushTriggerFields';
+import { buildDeploymentPushFilter } from './deploymentPushSetup';
 import { TriggerRunsOnRow } from './TriggerRunsOnRow';
 import { buildTriggerExecutionTarget, readWorkflowTriggerSetForm } from './sessionTriggerForm';
 import { useTriggerThenOptions } from './useTriggerThenOptions';
@@ -327,6 +329,10 @@ function AccountTriggerPopover(props: Readonly<{
     const placements = set.placements ?? [];
     const triggerId = props.triggerId;
     const savedTrigger = set.triggers.find(trigger => trigger.id === triggerId);
+    const deploymentTrigger = set.context?.deploymentTriggers?.find(trigger => trigger.triggerId === triggerId);
+    const [branch, setBranch] = React.useState(deploymentTrigger?.branch ?? '');
+    const [actionApproval, setActionApproval] = React.useState<'automatic' | 'ask' | undefined>();
+    const savedActionApproval = set.context?.actionApprovals?.some(approval => approval.triggerId === triggerId) ? 'automatic' : 'ask';
     const managed = set.target && readManagedMachineTriggerAction(set.target);
     const actionTargets = managed ? (['stop', 'delete'] as const).map(effect => buildManagedCreationScopeTriggerTarget({
         homeId: managed.input.homeId, managedId: managed.input.managedId, effect,
@@ -368,6 +374,9 @@ function AccountTriggerPopover(props: Readonly<{
                 <TriggerRunsOnRow testID="workflows-column-trigger-runs-on" target={project} onChange={setProject} accountLifetime={props.accountLifetime}
                     description={t('workflows.triggers.editor.runsOnAccountDescription')} />
             </>}
+            showThen={deploymentTrigger ? false : undefined}
+            afterRows={deploymentTrigger ? <DeploymentPushTriggerFields branch={branch} onBranchChange={setBranch}
+                approval={actionApproval ?? savedActionApproval} onApprovalChange={setActionApproval} /> : undefined}
             onRunNow={!needsReview && triggerId === null ? async () => { await runNow.runNow(set.automationId, 'newSession'); } : undefined}
             onToggleEnabled={props.onToggleEnabled}
             onSaveAsWorkflow={needsReview ? undefined : props.onSaveAsWorkflow}
@@ -380,7 +389,8 @@ function AccountTriggerPopover(props: Readonly<{
                     props.onWritten();
                     return;
                 }
-                if (write.target === null || project === null) return;
+                const target = write.target ?? (deploymentTrigger ? set.target : null);
+                if (target === null || project === null) return;
                 const definition = write.trigger === null ? null : (({ enabled: _enabled, ...definition }) => definition)(write.trigger);
                 await updateWorkflowTrigger({
                     automationId: set.automationId,
@@ -388,13 +398,17 @@ function AccountTriggerPopover(props: Readonly<{
                     expectedRevision: set.revision,
                     ...(needsReview ? { confirmLegacyConversion: true } : {}),
                     patch: {
-                        ...(set.context ? (({ workspace: _workspace, inlineDefinition: _inlineDefinition, onComplete: _onComplete, ...context }) => context)(set.context) : {}),
-                        target: write.target,
+                        ...(set.context ? (({ workspace: _workspace, inlineDefinition: _inlineDefinition, onComplete: _onComplete,
+                            actionApprovals: _actionApprovals, deploymentTriggers: _deploymentTriggers, ...context }) => context)(set.context) : {}),
+                        ...(deploymentTrigger ? { actionApproval: actionApproval ?? savedActionApproval } : {}),
+                        ...(deploymentTrigger && branch !== (deploymentTrigger.branch ?? '')
+                            ? { deployment: buildDeploymentPushFilter(branch, deploymentTrigger) } : {}),
+                        target,
                         project,
                         ...(triggerId === null || definition === null ? {} : { trigger: definition }),
                         enabled: value.enabled,
                         executionTarget: buildTriggerExecutionTarget(value.then, set.context?.executionTarget),
-                        inputs: write.inputs,
+                        inputs: deploymentTrigger ? set.context?.inputs ?? {} : write.inputs,
                     },
                 }, props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime });
                 props.onWritten();
@@ -419,6 +433,7 @@ type NewAccountTriggerPopoverProps = Readonly<{
     accountLifetime?: ServerAccountScopeLifetime | null;
     /** Opened from a Machine's own Triggers section: Runs on starts at that Machine. */
     initialProject?: WorkflowProjectTargetV1;
+    initialActionTargets?: readonly TriggerTargetV1[];
 }>;
 
 export function NewAccountTriggerPopover(props: NewAccountTriggerPopoverProps): React.ReactElement {
@@ -506,7 +521,7 @@ function NewAccountTriggerDraftPopover(props: NewAccountTriggerPopoverProps): Re
             initialWhen={runSeed ? { kind: 'runLifecycle', source: runSeed.source, condition: 'terminal' }
                 : eventSeed ? { kind: 'pluginEvent', value: null, eventRef: eventSeed.eventRef } : undefined}
             initialEventSeed={eventSeed}
-            initialActionTargets={runSeed?.actionTargets}
+            initialActionTargets={runSeed?.actionTargets ?? props.initialActionTargets}
             accountLifetime={props.accountLifetime}
             serverId={props.accountLifetime?.scope.serverId}
             workflowOptions={thenOptions.workflowOptions}
@@ -534,7 +549,7 @@ function NewAccountTriggerDraftPopover(props: NewAccountTriggerPopoverProps): Re
                     target: write.target,
                     project,
                     trigger: write.trigger,
-                    executionTarget: buildTriggerExecutionTarget(value.then, runSeed ? { kind: 'detached_run' } : undefined),
+                    executionTarget: buildTriggerExecutionTarget(value.then, runSeed || props.initialActionTargets ? { kind: 'detached_run' } : undefined),
                     inputs: write.inputs,
                 }, props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime });
                 fireAndForget(sync.refreshAutomations());

@@ -383,7 +383,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
     const [eventEditing, setEventEditing] = React.useState(Boolean(props.initialEventSeed));
     const workflow = useTriggerWorkflowDefinition(!observationOnly && then.kind === 'runWorkflow' ? then.ref : null,
         props.libraryWorkflowsAvailable !== false, props.accountLifetime);
-    const inlineDefinition = !observationOnly && then.kind === 'kept' && then.target.kind === 'inline' ? then.target.definition : null;
+    const inlineDefinition = props.showThen !== false && !observationOnly && then.kind === 'kept' && then.target.kind === 'inline' ? then.target.definition : null;
     const inputFields = React.useMemo(() => projectSessionTriggerWorkflowInputFields({
         when,
         inputs: inlineDefinition?.inputs ?? workflow.definition?.inputs ?? [],

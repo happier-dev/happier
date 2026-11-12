@@ -7,7 +7,7 @@ import type { GuidedStarter } from './guidedAutomation';
  * A subject page's suggested entries: a guided automation starter, or `addCheck`, which opens the trigger editor at
  * the service's own health form (a service can have several checks, so it is always offered).
  */
-export type SubjectTriggerStarter = GuidedStarter | 'addCheck';
+export type SubjectTriggerStarter = GuidedStarter | 'addCheck' | 'scheduledJob' | 'deployOnPush';
 
 /**
  * The one starter table every subject page's Triggers section suggests when it is empty: what usually needs
@@ -16,7 +16,7 @@ export type SubjectTriggerStarter = GuidedStarter | 'addCheck';
  */
 export const SUBJECT_TRIGGER_STARTERS: Readonly<Record<TriggerSubject['kind'], readonly SubjectTriggerStarter[]>> = {
   machine: ['healthFailed', 'nightly'],
-  environment: ['deploymentFailed', 'healthFailed', 'nightly'],
+  environment: ['deployOnPush', 'scheduledJob', 'deploymentFailed', 'healthFailed', 'nightly'],
   service: ['addCheck', 'healthFailed', 'nightly'],
 };
 
@@ -27,12 +27,14 @@ export const SUBJECT_TRIGGER_STARTERS: Readonly<Record<TriggerSubject['kind'], r
  */
 export const SUBJECT_TRIGGER_PERSISTENT_STARTERS: Readonly<Record<TriggerSubject['kind'], readonly SubjectTriggerStarter[]>> = {
   machine: [],
-  environment: [],
+  environment: ['deployOnPush', 'scheduledJob'],
   service: ['addCheck', 'healthFailed'],
 };
 
 export const SUBJECT_TRIGGER_STARTER_GLYPH: Readonly<Record<SubjectTriggerStarter, IconName>> = {
   addCheck: 'plus',
+  scheduledJob: 'clock',
+  deployOnPush: 'rocket-launch',
   healthFailed: 'pulse',
   deploymentFailed: 'rocket-launch',
   nightly: 'moon',

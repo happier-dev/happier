@@ -293,6 +293,23 @@ could never start. You can save a paused draft with no assignments and assign
 machines before enabling it; removing or disabling the last enabled assignment
 of a running Workflow is refused until you pause it first.
 
+### Schedule a service job from an Environment
+
+In unreleased 0.3 development source, open an Environment's **Triggers** section
+and choose **Run a job on a schedule**. Select a current service that supports
+commands, enter the command arguments, choose the schedule, and save. Opening
+setup runs no command and starts no Agent. The saved job uses the ordinary
+Workflow trigger and Action approval path; changing its command or target does
+not inherit approval for the previous exact operation.
+
+For a repository Environment with a linked runtime target, the same section
+offers **Deploy on push or merge**. Configure the repository event and optional
+branch filter, then save. The default is **Automatic** for a non-production
+Environment and **Ask** for Production; you can choose either explicitly for
+that trigger. Each admitted event supplies its exact commit. Later edits to the
+fixed deployment destination need their own approval rather than borrowing the
+previous trigger's consent.
+
 ## What can trigger one
 
 A timer is only one of three automatic sources that can start a Workflow.

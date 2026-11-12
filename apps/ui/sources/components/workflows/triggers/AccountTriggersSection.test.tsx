@@ -269,6 +269,32 @@ function writtenContext(input: ReturnType<typeof AutomationDefinitionReconcileRe
 // The retained Account adapter below exercises settings, source intake and legacy
 // links. Primary Library presentation consumes the unified view tested alongside it.
 describe('Account Workflow Library and settings', () => {
+    it('saves a contextual scheduled service command through the Account trigger owner without starting an Agent', async () => {
+        const { buildTriggerTarget } = await import('./sessionTriggerForm');
+        const target = buildTriggerTarget({ kind: 'doAction', actionId: 'machines.services.exec', input: {
+            serverId, machineId: project.machineId,
+            target: { kind: 'current', serviceId: 'app/web', expectedGeneration: 'release-a' },
+            mode: 'exec', argv: ['task', 'daily'],
+        } }, 'account');
+        if (!target) throw new Error('Expected command target');
+        const screen = await renderAccountScreen(<NewAccountTriggerPopover anchorRef={React.createRef()}
+            initialProject={project} initialActionTargets={[target]} onRequestClose={() => undefined} />);
+        const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
+        expect(screen.findAllByType(ActionInputFields)).toHaveLength(1);
+        expect(screen.findByType(ActionInputFields).props.input).toMatchObject({
+            machineId: project.machineId, mode: 'exec', argv: ['task', 'daily'],
+        });
+        expect(rows).toHaveLength(0);
+        await screen.pressByTestIdAsync('workflows-column-new-trigger-popover-submit');
+        await waitForHomeGovernance(() => expect(rows, screen.getTextContent()).toHaveLength(1));
+        const recipe = rows[0]!.executionRecipe;
+        if (!recipe || !('workflow' in recipe) || recipe.workflow.t !== 'plain') throw new Error('Expected plain Workflow');
+        expect(rows[0]!.triggers).toMatchObject([{ kind: 'schedule' }]);
+        expect(recipe.workflow.v.executionTarget).toEqual({ kind: 'detached_run' });
+        expect(recipe.workflow.v.inlineDefinition?.blocks).toEqual(target.kind === 'inline' ? target.definition.blocks : []);
+        expect(home.requests.some(request => request.path.includes('/sessions') && request.method === 'POST')).toBe(false);
+    });
+
     it('demands workflow options only while the trigger picker is open', async () => {
         serve(fixture());
         const screen = await renderAccountScreen(<AccountTriggersSection />);
@@ -533,6 +559,61 @@ describe('Account Workflow Library and settings', () => {
         expect(screen.findByProps({ accessibilityLabel: 'workflows.triggers.then.message', value: 'The machine needs attention' })).toBeTruthy();
     });
 
+    it.each(['ask', 'automatic'] as const)('reopens saved push consent as Automatic and saves %s with its edited branch and retained trigger identity', async choice => {
+        const { addWorkflowTrigger } = await import('@/sync/domains/workflows/workflowTriggerActions');
+        const { buildDeploymentPushRequest } = await import('./deploymentPushSetup');
+        const { DeploymentPushTriggerFields } = await import('./DeploymentPushTriggerFields');
+        const push = { kind: 'pluginEvent' as const, enabled: true,
+            eventRef: { pluginId: 'happier.scm.forge.github', localId: 'automation/repository-pushed-v1' },
+            sourceInstanceId: 'repository:app', sourceContractVersion: 1, sourceConfig: {}, displayLabel: 'App repository',
+            filter: null, maximumObservationAgeMs: null,
+            observationTransport: { kind: 'checkpointedPull' as const, watcherMaterializationRef: {
+                machineId: project.machineId, pluginId: 'happier.scm.forge.github', materializationId: 'github' } } };
+        const request = buildDeploymentPushRequest({ environment: { serverId, environmentId: 'staging', projectSourceId: 'source' },
+            targetLinkId: 'runtime', project }, push, 'ask', 'main');
+        await addWorkflowTrigger(request);
+        const saved = rows[0]!;
+        const recipe = saved.executionRecipe;
+        if (recipe?.v !== 2 || recipe.workflow.t !== 'plain') throw new Error('Expected a plain saved push fixture');
+        const triggerId = saved.triggers[0]!.id;
+        // Persisted HTTP data is a genuine boundary. This is the exact person-proof shape
+        // produced by workflowTriggerActions.test.ts's Automatic save contract.
+        const savedContext = AutomationStoredWorkflowDefinitionV2Schema.parse(recipe.workflow.v);
+        const context = AutomationStoredWorkflowDefinitionV2Schema.parse({ ...savedContext,
+            deploymentTriggers: [{ triggerId, branch: 'main', paths: ['apps/web/**'] }],
+            actionApprovals: [{ triggerId, operation: {
+                parent: { actionId: 'workflow.trigger.add', input: { ...request, actionApproval: 'automatic' } },
+                approvedBy: { accountId: 'account-a' }, steps: [{ actionId: 'deployments.deploy',
+                    input: { serverId, environmentId: 'staging', targetLinkId: 'runtime', whenBusy: 'supersede' },
+                    binding: { kind: 'deployment_sha' } }],
+            } }] });
+        rows = [AutomationDefinitionDetailSchema.parse({ ...saved, executionRecipe: { ...recipe,
+            workflow: { t: 'plain', v: context } } })];
+        resetTriggerSets();
+        const screen = await renderAccountScreen(<AccountTriggersSection />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`workflows-column:trigger:${saved.id}`)).not.toBeNull());
+        await screen.pressByTestIdAsync(`workflows-column:trigger:${saved.id}`);
+        expect(screen.findByType(DeploymentPushTriggerFields).props.approval).toBe('automatic');
+        expect(screen.findByTestId('deployment-push-branch')?.props.value).toBe('main');
+        await act(async () => screen.changeTextByTestId('deployment-push-branch', ' release '));
+        if (choice === 'ask') await screen.pressByTestIdAsync('deployment-push-approval:ask');
+        expect(screen.findByType(DeploymentPushTriggerFields).props.approval).toBe(choice);
+        await screen.pressByTestIdAsync('workflows-column-trigger-popover-submit');
+        await waitForHomeGovernance(() => expect(writes()).toHaveLength(1));
+        if (choice === 'ask') expect(writtenContext(writes()[0]!)).not.toHaveProperty('actionApprovals');
+        else expect(writtenContext(writes()[0]!)).toMatchObject({ actionApprovals: [{ triggerId, operation: {
+            parent: { actionId: 'workflow.trigger.update' }, steps: [{ actionId: 'deployments.deploy',
+                input: { serverId, environmentId: 'staging', targetLinkId: 'runtime', whenBusy: 'supersede' },
+                binding: { kind: 'deployment_sha' } }] } }] });
+        expect(writtenContext(writes()[0]!)).toMatchObject({ deploymentTriggers: [{ triggerId, branch: 'release', paths: ['apps/web/**'] }] });
+        expect(rows[0]?.triggers.map(trigger => trigger.id)).toEqual([triggerId]);
+        expect(rows[0]).toMatchObject({ enabled: true, triggers: [{ id: triggerId, enabled: true }] });
+        expect(writtenContext(writes()[0]!)).toMatchObject({ inputs: request.inputs,
+            inlineDefinition: { blocks: [{ actionId: 'deployments.deploy' }] } });
+        expect(home.requests.filter(request => request.path.includes('/account/settings')
+            && request.method !== 'GET')).toHaveLength(0);
+    });
+
     it.each(['ambiguous', 'unavailable'] as const)('refuses to replace an %s saved source with a new draft', async (condition) => {
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const credentials = await TokenStorage.getCredentialsForServerUrl(getActiveServerSnapshot().serverUrl);
@@ -760,9 +841,10 @@ describe('Account Workflow Library and settings', () => {
         const screen = await renderAccountScreen(<></>);
         void library.getCurrent().editor.open(target, { current: null });
         // Exactly one confirmation: the Action's own.
-        await waitForHomeGovernance(() => expect(screen.findAllByType(WebAlertModal)).toHaveLength(1));
+        await waitForHomeGovernance(() => expect(screen.findAllHostsByTestId('actions.confirmation-review')).toHaveLength(1));
         expect(library.getCurrent().editor.popover).toBeNull();
-        await screen.pressByTestIdAsync('web-modal-confirm');
+        expect(home.requests.filter(request => request.method === 'DELETE')).toEqual([]);
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
         await waitForHomeGovernance(() => expect(rows).toHaveLength(0));
         await waitForHomeGovernance(() => expect(library.getCurrent().libraryRows).toHaveLength(0));
     });
@@ -930,9 +1012,9 @@ describe('Account Workflow Library and settings', () => {
         const listsBefore = listRequests().length;
         // The real Action waits for the person's confirmation before its press settles.
         await act(async () => screen.pressByTestId('workflows-column-trigger-popover-delete'));
-        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findHostByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
         expect(home.requests.filter(request => request.method === 'DELETE')).toEqual([]);
-        await screen.pressByTestIdAsync('web-modal-confirm');
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
         await waitForHomeGovernance(() => {
             expect(rows).toEqual([]);
             expect(storage.getState().workflowTriggerSetsById.digest).toBeUndefined();
