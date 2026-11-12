@@ -74,6 +74,7 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
   const native = await createMuseMspProcessFixture({ ...options.native, auditPath, cwd });
   let launched = 0;
   const warnings: Parameters<LoggerService['warn']>[] = [];
+  const debugLogs: Parameters<LoggerService['debug']>[] = [];
   const exec = createStablePluginExecService({ ...native, environment: options.environment, signal, isOccurrenceCurrent: () => true,
     async resolveExecutable() {
       launched++;
@@ -299,6 +300,7 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
     });
     const context = composeNativeAgentSessionRuntimeContext({ identity, contributionId: agentId, sessionId,
       invokedAtMs: Date.now(), signal, services: { ...services, exec, logger: { ...services.logger,
+        debug(...args: Parameters<LoggerService['debug']>) { debugLogs.push(args); services.logger.debug(...args); },
         warn(...args: Parameters<LoggerService['warn']>) { warnings.push(args); services.logger.warn(...args); },
       } }, sessionServices,
       ui: createPluginInvocationPresentation({ currentSession: currentSessionUi, signal, isOccurrenceCurrent: lease.isCurrent,
@@ -316,7 +318,7 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
     const untouchedRegistry = untouched;
     const boundPublications = publications;
     return {
-      runtime, context, host, permissionHandler, custodyMutations, storedWrites, usageWrites, boundaryRequests, connectionStates, warnings,
+      runtime, context, host, permissionHandler, custodyMutations, storedWrites, usageWrites, boundaryRequests, connectionStates, warnings, debugLogs,
       publications: boundPublications,
       admission: { untouchedHasMuse, untouchedLaunchCount, selectedFactoryLaunchCount },
       get launchCount() { return launched; },

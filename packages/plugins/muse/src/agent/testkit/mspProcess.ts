@@ -23,6 +23,8 @@ export async function createMuseMspProcessFixture(options?: Readonly<{
     readinessGuard?: boolean;
     /** Muse 1.4.15's documented ephemeral-session profile refusal. */
     permissionProfileRefusal?: boolean;
+    /** Schema-derived alternate/unknown outcomes and incoherent result controls. */
+    permissionProfileResult?: Readonly<{ applyOutcome?: string; profileId?: string }>;
     /** Schema-derived admission failures, optionally after the captured native turn/started frame. */
     turnFailure?: 'refuse' | 'eof' | 'started-refuse' | 'started-eof';
     recording?: JsonValue;
@@ -54,6 +56,7 @@ export async function createMuseMspProcessFixture(options?: Readonly<{
             ...(options?.playbackSteps ? { MUSE_TEST_PLAYBACK_STEPS: JSON.stringify(options.playbackSteps) } : {}),
             ...(options?.expectedMcpServers ? { MUSE_TEST_EXPECTED_MCP: JSON.stringify(options.expectedMcpServers) } : {}),
             ...(options?.scenario ? { MUSE_TEST_SCENARIO: options.scenario } : {}),
+            ...(options?.permissionProfileResult ? { MUSE_TEST_PROFILE_RESULT: JSON.stringify(options.permissionProfileResult) } : {}),
             MUSE_TEST_PROFILE_REFUSAL: options?.permissionProfileRefusal ? '1' : '0',
             MUSE_TEST_SCHEMA: JSON.stringify(options?.schema ?? {}),
             ...(options?.turnFailure ? { MUSE_TEST_TURN_FAILURE: options.turnFailure } : {}),
@@ -334,9 +337,10 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
                     data: { kind: 'commandRejected', commandId: message.params.commandId,
                         reason: 'permission_profile_ephemeral_fixed', retryable: false } } });
             } else {
+                const profileResult = process.env.MUSE_TEST_PROFILE_RESULT ? JSON.parse(process.env.MUSE_TEST_PROFILE_RESULT) : { applyOutcome: 'completed' };
                 send({ jsonrpc: '2.0', id: message.id, result: { status: 'accepted',
-                    commandId: message.params.commandId, applyOutcome: 'completed', permissionState: {
-                        profileId: message.params.profileId, reviewerAuthority: 'human', reviewerAttached: true,
+                    commandId: message.params.commandId, applyOutcome: profileResult.applyOutcome, permissionState: {
+                        profileId: profileResult.profileId ?? message.params.profileId, reviewerAuthority: 'human', reviewerAttached: true,
                     } } });
             }
             writeAudit();

@@ -285,9 +285,23 @@ async function openMuseConversation<SessionId extends string | undefined>(
           const result = readMuseRecord(await msp.command(method, {
             sessionId: nativeSessionId, profileId: selected.permissionProfile,
           }, { signal: options?.signal ?? context.signal }));
-          if (result.status !== 'accepted' || readMuseRecord(result.permissionState).profileId !== selected.permissionProfile) {
+          const profileId = readMuseRecord(result.permissionState).profileId;
+          const outcome = { method, sessionId: nativeSessionId, status: typeof result.status === 'string' ? result.status : null,
+            applyOutcome: typeof result.applyOutcome === 'string' ? result.applyOutcome : null,
+            requestedProfileId: selected.permissionProfile,
+            effectiveProfileId: typeof profileId === 'string' ? profileId : null };
+          context.services.logger.debug('Muse permission profile outcome', outcome);
+          // Muse's open outcome vocabulary currently defines completed/noop as
+          // successes. Keep any unfamiliar outcome without claiming it applied.
+          if (outcome.status !== 'accepted' || (outcome.applyOutcome !== 'completed' && outcome.applyOutcome !== 'noop')
+            || outcome.effectiveProfileId !== selected.permissionProfile) {
+            // The response did not confirm the requested effect. Invalidate the
+            // local projection so a later explicit choice cannot falsely no-op.
+            currentProfile = undefined;
+            currentApproval = undefined;
             return { status: 'unavailable' as const,
-              diagnostic: { code: 'PLUGIN_EXEC_PROTOCOL_ERROR', severity: 'error' as const } };
+              diagnostic: { code: 'PLUGIN_EXEC_PROTOCOL_ERROR', severity: 'error' as const,
+                message: 'Muse did not confirm the requested permission profile.', details: outcome } };
           }
           currentProfile = selected.permissionProfile;
           // Profile selection changes native permission policy. Reapply the mapping's
@@ -312,6 +326,12 @@ async function openMuseConversation<SessionId extends string | undefined>(
         const reason = data.reason === 'permission_profile_ephemeral_fixed'
           || data.reason === 'permission_profile_unknown' || data.reason === 'permission_profile_unavailable'
           || data.reason === 'permission_profile_reviewer_unavailable' ? data.reason : undefined;
+        if (method === 'session/setPermissionProfile') context.services.logger.debug('Muse permission profile outcome', {
+          method, sessionId: nativeSessionId, status: failure.kind === 'rejected_before_effect' ? 'rejected' : 'unavailable', applyOutcome: null,
+          requestedProfileId: selected.permissionProfile,
+          ...(failure.kind === 'rejected_before_effect' && failure.details.providerErrorCode !== undefined
+            ? { providerErrorCode: failure.details.providerErrorCode } : {}), ...(reason ? { reason } : {}),
+        });
         return { status: failure.kind === 'rejected_before_effect' ? 'rejected' as const : 'unavailable' as const,
           diagnostic: { code: failure.kind === 'rejected_before_effect' ? 'provider_request_rejected' : 'PLUGIN_EXEC_FAILED',
             severity: 'error' as const, ...(reason ? { message: reason } : {}),
