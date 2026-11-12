@@ -322,7 +322,18 @@ export function reconcileMachineCollection(previous: MachineCollection | null, n
     const sections = reconcileStableRows(previous.sections, next.sections.map(section => {
         const before = previous.sections.find(candidate => candidate.key === section.key);
         if (!before) return section;
-        const rows = reconcileStableRows(before.rows, section.rows, machineCollectionRowKey);
+        const beforeByKey = new Map(before.rows.map(row => [machineCollectionRowKey(row), row]));
+        const presentationRows = section.rows.map(row => {
+            const held = beforeByKey.get(machineCollectionRowKey(row));
+            if (!held?.presenceSource || !row.presenceSource) return row;
+            // The leaf reads current activity from its linked owner. Clock-only arrivals
+            // must not replace its presentation row; status and wording still compare normally.
+            const machine = { ...row.presenceSource.machine,
+                active: held.presenceSource.machine.active, activeAt: held.presenceSource.machine.activeAt };
+            linkMachineActivity(row.presenceSource.machine, machine);
+            return { ...row, presenceSource: { ...row.presenceSource, machine } };
+        });
+        const rows = reconcileStableRows(before.rows, presentationRows, machineCollectionRowKey);
         rows.forEach((row, index) => {
             const current = section.rows[index]!;
             if (row !== current && row.presenceSource && current.presenceSource) {

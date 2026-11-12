@@ -5,6 +5,7 @@ import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/ma
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { t } from '@/text';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { captureMachinePresenceObservation, clearMachineRequestReachabilityForTest, recordMachineRequestFailed } from '@/sync/domains/machines/reachability/machineReachability';
 
 import type { ActiveSelectionMachineGroup } from '../hooks/useActiveSelectionMachineGroups';
@@ -34,13 +35,16 @@ function managed(id: string, overrides: Partial<ManagedMachineV1> = {}): Managed
 function machine(id: string, overrides: Partial<Machine> & { displayName?: string; host?: string; platform?: string } = {}): Machine {
     const { displayName, host, platform, ...rest } = overrides;
     const fixture = createMachineFixture({ id });
-    return {
+    const published = {
         ...fixture,
         active: false,
         activeAt: 0,
         metadata: { ...fixture.metadata!, displayName, host: host ?? `${id}.local`, platform: platform ?? 'linux' },
         ...rest,
     };
+    // These are answered census facts, including when the builder links a held projection.
+    publishMachineActivity(published, published, []);
+    return published;
 }
 
 function group(serverId: string, machines: Machine[], overrides: Partial<ActiveSelectionMachineGroup> = {}): ActiveSelectionMachineGroup {
