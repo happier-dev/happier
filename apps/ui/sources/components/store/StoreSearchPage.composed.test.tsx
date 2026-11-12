@@ -239,7 +239,9 @@ async function setup(qualifier = 'cursors', withFailure = false) {
                 }
                 return next;
             }) }), []);
-        return <DestinationInstanceHost tabId="store-page" ref={{ ...target, params }} pathname="/plugins" focused={props.focused ?? presented} visible={presented}
+        // The workspace retains its route reference until params change; an equal parent render publishes no route.
+        const destination = React.useMemo(() => ({ ...target, params }), [params]);
+        return <DestinationInstanceHost tabId="store-page" ref={destination} pathname="/plugins" focused={props.focused ?? presented} visible={presented}
             navigation={navigation}>
             <AppPaneProvider>{props.kind ? <StoreKindPage kind={props.kind} presented={presented} /> : <StoreSearchPage presented={presented} />}</AppPaneProvider>
         </DestinationInstanceHost>;

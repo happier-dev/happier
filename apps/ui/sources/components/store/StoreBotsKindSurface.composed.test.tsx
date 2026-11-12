@@ -34,11 +34,13 @@ it.each(['open', 'add'] as const)('browses metadata and reaches the shared previ
     const destinations = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
     const resolved = resolveDestinationRefFromHref(destinations, '/plugins/bots')!;
     const target = { ...resolved, params: { ...resolved.params, filters: JSON.stringify({ source: { include: [sourceId], exclude: [] } }) } };
+    // A real ScrollView retains its content host; the tracker rejects a host that changed during measurement.
+    const content = {};
     const screen = await renderScreen(<DestinationInstanceHost tabId="bots" ref={target} pathname="/plugins/bots" focused visible
         navigation={{ push: promptRegistriesRouterPushSpy, replace: () => {}, back: () => {}, setParams: () => {} }}>
         <AppPaneProvider><StoreBotsKindSurface kind="bot" input={{ mode: 'browse', presented: true }} /></AppPaneProvider>
     </DestinationInstanceHost>, { createNodeMock: node => node.type === 'ScrollView'
-        ? { getInnerViewRef: () => ({}), scrollTo: () => {} } : node.type === 'View' ? {} : null });
+        ? { getInnerViewRef: () => content, scrollTo: () => {} } : node.type === 'View' ? {} : null });
     // The physical pane owner mounts its page only after the native layout boundary reports width.
     await act(async () => {
         for (const node of screen.root.findAll(candidate => typeof candidate.type === 'string' && typeof candidate.props.onLayout === 'function')) {

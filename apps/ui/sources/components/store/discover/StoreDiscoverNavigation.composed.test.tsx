@@ -399,7 +399,9 @@ it('hands native MCP Text edits through a lazy pane-to-page transition without U
   expect(registryReads).toHaveLength(0);
   await screen.update(tree(true));
   await waitForHomeGovernance(() => expect(screen.findByTestId('mcp.add.env.row.0')).not.toBeNull());
-  expect(screen.findByTestId('store.kind.mcpServer.detailPane.header.title')?.props.children).toBe('Regional tool');
+  // The pane names the kind; the listing's own header names the item (ede9ea79cf8).
+  expect(screen.findByTestId('store.kind.mcpServer.detailPane.header.title')?.props.children).toBe('capabilities.store.kindWord.mcpServer');
+  expect(screen.getTextContent()).toContain('Regional tool');
   await measureEnv();
   await act(async () => { screen.findAll(node => node.props?.testID === 'mcp.add.env.row.0.type' && typeof node.props.onSelect === 'function')[0]!.props.onSelect('literal'); });
   const field = 'mcp.add.env.row.0.value';
@@ -423,12 +425,13 @@ it('hands native MCP Text edits through a lazy pane-to-page transition without U
   await measureEnv();
   expect(screen.findHostByTestId(field)?.props.value).toBe('europe-west');
   await act(async () => { nav.setParams({ selection: JSON.stringify({ ...reference, itemId: 'example/other' }) }); });
-  await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('example/other'));
+  // The web identifier's middle-ellipsis spans are separate text nodes in this renderer.
+  await waitForHomeGovernance(() => expect(screen.getTextContent()).toMatch(/example\s*\/other/));
   await waitForHomeGovernance(() => expect(screen.findByTestId('mcp.add.env.row.0')).not.toBeNull());
   await measureEnv();
   expect(screen.findHostByTestId(field)?.props.value).toBeUndefined();
   await act(async () => { nav.setParams({ selection: JSON.stringify(reference) }); });
-  await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(reference.itemId));
+  await waitForHomeGovernance(() => expect(screen.getTextContent()).toMatch(/example\s*\/region/));
   await waitForHomeGovernance(() => expect(screen.findByTestId('mcp.add.env.row.0')).not.toBeNull());
   await measureEnv();
   expect(screen.findHostByTestId(field)?.props.value).toBeUndefined();
@@ -472,8 +475,8 @@ it('opens a Discover item as its listing beside the page on a wide window, and B
   detailsPane.available = true;
   const { screen, reference } = await renderDiscoverWithOneJob();
   // Store → Discover (the default page) → Browse by job → the job.
-  await measureCards(screen, 'store.discover.jobs:stage');
-  await press(screen, `store.discover.jobs.${JSON.stringify([HAPPIER_PICKS_SOURCE_ID, 'review'])}`);
+  // A lone job uses the shared shelf's catalog row (RegistryShelf, 8e153aa1c91), not a measured card grid.
+  await press(screen, `store.discover.jobs.${JSON.stringify([HAPPIER_PICKS_SOURCE_ID, 'review'])}.row`);
   expect(nav.top().params).toMatchObject({ view: 'job', job: 'review' });
   // The job's choice opens its exact listing in the pane: the page stays, the route names the selection.
   await press(screen, 'store.job.groups.review-skill');
@@ -499,7 +502,7 @@ it('opens a Discover item as its listing beside the page on a wide window, and B
   expect(nav.top().params).toEqual({});
   await waitForHomeGovernance(() =>
     expect(
-      screen.findAllHostsByTestId('store.discover.jobs').length,
+      screen.findAllHostsByTestId(`store.discover.jobs.${JSON.stringify([HAPPIER_PICKS_SOURCE_ID, 'review'])}.row`).length,
     ).toBeGreaterThan(0),
   );
 });
@@ -507,8 +510,8 @@ it('opens a Discover item as its listing beside the page on a wide window, and B
 it('pushes a Discover item as its own listing page where no pane fits, and Back returns to the same job', async () => {
   detailsPane.available = false;
   const { screen, reference } = await renderDiscoverWithOneJob();
-  await measureCards(screen, 'store.discover.jobs:stage');
-  await press(screen, `store.discover.jobs.${JSON.stringify([HAPPIER_PICKS_SOURCE_ID, 'review'])}`);
+  // A lone job uses the shared shelf's catalog row (RegistryShelf, 8e153aa1c91), not a measured card grid.
+  await press(screen, `store.discover.jobs.${JSON.stringify([HAPPIER_PICKS_SOURCE_ID, 'review'])}.row`);
   await press(screen, 'store.job.groups.review-skill');
   expect(nav.top().pathname).toBe('/(app)/plugins/listing');
   expect(JSON.parse(nav.top().params.selection!)).toEqual(reference);

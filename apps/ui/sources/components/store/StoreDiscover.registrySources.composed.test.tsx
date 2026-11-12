@@ -153,9 +153,9 @@ it.each([false, true])('opens the cold database picker with bundled PostgreSQL a
         expect(packagedReads).toEqual([]);
         expect(readCurrentAppShellPluginUiProjection({ scope, declarationsOnly: true })?.registrySourcesById[entry.id]?.occurrenceId).toBeUndefined();
         await tree.update(body(true));
+        await waitForHomeGovernance(() => expect(readCurrentAppShellPluginUiProjection({ scope, declarationsOnly: true })?.registrySourcesById[entry.id])
+            .toMatchObject({ occurrenceId }));
         await waitForHomeGovernance(() => expect(JSON.stringify(tree!.tree.toJSON())).toContain('PostgreSQL'));
-        expect(readCurrentAppShellPluginUiProjection({ scope, declarationsOnly: true })?.registrySourcesById[entry.id])
-            .toMatchObject({ occurrenceId });
         expect(JSON.stringify(tree.tree.toJSON())).toContain('Data services');
         expect(JSON.stringify(tree.tree.toJSON())).toContain('Happier curated marketplace');
         expect(JSON.stringify(tree.tree.toJSON())).toContain('Retry');
