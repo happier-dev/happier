@@ -409,17 +409,17 @@ describe('managed configurator draft owner', () => {
             cpu: 4, memoryBytes: 8 * 1024 ** 3, image: { kind: 'catalog', id: 'ghcr.io/trycua/macos:26' }, storage: 'home',
         });
     });
-    it('starts a Cua sandbox launch from the provider\u2019s declared size defaults, so its options read is complete without typing', () => {
+    it('keeps Cua sandbox size fields empty until the person chooses the required values', () => {
         const descriptor = MachineProvisionerContributionV1Schema.parse(CUA_PLUGIN.manifest.contributes.machineProvisioners?.find(entry => entry.id === 'local-sandbox'));
         const action = PluginActionContributionV2Schema.parse(CUA_PLUGIN.manifest.contributes.actions?.find(entry => entry.id === descriptor.actions.options));
         const hints = normalizePluginActionInputHintsV2(action.inputHints);
         const draft = createManagedConfiguratorDraft({ provisioner: { contribution: { pluginId: CUA_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'cua', descriptor },
             controller, name: 'Sandbox' });
         expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!)).toEqual({});
-        expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!, hints)).toEqual({ size: { cpu: 2, memoryBytes: 4 * 1024 ** 3 } });
-        // What the person typed wins over the default; an unfilled field is still seeded.
+        expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!, hints)).toEqual({});
+        // Cua declares no native defaults; an edit must not invent the missing memory choice.
         const edited = setManagedConfiguratorOptionsSelectors(draft, { size: { cpu: 8 } });
-        expect(managedConfiguratorOptionsSelectors(edited, action.inputSchema!, hints)).toEqual({ size: { cpu: 8, memoryBytes: 4 * 1024 ** 3 } });
+        expect(managedConfiguratorOptionsSelectors(edited, action.inputSchema!, hints)).toBeNull();
     });
     it('resolves the Cua sandbox options request from the generated bundled manifest projection, not null', () => {
         const projected = JSON.parse(readFileSync(new URL('../../../../../../cli/assets/bundled-plugin-manifests/machine-cua.json', import.meta.url), 'utf8'));
@@ -428,7 +428,7 @@ describe('managed configurator draft owner', () => {
         const hints = normalizePluginActionInputHintsV2(action.inputHints);
         const draft = createManagedConfiguratorDraft({ provisioner: { contribution: { pluginId: projected.id, localId: descriptor.id }, occurrenceId: 'cua', descriptor },
             controller, name: 'Sandbox' });
-        expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!, hints)).toEqual({ size: { cpu: 2, memoryBytes: 4 * 1024 ** 3 } });
+        expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!, hints)).toEqual({});
     });
     it('shows the Cua sandbox memory in GiB while the stored and submitted value stays bytes, and leaves unlabelled integers raw', () => {
         const descriptor = MachineProvisionerContributionV1Schema.parse(CUA_PLUGIN.manifest.contributes.machineProvisioners?.find(entry => entry.id === 'local-sandbox'));
@@ -437,7 +437,8 @@ describe('managed configurator draft owner', () => {
         const memory = fields.find(field => field.path === 'size.memoryBytes');
         const cpu = fields.find(field => field.path === 'size.cpu');
         if (!memory || !cpu) throw new Error('The Cua sandbox options declare memory and CPU');
-        const shown = resolveHappierActionFieldPresentation(memory, memory.defaultValue);
+        expect(resolveHappierActionFieldPresentation(memory, memory.defaultValue)).toMatchObject({ kind: 'text', value: '' });
+        const shown = resolveHappierActionFieldPresentation(memory, 4 * 1024 ** 3);
         expect(shown).toMatchObject({ kind: 'text', value: '4' });
         expect(shown.kind === 'text' && shown.parseText('8')).toBe(8 * 1024 ** 3);
         const rawCpu = resolveHappierActionFieldPresentation(cpu, 2);
