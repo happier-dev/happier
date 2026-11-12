@@ -46,6 +46,8 @@ vi.mock('@/text', async () => {
 
 vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => reactNativeRuntime.isTauri,
+    invokeTauri: async () => false,
+    listenTauriEvent: async () => () => undefined,
 }));
 
 vi.mock('expo-notifications', () => ({
