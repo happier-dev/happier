@@ -11,7 +11,7 @@ import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/de
 import { DeploymentTeardownEnvironmentPartialDetailsV1Schema, DeploymentBackupFailureDetailsV1Schema,
     readDeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
-import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1, readDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/deployment-protocol/v1';
 import { FiniteCommandFailureDetailsV1Schema, MachineSetupFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
@@ -148,7 +148,9 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
             : missingSecrets?.success
             ? t('projects.deployments.receipt.missingSecrets', { names: missingSecrets.data.missingRequiredSecretNames.join(', ') })
             : retiredDomain ? `${retiredDomain} · ${remedy}`
-                : deploymentRecovery ? remedy || deploymentRecovery.remedy : presented.reason || remedy || null;
+                // The recovery owner reads the stored remedy: a sentence stays, a remedy code becomes its sentence.
+                : deploymentRecovery ? (remedy ? readDeploymentFailureRecoveryV1(failure.errorCode, failure.details).remedy : deploymentRecovery.remedy)
+                : presented.reason || remedy || null;
     return {
         reason,
         message: presented.code === null || failure.error === failure.errorCode ? null : failure.error,

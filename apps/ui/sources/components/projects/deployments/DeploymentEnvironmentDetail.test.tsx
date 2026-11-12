@@ -1869,6 +1869,31 @@ describe('Project deployments page', () => {
     } finally { controller.retire(); }
   });
 
+  it('opens the runtime Machine\'s own setup for a missing deployment tool, in words, never the raw remedy code', async () => {
+    const detail = environmentDetailForHome();
+    const { controller } = controllerFor({ detail });
+    const opened: unknown[][] = [];
+    const review = { ...noReview, openRecovery: (...args: unknown[]) => { opened.push(args); } };
+    // The Machine's missing-tool resolution answers with its typed remedy code, not a sentence (QA136-FORGE SOURCE-REVIEW).
+    const deploy = vi.fn(async () => { throw new HappyError('plugin_exec_system_tool_unavailable', false, {
+      code: 'plugin_exec_system_tool_unavailable',
+      details: { kind: 'systemToolUnavailable', remedy: 'install_on_machine_and_add_to_daemon_path' } }); });
+    try {
+      const screen = await renderScreen(
+        <DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id} demand={shown}
+          accountId="account-owner" serverId={scope.serverId} phone={false} deploy={deploy} review={review} onOpenReceipt={() => {}} />,
+      );
+      await screen.pressByTestIdAsync('project-deployments.environment.deploy');
+      const banner = 'project-deployments.outcome.refused.other';
+      await vi.waitFor(() => expect(screen.findByTestId(banner)).not.toBeNull());
+      // Details stay closed: what reads is the sentence, not the code.
+      expect(screen.getTextContent()).not.toContain('install_on_machine_and_add_to_daemon_path');
+      await screen.pressByTestIdAsync(`${banner}.action`);
+      // The fixture's one runtime Machine.
+      expect(opened).toEqual([['machines', { machineId: 'machine-a' }]]);
+    } finally { controller.retire(); }
+  });
+
   it('keeps a failed receipt\'s "Read deployment logs" on that receipt, where its failed step\'s logs are', async () => {
     const base = createDeploymentReceiptDetailV1();
     const failure = { code: 'native_failed', phase: 'build' as const };

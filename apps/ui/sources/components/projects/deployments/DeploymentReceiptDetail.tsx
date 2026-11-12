@@ -510,6 +510,7 @@ export const DeploymentReceiptDetail = React.memo(
                   onPress: () => {
                     const destination = recovery.nextAction.destination;
                     const at = destination === 'buildMachineSetup' && content.buildMachineId ? { machineId: content.buildMachineId }
+                      : destination === 'machines' && content.machines.length === 1 ? { machineId: content.machines[0]! }
                       : destination === 'logs' ? { deploymentId: deployment.id } : null;
                     if (at) props.onOpenRecoveryDestination?.(destination, at);
                     else props.onOpenRecoveryDestination?.(destination);

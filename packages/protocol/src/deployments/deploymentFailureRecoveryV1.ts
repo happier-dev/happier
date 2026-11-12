@@ -284,6 +284,8 @@ export function readDeploymentFailureRecoveryV1(errorCode: string, details?: unk
     return { requiredFact: projected.requiredFact,
         remedy: authored === 'retry_original_request' ? 'The requester could not be confirmed. Reconnect the original session and submit the request again.'
             : authored === 'run_from_authorized_host' ? 'This source is on a machine you cannot use for this request. Choose an authorized source machine.'
+                // The Machine's missing-tool resolution names its remedy as a code; the person reads this owner's sentence.
+                : authored === 'install_on_machine_and_add_to_daemon_path' ? recoveries.plugin_exec_system_tool_unavailable.remedy
                 : supersededRemedies.has(authored) || authored === fallback.remedy ? selected.remedy : authored,
         nextAction: selected.nextAction };
 }

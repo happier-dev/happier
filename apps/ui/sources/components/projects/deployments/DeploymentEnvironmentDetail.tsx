@@ -718,7 +718,8 @@ export const DeploymentEnvironmentDetail = React.memo(
           // A just-accepted Deploy says so once, when nothing above it needs saying.
           return outcome?.kind === 'started' ? (
             <DeployOutcomeBanner controller={banner}
-              machine={runtime?.source.kind === 'plugin' ? null : machineLabel} />
+              machine={runtime?.source.kind === 'plugin' ? null : machineLabel}
+              machineId={runtime?.source.kind === 'plugin' || machineIds.length !== 1 ? null : machineIds[0]} />
           ) : null;
         case 'machineOffline':
           // The notice slot's column: the line keeps the sheets' edge like every banner in this slot.
@@ -766,7 +767,8 @@ export const DeploymentEnvironmentDetail = React.memo(
         case 'approvalWaiting':
           return outcome ? (
             <DeployOutcomeBanner controller={banner}
-              machine={runtime?.source.kind === 'plugin' ? null : machineLabel} />
+              machine={runtime?.source.kind === 'plugin' ? null : machineLabel}
+              machineId={runtime?.source.kind === 'plugin' || machineIds.length !== 1 ? null : machineIds[0]} />
           ) : null;
         case 'latestFailed': {
           const failedId = attention.deploymentId;
@@ -1286,6 +1288,8 @@ export function DeployOutcomeBanner(
     controller: DeploymentOutcomeController;
     /** Null for a platform target: no Machine to name, so the refusal's own code says why. */
     machine: string | null;
+    /** The Machine a Machine-scoped remedy opens (its Setup), when the refusal concerns one runtime Machine. */
+    machineId?: string | null;
     copy?: 'deploy' | 'rollback' | 'cancel' | 'domain' | 'setting';
     placement?: 'inline';
   }>,
@@ -1397,7 +1401,8 @@ export function DeployOutcomeBanner(
         ? { action: { label: recovery.nextAction.label, onPress: controller.retry } }
         : recovery && openRecovery ? { action: { label: recovery.nextAction.label,
           onPress: () => openRecovery(recovery.nextAction.destination,
-            failedDeploymentId ? { deploymentId: failedDeploymentId } : undefined) } } : {})}
+            failedDeploymentId ? { deploymentId: failedDeploymentId }
+              : recovery.nextAction.destination === 'machines' && props.machineId ? { machineId: props.machineId } : undefined) } } : {})}
       // The typed code is for support; the sentence says what it left. When the typed remedy is the sentence, the
       // stored recovery line would only repeat or contradict it.
       details={failure ? failure.technicalDetails.filter(line => !(line.key === 'failure-remedy' && recovery && !canonicalReason))

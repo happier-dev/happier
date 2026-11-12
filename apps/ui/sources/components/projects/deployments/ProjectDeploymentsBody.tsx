@@ -313,8 +313,8 @@ const ProjectDeploymentsPage = React.memo(
         case 'review':
           openEnvironmentTab({ tab: 'overview', section: null }); return;
         case 'source': router.push(projectSourceRoute(props.sourceId)); return;
-        case 'machines': router.push(SETTINGS_ROUTES.machines); return;
-        case 'buildMachineSetup': router.push(machineId ? machinePageHref({ door: 'rail',
+        // A Machine-scoped remedy (a missing tool, the build Machine) opens that Machine's Setup; Machines only when none is named.
+        case 'machines': case 'buildMachineSetup': router.push(machineId ? machinePageHref({ door: 'rail',
           target: { machineId, serverId: props.serverId }, tab: { id: 'setup' } }) : SETTINGS_ROUTES.machines); return;
         case 'connectedAccounts': router.push(SETTINGS_ROUTES.connectedServices); return;
         case 'store': router.push(PLUGINS_APP_ROUTE); return;
