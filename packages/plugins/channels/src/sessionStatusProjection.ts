@@ -41,8 +41,10 @@ export function createSessionStatusProjection(publish: (
       else if (activity === 'idle' && presentations.get(target.source.bindingId)?.status !== 'received') await show(target, 'idle');
     },
     async finished(target: SessionStatusTarget) { await show(target, 'idle'); },
-    reconcile(bindingIds: ReadonlySet<string>) {
-      for (const id of presentations.keys()) if (!bindingIds.has(id)) presentations.delete(id);
+    reconcile(bindingIds: ReadonlySet<string>, onlyBindingId?: string) {
+      for (const id of presentations.keys()) {
+        if ((onlyBindingId === undefined || onlyBindingId === id) && !bindingIds.has(id)) presentations.delete(id);
+      }
     },
   };
 }

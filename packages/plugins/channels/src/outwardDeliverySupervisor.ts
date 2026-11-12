@@ -1,19 +1,16 @@
+import { createConversationOutwardDeliverySupervisorRuntime } from './outwardDeliverySupervisorRuntime.js';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';
 
 import {
   CHANNEL_DELIVERIES_COLLECTION,
-  CHANNEL_DELIVERIES_INDEX_ID,
   CHANNEL_STATE_COLLECTION,
   CHANNEL_STATE_FIELD,
   CHANNEL_STATE_INDEX_ID,
   CHANNEL_STATE_RECORD_KIND,
 } from './collections.js';
 import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
-import { createSupervisorWake } from './supervisorWake.js';
-import { createOutwardBindingObservation } from './outwardBindingObservation.js';
-import { createChannelsCollectionAccess } from './collectionUpdateRequired.js';
 import { hasCurrentConversationExecutionPlacement, isConversationConnectionPlacedForInvocation } from './reconciliation.js';
 import { asChannelStateRow, readConversationConnectionUpdateRow } from './accountLocalBindingPolicy.js';
 import {
@@ -52,8 +49,6 @@ import {
 } from './sessionProjection.js';
 import { projectConversationDiscussionPage } from './discussionProjection.js';
 import { createSessionStatusProjection, type SessionStatusTarget } from './sessionStatusProjection.js';
-import { publishSessionStatus } from './sessionStatusProviderAction.js';
-import { readCurrentProviderContributionForPersistedSelection } from './providerContributions.js';
 
 const RECONCILIATION_INTERVAL_MS = 1_000;
 const OUTWARD_DELIVERY_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -115,6 +110,12 @@ export type ConversationOutwardDeliveryCycleOptions = Readonly<{
   observePendingIngress?: (rowId: string) => void;
   sessionStatus?: ReturnType<typeof createSessionStatusProjection>;
   sessionActivity?: (sessionId: string) => 'active' | 'idle' | 'stopped' | undefined;
+  /** Activation-owned work; omitted by finite callers that await the whole cycle. */
+  scheduleWork?: (
+    key: readonly ['binding' | 'custody', string],
+    work: () => Promise<Pick<ConversationOutwardDeliveryCycleResult, 'nextWakeAt' | 'nextBindingIds'>>,
+    projectBinding: boolean,
+  ) => void;
 }>;
 
 export type ConversationOutwardDeliveryCycleResult = Readonly<{
@@ -136,37 +137,6 @@ export type ConversationOutwardDeliverySupervisor = Readonly<{
   run(context: BackgroundServiceContext): Promise<void>;
   dispose(): Promise<void>;
 }>;
-
-function defaultSleep(delayMs: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(signal.reason ?? new Error('Outward delivery supervisor was cancelled.'));
-      return;
-    }
-    const timer = globalThis.setTimeout(() => {
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    }, delayMs);
-    const onAbort = (): void => {
-      globalThis.clearTimeout(timer);
-      reject(signal.reason ?? new Error('Outward delivery supervisor was cancelled.'));
-    };
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
-const DEFAULT_CLOCK: Clock = Object.freeze({
-  now: () => Date.now(),
-  sleep: defaultSleep,
-});
-
-function positiveDelay(value: number | undefined, fallback: number, label: string): number {
-  const resolved = value ?? fallback;
-  if (!Number.isSafeInteger(resolved) || resolved <= 0) {
-    throw new Error(`${label} must be a positive safe integer.`);
-  }
-  return resolved;
-}
 
 function earliestRetentionDeadlineAnchor(
   carried: number | undefined,
@@ -218,17 +188,6 @@ function bindingConnectionIdFromRow(value: JsonValue, rowId: string): string | u
   if (bindingIdFromRow(value, rowId) === undefined || !isJsonRecord(value)) return undefined;
   const connectionId = value[CHANNEL_STATE_FIELD.connectionId];
   return typeof connectionId === 'string' ? connectionId : undefined;
-}
-
-function logOutwardDeliverySupervisorCycleFailure(
-  context: BackgroundServiceContext,
-  error: unknown,
-): void {
-  if (isInactiveSupervisorCollectionFailure(error)) return;
-  context.services.logger.warn('[Channels] outward delivery supervisor cycle failed', {
-    boundary: 'cycle',
-    ...(classifySupervisorFailure(error) ?? {}),
-  });
 }
 
 type OutwardDeliveryWorkFailureBoundary =
@@ -485,10 +444,23 @@ export async function runConversationOutwardDeliveryCycle(
 
   let nextDeliveryCursor = input.deliveryCursor;
   let nextRetentionSweep = input.retentionSweep;
+  const takeSchedulingResult = () => {
+    const result = {
+      ...(bindingDiscoveryFailed ? { nextBindingIds: 'all' as const }
+        : nextBindingIds.size === 0 ? {} : { nextBindingIds: [...nextBindingIds] }),
+      ...(nextWakeAt === undefined ? {} : { nextWakeAt }),
+    };
+    if (input.scheduleWork !== undefined) {
+      // Settled work and the scan each transfer their accumulated wake facts
+      // once. Late binding completions cannot overwrite the scan's cursors.
+      bindingDiscoveryFailed = false;
+      nextBindingIds.clear();
+      nextWakeAt = undefined;
+    }
+    return result;
+  };
   const cycleResult = (): ConversationOutwardDeliveryCycleResult => ({
-    ...(bindingDiscoveryFailed ? { nextBindingIds: 'all' as const }
-      : nextBindingIds.size === 0 ? {} : { nextBindingIds: [...nextBindingIds] }),
-    ...(nextWakeAt === undefined ? {} : { nextWakeAt }),
+    ...takeSchedulingResult(),
     ...(nextDeliveryCursor === undefined ? {} : { nextDeliveryCursor }),
     ...(nextRetentionSweep === undefined ? {} : { nextRetentionSweep }),
   });
@@ -832,8 +804,8 @@ export async function runConversationOutwardDeliveryCycle(
   const projectionBindingIds = new Set(bindingIds);
   const mediationBindingIds = new Set([...projectionBindingIds, ...retainedPermissionWaits.keys()]);
   const workBindingIds = new Set([...mediationBindingIds, ...retainedDeliveriesByBindingId.keys()]);
-  await Promise.all([
-    ...[...workBindingIds].map(async bindingId => {
+  const work = [
+    ...[...workBindingIds].map(bindingId => ({ key: ['binding', bindingId] as const, run: async () => {
       for (const record of retainedDeliveriesByBindingId.get(bindingId) ?? []) {
         await recoverRetainedDelivery(record);
       }
@@ -846,13 +818,19 @@ export async function runConversationOutwardDeliveryCycle(
         }
       }
       if (projectionBindingIds.has(bindingId)) await projectBinding(bindingId);
-    }),
-    ...unboundRetainedDeliveries.map(recoverRetainedDelivery),
-  ]);
+    } })),
+    ...unboundRetainedDeliveries.map(record => ({ key: ['custody', record.custodyId] as const,
+      run: () => recoverRetainedDelivery(record) })),
+  ];
+  if (input.scheduleWork === undefined) await Promise.all(work.map(item => item.run()));
+  else for (const item of work) input.scheduleWork(item.key, async () => {
+    await item.run();
+    return takeSchedulingResult();
+  }, item.key[0] === 'binding' && projectionBindingIds.has(item.key[1]));
 
   if (context.signal.aborted) return cycleResult();
 
-  // Coarse retention runs last in the wake, behind every live obligation.
+  // Coarse retention follows admission of live work, without holding its delivery.
   // Redrive, permission-wait mediation, and transcript projection are what a
   // person is waiting on; a retention page is a whole page of storage calls
   // that only reclaims rows already past their thirty-day window, so nothing it
@@ -931,230 +909,13 @@ export async function runConversationOutwardDeliveryCycle(
   return cycleResult();
 }
 
-/**
- * One activation-owned runner drives projection and retained custody. It owns
- * no Account cache or durable queue: restart simply starts from Collection
- * state, while a transient keyset cursor prevents one hot row from starving a
- * later retained row during this generation.
- */
+/** The activation runner owns pending binding work and drains it before retirement. */
 export function createConversationOutwardDeliverySupervisor(
   options: ConversationOutwardDeliverySupervisorOptions = {},
 ): ConversationOutwardDeliverySupervisor {
-  const clock = options.clock ?? DEFAULT_CLOCK;
-  const reconciliationIntervalMs = positiveDelay(
-    options.reconciliationIntervalMs,
-    RECONCILIATION_INTERVAL_MS,
-    'Outward delivery reconciliation interval',
-  );
-  const runCycle = options.runCycle ?? runConversationOutwardDeliveryCycle;
-  let controller: AbortController | null = null;
-  let running: Promise<void> | null = null;
-  let disposed = false;
-  let updateRequired = false;
-
-  const run = async (context: BackgroundServiceContext): Promise<void> => {
-    if (disposed) throw new Error('Outward delivery supervisor is disposed.');
-    if (running !== null) throw new Error('Outward delivery supervisor is already running.');
-    if (updateRequired) return;
-    const supervisorController = new AbortController();
-    controller = supervisorController;
-    const abortFromContext = (): void => supervisorController.abort(context.signal.reason);
-    if (context.signal.aborted) abortFromContext();
-    else context.signal.addEventListener('abort', abortFromContext, { once: true });
-    let deliveryCursor: string | undefined;
-    let deliveryDeadline: number | undefined;
-    let retentionSweep: ConversationOutwardRetentionSweepState | undefined;
-    const wake = createSupervisorWake(supervisorController.signal);
-    const observations: Array<{ dispose(): void }> = [];
-    const pendingIngressObservations = new Map<string, { dispose(): void }>();
-    let discoverBindings = true;
-    const changedBindingIds = new Set<string>();
-    const retryBindingIds = new Set<string>();
-    const sessions = createOutwardBindingObservation({ ...context, signal: supervisorController.signal }, bindingIds => {
-      for (const bindingId of bindingIds) changedBindingIds.add(bindingId);
-      wake.wake();
-    });
-    const sessionStatus = createSessionStatusProjection(async (target, status, messageId) => {
-      try {
-        const result = await publishSessionStatus({ ...context, signal: supervisorController.signal }, target, status, messageId);
-        if (result.kind !== 'delivered' && !(result.kind === 'notReady' && result.reason === 'unsupported')) {
-          context.services.logger.warn('[Channels] Session status unavailable', {
-            bindingId: target.source.bindingId, outcome: result.kind,
-            ...(result.kind === 'notReady' ? { reason: result.reason } : {}),
-          });
-        }
-        return result;
-      } catch (error) {
-        context.services.logger.warn('[Channels] Session status unavailable', {
-          bindingId: target.source.bindingId, ...(classifySupervisorFailure(error) ?? {}),
-        });
-        return { kind: 'outcomeUnknown' };
-      }
-    });
-    let discoveryInvalidated = false;
-    let retentionInvalidated = false;
-    const invalidate = () => {
-      discoveryInvalidated = true;
-      wake.wake();
-    };
-    running = (async () => {
-      try {
-        const access = createChannelsCollectionAccess(requireChannelsAccountStorage(context), (status, error) => {
-          updateRequired = true;
-          context.services.logger.warn('[Channels] Account Collection requires an update', status);
-          supervisorController.abort(error);
-        });
-        context = { ...context, services: { ...context.services, storage: {
-          ...context.services.storage, account: access.storage,
-        } } };
-        const account = access.storage;
-        // Only structural changes require binding discovery. Input publication
-        // uses its Session selector; projection-frontier writes are our output.
-        observations.push(account.collection(CHANNEL_STATE_COLLECTION).watch({
-          index: CHANNEL_STATE_INDEX_ID.byKind,
-          prefixes: [CHANNEL_STATE_RECORD_KIND.connection, CHANNEL_STATE_RECORD_KIND.binding].map(kind => [kind]),
-          order: 'asc',
-        }, () => { discoverBindings = true; invalidate(); }));
-        observations.push(account.collection(CHANNEL_DELIVERIES_COLLECTION).watch({ kind: 'collection' }, invalidate));
-        observations.push(account.collection(CHANNEL_DELIVERIES_COLLECTION).watch({
-          index: CHANNEL_DELIVERIES_INDEX_ID.byTerminalUpdatedAt, prefix: [true], order: 'asc',
-        }, () => { retentionInvalidated = true; invalidate(); }));
-        while (!supervisorController.signal.aborted) {
-          // Retirement and delivery writes emit the same hints as foreign
-          // changes. Finish the current keyset pass before replaying them,
-          // otherwise each written page restarts discovery at the same prefix.
-          // The fresh pass still discovers changes behind either cursor.
-          if (discoveryInvalidated && deliveryCursor === undefined && retentionSweep?.cursor === undefined) {
-            discoveryInvalidated = false;
-            if (retryBindingIds.size === 0) deliveryDeadline = undefined;
-            // Delivery writes discover live work, but cannot make existing
-            // terminal rows cross their already-known retention deadline.
-            if (retentionInvalidated && retentionSweep?.notBefore === undefined) retentionSweep = undefined;
-            retentionInvalidated = false;
-          }
-          const fullBindingDiscovery = discoverBindings;
-          discoverBindings = false;
-          const bindingIds = new Set(changedBindingIds);
-          changedBindingIds.clear();
-          if (deliveryDeadline !== undefined && deliveryDeadline <= clock.now()) {
-            for (const bindingId of retryBindingIds) bindingIds.add(bindingId);
-            retryBindingIds.clear();
-            deliveryDeadline = undefined;
-          }
-          wake.reset();
-          const observedBindings = new Map<string, string>();
-          const observedDiscussions = new Map<string, string>();
-          const observedPendingIngress = new Set<string>();
-          let nextWakeAt: number | undefined;
-          let continuationStalled = false;
-          const workerContext = {
-            ...context,
-            signal: supervisorController.signal,
-          } satisfies BackgroundServiceContext;
-          try {
-            if (deliveryCursor === undefined && retryBindingIds.size === 0) deliveryDeadline = undefined;
-            const cycle = await runCycle({
-              context: workerContext,
-              now: clock.now,
-              sessionStatus,
-              sessionActivity: sessions.activity,
-              ...(fullBindingDiscovery ? {} : { bindingIds: [...bindingIds] }),
-              observeSession: async (sessionId, bindingId, target) => {
-                observedBindings.set(bindingId, sessionId);
-                const provider = target?.connection.providerAction;
-                const contribution = provider === undefined ? undefined : await readCurrentProviderContributionForPersistedSelection({
-                  context: { targetedContributions: context.services.targetedContributions, signal: supervisorController.signal },
-                  providerPluginId: provider.providerPluginId, providerContributionSelection: provider.providerContributionSelection,
-                });
-                await sessions.observe(sessionId, bindingId, contribution?.operations.sessionStatus !== undefined);
-              },
-              observeDiscussion: (discussionId, bindingId) => {
-                observedDiscussions.set(bindingId, discussionId);
-                sessions.observeDiscussion(discussionId, bindingId);
-              },
-              observePendingIngress: rowId => {
-                observedPendingIngress.add(rowId);
-                if (pendingIngressObservations.has(rowId)) return;
-                pendingIngressObservations.set(rowId, account.collection(CHANNEL_STATE_COLLECTION).watch({
-                  kind: 'row', rowId,
-                }, invalidate));
-                // The finalizer read this blocker before subscribing. Rejoin
-                // once under observation, then park until its owner settles it.
-                invalidate();
-              },
-              ...(deliveryCursor === undefined ? {} : { deliveryCursor }),
-              ...(retentionSweep === undefined ? {} : { retentionSweep }),
-            });
-            const advancedContinuation = (cycle.nextDeliveryCursor !== undefined && cycle.nextDeliveryCursor !== deliveryCursor)
-              || (cycle.nextRetentionSweep?.cursor !== undefined && cycle.nextRetentionSweep.cursor !== retentionSweep?.cursor);
-            continuationStalled = (cycle.nextDeliveryCursor !== undefined && cycle.nextDeliveryCursor === deliveryCursor)
-              || (cycle.nextRetentionSweep?.cursor !== undefined && cycle.nextRetentionSweep.cursor === retentionSweep?.cursor);
-            deliveryCursor = cycle.nextDeliveryCursor;
-            retentionSweep = cycle.nextRetentionSweep;
-            nextWakeAt = cycle.nextWakeAt;
-            if (cycle.nextBindingIds === 'all') discoverBindings = true;
-            else for (const bindingId of cycle.nextBindingIds ?? []) retryBindingIds.add(bindingId);
-            if (nextWakeAt !== undefined) deliveryDeadline = Math.min(deliveryDeadline ?? Infinity, nextWakeAt);
-            nextWakeAt = deliveryDeadline;
-            if (advancedContinuation || (discoveryInvalidated && !continuationStalled)) nextWakeAt = clock.now();
-            else if (retentionSweep?.notBefore !== undefined) {
-              nextWakeAt = Math.min(nextWakeAt ?? Infinity, retentionSweep.notBefore);
-            }
-            if (fullBindingDiscovery && cycle.nextBindingIds !== 'all') sessions.reconcile(observedBindings, observedDiscussions);
-            if (fullBindingDiscovery && cycle.nextBindingIds !== 'all') sessionStatus.reconcile(new Set(observedBindings.keys()));
-            for (const [rowId, observation] of pendingIngressObservations) {
-              if (observedPendingIngress.has(rowId)) continue;
-              observation.dispose();
-              pendingIngressObservations.delete(rowId);
-            }
-          } catch (error) {
-            // Leave the cursor unchanged so a transient failure cannot skip
-            // a durable row. The next wake repeats canonical discovery.
-            if (!supervisorController.signal.aborted) {
-              logOutwardDeliverySupervisorCycleFailure(workerContext, error);
-              if (fullBindingDiscovery) discoverBindings = true;
-              else for (const bindingId of bindingIds) retryBindingIds.add(bindingId);
-              nextWakeAt = clock.now() + reconciliationIntervalMs;
-              deliveryDeadline = Math.min(deliveryDeadline ?? Infinity, nextWakeAt);
-              continuationStalled = true;
-            }
-          }
-          if (supervisorController.signal.aborted) break;
-          try {
-            // The pending hint is retained above. Do not let its wake bit
-            // bypass a failed page's recovery. Healthy exhausted scans still
-            // replay hints immediately, independently of unrelated deadlines.
-            if (continuationStalled && discoveryInvalidated && nextWakeAt !== undefined && nextWakeAt > clock.now()) wake.reset();
-            await wake.wait(clock, nextWakeAt);
-          } catch {
-            if (!supervisorController.signal.aborted) {
-              throw new Error('Outward delivery supervisor wait failed.');
-            }
-          }
-        }
-      } finally {
-        for (const observation of observations) observation.dispose();
-        for (const observation of pendingIngressObservations.values()) observation.dispose();
-        pendingIngressObservations.clear();
-        sessions.dispose();
-        wake.dispose();
-        context.signal.removeEventListener('abort', abortFromContext);
-        controller = null;
-      }
-    })();
-    try {
-      await running;
-    } finally {
-      running = null;
-    }
-  };
-
-  const dispose = async (): Promise<void> => {
-    if (disposed) return;
-    disposed = true;
-    controller?.abort(new Error('Outward delivery supervisor was disposed.'));
-    await running;
-  };
-
-  return Object.freeze({ run, dispose });
+  return createConversationOutwardDeliverySupervisorRuntime({
+    ...options,
+    reconciliationIntervalMs: options.reconciliationIntervalMs ?? RECONCILIATION_INTERVAL_MS,
+    runCycle: options.runCycle ?? runConversationOutwardDeliveryCycle,
+  });
 }

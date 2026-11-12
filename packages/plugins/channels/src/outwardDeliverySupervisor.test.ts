@@ -5148,6 +5148,93 @@ describe('Channels outward-delivery supervisor', () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 
+  it.each(['completion', 'shutdown', 'late retry'] as const)('delivers a later collection wake while a sibling binding remains pending until %s', async finish => {
+    vi.useFakeTimers();
+    const generation = new AbortController();
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await seedProjectionState(state);
+    const binding = bindingRow();
+    await state.put({ ...binding, id: 'binding-2', 'binding-id': 'binding-2', 'session-id': 'session-2', payload: {
+      ...binding.payload, target: { ...binding.payload.target, sessionId: 'session-2' },
+    } }, { expectedRevision: 'absent' });
+    await state.put(createConversationSessionProjectionFrontierRow({ bindingId: 'binding-2', targetSessionId: 'session-2',
+      transcriptCursor: null, lastScannedSeq: 0, revision: 1, now: 0 }), { expectedRevision: 'absent' });
+    let releaseHeld = () => {};
+    const held = new Promise<void>(resolve => { releaseHeld = resolve; });
+    let answer = false;
+    let siblingAnswer = false;
+    let heldReads = 0;
+    const changed = new Map<string, (event?: SessionEvent) => void>();
+    const execute = vi.fn(async (action: string, request: { sessionId: string; cursor?: string }) => {
+      if (action === 'session.permission.remote.pending.list') {
+        return emptyPendingPermissionPage();
+      }
+      const hasAnswer = request.sessionId === 'session-2' ? answer : siblingAnswer;
+      if (request.sessionId === 'session-1') {
+        heldReads += 1;
+        await held;
+        if (finish === 'late retry' && heldReads === 1) throw new Error('Session transport unavailable');
+      }
+      return { ok: true, projection: 'externalShareableV1', sessionId: request.sessionId,
+        scannedThroughSeq: hasAnswer ? 1 : 0,
+        nextCursor: hasAnswer ? '1' : '0', hasMore: false,
+        items: hasAnswer && request.cursor !== '1' ? [{ kind: 'assistantText',
+          sessionId: request.sessionId, seq: 1, itemId: 'answer', turnId: 'turn', final: 'completed', text: 'Answer', consumedInputs: [] }] : [] };
+    });
+    const deliver = vi.fn(async () => ({ result: { kind: 'delivered', providerMessageIds: ['answer'] }, executionOrigin: providerTransportOrigin }));
+    const supervisor = createConversationOutwardDeliverySupervisor();
+    const running = supervisor.run({ ...backgroundContext({ state, deliveries, execute,
+      executeAdmittedTargetedOperationWithExecutionOrigin: deliver,
+      watchSession: (listener, sessionId) => { changed.set(sessionId, listener); return { dispose() { changed.delete(sessionId); } }; },
+    }), signal: generation.signal });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(changed.has('session-2')).toBe(true);
+      await vi.waitFor(() => expect(execute.mock.calls.some(([action, request]) => action === 'session.transcript.get' && request.sessionId === 'session-2')).toBe(true));
+      answer = true;
+      if (finish === 'late retry') changed.get('session-2')?.();
+      else {
+        const current = state.rows.get('binding-2')!;
+        await state.put({ ...current.value, 'updated-at': 1 }, { expectedRevision: current.revision });
+      }
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.waitFor(() => expect(deliver).toHaveBeenCalledOnce());
+      expect(heldReads).toBe(1);
+      expect(state.rows.get('projection-frontier:binding-2')?.value.payload).toMatchObject({ transcriptCursor: '1' });
+      siblingAnswer = true;
+      if (finish !== 'late retry') changed.get('session-1')?.();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(heldReads).toBe(1);
+      if (finish === 'late retry') {
+        releaseHeld();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(heldReads).toBe(1);
+        await vi.advanceTimersByTimeAsync(999);
+        expect(heldReads).toBe(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(heldReads).toBe(2);
+        await vi.waitFor(() => expect(deliver).toHaveBeenCalledTimes(2));
+        return;
+      }
+      if (finish === 'completion') {
+        releaseHeld();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(heldReads).toBe(2);
+        await vi.waitFor(() => expect(deliver).toHaveBeenCalledTimes(2));
+        expect(state.rows.get('projection-frontier:binding-1')?.value.payload).toMatchObject({ transcriptCursor: '1' });
+        return;
+      }
+      let stopped = false;
+      void running.then(() => { stopped = true; });
+      generation.abort();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stopped).toBe(false);
+    } finally {
+      releaseHeld(); generation.abort(); await running; await supervisor.dispose(); vi.useRealTimers();
+    }
+  });
+
   it.each(['session.transcript.get', 'session.permission.remote.pending.list', 'retained delivery', 'unbound retained delivery'] as const)(
     'delivers another binding\'s completed replies while %s remains pending', async heldAction => {
     const state = new MemoryCollection();

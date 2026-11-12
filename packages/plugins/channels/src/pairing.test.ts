@@ -6,6 +6,7 @@ import {
 } from '@happier-dev/channels-protocol/v1';
 
 import { classifyConversationCommand } from './commands.js';
+import { readConversationBindingEndpointName } from './accountLocalBindingPolicy.js';
 import {
   createConversationPairingManager,
   type ConversationPairingBinding,
@@ -131,6 +132,35 @@ describe('Channels pre-binding pairing', () => {
   const sharedProof = {
     kind: 'thread', audience: 'shared', id: 'topic-a', parentId: sharedParent.id, label: 'Proof topic',
   } as const;
+
+  it.each([
+    { name: 'missing topic name', endpoint: { kind: 'thread', audience: 'shared', id: 'topic-a', parentId: sharedParent.id, parentLabel: 'Forum' }, expectedName: 'Proof topic' },
+    { name: 'retained topic name after a rename', endpoint: { ...sharedProof, label: 'Selected topic name' }, expectedName: 'Selected topic name' },
+    { name: 'parent binding proved in a child topic', endpoint: sharedParent, expectedName: 'Forum' },
+  ] satisfies readonly { name: string; endpoint: ConversationResolvedEndpointV1; expectedName: string }[])(
+    'persists the canonical binding name from pairing: $name', async ({ endpoint, expectedName }) => {
+      const manager = createManager({ value: 1_000 });
+      const challenge = manager.createChallenge({
+        connectionId: 'connection-1', expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'topic-name',
+        executionOrigin, destinationLabel: 'Forum', endpoint, proofEndpoint: sharedProof, target: sessionTarget,
+      });
+      const proposal = completePreBindingMessage(manager, {
+        connectionId: 'connection-1', executionOrigin, endpoint: sharedProof,
+        actor: { principalId: 'person-1', kind: 'human', isIntegrationSelf: false },
+        contentProvenance: 'original', command: classifyConversationCommand(`/pair ${challenge.manualToken}`),
+      });
+      if (proposal.kind !== 'matched') throw new Error('Expected the topic proof.');
+      // The writer represents Account storage; pairing and canonical name projection stay real.
+      const result = await manager.finalize({
+        generationId: challenge.generationId, proposalId: proposal.proposalId,
+        connectionId: 'connection-1', finalizeIdempotencyKey: 'topic-name-finalize',
+      }, async input => ({ kind: 'created', binding: { ...pairingBinding(input.bindingId), endpoint: input.endpoint } }));
+      if (result.kind !== 'created') throw new Error('Expected a persisted binding.');
+      expect(readConversationBindingEndpointName(result.binding.endpoint)).toBe(expectedName);
+      expect(result.binding.endpoint).toMatchObject({ kind: endpoint.kind, id: endpoint.id });
+      if ('parentLabel' in endpoint) expect(result.binding.endpoint.parentLabel).toBe('Forum');
+    },
+  );
 
   it('confines explicitly shared proof to its exact endpoint and admits only one actual sender', () => {
     const manager = createManager({ value: 1_000 });

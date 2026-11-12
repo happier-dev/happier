@@ -4874,6 +4874,14 @@ async function settleFailedIngressDueWork(input: Readonly<{
 
 /** Poll, push and due recovery keep one row owner through native settlement. */
 async function dispatchIngressObligation(input: Parameters<typeof dispatchIngressObligationAttempt>[0]): Promise<IngressCheckpointOutcome> {
+  if (input.source.kind === 'providerObservation' && !input.source.directAction
+    && !input.obligation.value.terminal && input.obligation.value.payload.target?.kind === 'discussion'
+    && input.ingress !== null && ingressShell(input.ingress).transport.kind === 'socket') {
+    // Capture already retained this input. The existing due-work supervisor
+    // owns native Discussion publication, including a person's approval wait;
+    // holding the socket endpoint lane here would also hold later /stop input.
+    return 'socketCustodyDeferred';
+  }
   const key = ingressAttemptKey(input.routingIdentityKey, input.obligation.row.rowId);
   const retain = input.source.kind === 'checkpointedPoll' && input.obligation.value.payload.target?.kind === 'discussion'
     ? input.source.retainDiscussionAttempt : undefined;

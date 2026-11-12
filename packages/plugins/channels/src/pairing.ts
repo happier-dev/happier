@@ -641,6 +641,13 @@ export function createConversationPairingManager(dependencies: Readonly<{
       recordTerminalChallenge(challenge.challengeId, 'consumed');
       recordConsumedToken(challenge.token, challenge.expiresAt);
       const proposalId = dependencies.createId('proposal');
+      // Proof can supply a native name unavailable during endpoint lookup.
+      // Keep selected names, and never rename a parent from its child proof.
+      const endpoint = challenge.endpoint.label === undefined
+        && reservation.endpoint.label !== undefined
+        && areConversationEndpointIdentitiesEqual(challenge.endpoint, reservation.endpoint)
+        ? { ...challenge.endpoint, label: reservation.endpoint.label }
+        : challenge.endpoint;
       const proposal: Proposal = {
         censusId: reservation.censusId,
         challengeId: challenge.challengeId,
@@ -648,7 +655,7 @@ export function createConversationPairingManager(dependencies: Readonly<{
         bindingId: dependencies.createId('binding'),
         connectionId: challenge.connectionId,
         executionOrigin: challenge.executionOrigin,
-        endpoint: challenge.endpoint,
+        endpoint,
         proofEndpoint: reservation.endpoint,
         principalId: reservation.principalId,
         target: challenge.target,

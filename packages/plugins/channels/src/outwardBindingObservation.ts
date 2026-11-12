@@ -63,10 +63,15 @@ export function createOutwardBindingObservation(
         if (affected !== undefined) changed([...affected]);
       });
     },
-    reconcile(observedBindings: ReadonlyMap<string, string>, observedDiscussions: ReadonlyMap<string, string>) {
+    reconcile(observedBindings: ReadonlyMap<string, string>, observedDiscussions: ReadonlyMap<string, string>, scope?: Readonly<{
+      bindingId?: string;
+      preserveBindingIds?: ReadonlySet<string>;
+    }>) {
+      const selected = (bindingId: string) => (scope?.bindingId === undefined || scope.bindingId === bindingId)
+        && !scope?.preserveBindingIds?.has(bindingId);
       for (const [sessionId, observation] of sessions) {
         for (const bindingId of observation.bindingIds) {
-          if (observedBindings.get(bindingId) !== sessionId) {
+          if (selected(bindingId) && observedBindings.get(bindingId) !== sessionId) {
             observation.bindingIds.delete(bindingId);
             observation.activityBindings.delete(bindingId);
           }
@@ -75,7 +80,7 @@ export function createOutwardBindingObservation(
       }
       for (const [discussionId, bindingIds] of discussions) {
         for (const bindingId of bindingIds) {
-          if (observedDiscussions.get(bindingId) !== discussionId) bindingIds.delete(bindingId);
+          if (selected(bindingId) && observedDiscussions.get(bindingId) !== discussionId) bindingIds.delete(bindingId);
         }
         if (bindingIds.size === 0) discussions.delete(discussionId);
       }
