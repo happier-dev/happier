@@ -1,7 +1,7 @@
 import { chmod, chown, lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { MachineAdministratorUsernameV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
+import { establishNativeAdministrator } from './nativeAdministrator.js';
 import { execFileWithDeadline, ExecFileTerminationError, type ExecFileWithDeadlineOptions } from '../process/execFileWithDeadline.js';
 import { MachineSetupEffectError, type MachineRecipeStepV1, type MachineSetupBackend, type MachineSetupStepObservationV1 } from './index.js';
 import { createNativeSystemBackend, mutateApt, readLocalAccount } from './nativeSystemBackend.js';
@@ -362,31 +362,7 @@ export function createMachineSetupNativeBackend(options: Readonly<{
                     : error instanceof MachineSetupEffectError ? error.reasonCode : 'required_fact_unavailable', facts: {} };
             }
         },
-        async establishAdministrator({ step, password }) {
-            if (!MachineAdministratorUsernameV1Schema.safeParse(step.username).success || step.locked === true
-                || !password.length || password.some(byte => byte === 0 || byte === 10 || byte === 13)) throw new MachineSetupEffectError('validation_failed');
-            // The reviewed name must still resolve to the exact local non-root
-            // account immediately before passing any secret to the native tool.
-            const row = await readLocalAccount(run, 'passwd', step.username);
-            if (!row || !Number.isSafeInteger(Number(row[2])) || Number(row[2]) <= 0) throw new MachineSetupEffectError('validation_failed');
-            const prefix = Buffer.from(`${step.username}:`, 'utf8');
-            const frame = Buffer.alloc(prefix.length + password.length + 1);
-            frame.set(prefix); frame.set(password, prefix.length); frame[frame.length - 1] = 10;
-            try {
-                // Default PAM policy owns hashing and verifier installation. No
-                // password, hash or native output becomes argv/env/plan/events.
-                const result = await run('/usr/sbin/chpasswd', [], { LC_ALL: 'C' }, frame);
-                if (result.errorCode === 'ENOENT') throw new MachineSetupEffectError('required_fact_unavailable');
-                // PAM may have already installed the verifier on nonzero exit;
-                // cancellation after dispatch is likewise not proof of rollback.
-                if (result.code !== 0) throw new Error('Administrator establishment outcome unknown');
-            } finally { frame.fill(0); }
-            // Called only for an administrator created by this APPLY. Retain
-            // existing memberships while establishing ordinary password sudo.
-            if ((await run('usermod', ['--append', '--groups', 'sudo', '--', step.username])).code !== 0) {
-                throw new MachineSetupEffectError('native_effect_failed');
-            }
-        },
+        establishAdministrator: input => establishNativeAdministrator(run, input),
         async apply(step) {
             options.signal?.throwIfAborted();
             if (step.kind === 'reboot') {

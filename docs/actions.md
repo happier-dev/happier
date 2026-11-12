@@ -10436,8 +10436,13 @@ classic prompt and the exact sudo-rs PAM wrapper while retaining the expected
 password principal; see [Ubuntu's prompt differences](https://ubuntu.com/server/docs/reference/other-tools/sudo-rs/). Ask installs no administrator-to-root rule.
 The administrator must differ from the daemon account; otherwise setup and
 effects refuse with a typed recovery. During managed guest creation, the existing
-administrator establishment step appends ordinary `sudo` group membership only
-when that APPLY created the account. Adopted accounts keep their existing rights. If its own sudo permission or password is
+administrator establishment step selects the local `sudo` or `wheel` group from
+the host’s active conventional full-root sudoers grants, following included files
+and directories, and appends membership only when that APPLY created the account.
+Native sudo then confirms root access for the running CLI interpreter; an effective
+denial remains a typed prerequisite failure. Aliased or otherwise custom grants
+without a recognized direct group rule need native policy configuration or an
+existing administrator. Adopted accounts keep their existing rights. If its own sudo permission or password is
 unavailable, the effect explains that prerequisite before any setup mutation.
 This chain requires fresh authentication for each effect on classic sudo and
 sudo-rs; sudo-rs 0.2.13 does not support `runaspw` or `runas_default`. See its

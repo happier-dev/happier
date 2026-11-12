@@ -1,3 +1,5 @@
+import { MachineSetupEffectError } from './effectError.js';
+export { MachineSetupEffectError } from './effectError.js';
 import { MachineAdministratorUsernameV1Schema, MachineElevationFailureV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import { MachineSetupSshHostKeyEvidenceV1Schema, type MachineSetupNativeSshHostKeyV1 } from '@happier-dev/protocol/machines/setup/backupReceiverV1';
 import type { MachineElevationFailureV1, MachineFirewallRecoveryV1 as MachineSetupFirewallRecoveryV1,
@@ -154,12 +156,6 @@ export function readMachineSetupInitialPresenceV1(plan: MachineSetupEffectPlanV1
     : presence.length > 0 && presence.every(value => value === false) ? 'absent' : undefined;
 }
 
-export class MachineSetupEffectError extends Error {
-    constructor(readonly reasonCode: 'foreign_effect_conflict' | 'validation_failed' | 'native_effect_failed' | 'package_manager_busy' | 'required_fact_unavailable' | 'needs_admin_to_check',
-        readonly failure?: MachineElevationFailureV1) {
-        super(reasonCode); this.name = 'MachineSetupEffectError';
-    }
-}
 
 /** CHECK and its isolation preview expose the same native prerequisite and repair. */
 export function readMachineSetupObservationFailureV1(observation: MachineSetupStepObservationV1): MachineElevationFailureV1 | undefined {

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -11,6 +11,9 @@ const basis = { kind: 'bootstrap' as const, managedId: 'm', operationId: 'op', a
 const ok = (stdout = ''): MachineSetupNativeCommandResult => ({ code: 0, stdout, stderr: '' });
 async function fixture(present = true, appearsBeforeCreate = false) {
     const root = await mkdtemp(join(tmpdir(), 'happier-admin-establish-')); roots.push(root);
+    const policyPath = join(root, 'host-sudoers');
+    await writeFile(policyPath, '%sudo ALL=(ALL:ALL) ALL\n');
+    let rootAllowed = true;
     let uid = 1100;
     let outcome: 'success' | 'failure' | 'cancel' | 'cancelAfterSuccess' = 'success';
     let established = present;
@@ -32,10 +35,15 @@ async function fixture(present = true, appearsBeforeCreate = false) {
             }
             return ok(command.args.includes('passwd') ? `${name}:x:${process.getuid?.()}:${process.getgid?.()}::/tmp:/bin/sh\n` : `${name}:x:${process.getgid?.()}:\n`);
         }
+        if (command.executable === 'sudo') {
+            expect(command.args).toEqual(['-n', '-l', '-U', 'alice', '-u', 'root', '--', process.execPath]);
+            return rootAllowed ? ok(process.execPath) : { code: 1, stdout: '', stderr: '' };
+        }
         if (command.executable === 'useradd') { effects.push('useradd'); present = true; return ok(); }
         if (command.executable === 'usermod') {
-            expect(command.args).toEqual(['--append', '--groups', 'sudo', '--', 'alice']);
-            effects.push('administrator-group'); groups.add('sudo'); return ok();
+            expect(command.args.slice(0, 2)).toEqual(['--append', '--groups']);
+            expect(command.args.slice(3)).toEqual(['--', 'alice']);
+            effects.push('administrator-group'); groups.add(command.args[2]!); return ok();
         }
         if (command.executable === 'passwd') return ok(`alice ${established ? 'P' : 'L'} 2026-01-01 0 99999 7 -1\n`);
         if (command.executable === 'fixture-native') {
@@ -54,13 +62,21 @@ async function fixture(present = true, appearsBeforeCreate = false) {
             if (outcome === 'cancelAfterSuccess') controller.abort();
             return outcome === 'failure' ? { code: 1, stdout: 'private:password', stderr: 'private:password' } : ok();
         }
-        if (command.executable === 'visudo') { effects.push('sudoers'); return ok(); }
+        if (command.executable === 'visudo') {
+            if (command.args[0] === '-c') return ok(`${policyPath}: parsed OK\n`);
+            effects.push('sudoers'); return ok();
+        }
         throw new Error(`Unexpected native boundary ${command.executable}`);
     } });
     const user: MachineRecipeStepV1 = { id: 'administrator', kind: 'user', username: 'alice' };
     const grant: MachineRecipeStepV1 = { id: 'grant', kind: 'file', path: join(root, 'sudoers'), owner: userInfo().username,
         group: userInfo().username, mode: 0o440, content: { kind: 'literal', value: '# Happier managed\npolicy\n' }, validate: 'sudoers' };
-    return { backend, effects, inputFrames, controller, user, grant, readGroups: () => [...groups], readVerifier: () => verifier, setLocked() { established = false; }, setUid(value: number) { uid = value; },
+    return { denyRoot() { rootAllowed = false; }, async includePolicy(content: string) {
+        const directory = join(root, 'sudoers.d'); await mkdir(directory);
+        await writeFile(join(directory, '10-admin'), content);
+        await writeFile(join(directory, 'ignored.conf'), '%sudo ALL=(ALL:ALL) ALL\n');
+        await writeFile(policyPath, `@includedir "${directory}"\n`);
+    }, setPolicy: (content: string) => writeFile(policyPath, content), backend, effects, inputFrames, controller, user, grant, readGroups: () => [...groups], readVerifier: () => verifier, setLocked() { established = false; }, setUid(value: number) { uid = value; },
         setFreshAccount(value: typeof freshAccount) { freshAccount = value; }, setOutcome(value: typeof outcome) { outcome = value; } };
 }
 
@@ -80,6 +96,59 @@ describe('one-use bootstrap administrator establishment', () => {
         expect(password.every(byte => byte === 0)).toBe(true);
         expect(f.inputFrames.every(frame => frame.every(byte => byte === 0))).toBe(true);
         expect(JSON.stringify({ result, events, plan })).not.toContain('private:password');
+    });
+
+    it.each([
+        ['%wheel ALL=(ALL) ALL\n', 'wheel'],
+        ['# %sudo ALL=(ALL:ALL) ALL\n%wheel ALL=(ALL:ALL) ALL\n', 'wheel'],
+        ['# %wheel ALL=(ALL) NOPASSWD: ALL\n%sudo ALL=(ALL:ALL) ALL\n', 'sudo'],
+    ])('selects the administrator group granted by the host policy (%s)', async (policy, group) => {
+        const f = await fixture(false); await f.setPolicy(policy);
+        const plan = await checkMachineSetupEffectPlan({ basis, steps: [f.user, f.grant], backend: f.backend });
+        const password = Buffer.from('private:password');
+        const result = await applyMachineSetupEffectPlan({ plan, backend: f.backend,
+            administratorEstablishment: { stepId: f.user.id, username: 'alice', password } });
+        expect(result.status).toBe('applied');
+        expect(f.readGroups()).toEqual(['retained-native-group', group]);
+        expect(password.every(byte => byte === 0)).toBe(true);
+    });
+
+    it('finds a wheel grant in an included directory when visudo reports only its main file', async () => {
+        const f = await fixture(false); await f.includePolicy('%wheel ALL=(ALL) ALL\n');
+        const plan = await checkMachineSetupEffectPlan({ basis, steps: [f.user, f.grant], backend: f.backend });
+        const password = Buffer.from('private:password');
+        const result = await applyMachineSetupEffectPlan({ plan, backend: f.backend,
+            administratorEstablishment: { stepId: f.user.id, username: 'alice', password } });
+        expect(result.status).toBe('applied');
+        expect(f.readGroups()).toEqual(['retained-native-group', 'wheel']);
+        expect(password.every(byte => byte === 0)).toBe(true);
+    });
+
+    it('uses native sudo to reject an effective denial despite a conventional group grant', async () => {
+        const f = await fixture(false); await f.setPolicy('%wheel ALL=(ALL) ALL\n%wheel ALL=(ALL) !ALL\n'); f.denyRoot();
+        const plan = await checkMachineSetupEffectPlan({ basis, steps: [f.user, f.grant], backend: f.backend });
+        const password = Buffer.from('private:password');
+        const result = await applyMachineSetupEffectPlan({ plan, backend: f.backend,
+            administratorEstablishment: { stepId: f.user.id, username: 'alice', password } });
+        expect(result).toMatchObject({ status: 'failed', failure: {
+            kind: 'native_check_unavailable', requiredFact: 'administratorSudoGroup', reason: 'required_fact_unavailable',
+        } });
+        expect(f.effects).toEqual(['useradd', 'chpasswd', 'administrator-group']);
+        expect(password.every(byte => byte === 0)).toBe(true);
+    });
+
+    it('explains a host without a recognized administrator group before installing the password or managed policy', async () => {
+        const f = await fixture(false); await f.setPolicy('# %wheel ALL=(ALL) ALL\nroot ALL=(ALL) ALL\n');
+        const plan = await checkMachineSetupEffectPlan({ basis, steps: [f.user, f.grant], backend: f.backend });
+        const password = Buffer.from('private:password');
+        const result = await applyMachineSetupEffectPlan({ plan, backend: f.backend,
+            administratorEstablishment: { stepId: f.user.id, username: 'alice', password } });
+        expect(result).toMatchObject({ status: 'failed', failure: {
+            kind: 'native_check_unavailable', requiredFact: 'administratorSudoGroup', reason: 'required_fact_unavailable',
+        } });
+        expect(f.effects).toEqual(['useradd']);
+        expect(f.readGroups()).toEqual(['retained-native-group']);
+        expect(password.every(byte => byte === 0)).toBe(true);
     });
 
     it('preserves the password when the native creation owner finds an account that appeared after CHECK', async () => {

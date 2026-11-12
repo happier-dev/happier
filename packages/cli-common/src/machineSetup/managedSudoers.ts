@@ -1,4 +1,4 @@
-import { MachineSetupEffectError } from './index.js';
+import { MachineSetupEffectError } from './effectError.js';
 import { computeSha256HexDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import { MachineAdminAccessV1Schema, type MachineAdminAccessV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import type { MachineRecipeStepV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
