@@ -63,14 +63,23 @@ async function ownerAlive(record: LockRecord): Promise<boolean | null> {
   }
 }
 
-async function writeExclusiveTakeoverClaim(path: string, record: LockRecord): Promise<boolean> {
-  const temporaryPath = `${path}.${record.token}.tmp`;
-  const handle = await open(temporaryPath, 'wx', 0o600);
+async function publishExclusiveLockRecord(path: string, record: LockRecord): Promise<void> {
+  const handle = await open(path, 'wx', 0o600);
   try {
     await handle.writeFile(`${JSON.stringify(record)}\n`);
-  } finally {
-    await handle.close();
+  } catch (error) {
+    // Only our unpublished exclusive create is ours to retire. Close before unlinking
+    // for Windows, and preserve the publication error if cleanup also fails.
+    await handle.close().catch(() => undefined);
+    await unlink(path).catch(() => undefined);
+    throw error;
   }
+  await handle.close();
+}
+
+async function writeExclusiveTakeoverClaim(path: string, record: LockRecord): Promise<boolean> {
+  const temporaryPath = `${path}.${record.token}.tmp`;
+  await publishExclusiveLockRecord(temporaryPath, record);
   try {
     await link(temporaryPath, path);
     return true;
@@ -162,12 +171,7 @@ async function acquirePersonalHomeOperationLease(
       continue;
     }
     try {
-      const handle = await open(path, 'wx', 0o600);
-      try {
-        await handle.writeFile(`${JSON.stringify(record)}\n`);
-      } finally {
-        await handle.close();
-      }
+      await publishExclusiveLockRecord(path, record);
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
@@ -188,23 +192,24 @@ async function acquirePersonalHomeOperationLease(
 
       if (!(await writeExclusiveTakeoverClaim(takeoverPath, record))) continue;
       try {
-        // The claimant record identifies the takeover process so an interrupted takeover is
-        // recoverable. This separate hard link pins the exact stale inode being replaced.
-        await link(path, pinnedTakeoverPath);
-        const [current, pinned] = await Promise.all([lstat(path), lstat(pinnedTakeoverPath)]);
-        const pinnedRecord = parseLockRecord(await readFile(pinnedTakeoverPath, 'utf8'));
-        if (current.dev !== pinned.dev || current.ino !== pinned.ino || pinnedRecord.token !== existing.token) {
-          throw new PersonalHomeOperationError('operation_in_progress', 'Personal Home lock changed during stale takeover');
+        try {
+          // The claimant record identifies the takeover process so an interrupted takeover is
+          // recoverable. This separate hard link pins the exact stale inode being replaced.
+          await link(path, pinnedTakeoverPath);
+          const [current, pinned] = await Promise.all([lstat(path), lstat(pinnedTakeoverPath)]);
+          const pinnedRecord = parseLockRecord(await readFile(pinnedTakeoverPath, 'utf8'));
+          if (current.dev !== pinned.dev || current.ino !== pinned.ino || pinnedRecord.token !== existing.token) {
+            throw new PersonalHomeOperationError('operation_in_progress', 'Personal Home lock changed during stale takeover');
+          }
+          await unlink(path);
+        } catch (claimError) {
+          const code = (claimError as NodeJS.ErrnoException).code;
+          if (code === 'ENOENT' || code === 'EEXIST') continue;
+          if (claimError instanceof PersonalHomeOperationError) throw claimError;
+          throw new PersonalHomeOperationError('ambiguous_stale_lock', 'Filesystem cannot safely claim the stale Personal Home lock');
         }
-        await unlink(path);
-        const handle = await open(path, 'wx', 0o600);
-        try { await handle.writeFile(`${JSON.stringify(record)}\n`); } finally { await handle.close(); }
+        await publishExclusiveLockRecord(path, record);
         break;
-      } catch (claimError) {
-        const code = (claimError as NodeJS.ErrnoException).code;
-        if (code === 'ENOENT' || code === 'EEXIST') continue;
-        if (claimError instanceof PersonalHomeOperationError) throw claimError;
-        throw new PersonalHomeOperationError('ambiguous_stale_lock', 'Filesystem cannot safely claim the stale Personal Home lock');
       } finally {
         await releaseExactTakeoverClaim(takeoverPath, pinnedTakeoverPath, record.token);
       }

@@ -1,11 +1,63 @@
-import { link, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { acquirePersonalHomeOperationLock, isPersonalHomeOperationLockHeld, PersonalHomeOperationError, withPersonalHomeOperationLock } from './lock.js';
 
+// Only the filesystem boundary is replaced; exclusive creation and all lock logic stay real.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...fs, open: vi.fn(fs.open) };
+});
+
 describe('Personal Home operation lock', () => {
+  it.each(['initial', 'takeover claim', 'stale replacement'] as const)('recovers after failed %s publication', async (phase) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-home-lock-write-failure-'));
+    const directory = join(root, '.operations');
+    const path = join(directory, 'lock');
+    const failure = Object.assign(new Error('Disk full'), { code: 'ENOSPC' });
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    await mkdir(directory);
+    const stale = JSON.stringify({ token: 'stale-token', pid: 2_147_483_647, host: hostname(), startedAt: new Date(0).toISOString(), operation: 'backup' });
+    if (phase !== 'initial') await writeFile(path, stale);
+    let injected = false;
+    vi.mocked(open).mockImplementation(async (...args) => {
+      const handle = await fs.open(...args);
+      const target = String(args[0]);
+      if (!injected && (phase === 'takeover claim' ? target.endsWith('.tmp') : target === path)) {
+        injected = true;
+        vi.spyOn(handle, 'writeFile').mockRejectedValueOnce(failure);
+      }
+      return handle;
+    });
+    try {
+      await expect(acquirePersonalHomeOperationLock(root, 'restore')).rejects.toBe(failure);
+      expect(injected).toBe(true);
+      vi.mocked(open).mockImplementation(fs.open);
+      // A failed claim must preserve the pre-existing stale file; failed owned writes leave nothing.
+      expect(await readdir(directory)).toEqual(phase === 'takeover claim' ? ['lock'] : []);
+      if (phase === 'takeover claim') expect(await readFile(path, 'utf8')).toBe(stale);
+      const release = await acquirePersonalHomeOperationLock(root, 'restore');
+      await release();
+    } finally {
+      vi.mocked(open).mockImplementation(fs.open);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['', JSON.stringify({ token: 'unknown', pid: 1, host: 'another-host', startedAt: 'unknown', operation: 'backup' })])('preserves an unknown existing lock', async (contents) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-home-lock-unknown-'));
+    const path = join(root, '.operations', 'lock');
+    try {
+      await mkdir(join(root, '.operations'));
+      await writeFile(path, contents);
+      await expect(acquirePersonalHomeOperationLock(root, 'restore')).rejects.toMatchObject({ code: 'ambiguous_stale_lock' });
+      expect(await readFile(path, 'utf8')).toBe(contents);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it('serializes operations and writes owner metadata', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-home-lock-'));
     const release = await acquirePersonalHomeOperationLock(root, 'backup');
