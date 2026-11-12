@@ -17,6 +17,7 @@ import {
 } from './store';
 import type { LocalServiceLauncherSnapshot, LocalServiceLauncherState } from './types';
 import { subscribeLocalServiceCredentialRetirement } from '../inventory/sharedStore';
+import { invalidateLocalServicePreviewStore } from '../preview/sharedStore';
 
 export type LocalServiceLauncherSnapshotClient = (
     input: LocalServiceLauncherSnapshotClientInput,
@@ -164,6 +165,9 @@ const store = createSharedSubscriptionStore<
     defaultWatchClient,
     watchAfterRefresh: true,
     shouldWatch: state => state.updatedAt !== null,
+    // Browser demand now holds this scoped watch rather than broad inventory.
+    // Preview membership must follow the same daemon change without a manual Reload.
+    onWatchSnapshot: input => invalidateLocalServicePreviewStore(input),
     watch: async ({ input, state, watchClient, signal }) => {
         const result = await watchClient({ ...normalizeInput(input),
             projection: input.projection ?? undefined, targets: [...selectLocalServiceLaunchTargets(state)], signal });

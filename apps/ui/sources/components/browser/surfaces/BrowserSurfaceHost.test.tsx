@@ -42,6 +42,7 @@ import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from 
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createMachineFixture, createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/browser';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -143,8 +144,9 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
         const servicesResponse = await browserPreviewBoundary.servicesRpc?.(input);
         if (servicesResponse != null) return servicesResponse;
         if (input.method === 'daemon.browser.view.list') return { protocolVersion: 1, views: browserStreamBoundary.views };
-        if (input.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE
-            && browserPreviewBoundary.response) return browserPreviewBoundary.response;
+        if (input.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT) return {
+            protocolVersion: 1, snapshot: { v: 1, machineId: input.machineId, updatedAt: 1, targets: [] },
+        };
         if (input.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_SNAPSHOT && browserPreviewBoundary.emptySnapshot) {
             return { protocolVersion: 1, snapshot: { v: 1, machineId: input.machineId, generatedAt: 1,
                 refreshState: 'idle', resources: [], previews: [], diagnostics: [] } };
@@ -624,6 +626,15 @@ beforeEach(async () => {
     const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
     setRuntimeFetch(async () => new Response('{}', { status: 404 }));
     const serverUrl = 'https://browser-host.example.test';
+    const previewActionBoundary = await createExternalActionAccountHttpBoundary({
+        serverUrl, serverIdentityId: BROWSER_CLIENT_ACTION_ORIGIN.serverIdentityId,
+        accountId: 'account-1', machineId: 'machine_1', tokenEpoch: 1,
+        actionId: 'localServices.preview.openOrCreate',
+        execute: () => {
+            if (!browserPreviewBoundary.response) throw new Error('Expected a preview registration response');
+            return browserPreviewBoundary.response;
+        },
+    });
     await adoptHomeProfile({ descriptor: {
         v: 1, homeServerIdentityId: BROWSER_CLIENT_ACTION_ORIGIN.serverIdentityId,
         canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }],
@@ -635,6 +646,8 @@ beforeEach(async () => {
         const actionResponse = await browserActionHttp?.(input, init);
         if (actionResponse) return actionResponse;
         const path = new URL(String(input)).pathname;
+        const previewResponse = await previewActionBoundary.handle(new URL(String(input)), init);
+        if (previewResponse) return previewResponse;
         if (path === '/v1/features' && browserFeatures) return Response.json(browserFeatures);
         if (path === '/v1/local-services/preview/preview_1/access' && browserFeatures) {
             if (browserPreviewBoundary.accessRefusal) {
@@ -968,7 +981,8 @@ describe('BrowserSurfaceHost', () => {
         const { BrowserDetailsSurface } = await import('./browserDetailsSurfaceRenderer');
         const { BrowserShell } = await import('../BrowserShell');
         const { DaemonLocalServicePreviewSnapshotResponseV1Schema } = await import('@happier-dev/protocol/local/services/preview/v1');
-        const { LocalServiceInventorySnapshotV1Schema, DaemonLocalServiceInventoryWatchRequestV1Schema } = await import('@happier-dev/protocol/local/services/inventory/v1');
+        const { DaemonLocalServiceInventoryWatchRequestV1Schema } = await import('@happier-dev/protocol/local/services/inventory/v1');
+        const { LocalServiceLauncherSnapshotV1Schema } = await import('@happier-dev/protocol/local/services/launcher/v1');
         browserFeatures = createRootLayoutFeaturesResponse({ features: { browser: {
             enabled: true, viewTargets: { enabled: true }, internal: { enabled: true },
         } } });
@@ -985,10 +999,13 @@ describe('BrowserSurfaceHost', () => {
         let ended = false;
         let previewReads = 0;
         let watches = 0;
-        const observationSignals: AbortSignal[] = [];
         const watchSignals: AbortSignal[] = [];
-        const inventory = () => LocalServiceInventorySnapshotV1Schema.parse({ v: 1, machineId: target.machineId,
-            generatedAt: ended ? 2 : 1, refreshState: 'idle', entries: [], diagnostics: [] });
+        const launcher = () => LocalServiceLauncherSnapshotV1Schema.parse({ v: 1, machineId: target.machineId,
+            sessionId: target.sessionId, updatedAt: ended ? 2 : 1, targets: ended ? [] : [{
+                id: resource.previewId, source: 'registered_preview', machineId: target.machineId,
+                sessionId: target.sessionId, title: 'Preview', confidence: 'high', state: 'available',
+                actions: ['open_preview'], browserTarget: target,
+            }] });
         // Only the daemon RPC is substituted. Both keyed stores, watch invalidation, the
         // production Details feed and the mounted Browser lifecycle remain real.
         browserPreviewBoundary.servicesRpc = async input => {
@@ -1001,20 +1018,13 @@ describe('BrowserSurfaceHost', () => {
             if (input.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
                 const request = DaemonLocalServiceInventoryWatchRequestV1Schema.parse(input.payload);
                 expect(input.signal).toBeDefined();
-                if (request.observationOnly) {
-                    observationSignals.push(input.signal!);
-                    // Mounted producer demand survives snapshot answers until transport cancellation.
-                    return await new Promise(resolve => input.signal!.addEventListener('abort',
-                        () => resolve({ protocolVersion: 1, changed: false }), { once: true }));
-                }
+                expect(request.launcherProjection).toBeDefined();
                 watchSignals.push(input.signal!);
                 watches++;
                 return await (watches === 1 ? firstWatch.promise : parkedWatch.promise);
             }
-            if (input.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH
-                || input.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT) return { protocolVersion: 1, snapshot: inventory() };
             if (input.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT) return { protocolVersion: 1,
-                snapshot: { v: 1, machineId: target.machineId, sessionId: target.sessionId, updatedAt: ended ? 2 : 1, targets: [] } };
+                snapshot: launcher() };
             return null;
         };
         const fetchProbe = vi.fn(async () => Response.json({ state: 'collector_available' }));
@@ -1029,27 +1039,23 @@ describe('BrowserSurfaceHost', () => {
             await vi.waitFor(() => expect(screen.findAllByType('iframe')).toHaveLength(1));
             await act(async () => screen.findByType('iframe').props.onLoad());
             await vi.waitFor(() => expect(watches).toBe(1));
-            expect(observationSignals).toHaveLength(1);
             await flushHookEffects();
             const reads = previewReads;
             const probes = fetchProbe.mock.calls.length;
             ended = true;
-            await act(async () => firstWatch.resolve({ protocolVersion: 1, changed: true, snapshot: inventory() }));
+            await act(async () => firstWatch.resolve({ protocolVersion: 1, changed: true, snapshot: launcher() }));
             await vi.waitFor(() => expect(screen.findHostByTestId('pushed-ended-view-unavailable-diagnostic-preview_ended')).not.toBeNull());
             expect(screen.findAllByType('iframe')).toHaveLength(0);
             expect(screen.findByType(BrowserShell).props.state.viewsById['stop-view'])
                 .toMatchObject({ loadingState: 'failed', lastError: 'preview_ended', currentUrl: preview.accessUrl });
             expect(previewReads - reads).toBe(1);
             expect(fetchProbe.mock.calls).toHaveLength(probes);
-            expect(observationSignals).toHaveLength(1);
             await vi.waitFor(() => expect(watches).toBe(2));
             await screen.update(renderSurface(false));
-            expect(observationSignals[0]!.aborted).toBe(true);
             expect(watchSignals[watchSignals.length - 1]!.aborted).toBe(true);
             const hiddenReads = previewReads;
             await flushHookEffects();
             expect(previewReads).toBe(hiddenReads);
-            expect(observationSignals).toHaveLength(1);
             expect(watches).toBe(2);
         } finally {
             await screen.unmount();
@@ -1248,6 +1254,7 @@ describe('BrowserSurfaceHost', () => {
             if (!previewLifetime || !credentialKey) throw new Error('Expected the current preview Account binding');
             runtimeActionExecute = createLocalServicesRuntimeActionExecutor({
                 catalogBinding: { lifetime: previewLifetime, credentialKey },
+                executeOnMachine: async () => browserPreviewBoundary.response,
                 fallback: createBrowserRuntimeActionExecutor({}),
             });
             if (entry !== 'refused') browserPreviewBoundary.accessRefusal = null;
@@ -2355,8 +2362,7 @@ describe('BrowserSurfaceHost', () => {
         const selectedProfile = { profileId: 'saved-work', displayName: 'Work', storageMode: 'user' as const,
             owner: { kind: 'user' as const, id: 'saved-work' }, cleanupOnSessionClose: false };
         const selection = screen.findByType(BrowserShell).props.browserProfile.management.source.selection;
-        await screen.pressByTestIdAsync('browser-surface-privacy');
-        expect(screen.findByTestId('browser-surface-privacy-status-mode-session')).toBeTruthy();
+        expect(screen.findByType(BrowserShell).props.browserProfile.profile.storageMode).toBe('session');
         await act(async () => selection.onSelected(selectedProfile, [
             { kind: 'viewClosed', eventId: 'switch-close', browserSessionId: 'session_1', viewId: 'agent-view', occurredAt: 1000 },
             { kind: 'sessionCreated', eventId: 'switch-profile', browserSessionId: 'session_1', profileId: selectedProfile.profileId, occurredAt: 1001 },
@@ -2366,10 +2372,10 @@ describe('BrowserSurfaceHost', () => {
         ]));
         expect(control?.readState()?.viewsById['agent-view']).toBeDefined();
         expect(onCloseTab).not.toHaveBeenCalled();
-        expect(screen.findByTestId('browser-surface-privacy-status-mode-user')).toBeTruthy();
+        expect(screen.findByType(BrowserShell).props.browserProfile.profile).toMatchObject(selectedProfile);
         await act(async () => control?.applyDaemonEvents?.([{ kind: 'sessionCreated', eventId: 'other-profile',
             browserSessionId: 'session_1', profileId: 'other-profile', occurredAt: 1002 }]));
-        expect(screen.findByTestId('browser-surface-privacy-status-mode-session')).toBeTruthy();
+        expect(screen.findByType(BrowserShell).props.browserProfile.profile.storageMode).toBe('session');
         await screen.unmount();
     });
 
