@@ -103,6 +103,8 @@ export function buildActionExecutorContextForRpc(
         ? params.callerInputAuthorization : undefined;
     const externalActionExecutionAuthorization = params.externalActionExecutionAuthorization
         ?? localActionContext?.externalActionExecutionAuthorization ?? requesterAuthorization;
+    const runtimeAccountId = params.runtimeAccountId ?? externalActionExecutionAuthorization?.binding.accountId
+        ?? localActionContext?.runtimeAccountId;
     const requesterInvocation = requesterAuthorization && !params.sessionActionOrigin
         && !requesterAuthorization.binding.workflowActionOrigin
         ? readRequesterAccountActionContext(requesterAuthorization)?.invocation : undefined;
@@ -173,9 +175,12 @@ export function buildActionExecutorContextForRpc(
         ...(serverId ? { serverId } : {}),
         ...(params.externalActionTarget ? { externalActionTarget: params.externalActionTarget } : {}),
         ...(params.rpcSessionAuthorization ? { rpcSessionAuthorization: params.rpcSessionAuthorization } : {}),
-        ...(params.runtimeAccountId ? { runtimeAccountId: params.runtimeAccountId } : {}),
+        ...(runtimeAccountId ? { runtimeAccountId } : {}),
         ...(externalActionExecutionAuthorization
-            ? { externalActionExecutionAuthorization } : {}),
+            ? { externalActionExecutionAuthorization,
+                serverIdentityId: externalActionExecutionAuthorization.binding.serverIdentityId } : {}),
+        ...(localActionContext?.presentUserConfirmation
+            ? { presentUserConfirmation: localActionContext.presentUserConfirmation } : {}),
         ...(params.signal ? { signal: params.signal } : {}),
         ...(localActionContext?.authenticatedLocalRootCustody
             ? { authenticatedLocalRootCustody: localActionContext.authenticatedLocalRootCustody } : {}),
@@ -280,6 +285,8 @@ export function buildActionExecutorContextForRpc(
             authority: requesterInvocation.authority === 'account_automation' ? 'account_automation' as const
                 : params.callerAuthority ?? 'account_automation',
             actionCaller: requesterInvocation.caller,
+            ...(requesterInvocation.presentUserConfirmation
+                ? { presentUserConfirmation: requesterInvocation.presentUserConfirmation } : {}),
             ...(requesterInvocation.callerPermissionMode !== undefined
                 ? { callerPermissionMode: requesterInvocation.callerPermissionMode } : {}),
             ...(requesterInvocation.workspaceWrites ? { workspaceWrites: requesterInvocation.workspaceWrites } : {}),

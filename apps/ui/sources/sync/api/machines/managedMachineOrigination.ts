@@ -38,6 +38,8 @@ type ManagedMachineNativeActionParams = Readonly<{
     input: unknown;
     context: ActionExecutorContext;
     confirmInFlow?: boolean;
+    /** The receiving Machine's carried review this in-flow confirmation answers. */
+    reviewDigest?: string;
     retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>;
     signal?: AbortSignal;
     /** Optional host strategy for transferring the actual guest payload bytes. */
@@ -95,7 +97,7 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
         // the parent's marker to that child through the ordinary Account path.
         context = admittedChild || params.confirmInFlow
             ? bindPresentUserActionConfirmation(actionId, selected,
-                admittedChild ? { ...addressedContext, presentUserConfirmation: undefined } : addressedContext)
+                admittedChild ? { ...addressedContext, presentUserConfirmation: undefined } : addressedContext, params.reviewDigest)
             : addressedContext;
         const confirmation = context.presentUserConfirmation?.inputDigest === undefined ? undefined : context.presentUserConfirmation;
         const reviewedParent = readHostReviewedParentV1(context);

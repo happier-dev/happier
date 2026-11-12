@@ -831,6 +831,8 @@ export type ActionExecutorContext = Readonly<{
     /** Host confirmation binds normalized input; Plugin Account action.invoke binds
      * the exact wrapper once when the approval is consumed. */
     inputDigest?: string;
+    /** The receiving executor's reviewed consequences this confirmation answered; admitted only while they still match. */
+    reviewDigest?: string;
     requestId?: string;
     accountId?: string;
     /** Canonical Home identity when available; local profile identity otherwise. */
@@ -1008,6 +1010,8 @@ export type ActionExecutorContext = Readonly<{
     actionId: ActionId;
     requestId: string;
     inputDigest: string;
+    /** A receiving executor's carried review this confirmation answered; that executor admits it only while it holds. */
+    reviewDigest?: string;
     /** Verified proposal consumer; may retain stricter disclosure policy than the deciding UI. */
     requestSurface?: keyof ActionSurfaces;
     decidingAccountId?: string;

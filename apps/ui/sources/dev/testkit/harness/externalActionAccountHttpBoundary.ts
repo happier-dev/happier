@@ -88,7 +88,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
     /** Real encrypted Account codec; plaintext Accounts never acquire key material. */
     encryption?: Pick<Encryption, 'openEncryption' | 'getContentPrivateKey'>;
     /** A dispatched Action refusal is an HTTP execution envelope, not a transport rejection. */
-    failure?: (result: unknown) => Readonly<{ errorCode: string; error: string }> | null;
+    failure?: (result: unknown) => Readonly<{ errorCode: string; error: string; details?: unknown }> | null;
 } & (
     | {
         requesterInvocation?: 'required';
@@ -112,6 +112,21 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
         execute(input: unknown, context: Readonly<{
             target: Extract<NonNullable<ExternalActionRequestEnvelopeV1['target']>, { kind: 'machine' }>;
             requesterAccountContext: NonNullable<ReturnType<typeof openExternalActionRequesterAccountContextV1>>;
+            requestId?: string;
+            /** Actual network headers, for policy assertions at the HTTP boundary. */
+            requestHeaders: Headers;
+            signal?: AbortSignal | null;
+        }>): Promise<unknown> | unknown;
+    }
+    | {
+        /**
+         * Native setup carries the person's private invocation only with a present-user confirmation to send;
+         * an unconfirmed press reaches the receiver without one.
+         */
+        requesterInvocation: 'optional';
+        execute(input: unknown, context: Readonly<{
+            target: Extract<NonNullable<ExternalActionRequestEnvelopeV1['target']>, { kind: 'machine' }>;
+            invocation?: ExternalActionRequesterInvocationV1;
             requestId?: string;
             /** Actual network headers, for policy assertions at the HTTP boundary. */
             requestHeaders: Headers;
@@ -213,7 +228,9 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
             if (input === undefined) throw new Error('Invalid encrypted external Action fixture request');
             const requestHeaders = new Headers(init?.headers);
             let result: unknown;
-            if (params.requesterInvocation === 'none') {
+            if (params.requesterInvocation === 'optional' && !request?.executionAuthorization) {
+                result = await params.execute(input, { target, requestId: envelope.requestId, signal: init?.signal, requestHeaders });
+            } else if (params.requesterInvocation === 'none') {
                 if (request?.executionAuthorization?.requesterAccountContext) throw new Error('Unexpected private requester Account carrier');
                 result = await params.execute(input, { target, requestId: envelope.requestId, signal: init?.signal, requestHeaders });
             } else {
@@ -222,7 +239,11 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                     purpose: { kind: 'external_action' }, machineId: machine.id, installationId: machine.installationId!,
                     serverIdentityId: params.serverIdentityId, installationPrivateKey: installation.privateKey, includeInvocation: true });
                 if (!opened) throw new Error('Invalid private requester Account carrier');
-                if (params.requesterInvocation === 'credentials') result = await params.execute(input, {
+                if (params.requesterInvocation === 'optional') {
+                    if (!opened.invocation) throw new Error('Missing private requester invocation');
+                    result = await params.execute(input, { target, invocation: opened.invocation,
+                        requestId: envelope.requestId, signal: init?.signal, requestHeaders });
+                } else if (params.requesterInvocation === 'credentials') result = await params.execute(input, {
                     target, requesterAccountContext: opened.credentials, requestId: envelope.requestId, signal: init?.signal, requestHeaders,
                 });
                 else {

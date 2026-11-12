@@ -194,6 +194,8 @@ export function unwrapActionResultForRpc(actionId: ActionId, result: ActionExecu
             }
         }
     }
+    // The executor owns this review; carry it unchanged to the originating UI presenter.
+    if (result.errorCode === 'action_interactive_review_required') details = result.details;
     return {
         ok: false,
         errorCode: result.errorCode,

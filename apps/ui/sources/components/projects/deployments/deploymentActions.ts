@@ -59,6 +59,8 @@ export type DeploymentUiDomainAddInput = Readonly<{
 }>;
 export type DeploymentUiDomainInput = Omit<DeploymentDomainRemoveInputV1, 'serverId' | 'requestKey'> & Readonly<{ requestKey?: string }>;
 
+type DeploymentStepConfirmation = NonNullable<NonNullable<Parameters<typeof createFrontDoorActionExecute>[1]>['presentUserActionConfirmation']>;
+
 /** Prepared content is admitted by the Action owner under the captured Home/Account. */
 export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, projectSourceId: string) {
     const execute = createFrontDoorUiActionExecutor(undefined, {
@@ -367,8 +369,11 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                 },
             };
         },
-        /** Explicit authoring intent only; mounting a draft never calls this preparation. */
-        async prepareCreate(input: DeploymentUiCreateInput, operation?: UiActionOperation) {
+        /**
+         * Explicit authoring intent only; mounting a draft never calls this preparation. The review step is the
+         * person's confirmation host: a controller that carries its review back presents it through `confirmation`.
+         */
+        async prepareCreate(input: DeploymentUiCreateInput, operation?: UiActionOperation, confirmation?: DeploymentStepConfirmation) {
             assertCurrent();
             const preview = DeploymentEnvironmentCreateActionResultV1Schema.parse(await invoke(
                 'deployments.environments.create', { ...input, mode: 'preview', requestKey: input.requestKey ?? randomUUID(),
@@ -378,7 +383,7 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                 throw new HappyError(code, false, { code, details: preview });
             }
             assertCurrent();
-            const frontDoor = createFrontDoorActionExecute();
+            const frontDoor = createFrontDoorActionExecute(undefined, confirmation ? { presentUserActionConfirmation: confirmation } : undefined);
             const prepared = await frontDoor.prepare('deployments.environments.create', preview.input, {
                 surface: 'ui', serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId,
                 ...operation,

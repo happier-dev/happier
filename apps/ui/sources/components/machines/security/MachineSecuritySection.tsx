@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { describeMachineSetupReason } from '@/components/machines/setup/machineSetupReasonText';
 
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
+import { ActionConfirmationReviewFacts } from '@/components/approvals/ActionConfirmationReview';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
@@ -147,6 +148,7 @@ export function MachineSecuritySection(
         controls={controls}
         canManage={props.canManage}
         happier={happier}
+        serverId={props.serverId}
       />
     </>
   );
@@ -162,6 +164,8 @@ export function MachineSecurityView(
     canManage?: boolean;
     /** Happier on this Machine: the Updates surface's own row for it, last in the section. */
     happier?: MachineHappierUpdate | null;
+    /** The Machine's Home, for naming what its carried review mentions. */
+    serverId?: string | null;
   }>,
 ) {
   const { updates, controls } = props;
@@ -242,7 +246,7 @@ export function MachineSecurityView(
           />
         ) : null}
       </ItemGroup>
-      <UpdatesReviewCard machineName={machine} controls={controls} />
+      <UpdatesReviewCard machineName={machine} controls={controls} serverId={props.serverId ?? null} />
     </View>
   );
 }
@@ -569,7 +573,7 @@ const BLOCKED_KEYS = {
 
 /** The reviewed install opens under the section: exactly what the Machine planned, then its own progress. */
 function UpdatesReviewCard(
-  props: Readonly<{ machineName: string; controls: MachineSecurityControls }>,
+  props: Readonly<{ machineName: string; controls: MachineSecurityControls; serverId: string | null }>,
 ) {
   const { review } = props.controls;
   const machine = props.machineName;
@@ -660,6 +664,8 @@ function UpdatesReviewCard(
       );
     default: {
       const approval = review.kind === 'review' ? null : review.approval;
+      // The Machine's own review of this install: this step is its confirmation, so Install answers it.
+      const confirmation = review.kind === 'applying' ? review.confirmation : null;
       const packages = review.kind === 'preparing' ? [] : review.packages;
       const prerequisite = review.kind === 'review'
         ? describeActionExecutionPrerequisite(review.setupReview?.administratorUnavailable?.reasonCode)
@@ -674,7 +680,7 @@ function UpdatesReviewCard(
               : `${s}.reviewTitleAll`,
             { machine },
           )}
-          description={prerequisite?.message ?? t(`${s}.reviewDescription`)}
+          description={prerequisite?.message ?? confirmation?.summary ?? t(`${s}.reviewDescription`)}
         >
           {review.kind === 'preparing' ? (
             <Item
@@ -704,6 +710,10 @@ function UpdatesReviewCard(
             />
           ) : null}
         </ItemGroup>
+        {confirmation ? (
+          <ActionConfirmationReviewFacts actionId={confirmation.actionId} actionArgs={confirmation.actionArgs}
+            preview={confirmation.preview} serverId={props.serverId} testID="machine-security-confirmation" />
+        ) : null}
         {/* The decision sits after the review's sheet (SectionButtonRow contract), not inside it. */}
         <ItemGroup surface="none">
           <SectionButtonRow>
@@ -711,9 +721,9 @@ function UpdatesReviewCard(
               testID="machine-security-apply"
               size="small"
               title={t(`${s}.installCount`, { count: packages.length })}
-              disabled={review.kind !== 'review' || prerequisite !== null}
+              disabled={(review.kind !== 'review' && !confirmation) || prerequisite !== null}
               {...(prerequisite ? { accessibilityHint: prerequisite.message } : {})}
-              loading={review.kind === 'applying' && approval === null}
+              loading={review.kind === 'applying' && approval === null && !confirmation}
               onPress={props.controls.onApply}
             />
             <RoundButton

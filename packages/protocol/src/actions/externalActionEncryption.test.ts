@@ -17,6 +17,7 @@ import {
   createDeploymentLinkContentArtifactIdV1,
   projectDeploymentNativeAdmissionV1,
   isDeploymentDomainNativeAdmissionV1,
+  prepareExternalActionResponseEnvelopeV1,
 } from './externalActionApi.js';
 import { RPC_METHODS } from '../rpc/methods.js';
 import { DaemonPluginUiResourceReadRequestSchema, DaemonPluginUiResourceReadResponseSchema, DaemonPluginUiResourceWatchOpenResponseSchema,
@@ -39,6 +40,30 @@ const binding = {
 const randomBytes = (length: number) => new Uint8Array(length).fill(2);
 
 describe('whole external Action encryption', () => {
+  it('carries a present person\'s review only inside the encrypted response and fails closed without its material', () => {
+    // A receiving executor's own-UI refusal: its review is Account content (a Machine-discovered command).
+    const execution = { ok: false as const, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',
+      details: { review: { actionArgs: { browserSessionId: 'owner-session', viewId: 'view' },
+        preview: { summary: 'Restart web, then start serve-web-private-command' } }, reviewDigest: 'D'.repeat(43) } };
+    const reviewBinding = { ...binding, actionId: 'browser.view.open' };
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: reviewBinding, input: { browserSessionId: 'owner-session', viewId: 'view' }, material, randomBytes });
+    const prepared = prepareExternalActionResponseV2({ binding: reviewBinding, request, executedMachineId: 'machine-1',
+      execution, material, randomBytes });
+    // What Home relays: no review content, operands or digest, only the sealed payload.
+    expect(Object.keys(JSON.parse(prepared.body)).sort()).toEqual(['actionId', 'payload', 'requestId', 'v']);
+    expect(prepared.body).not.toContain('serve-web-private-command');
+    expect(prepared.body).not.toContain('review');
+    expect(prepared.body).not.toContain('D'.repeat(43));
+    // The person's client opens exactly that refusal and its review.
+    expect(openExternalActionResponseV2({ envelope: prepared.response, binding: reviewBinding, request, material })).toEqual(execution);
+    // Without the Account material there is no review and no plaintext fallback.
+    expect(openExternalActionResponseV2({ envelope: prepared.response, binding: reviewBinding, request,
+      material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(8) } })).toBeNull();
+    // A plain Account's existing plain envelope carries the same refusal.
+    expect(prepareExternalActionResponseEnvelopeV1({ v: 1, actionId: reviewBinding.actionId, requestId: reviewBinding.requestId,
+      execution }).response.execution).toEqual(execution);
+  });
   it('binds backup configure admission without disclosing authored destination configuration', () => {
     const root = { ...binding, actionId: 'deployments.backups.configure' };
     const input = { serverId: binding.serverIdentityId, environmentId: 'environment', expectedRevision: 2,

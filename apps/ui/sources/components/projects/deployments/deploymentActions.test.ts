@@ -20,12 +20,24 @@ import { DeploymentBackupConfigurationV1Schema } from '@happier-dev/deployment-p
 import { createWorkflowAutomationHttpBoundary } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
 import { AutomationStoredWorkflowDefinitionV2Schema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal'))
     .createModalModuleMock({ confirmResult: true }).module);
 
 const homes = createHomeGovernanceHarness();
+/**
+ * A receiving executor without a presenter: it refuses a person's own press with the exact review its approval
+ * builder produced, and admits only a confirmation bound to that review's digest (the digest itself is Protocol's).
+ */
+const REFUSE = Symbol('refuse');
+const REVIEW_DIGEST = 'R'.repeat(43);
+const refusing = (input: unknown, summary: string) => ({ [REFUSE]: { input, summary } });
+const carriedReview = (result: unknown) => {
+    if (typeof result !== 'object' || result === null || !(REFUSE in result)) return null;
+    const { input, summary } = (result as ReturnType<typeof refusing>)[REFUSE];
+    return { errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',
+        details: { review: { actionArgs: input, preview: { summary } }, reviewDigest: REVIEW_DIGEST } };
+};
 installHomeGovernanceBoundaries(homes);
 const { createDeploymentActions } = await import('./deploymentActions');
 // Resolve the real lazy Action graph during collection, outside the behavior budget.
@@ -462,7 +474,7 @@ describe('deployment UI Action callbacks', () => {
     });
 
     const copyFrom = { environmentId: 'production', expectedRevision: 7, choices: { secrets: [], values: [], data: [] } };
-    it.each([
+    it.each(([
         ['Duplicate', { controllerMachineId: 'controller', copyFrom },
             { controllerMachineId: 'controller', copyFrom, copyPlan: { bindings: [] }, copyIntentCommitment: 'A'.repeat(43) }],
         ['Create with Always on retention', {
@@ -470,7 +482,8 @@ describe('deployment UI Action callbacks', () => {
             firstTargetLink: { machines: [{ machineId: 'controller', installationId: 'controller-installation' }] }, managedRetention: 'keep' as const },
             { controllerMachineId: 'controller', managedRetention: 'keep', firstTargetLink: { machines: [{ machineId: 'controller',
                 installationId: 'controller-installation' }], contentArtifactId: 'reviewed-link', contentHeaderVersion: 1, contentBodyVersion: 1 } }],
-    ] as const)('opens one review of the exact %s when its prepared Create is refused for review, without creating it', async (_name, authored, reviewed) => {
+    ] as const).flatMap(([name, authored, reviewed]) => (['dialog', 'review step'] as const).map(host => [name, host, authored, reviewed] as const)))(
+        'confirms the controller\'s own review and creates the exact %s once (%s), after the controller refuses their own Create', async (_name, host, authored, reviewed) => {
         const serverId = await homes.addHome({ name: 'Create review', serverUrl: 'https://create-review.test',
             serverIdentityId: `srv_${'9'.repeat(32)}`, accountId: 'owner', currentAccount: true });
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' }, isCurrent: () => true,
@@ -484,25 +497,39 @@ describe('deployment UI Action callbacks', () => {
         }, review: { creationDefaults: { values: { controllerMachineId: 'controller', retainPreviousDeployments: 0 },
             sources: { controllerMachineId: 'project', retainPreviousDeployments: 'project' } },
             creationDefaultsBasis: { projectSourceId: 'source-app', sourceRevision: 7, projectDefaultsRevision: 3, content: null } } });
-        const commits: unknown[] = [];
-        // The controller has no presenter for the present-user review, so it refuses the commit before any effect.
+        const commits: Array<Readonly<{ input: unknown; confirmed: boolean }>> = [];
+        // The controller cannot present a confirmation: it refuses the person's own commit until one is carried.
         await answerExternalActionAccountForHome(homes, serverId, { machineId: 'controller',
             actionId: 'deployments.environments.create', tokenEpoch: 0,
-            failure: result => result === 'refuse' ? { errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required' } : null,
-            execute: received => {
+            failure: carriedReview,
+            execute: (received, context) => {
                 if (typeof received === 'object' && received !== null && 'mode' in received) return preview;
-                commits.push(received);
-                return 'refuse';
+                const confirmed = context.invocation.presentUserConfirmation?.reviewDigest === REVIEW_DIGEST;
+                commits.push({ input: received, confirmed });
+                return confirmed ? { ok: true, environmentId: 'created', revision: 1 } : refusing(received, 'Create Staging from the reviewed definition');
             } });
-        const prepared = await createDeploymentActions(lifetime, 'source-app').prepareCreate(input);
-        const refusal = await prepared.run().catch((error: unknown) => error);
-        expect(refusal).toMatchObject({ code: 'approval_request_created',
-            details: { kind: 'approval_request_created', actionId: 'deployments.environments.create' } });
-        expect(commits).toEqual([preview.input]);
-        expect(homes.artifacts(serverId).list()).toHaveLength(1);
-        const review = ApprovalRequestV2Schema.parse(JSON.parse(homes.artifacts(serverId)
-            .readPlainBody((refusal as { details: { artifactId: string } }).details.artifactId) ?? 'null'));
-        expect(review).toMatchObject({ status: 'open', actionId: 'deployments.environments.create', actionArgs: preview.input });
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.confirm).mockClear();
+        // The Create review step hosts the controller's carried review itself; its own Create answers it.
+        const shownInStep: unknown[] = [];
+        const stepConfirmation = host === 'review step' ? async ({ preview: carried }: Readonly<{ preview?: unknown }>) => {
+            shownInStep.push(carried);
+            return true;
+        } : undefined;
+        const prepared = await createDeploymentActions(lifetime, 'source-app').prepareCreate(input, undefined, stepConfirmation);
+        await expect(prepared.run()).resolves.toEqual({ ok: true, environmentId: 'created', revision: 1 });
+        // One confirmation, then exactly the reviewed input again with it; no self-approval Artifact.
+        expect(commits).toEqual([{ input: preview.input, confirmed: false }, { input: preview.input, confirmed: true }]);
+        if (host === 'dialog') {
+            expect(Modal.confirm).toHaveBeenCalledTimes(1);
+            // The person sees the receiving executor's own review, not a bare restatement of the input.
+            expect(vi.mocked(Modal.confirm).mock.calls[0]?.[1]).toContain('Create Staging from the reviewed definition');
+        } else {
+            // No dialog follows the step: the step is the confirmation.
+            expect(Modal.confirm).not.toHaveBeenCalled();
+            expect(shownInStep).toEqual([{ summary: 'Create Staging from the reviewed definition' }]);
+        }
+        expect(homes.artifacts(serverId).list()).toHaveLength(0);
     });
 
     it('prepares protection facts without promising fork approval and saves one exact direct Action', async () => {
@@ -579,9 +606,9 @@ describe('deployment UI Action callbacks', () => {
         expect(homes.requestsFor('/v1/artifacts')).toHaveLength(0);
     });
 
-    it('turns the controller\'s review-required refusal into one review of the exact Save, never an effect', async () => {
+    it.each(['confirms', 'cancels'] as const)('asks the person natively when the controller refuses their own Save for review, and saves only once they confirm (%s)', async choice => {
         const homeId = `srv_${'e'.repeat(32)}`;
-        const serverId = await homes.addHome({ name: 'Preview Save review', serverUrl: 'https://preview-save-review.test',
+        const serverId = await homes.addHome({ name: 'Preview Save review', serverUrl: `https://preview-save-${choice}.test`,
             serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' }, isCurrent: () => true,
             onRetire: () => ({ dispose() {} }) };
@@ -590,22 +617,32 @@ describe('deployment UI Action callbacks', () => {
         const previewTemplate = { v: 1, enabled: true, forkPreviews: 'off',
             repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
             runtimeTargetLinkId: 'runtime', domain: null, bindingBlueprints: [], data: [] } as const;
-        const dispatched: unknown[] = [];
-        // The controller has no presenter for a present-user review; it refuses before any effect.
+        const dispatched: Array<Readonly<{ input: unknown; confirmed: boolean }>> = [];
+        // The controller cannot present a confirmation: it refuses the person's own press until one is carried.
         await answerExternalActionAccountForHome(homes, serverId, { machineId: header.controllerMachineId,
             actionId: 'deployments.environments.update', tokenEpoch: 0,
-            failure: () => ({ errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required' }),
-            execute: raw => { dispatched.push(raw); return {}; } });
+            failure: carriedReview,
+            execute: (raw, context) => {
+                const confirmed = context.invocation.presentUserConfirmation?.reviewDigest === REVIEW_DIGEST;
+                dispatched.push({ input: raw, confirmed });
+                return confirmed ? { ok: true, environmentId: header.id, revision: 8 } : refusing(raw, 'Turn on previews for this environment');
+            } });
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.confirm).mockClear();
+        if (choice === 'cancels') vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
         const saved = createDeploymentActions(lifetime, header.projectSourceId).updateEnvironment(header, { previewTemplate });
-        const refusal = await saved.catch((error: unknown) => error);
-        expect(refusal).toMatchObject({ code: 'approval_request_created',
-            details: { kind: 'approval_request_created', actionId: 'deployments.environments.update' } });
-        expect(dispatched).toHaveLength(1);
-        expect(homes.artifacts(serverId).list()).toHaveLength(1);
-        const review = ApprovalRequestV2Schema.parse(JSON.parse(homes.artifacts(serverId)
-            .readPlainBody((refusal as { details: { artifactId: string } }).details.artifactId) ?? 'null'));
-        expect(review).toMatchObject({ status: 'open', actionId: 'deployments.environments.update',
-            actionArgs: dispatched[0] as Record<string, unknown> });
+        if (choice === 'confirms') {
+            await expect(saved).resolves.toMatchObject({ ok: true, environmentId: header.id, revision: 8 });
+            // One native confirmation, then the exact refused Save again with it; never a self-approval Artifact.
+            expect(dispatched.map(row => row.confirmed)).toEqual([false, true]);
+            expect(dispatched[1]!.input).toEqual(dispatched[0]!.input);
+        } else {
+            await expect(saved).rejects.toMatchObject({ code: 'approval_canceled' });
+            expect(dispatched.map(row => row.confirmed)).toEqual([false]);
+        }
+        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(Modal.confirm).mock.calls[0]?.[1]).toContain('Turn on previews for this environment');
+        expect(homes.artifacts(serverId).list()).toHaveLength(0);
     });
 
     it('requests the controller-owned Deploy review without executing the deploy', async () => {

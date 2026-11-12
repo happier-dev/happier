@@ -1071,6 +1071,14 @@ active-join and retained-receipt semantics, not a new durable replay ledger.
 `executor/approvalReview.ts` records the
 same `presentUserApproval` used by an authenticated deferred decision. A native
 review has no Artifact id and does not manufacture an approval Artifact.
+For an own-UI press received without a native confirmation presenter, the executor
+returns its prepared review and `reviewDigest` with `action_interactive_review_required`.
+The originating UI presents that review and binds a fresh invocation's confirmation
+to its digest. The receiving executor recognizes the press from the existing
+Home-admitted Account binding, rebuilds the review, and refuses missing or changed
+digests with the fresh review before any effect. A digest without a readable preview
+keeps the refusal in the UI. This is unreleased 0.3 behavior; no self-approval
+Artifact or caller-asserted presentation marker is required.
 Private prepared admission retains the answered review through operation
 dispatch. Internal children consume the existing reviewed-parent issuer without
 another per-step policy read; confirmation does not replace their ordinary

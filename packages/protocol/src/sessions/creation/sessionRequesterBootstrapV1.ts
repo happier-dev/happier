@@ -127,6 +127,8 @@ export const ExternalActionRequesterInvocationV1Schema = lazyZodSchema(() => z.s
   presentUserConfirmation: z.optional(z.strictObject({
     actionId: ActionIdSchema,
     inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+    /** The receiving executor's reviewed consequences the person confirmed (computeActionReviewDigestV1). */
+    reviewDigest: z.optional(z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u))),
     requestId: z.string().check(z.minLength(1)),
     accountId: z.string().check(z.minLength(1)),
     serverId: z.string().check(z.minLength(1)),
@@ -167,6 +169,7 @@ export function projectExternalActionRequesterInvocationV1(args: Readonly<{
     ? args.context.presentUserConfirmation
     : review?.actionId === args.actionId ? {
       actionId: review.actionId, inputDigest: review.inputDigest, requestId: review.requestId,
+      ...(review.reviewDigest ? { reviewDigest: review.reviewDigest } : {}),
       accountId: args.account.accountId, serverId: args.context.serverIdentityId ?? args.account.serverId,
       target: args.target,
     } : undefined;

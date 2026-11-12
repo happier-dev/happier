@@ -3283,12 +3283,24 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
                     admittedMachineRole: 'manage', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
                 } });
                 const addressedContext = { ...context, actionRequestId: envelope.requestId,
-                    externalActionTarget: envelope.target, externalActionExecutionAuthorization: authorization };
-                const received = await rpc.invokeLocal(getActionSpec(actionId).bindings!.rpcMethod!, actionInput, {
+                    externalActionTarget: envelope.target };
+                const receive = (digest?: string, confirmed = false) => rpc.invokeLocal(getActionSpec(actionId).bindings!.rpcMethod!, actionInput, {
                     rpcContext: { ...h.ingress, callerAuthority: 'present_user', originalActionEnvelope: envelope },
-                    localActionContext: reviewDigest
-                        ? bindPresentUserActionConfirmation(actionId, actionInput, addressedContext, reviewDigest) : addressedContext,
+                    // As in the UI transport, bind the native decision before Home adds its signed authorization.
+                    localActionContext: { ...(confirmed
+                        ? bindPresentUserActionConfirmation(actionId, actionInput, addressedContext, digest) : addressedContext),
+                        externalActionExecutionAuthorization: authorization },
                 });
+                if (reviewDigest) {
+                    for (const digest of [undefined, 'A'.repeat(43)]) {
+                        expect(await receive(digest, true)).toMatchObject({ ok: false,
+                            errorCode: 'action_interactive_review_required', details: { reviewDigest,
+                                review: { preview: { hostReviewedChildren: { children: [{ action: 'localServices.launcher.start' }] } } } } });
+                        expect(old.snapshot().state).toBe('running');
+                        expect(approvals).toEqual([]);
+                    }
+                }
+                const received = await receive(reviewDigest, !!reviewDigest);
                 if (!reviewDigest) {
                     expect(received, JSON.stringify({ received, approvals })).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
                     expect(old.snapshot().state).toBe('running');

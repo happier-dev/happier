@@ -229,4 +229,26 @@ describe('Machine → Security page', () => {
     expect(findTestInstanceByTypeWithProps(pushed, SurfaceFreshnessLine, { testID: 'machine-security-stale' })?.props.reason)
       .toBe(t('machineDetailPage.security.staleNeedsManage', { machine: 'shop-prod' }));
   });
+
+  it('shows the Machine\'s own review of an install in the Install step, and Install answers it with no dialog', async () => {
+    const { Modal } = await import('@/modal');
+    const plan = { v: 1 as const, basis: { kind: 'updates' as const, machineId: 'shop', scope: 'all' as const }, steps: [], nativeFacts: [],
+      planDigest: 'b'.repeat(64) };
+    const onApply = vi.fn();
+    const screen = await render(model({ status: 'drifted', pendingSecurity: 0, pendingAll: 2, rebootNeeded: false }), true, controls({
+      onApply,
+      review: { kind: 'applying', scope: 'all', plan, packages: [{ name: 'openssl', version: '3.0.2' }], approval: null,
+        confirmation: { actionId: 'machines.setup.updates.apply', actionArgs: { homeId: 'home', machineId: 'shop', scope: 'all', plan },
+          preview: { summary: 'Install 2 updates as the administrator you name' },
+          summary: 'Install 2 updates as the administrator you name' } },
+    }));
+    // The step's own description is the Machine's consequence; its Install is the confirmation.
+    expect(screen.getTextContent()).toContain('Install 2 updates as the administrator you name');
+    const install = findTestInstanceByTypeWithProps(screen, RoundButton, { testID: 'machine-security-apply' });
+    expect(install?.props).toMatchObject({ disabled: false, loading: false });
+    await screen.pressByTestIdAsync('machine-security-apply');
+    expect(onApply).toHaveBeenCalledTimes(1);
+    expect(Modal.confirm).not.toHaveBeenCalled();
+    expect(Modal.show).not.toHaveBeenCalled();
+  });
 });

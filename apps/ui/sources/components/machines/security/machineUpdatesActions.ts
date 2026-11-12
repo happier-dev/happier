@@ -13,9 +13,16 @@ export function planMachineUpdates(target: MachineUpdatesTarget, scope: MachineU
   });
 }
 
-/** Preserve the public approval/progress/refusal envelope for the reviewed native plan. */
-export function applyMachineUpdates(target: MachineUpdatesTarget, scope: MachineUpdatesScope, plan: MachineSetupEffectPlanV1, context?: Context) {
-  return execute('machines.setup.updates.apply', { homeId: target.homeId, machineId: target.machineId, scope, plan }, {
+type Confirmation = NonNullable<NonNullable<Parameters<typeof createFrontDoorActionExecute>[1]>['presentUserActionConfirmation']>;
+
+/**
+ * Preserve the public approval/progress/refusal envelope for the reviewed native plan. The review step is the
+ * person's confirmation host: a Machine that carries its own review back presents it through `confirmation`.
+ */
+export function applyMachineUpdates(target: MachineUpdatesTarget, scope: MachineUpdatesScope, plan: MachineSetupEffectPlanV1, context?: Context,
+  confirmation?: Confirmation) {
+  const dispatch = confirmation ? createFrontDoorActionExecute(undefined, { presentUserActionConfirmation: confirmation }) : execute;
+  return dispatch('machines.setup.updates.apply', { homeId: target.homeId, machineId: target.machineId, scope, plan }, {
     ...context, surface: 'ui', serverId: target.serverId,
   });
 }

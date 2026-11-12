@@ -7,6 +7,7 @@ import { ProjectExecutionChoiceV1Schema } from '@happier-dev/protocol/workspaces
 import { LocalServiceStartApprovalReviewV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { HostReviewedChildrenPlanV1Schema } from '@happier-dev/protocol/actions/executor/hostReviewedChildrenV1';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
@@ -69,6 +70,7 @@ export type ProjectCommandApprovalPresentation =
       workspace?: WorkspaceAddressV1;
       setupReview?: ProjectSetupReviewV1;
       moveFromMachineId?: string;
+      restart?: true;
     }>;
 type Destination =
   | Readonly<{ kind: 'primary' }>
@@ -91,9 +93,17 @@ export function readProjectCommandApproval(
       destination: { kind: 'machine', machineId: move.data.selectedTarget.machineId },
       ...(move.data.setupReview ? { setupReview: move.data.setupReview } : {}) };
   }
-  if (approval.actionId === 'localServices.launcher.start') {
-    const review = LocalServiceStartApprovalReviewV1Schema.safeParse(isRecord(approval.preview) ? approval.preview.serviceStartReview : undefined);
-    if (!review.success || !sameStrictJsonValue(review.data.request, approval.actionArgs)) return null;
+  if (approval.actionId === 'localServices.launcher.start' || approval.actionId === 'localServices.actions.restartManaged') {
+    const preview = isRecord(approval.preview) ? approval.preview : null;
+    const restart = approval.actionId === 'localServices.actions.restartManaged';
+    const content = restart ? isRecord(preview?.hostReviewedContent) ? preview.hostReviewedContent : null : preview;
+    const review = LocalServiceStartApprovalReviewV1Schema.safeParse(content?.serviceStartReview);
+    if (!review.success) return null;
+    const children = restart ? HostReviewedChildrenPlanV1Schema.safeParse(preview?.hostReviewedChildren) : null;
+    const matches = restart ? children?.success && children.data.children.some(child =>
+      child.action === 'localServices.launcher.start' && sameStrictJsonValue(child.input, review.data.request))
+      : sameStrictJsonValue(review.data.request, approval.actionArgs);
+    if (!matches) return null;
     const source = review.data.request.workspace!;
     const target = review.data.target;
     const selection = review.data.request.declaration!.selection;
@@ -103,6 +113,7 @@ export function readProjectCommandApproval(
       kind: 'service', serverId: target.serverId, sourceMachineId: source.machineId,
       workspace: target, destination: sameStrictJsonValue(source, target) ? { kind: 'primary' }
         : { kind: 'machine', machineId: target.machineId },
+      ...(restart ? { restart: true as const } : {}),
       ...(review.data.setup?.required ? { setupReview: review.data.setup } : {}) };
   }
   if (approval.actionId === 'projects.compute.exec') {
@@ -210,6 +221,8 @@ export function describeProjectCommandApprovalTitle(
 ): string {
   if (presentation.kind === 'service' && presentation.moveFromMachineId)
     return t('projectServices.moveConfirm', { service: presentation.name ?? '', from: moveFromMachineName, to: runsOnMachineName });
+  if (presentation.kind === 'service' && presentation.restart && presentation.name)
+    return t('localServices.effectReview.restartTitle', { service: presentation.name });
   // Remembered consent covers the Project on any of the person's machines, so its question names none.
   if (presentation.kind === 'setup')
     return presentation.remembersConsent
@@ -249,7 +262,8 @@ export function describeProjectCommandApprovalDecisions(
   presentation: ProjectCommandApprovalPresentation,
 ): Readonly<{ approve: string; reject: string }> {
   if (presentation.kind === 'service')
-    return { approve: t(presentation.moveFromMachineId ? 'projectServices.move' : 'localServices.effectReview.start'), reject: t('localServices.effectReview.notNow') };
+    return { approve: t(presentation.moveFromMachineId ? 'projectServices.move' : presentation.restart
+      ? 'localServices.effectReview.restart' : 'localServices.effectReview.start'), reject: t('localServices.effectReview.notNow') };
   return presentation.kind === 'setup'
     ? {
         approve: presentation.remembersConsent ? t('projects.authoring.allowUntilChanged') : t('projects.scripts.setup.run'),

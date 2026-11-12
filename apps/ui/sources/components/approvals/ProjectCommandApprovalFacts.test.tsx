@@ -5,6 +5,7 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { ProjectPrepareInputV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ProjectSetupReviewV1Schema } from '@happier-dev/protocol/actions/projectSetupConsentFailure';
 import { MachinePoolViewV1Schema } from '@happier-dev/protocol/machines/pools';
+import { LocalServiceStartApprovalReviewV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 
 /** The value beside a facts row's key (the shared approval fields draw label then value). */
 type FactNode = { props: { children?: unknown } };
@@ -44,6 +45,30 @@ const workspace = {
 };
 
 describe('Project command approval facts', () => {
+  it('discloses the retained native Start effect as the parent Restart decision', async () => {
+    const start = { machineId: 'devbox', targetId: 'web', workspace,
+      declaration: { workspaceRefId: workspace.workspaceId, selection: { kind: 'manifest', name: 'web' } },
+      expectedEffectDigest: 'a'.repeat(64) };
+    const review = LocalServiceStartApprovalReviewV1Schema.parse({ request: start, target: workspace, reviewedEffectDigest: start.expectedEffectDigest,
+      setup: { required: false, project: { serverId: workspace.serverId, projectId: 'project' },
+        reviewedEffectDigest: 'b'.repeat(64), reviewedEffect: {} },
+      reviewedEffect: { command: { source: { kind: 'command', command: 'serve replacement web' } } } });
+    const approval = { actionId: 'localServices.actions.restartManaged' as const,
+      actionArgs: { requestId: 'restart', action: 'restart_managed',
+        target: { kind: 'managed_service', machineId: 'devbox', managedServiceId: 'old' } },
+      preview: { hostReviewedContent: { serviceStartReview: review },
+        hostReviewedChildren: { children: [{ action: 'localServices.launcher.start', role: 'service.restart.start', input: start }] } } };
+    const presentation = readProjectCommandApproval(approval);
+    expect(presentation).toMatchObject({ kind: 'service', name: 'web', command: 'serve replacement web' });
+    if (!presentation) throw new Error('Missing parent Restart effect review');
+    expect(describeProjectCommandApprovalTitle(presentation, 'devbox')).toBe('Restart web?');
+    expect(describeProjectCommandApprovalDecisions(presentation)).toEqual({ approve: 'Restart', reject: 'Not now' });
+    const screen = await renderScreen(<ProjectCommandApprovalFacts presentation={presentation} testID="facts" />);
+    expect(screen.getTextContent()).toContain('serve replacement web');
+    expect(readProjectCommandApproval({ ...approval, preview: { ...approval.preview,
+      hostReviewedChildren: { children: [{ action: 'localServices.launcher.start', role: 'service.restart.start',
+        input: { ...start, targetId: 'other' } }] } } })).toBeNull();
+  });
   it('discloses incoming setup in the same Move approval for an agent request', async () => {
     const destination = { kind: 'workers', destination: { kind: 'machine', machineId: 'worker' } };
     const address = { serverId: 'home', refId: 'checkout' };

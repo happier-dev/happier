@@ -4,7 +4,7 @@ import { resolveLocalServiceDomainActionRpcBinding } from '@happier-dev/protocol
 import { LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION } from '@happier-dev/protocol/local/services/actionIdsV1';
 import { readSessionStateFieldFromMetadata } from '@happier-dev/agents';
 import { resolveApprovalReplayRoute } from './approvalReplayRoute';
-import { executeMachineActionAtDaemon, openPresentUserReviewForRefusal } from './executeMachineActionAtDaemon';
+import { confirmOwnUiRefusal, executeMachineActionAtDaemon } from './executeMachineActionAtDaemon';
 import { createUiPreparedSessionBirthV1 } from './preparedSessionBirth';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED, isAccountModeDowngradeUnverifiedError, readRpcRequestDisposition } from '@happier-dev/sync-client';
@@ -963,7 +963,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     return spec.executionPlacement === 'machine' && spec.originalExecution?.daemonIngressSurfaces?.includes('ui') === true;
   };
   const executeMachineOwnedAction = async (args: Readonly<{
-    actionId: string; input: unknown; context: ActionExecutorContext; confirmInFlow?: boolean;
+    actionId: string; input: unknown; context: ActionExecutorContext; confirmInFlow?: boolean; reviewDigest?: string;
   }>) => {
     // Mounted surfaces supply this target through the admitted controller, not
     // Action input, presence ranking, or the UI's default Machine selection.
@@ -1039,7 +1039,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     const machineId = requestedMachineId ?? mountedMachineId;
     if (!accountContext || !machineId) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
     const addressedContext = { ...args.context, externalActionTarget: args.context.externalActionTarget ?? { kind: 'machine' as const, machineId } };
-    const context = args.confirmInFlow ? bindPresentUserActionConfirmation(ActionIdSchema.parse(args.actionId), args.input, addressedContext) : addressedContext;
+    const context = args.confirmInFlow ? bindPresentUserActionConfirmation(ActionIdSchema.parse(args.actionId), args.input, addressedContext, args.reviewDigest) : addressedContext;
     const confirmation = context.presentUserConfirmation?.inputDigest === undefined ? undefined : context.presentUserConfirmation;
     const reviewedParent = readHostReviewedParentV1(context);
     // Delegate admission with the original host origin. The receiving daemon
@@ -3230,7 +3230,16 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         ...(detectedProvider ? [detectedProvider.where, detectedProvider.availability,
           detectedProvider.models?.title, detectedProvider.models?.subtitle] : []),
       ].filter(Boolean).join('\n\n');
-      const confirmed = actionId === 'account.delete'
+      // A receiving executor's carried review with host-discovered facts (the command a Service starts, a deploy's
+      // effect, its included steps) reads through the approval family presenters, not as a bare sentence.
+      const reviewFacts = preview !== undefined && actionId !== 'account.delete'
+        ? await import('@/components/approvals/ActionConfirmationReview') : null;
+      const confirmed = reviewFacts?.hasActionConfirmationReviewFacts({ actionId, actionArgs: input, preview })
+        ? await reviewFacts.confirmActionReview({ actionId, actionArgs: input, preview,
+          title: presentation.title ?? t('approvals.untitled'), summary: confirmationSummary || null,
+          confirmLabel: presentation.confirmLabel ?? t('approvals.approve'), irreversible: getActionSpec(actionId).irreversible === true,
+          serverId: accountContext.serverId, ...(context.signal ? { signal: context.signal } : {}) })
+        : actionId === 'account.delete'
         ? await Modal.prompt(t('settingsAccount.deleteAccountConfirmTitle'), t('settingsAccount.deleteAccountConfirmBody'), {
           placeholder: 'DELETE', confirmText: t('settingsAccount.deleteAccount'),
         }) === 'DELETE'
@@ -5019,10 +5028,13 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     };
   };
 
+  // A confirmed re-execution after a receiving executor's refusal is a new invocation of the same exact input,
+  // bound (at each path's existing binding site) to the review that executor carried back.
+  const freshRequest = (context: ActionExecutorContext): ActionExecutorContext => ({ ...context, actionRequestId: randomUUID() });
   const executeMachineAction = (actionId: ActionId, input: unknown, context: ActionExecutorContext, confirmInFlow = false) =>
-    executeMachineActionAtDaemon(actionId, input, context, (requestedActionId, actionInput) =>
-      executeMachineOwnedAction({ actionId: requestedActionId, input: actionInput, context,
-        confirmInFlow: requestedActionId === actionId && confirmInFlow }));
+    executeMachineActionAtDaemon(actionId, input, context, (actionInput, reviewDigest) => reviewDigest
+      ? executeMachineOwnedAction({ actionId, input: actionInput, context: freshRequest(context), confirmInFlow: true, reviewDigest })
+      : executeMachineOwnedAction({ actionId, input: actionInput, context, confirmInFlow }), deps.presentUserActionConfirmation);
 
   const executeAction = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext, confirmInFlow = false) => {
     const resolved = resolveContext(context, input, actionId);
@@ -5036,9 +5048,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     }
     return resolved.surface !== 'plugin' && isMachineOwnedAdmissionAction(actionId, input)
       ? await executeMachineAction(actionId, input, resolved, confirmInFlow)
-      : await openPresentUserReviewForRefusal(actionId, input, resolved,
+      : await confirmOwnUiRefusal(actionId, input, resolved,
         await executor.execute(actionId, input, confirmInFlow ? bindPresentUserActionConfirmation(actionId, input, resolved) : resolved),
-        (requestedActionId, actionInput) => executor.execute(requestedActionId, actionInput, resolved));
+        deps.presentUserActionConfirmation, (confirmedInput, reviewDigest) =>
+          executor.execute(actionId, confirmedInput, bindPresentUserActionConfirmation(actionId, confirmedInput, freshRequest(resolved), reviewDigest)));
   };
   return {
     previewSessionTargets: async (target, context) => {
@@ -5049,7 +5062,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     },
     // A genuine present-user native invocation has one installed Action policy
     // and approval owner. Do not create a second local Ask before its relay; a
-    // receiving Machine that refuses for want of a presenter gets the same one review.
+    // receiving Machine that refuses for want of a presenter carries its review to this executor's confirmation.
     executeNativeManagedAction: async (actionId: ManagedMachineActionIdV1, input: unknown, context?: ActionExecutorContext, confirmInFlow = false,
       retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>) => {
       if (!accountContext) return { ok: false as const, errorCode: 'not_authenticated', error: 'not_authenticated' };
@@ -5059,10 +5072,13 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (deps.isActionEnabled && !deps.isActionEnabled(actionId, resolvedContext)) {
         return { ok: false as const, errorCode: 'action_disabled', error: 'action_disabled' };
       }
-      return await openPresentUserReviewForRefusal(actionId, input, resolvedContext,
-        await executeManagedMachineNativeAction({ account: accountContext, actionId, input,
-          context: resolvedContext, confirmInFlow, retainedMachine, ...(context?.signal ? { signal: context.signal } : {}) }),
-        (requestedActionId, actionInput) => executor.execute(requestedActionId, actionInput, resolvedContext));
+      const account = accountContext;
+      const native = (nativeInput: unknown, nativeContext: ActionExecutorContext, confirmed: boolean, reviewDigest?: string) =>
+        executeManagedMachineNativeAction({ account, actionId, input: nativeInput, context: nativeContext, confirmInFlow: confirmed,
+          ...(reviewDigest ? { reviewDigest } : {}), retainedMachine, ...(context?.signal ? { signal: context.signal } : {}) });
+      return await confirmOwnUiRefusal(actionId, input, resolvedContext, await native(input, resolvedContext, confirmInFlow),
+        deps.presentUserActionConfirmation, (confirmedInput, reviewDigest) =>
+          native(confirmedInput, freshRequest(resolvedContext), true, reviewDigest));
     },
     readWidgetInputDescriptor: async request => {
       const port = readWidgetActionSurfacePortV1(widgetInputDeps, request.ref.surface);
@@ -5089,11 +5105,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           ...(review?.operation ? { operation: review.operation } : {}),
           invocation: { run: () => executeMachineAction(actionId, input, resolved) } };
       }
-      // A prepared run reaches the same receiving owner as execute, so its refusal opens the same review.
+      // A prepared run reaches the same receiving owner as execute, so its refusal gets the same confirmation.
       const prepared = await executor.prepare(actionId, input, resolved, options);
       return prepared.kind === 'ready' ? { ...prepared, invocation: { ...prepared.invocation,
-        run: async () => await openPresentUserReviewForRefusal(actionId, input, resolved, await prepared.invocation.run(),
-          (requestedActionId, actionInput) => executor.execute(requestedActionId, actionInput, resolved)) } } : prepared;
+        run: async () => await confirmOwnUiRefusal(actionId, input, resolved, await prepared.invocation.run(),
+          deps.presentUserActionConfirmation, (confirmedInput, reviewDigest) =>
+            executor.execute(actionId, confirmedInput, bindPresentUserActionConfirmation(actionId, confirmedInput, freshRequest(resolved), reviewDigest))) } } : prepared;
     },
     executeAdmittedClientAction: (actionId, input, context) => executor.executeAdmittedClientAction(actionId, input, context),
     execute: executeAction,

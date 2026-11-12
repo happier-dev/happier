@@ -73,7 +73,7 @@ import { isMachineSetupPlanOrApplyActionIdV1 } from '../machines/managed/actionI
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../bots/templates/botTemplateActionIdsV1.js';
 import { hasPendingDeploymentBindingSelectionV1 } from '../deployments/deploymentBindingSelectionNarrowing.js';
 import { withoutClientActionInput } from './clientActionInput.js';
-import { isPresentUserHostInvocation } from './invocationAuthority.js';
+import { isPresentUserHostInvocation, isHomeAdmittedPresentUserHostInvocation } from './invocationAuthority.js';
 import { ReviewFindingsApplyInputV1Schema } from '../reviews/reviewApplyV1.js';
 import type { ReviewCommentV1 } from '../reviews/comments/v1.js';
 import { buildAcceptedReviewFindingsForVerifyV1,
@@ -219,7 +219,7 @@ import { parseWorkflowDefinitionRefV1 } from '../workflows/workflowDefinitionRef
 import { ComputerSelectedTargetResponseV1Schema, ComputerTargetSelectRequestV1Schema, ComputerTargetsListResponseV1Schema, computerTargetKeyV1 } from '../computer/v1.js';
 import { isSessionFollowActionIdV1, SessionFollowActionInputSchemasV1 } from '../sessions/follow/actions.js';
 import { evaluateApiTokenGrantV1, isApiTokenGrantActionAllowedV1, isApiTokenGrantTargetMemberV1, isPermissionModeGrantedV1 } from '../auth/apiTokenGrant.js';
-import { resolveCredentialActionAdmissionV1, resolveWorkspaceWriteActionAdmissionV1, requiresPresentUserExecutionAuthorityForActionInputV1, computeActionInputApprovalDigestV1 } from './decisionAuthority.js';
+import { resolveCredentialActionAdmissionV1, resolveWorkspaceWriteActionAdmissionV1, requiresPresentUserExecutionAuthorityForActionInputV1, computeActionInputApprovalDigestV1, computeActionReviewDigestV1 } from './decisionAuthority.js';
 import { SessionActionRpcOriginV1Schema } from '../rpc/socket.js';
 import { SessionNeedsYouRaiseInputV1Schema } from '../sessions/permissions/questionV1.js';
 import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
@@ -3135,10 +3135,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // revisions/content without asking the person to approve that same intent again.
     const nativeConfirmation = !existingAdmission && !sharedRequesterRequest
       ? admitPresentUserConfirmationV1(actionId, semanticInput, ctx) : null;
+    // A confirmation answering this host's carried review admits only those consequences (checked below).
+    const confirmedReviewDigest = nativeConfirmation ? ctx.presentUserConfirmation?.reviewDigest : undefined;
     if (!existingAdmission) admittedInput = materializeSessionCreationActionInput(actionId,
       discussionParticipantLaunch ? parsed.data : admittedInput, ctx);
     const nativeReview = nativeConfirmation
-      ? recordPresentUserApprovalV1({ ...nativeConfirmation, input: admittedInput }) : null;
+      ? recordPresentUserApprovalV1({ ...nativeConfirmation, input: admittedInput,
+        ...(confirmedReviewDigest ? { reviewDigest: confirmedReviewDigest } : {}) }) : null;
     const childrenPreparation = await prepareHostReviewedChildrenV1({ actionId, input: admittedInput, context: ctx, deps,
       executeChild: executeHostChild,
       admitCredentialScope: (id, context, input) => admitCredentialScope(id, context, input, true),
@@ -3273,9 +3276,46 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       : requiredDirectoryApproval && baseApprovalRouting.required
       ? { ...baseApprovalRouting, result: 'required' as const }
       : baseApprovalRouting;
-    if ((approvalRouting.required || approvalRouting.uiConfirmationRequired) && !isApprovalAction && ctx.interactivePresentation === 'unavailable') {
-      return { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',
-        ...(baseApprovalRouting.profile ? { details: { approvalProfile: baseApprovalRouting.profile } } : {}) };
+    // The one approval builder: an approval request, the native confirmation, and a review this host carries back.
+    const prepareCurrentApproval = () => prepareApprovalRequest({
+      deps,
+      actionId,
+      input: admittedInput,
+      actionArgs: admittedInput,
+      context: ctx,
+      ...(childrenApprovalPreview === undefined ? {} : { hostReviewedContent: childrenApprovalPreview }),
+      ...(deploymentReview === undefined ? {} : { deploymentReview }),
+      ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
+      executeCanonicalAction: (id, input) => executeInvocation(id, input, ctx),
+      ...(widgetSourceRead ? { widgetSurfaceRead: widgetSourceRead } : {}),
+      ...(computerSelection ? { computerApprovalDisplay: computerSelection.approvalDisplay } : {}),
+    });
+    // A host without a presenter carries its exact review back to the person's own UI press, whose executor
+    // presents it and binds the confirmation to it. Nothing is persisted; other callers keep only the refusal.
+    const reviewRefusal = (review: Readonly<{ actionArgs: unknown; preview: unknown }> | null): ActionExecuteResult => ({
+      ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',
+      ...(baseApprovalRouting.profile || review ? { details: {
+        ...(baseApprovalRouting.profile ? { approvalProfile: baseApprovalRouting.profile } : {}),
+        ...(review ? { review: projectNativeJsonValueForTransport({ actionArgs: review.actionArgs ?? null, preview: review.preview ?? null }),
+          reviewDigest: computeActionReviewDigestV1(actionId, review) } : {}),
+      } } : {}) });
+    const carriesOwnReview = ctx.surface === 'ui' && !isApprovalAction
+      && (isPresentUserHostInvocation(ctx) || isHomeAdmittedPresentUserHostInvocation(ctx, actionId));
+    const noConfirmationPresenter = !deps.presentUserActionConfirmation || ctx.interactivePresentation === 'unavailable';
+    // Only the executor that carries reviews (no presenter) verifies them; a presenting executor relays the confirmation.
+    if (noConfirmationPresenter && (confirmedReviewDigest !== undefined || nativeConfirmation && carriesOwnReview)) {
+      // The person confirmed one exact review; changed consequences ask again with the fresh review.
+      const review = await prepareCurrentApproval();
+      if (!review) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
+      if ('ok' in review) return review;
+      if (computeActionReviewDigestV1(actionId, review) !== confirmedReviewDigest) return reviewRefusal(review);
+    }
+    if ((approvalRouting.required || approvalRouting.uiConfirmationRequired) && !isApprovalAction
+      && (ctx.interactivePresentation === 'unavailable' || carriesOwnReview && noConfirmationPresenter)) {
+      if (!carriesOwnReview) return reviewRefusal(null);
+      const review = await prepareCurrentApproval();
+      if (review && 'ok' in review) return review;
+      return reviewRefusal(review);
     }
     if (requiredDirectoryApproval && !approvalRouting.required) {
       // Target inspection proves which folder may be created; the shared
@@ -3317,19 +3357,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             { surface: widgetTarget, instanceId: added.instance.id }, added.instance, ctx);
           if (refusal && !isWidgetAdmissionUndecidableHereV1(refusal)) return refusal;
         }
-        const prepareCurrentApproval = () => prepareApprovalRequest({
-          deps,
-          actionId,
-          input: admittedInput,
-          actionArgs: admittedInput,
-          context: ctx,
-          ...(childrenApprovalPreview === undefined ? {} : { hostReviewedContent: childrenApprovalPreview }),
-          ...(deploymentReview === undefined ? {} : { deploymentReview }),
-          ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
-          executeCanonicalAction: (id, input) => executeInvocation(id, input, ctx),
-          ...(widgetSourceRead ? { widgetSurfaceRead: widgetSourceRead } : {}),
-          ...(computerSelection ? { computerApprovalDisplay: computerSelection.approvalDisplay } : {}),
-        });
         if (options?.confirmUiDefault && approvalRouting === baseApprovalRouting
           && ctx.surface === 'ui' && isPresentUserHostInvocation(ctx) && !ctx.bypassApprovals
           && ctx.presentUserConfirmation?.actionId !== actionId && deps.presentUserActionConfirmation) {

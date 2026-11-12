@@ -85,6 +85,16 @@ export function computeActionInputApprovalDigestV1(actionId: ActionId, input: un
 }
 
 /**
+ * The exact reviewed consequences a receiving executor would run for this invocation: the operands and the
+ * preview its one approval builder produces. A person's confirmation bound to this digest admits only that review.
+ */
+export function computeActionReviewDigestV1(actionId: ActionId, review: Readonly<{ actionArgs: unknown; preview: unknown }>): string {
+  return computeCanonicalDomainSeparatedDigest('action.present-user-review.v1', [actionId,
+    createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(review.actionArgs ?? null)),
+    createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(review.preview ?? null))]);
+}
+
+/**
  * Person-class Actions default to Ask for automation callers (agent, MCP, plugin).
  * That default is ordinary user-changeable approval policy, never a floor.
  */

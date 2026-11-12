@@ -1,4 +1,7 @@
 import * as React from 'react';
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionConfirmationReviewFacts } from '@/components/approvals/ActionConfirmationReview';
+import { useInStepActionConfirmation } from '@/components/approvals/useInStepActionConfirmation';
 import type { DeploymentEnvironmentTabV1 } from '@happier-dev/deployments';
 import { DeploymentPartialProgress } from './DeploymentPartialProgress';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
@@ -138,6 +141,10 @@ export const DeploymentEnvironmentDraft = React.memo(
     );
     const [saving, setSaving] = React.useState(false);
     const [prepared, setPrepared] = React.useState<PreparedCreate | null>(null);
+    // The review step is also the controller's confirmation host: its carried review shows here and Create answers it.
+    const stepConfirmation = useInStepActionConfirmation();
+    const { answer: answerStepConfirmation, confirm: stepConfirm } = stepConfirmation;
+    const stepReview = stepConfirmation.pending;
     const [refusal, setRefusal] =
       React.useState<DeploymentActionOutcome | null>(null);
     const partial = refusal?.kind === 'refused' ? refusal.progress : undefined;
@@ -214,7 +221,8 @@ export const DeploymentEnvironmentDraft = React.memo(
     // A prepared run carries the exact operands it was prepared from; any edit makes it stale.
     React.useEffect(() => {
       setPrepared(null);
-    }, [name, chosen?.id, branch, composePath, composeDocument, imageName, imagePort, storedDefinition, production, deployerMode, deployerPrincipals, retention, onPlatform, copyChoices, platformProvider]);
+      answerStepConfirmation(false);
+    }, [answerStepConfirmation, name, chosen?.id, branch, composePath, composeDocument, imageName, imagePort, storedDefinition, production, deployerMode, deployerPrincipals, retention, onPlatform, copyChoices, platformProvider]);
     const machineName = (machineId: string) => {
       const machine = (allMachines ?? []).find((entry) => entry.id === machineId);
       return machine ? getMachineDisplayName(machine, allMachines ?? []) : t('approvals.machineNotKnown');
@@ -223,6 +231,10 @@ export const DeploymentEnvironmentDraft = React.memo(
     // Save is explicit creation intent; the host prepares omitted defaults and
     // retains the exact operands. Create runs that retained invocation, never a second preparation.
     const save = async () => {
+      if (stepReview) {
+        answerStepConfirmation(true);
+        return;
+      }
       if (partial) {
         if (partial.environmentId) onSaved(partial.environmentId, { tab: deploymentPartialRecoveryTab(partial) });
         return;
@@ -255,7 +267,7 @@ export const DeploymentEnvironmentDraft = React.memo(
               firstTargetLink: { machines: [{ machineId: chosen.id, installationId: chosen.installationId }] },
               ...deploymentManagedRetention(retention),
             }),
-          });
+          }, undefined, stepConfirm);
           setPrepared({ review: next.review, run: next.run });
           return;
         }
@@ -277,6 +289,8 @@ export const DeploymentEnvironmentDraft = React.memo(
         }
         onSaved(created.environmentId);
       } catch (error) {
+        // Declining the controller's review in this step is the person's answer, not a failure.
+        if (isActionApprovalDeclinedErrorCode((error as { code?: unknown } | null)?.code)) return;
         const outcome = readDeploymentActionError(error);
         if (outcome.kind === 'approval') {
           if (createdEnvironment) onSaved(createdEnvironment.environmentId, { tab: 'settings' });
@@ -336,8 +350,8 @@ export const DeploymentEnvironmentDraft = React.memo(
       onPress: () => {
         void save();
       },
-      disabled: partial ? !partial.environmentId || saving : !valid || !actions || saving,
-      loading: saving,
+      disabled: stepReview ? false : partial ? !partial.environmentId || saving : !valid || !actions || saving,
+      loading: saving && !stepReview,
       testID: 'project-deployments.draft.save',
     };
 
@@ -395,7 +409,7 @@ export const DeploymentEnvironmentDraft = React.memo(
             <ItemGroup
               testID="project-deployments.draft.defaults"
               title={t('projects.deployments.creationReview.title')}
-              description={t('projects.deployments.creationReview.description')}
+              description={stepReview?.summary ?? t('projects.deployments.creationReview.description')}
             >
               {renderDeploymentCreationDefaultsRows({
                 defaults: prepared.review.creationDefaults,
@@ -403,6 +417,11 @@ export const DeploymentEnvironmentDraft = React.memo(
                 testID: 'project-deployments.draft.defaults',
               })}
             </ItemGroup>
+          ) : null}
+          {stepReview ? (
+            <ActionConfirmationReviewFacts actionId={stepReview.actionId} actionArgs={stepReview.actionArgs}
+              preview={stepReview.preview} serverId={props.lifetime?.scope.serverId ?? null}
+              testID="project-deployments.draft.confirmation" />
           ) : null}
           <ItemGroup
             title={t('projects.deployments.whereTitle')}
@@ -632,7 +651,7 @@ export const DeploymentEnvironmentDraft = React.memo(
                 testID="project-deployments.draft.save.phone"
                 title={saveAction.title}
                 disabled={saveAction.disabled}
-                loading={saving}
+                loading={saveAction.loading}
                 onPress={saveAction.onPress}
               />
             </PagePinnedBar>

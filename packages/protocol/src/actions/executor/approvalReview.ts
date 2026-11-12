@@ -15,11 +15,13 @@ export function recordPresentUserApprovalV1(args: Readonly<{
   requestSurface?: ActionExecutorContext['surface'];
   decidingAccountId?: string;
   decidedAtMs?: number;
+  reviewDigest?: string;
 }>): NonNullable<ActionExecutorContext['presentUserApproval']> {
   return {
     ...(args.artifactId ? { artifactId: args.artifactId } : {}),
     actionId: args.actionId, requestId: args.requestId,
     inputDigest: computeActionInputApprovalDigestV1(args.actionId, args.input),
+    ...(args.reviewDigest ? { reviewDigest: args.reviewDigest } : {}),
     ...(args.requestSurface ? { requestSurface: args.requestSurface } : {}),
     ...(args.decidingAccountId ? { decidingAccountId: args.decidingAccountId } : {}),
     ...(args.decidedAtMs === undefined ? {} : { decidedAtMs: args.decidedAtMs }),

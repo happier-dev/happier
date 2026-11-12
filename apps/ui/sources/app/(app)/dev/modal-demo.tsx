@@ -7,6 +7,22 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { Modal } from '@/modal';
 import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { confirmActionReview } from '@/components/approvals/ActionConfirmationReview';
+
+/** A Machine's carried Restart review (its approval builder's preview): the exact child it would start. */
+const RESTART_WORKSPACE = { serverId: 'home', machineId: 'devbox', workspaceId: 'checkout', rootPath: '/src/storefront' };
+const RESTART_START = { machineId: 'devbox', targetId: 'web', workspace: RESTART_WORKSPACE,
+    declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'web' } }, expectedEffectDigest: 'a'.repeat(64) };
+const RESTART_REVIEW = {
+    actionId: 'localServices.actions.restartManaged',
+    actionArgs: { requestId: 'restart', action: 'restart_managed', target: { kind: 'managed_service', machineId: 'devbox', managedServiceId: 'web-1' } },
+    preview: {
+        hostReviewedChildren: { children: [{ action: 'localServices.launcher.start', role: 'service.restart.start', input: RESTART_START }] },
+        hostReviewedContent: { serviceStartReview: { request: RESTART_START, target: RESTART_WORKSPACE, reviewedEffectDigest: 'a'.repeat(64),
+            setup: { required: false, project: { serverId: 'home', projectId: 'storefront' }, reviewedEffectDigest: 'b'.repeat(64), reviewedEffect: {} },
+            reviewedEffect: { command: { source: { kind: 'command', command: 'serve web --port 4173' } } } } },
+    },
+} as const;
 
 // Example custom modal component
 function CustomContentModal({ onClose, title, message }: { onClose: () => void; title: string; message: string }) {
@@ -128,6 +144,16 @@ export default function ModalDemoScreen() {
                         title="Basic Confirmation"
                         subtitle="Simple yes/no confirmation"
                         onPress={showConfirm}
+                    />
+                    <Item
+                        title="Reviewed Confirmation"
+                        subtitle="A Machine's carried Restart review"
+                        onPress={async () => {
+                            const result = await confirmActionReview({ ...RESTART_REVIEW, title: 'Restart web?',
+                                summary: 'This restarts this service now. Anything using its address disconnects while it restarts.',
+                                confirmLabel: 'Restart', irreversible: false, serverId: null });
+                            setLastResult(`Reviewed result: ${result ? 'Confirmed' : 'Cancelled'}`);
+                        }}
                     />
                     <Item
                         title="Destructive Confirmation"

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { createActionExecutor } from './actionExecutor.js';
+import { computeActionInputApprovalDigestV1 } from './decisionAuthority.js';
+import { ExternalActionExecutionAuthorizationV1Schema } from './externalActionApi.js';
 import { getActionSpec } from './actionSpecs.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './executor/types.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
@@ -24,6 +26,62 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
     ...overrides,
   } as unknown as ActionExecutorDeps);
 }
+
+describe('a review carried back by a host without a presenter', () => {
+  const actionId = 'notifications.test' as const;
+  const input = { serverId: 'home', machineId: 'controller', sourceInstanceId: 'subject',
+    channelId: 'happier.channel-slack/alerts', channelIndex: 0, expectedSourceRevision: 'revision-2' };
+  const press = (requestId: string, reviewDigest?: string, homeAdmitted = false): ActionExecutorContext => ({ serverId: 'home', surface: 'ui',
+    authority: 'present_user', actionCaller: { kind: 'host' }, interactivePresentation: 'unavailable',
+    actionRequestId: requestId, runtimeAccountId: 'alice',
+    ...(homeAdmitted ? { interactivePresentation: undefined,
+      externalActionTarget: { kind: 'machine' as const, machineId: 'controller' },
+      externalActionExecutionAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-verified', binding: {
+        accountId: 'alice', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 1 },
+        serverIdentityId: 'home', machineId: 'controller', installationId: 'installation', actionId, requestId,
+        target: { kind: 'machine', machineId: 'controller' }, accountEncryptionMode: 'plain',
+        admittedMachineRole: 'manage', requestEnvelopeDigest: 'A'.repeat(43),
+      } }),
+    } : {}),
+    ...(reviewDigest ? { presentUserConfirmation: { actionId, inputDigest: computeActionInputApprovalDigestV1(actionId, input),
+      reviewDigest, requestId, accountId: 'alice', serverId: 'home',
+      target: homeAdmitted ? { kind: 'machine', machineId: 'controller' } : null } } : {}) });
+  const reviewOf = (result: unknown) => (result as { details: { review: unknown; reviewDigest: string } }).details;
+
+  it.each([false, true])('carries its exact review, admits only its confirmation, and asks again when it changes (Home admitted: %s)', async homeAdmitted => {
+    const ownPress = (requestId: string, digest?: string) => press(requestId, digest, homeAdmitted);
+    let destination = 'alerts-room';
+    const sent: unknown[] = [];
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'must-not-exist' }));
+    // The host's delivery and its discovered destination are the boundaries; review, admission and digests stay real.
+    const executor = createExecutor({ approvalsCreate,
+      prepareNotificationTestApproval: async ({ input: request }) => ({ request, controllerMachineId: 'controller',
+        destination, disclosure: 'slack' }),
+      notificationConfigurationAction: async ({ input: request }) => {
+        sent.push(request);
+        return { status: 'sent', controllerMachineId: 'controller', channelId: (request as { channelId: string }).channelId };
+      } } as Partial<ActionExecutorDeps>);
+    const refused = await executor.execute(actionId, input, ownPress('press-1'));
+    expect(refused).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required', details: {
+      review: { actionArgs: input, preview: { notificationTestReview: { destination: 'alerts-room' } } },
+      reviewDigest: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u) } });
+    const firstDigest = reviewOf(refused).reviewDigest;
+    // A confirmation of some other review is not this one.
+    const stale = await executor.execute(actionId, input, ownPress('press-2', 'A'.repeat(43)));
+    expect(stale).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required', details: { reviewDigest: firstDigest } });
+    // The person confirmed the old destination; the host now would send elsewhere, so it asks again with that.
+    destination = 'other-room';
+    const changed = await executor.execute(actionId, input, ownPress('press-3', firstDigest));
+    expect(changed).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required',
+      details: { review: { preview: { notificationTestReview: { destination: 'other-room' } } } } });
+    expect(reviewOf(changed).reviewDigest).not.toBe(firstDigest);
+    expect(sent).toEqual([]);
+    await expect(executor.execute(actionId, input, ownPress('press-4', reviewOf(changed).reviewDigest)))
+      .resolves.toMatchObject({ ok: true, result: { status: 'sent' } });
+    expect(sent).toEqual([input]);
+    expect(approvalsCreate).not.toHaveBeenCalled();
+  });
+});
 
 describe('ActionExecutor prepared invocation', () => {
   it('P40-Ae admits the real redeploy front door without a second hold, but never lends that to automation or explicit Ask', async () => {

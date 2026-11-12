@@ -4,6 +4,7 @@ import { ManagedMachineActionOutputSchemasV1, type MachineSetupPlanReviewV1 } fr
 import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
+import { useInStepActionConfirmation, type InStepActionConfirmation } from '@/components/approvals/useInStepActionConfirmation';
 import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
 import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 
@@ -48,6 +49,8 @@ export type MachineUpdatesReview =
       plan: MachineSetupEffectPlanV1;
       packages: readonly MachineUpdatePackage[];
       approval: ActionApprovalContinuation | null;
+      /** The Machine's own review of this install, answered by this step's Install press. */
+      confirmation: InStepActionConfirmation | null;
     }>
   | Readonly<{
       kind: 'installing';
@@ -97,6 +100,8 @@ export function useMachineUpdatesReview(
   }>,
 ) {
   const { lifetime, run, abort, inFlight } = useScopedActionRun(input.serverId);
+  const stepConfirmation = useInStepActionConfirmation();
+  const { confirm, answer } = stepConfirmation;
   const [review, setReview] = React.useState<MachineUpdatesReview>({
     kind: 'idle',
   });
@@ -180,9 +185,14 @@ export function useMachineUpdatesReview(
   );
 
   const apply = React.useCallback(async () => {
+    // The Machine's carried review is on this step: Install answers it.
+    if (stepConfirmation.pending) {
+      answer(true);
+      return;
+    }
     if (inFlight() || review.kind !== 'review' || !target) return;
     const { scope, plan, packages } = review;
-    setReview({ kind: 'applying', scope, plan, packages, approval: null });
+    setReview({ kind: 'applying', scope, plan, packages, approval: null, confirmation: null });
     const actionInput = {
       homeId: target.homeId,
       machineId: target.machineId,
@@ -196,9 +206,9 @@ export function useMachineUpdatesReview(
         applyMachineUpdates(target, scope, plan, {
           expectedAccountId: bound.scope.accountId,
           signal,
-        }),
+        }, confirm),
       (approval) =>
-        setReview({ kind: 'applying', scope, plan, packages, approval }),
+        setReview({ kind: 'applying', scope, plan, packages, approval, confirmation: null }),
     );
     if (!result) return;
     if (!result.ok) {
@@ -223,7 +233,7 @@ export function useMachineUpdatesReview(
             during: 'apply',
           },
     );
-  }, [inFlight, review, run, target]);
+  }, [answer, confirm, inFlight, review, run, stepConfirmation.pending, target]);
 
   // The accepted operation's own lifecycle is the progress; its terminal state settles the review once.
   const operation = useActionOperation({
@@ -255,9 +265,12 @@ export function useMachineUpdatesReview(
   }, [onSettled, operationState, review]);
 
   const cancel = React.useCallback(() => {
+    answer(false);
     abort();
     setReview({ kind: 'idle' });
-  }, [abort]);
+  }, [abort, answer]);
 
-  return { review, prepare, apply, cancel };
+  const shown = React.useMemo((): MachineUpdatesReview => review.kind === 'applying' && review.confirmation !== stepConfirmation.pending
+    ? { ...review, confirmation: stepConfirmation.pending } : review, [review, stepConfirmation.pending]);
+  return { review: shown, prepare, apply, cancel };
 }
