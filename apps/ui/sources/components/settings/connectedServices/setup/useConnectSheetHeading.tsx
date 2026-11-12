@@ -33,7 +33,8 @@ export function useConnectSheetHeading(
         anchor,
       }),
       leading: leadingRef.current,
-      ...(heading.actions ? { actions: heading.actions } : {}),
+      // Chrome updates merge; null retires a previous method's Machine chip.
+      actions: heading.actions ?? null,
       // A sign-in's steps can outgrow the window: the body scrolls under the band (Share's list scrolls itself).
       bodyScroll,
     });

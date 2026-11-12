@@ -9,6 +9,7 @@ import { ConnectedServiceSetupPanel } from '../setup/ConnectedServiceSetupPanel'
 import { ConnectSheetContent } from '../setup/ConnectSheetContent';
 import type { ConnectSheetAccountRequest } from '../setup/ConnectedServiceSetupModal';
 import type { CustomModalChromeConfig } from '@/modal/types';
+import { mergeChromeConfig } from '@/modal/components/customModalChrome';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { configureConnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -148,7 +149,9 @@ function PortableSetup(props: Readonly<{ credentials: NonNullable<Awaited<Return
     const selectedService = props.service ?? service;
     const serviceKey = `${selectedService.pluginId}/${selectedService.localId}`;
     // Render the real sheet's chrome actions at the modal presentation boundary.
-    const [chrome, setChrome] = React.useState<CustomModalChromeConfig | null>(null);
+    const [chrome, setChromeState] = React.useState<CustomModalChromeConfig | null>(null);
+    const setChrome = React.useCallback((next: CustomModalChromeConfig | null) =>
+        setChromeState(current => mergeChromeConfig(current, next)), []);
     const onSheetResult = React.useCallback(() => {}, []);
     const sheetRequest = React.useMemo<ConnectSheetAccountRequest>(() => ({ service: selectedService,
         intent: props.reconnectAccountId ? 'reconnect' : 'add',
@@ -344,6 +347,29 @@ function withPortableSheetBrowser(run: () => Promise<void>) {
         clearTimeout: globalThis.clearTimeout.bind(globalThis),
     } });
 }
+
+it('clears the Connect sheet Machine chip when the selected mode is Account placed', () => withPortableSheetBrowser(async () => {
+    const fixture = await restoreClaudeBrowserMachineFixture('online', 'add');
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const { createUiConnectedAccountAuthenticationHost } = await import('@/sync/ops/connectedAccounts/connectedAccountAuthenticationHost');
+    const host = createUiConnectedAccountAuthenticationHost(await captureLazyActionAccountContext(fixture.serverId));
+    const placement = await host.readAccountAuthenticationModes(claude);
+    expect(placement.status).toBe('available');
+    if (placement.status !== 'available') throw new Error(placement.code);
+    const screen = await renderScreen(<PortableSetup credentials={fixture.credentials} service={claude} connectSheet initialTarget={null} onCancel={() => {}} />);
+    try {
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-service-setup:method:oauth')).not.toBeNull());
+        // Start with a Machine mode so omission of a later actions patch cannot pass.
+        const modeIds = [...(placement.machineRequiredModeIds ?? []), ...placement.modeIds, ...(placement.machineRequiredModeIds ?? [])];
+        for (const modeId of modeIds) {
+            await screen.pressByTestIdAsync(`connected-service-setup:method:${modeId}`);
+            await vi.waitFor(() => {
+                const chip = screen.findHostByTestId('connected-service-setup-target.chip');
+                expect(chip !== null).toBe(!placement.modeIds.includes(modeId));
+            });
+        }
+    } finally { await screen.unmount(); }
+}));
 
 it.each(['add', 'reconnect'] as const)('invites choosing an online Machine before Claude browser %s', intent => withPortableSheetBrowser(async () => {
     const fixture = await restoreClaudeBrowserMachineFixture('online', intent);
