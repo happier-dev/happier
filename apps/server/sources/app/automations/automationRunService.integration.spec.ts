@@ -568,6 +568,8 @@ describe("automationRunService (integration)", () => {
             data: {
                 id: params.id,
                 automationId: automation.id,
+                // Admission freezes this snapshot even for retained execution inputs.
+                assignments: { create: { machineId: machine.id, priority: 0 } },
                 ...scheduleRunCause(automation.triggers[0]!.id),
                 accountId: account.id,
                 state,
@@ -668,6 +670,8 @@ describe("automationRunService (integration)", () => {
             data: {
                 id: params.id,
                 automationId: automation.id,
+                // Admission freezes this snapshot even for retained execution inputs.
+                assignments: { create: { machineId: machine.id, priority: 0 } },
                 ...scheduleRunCause(automation.triggers[0]!.id),
                 accountId: account.id,
                 state: params.state,
@@ -960,6 +964,8 @@ describe("automationRunService (integration)", () => {
         const run = await db.automationRun.create({
             data: {
                 id: `run-conversation-result-validation-${suffix}`,
+                // Admission freezes this snapshot even for retained execution inputs.
+                assignments: { create: { machineId: machine.id, priority: 0 } },
                 automationId: automation.id,
                 accountId: account.id,
                 state: "running",
@@ -3340,6 +3346,8 @@ describe("automationRunService (integration)", () => {
         const cancelledRun = await db.automationRun.create({
             data: {
                 id: "run-cancelled-known-produced-session",
+                // Admission freezes this snapshot even for retained execution inputs.
+                assignments: { create: { machineId: seeded.machineId, priority: 0 } },
                 automationId: seeded.automationId,
                 ...scheduleRunCause(seeded.triggerId),
                 accountId: seeded.accountId,
@@ -3450,6 +3458,8 @@ describe("automationRunService (integration)", () => {
         const run = await db.automationRun.create({
             data: {
                 id: "run-retain-before-cancel",
+                // Admission freezes this snapshot even for retained execution inputs.
+                assignments: { create: { machineId: seeded.machineId, priority: 0 } },
                 automationId: seeded.automationId,
                 ...scheduleRunCause(seeded.triggerId),
                 accountId: seeded.accountId,
@@ -3571,6 +3581,8 @@ describe("automationRunService (integration)", () => {
         const run = await db.automationRun.create({
             data: {
                 id: "run-cancel-before-retain",
+                // Admission freezes this snapshot even for retained execution inputs.
+                assignments: { create: { machineId: seeded.machineId, priority: 0 } },
                 automationId: seeded.automationId,
                 ...scheduleRunCause(seeded.triggerId),
                 accountId: seeded.accountId,
