@@ -1165,6 +1165,19 @@ refreshes that available projection. Genuine scan, transport and credential fail
 still offer their existing recovery. Load the matching daemon and UI together.
 
 
+## Triage source availability diagnostics (unreleased 0.3)
+
+Configured sources in the aggregate list result add optional
+`availabilityFailure` using the existing closed source-failure schema. The list
+projects the upstream plugin-admission code and plugin id from the registration
+snapshot; consumers disclose that supplied cause without another inventory read.
+Omission preserves existing results and does not manufacture a request id.
+
+Registration, the aggregate producer, shared schema and mounted readers reload
+together under the unpublished 0.3 development cut. Earlier strict development
+readers can reject the field. No persisted record, protocol epoch, gate,
+migration or predecessor adapter is added.
+
 ## Triage exact PR status lookup (unreleased 0.3)
 
 The closed V1 Session-relation result and Triage entry Action input accept optional

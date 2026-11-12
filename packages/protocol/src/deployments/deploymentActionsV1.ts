@@ -808,6 +808,8 @@ export const DeploymentTransitionInputV1Schema = lazyZodSchema(() => z.strictObj
   contentArtifactId: z.optional(DeploymentIdentifierV1Schema),
   contentHeaderVersion: z.optional(DeploymentRevisionV1Schema), contentBodyVersion: z.optional(DeploymentRevisionV1Schema),
   expectedTargetLinkRevision: z.optional(DeploymentRevisionV1Schema),
+  /** Successful membership enrollment may retain the current immutable release. */
+  servingDeploymentId: z.optional(DeploymentIdentifierV1Schema),
   teardownProof: z.optional(DeploymentTeardownProofV1Schema),
 }).check(z.superRefine((input, context) => {
   const content = [input.contentArtifactId, input.contentHeaderVersion, input.contentBodyVersion];
@@ -818,6 +820,9 @@ export const DeploymentTransitionInputV1Schema = lazyZodSchema(() => z.strictObj
   if ((input.kind === 'settle') !== terminal) context.addIssue({ code: 'custom', path: ['state'], message: 'Transition kind must match settlement.' });
   if (input.expectedTargetLinkRevision !== undefined && (input.kind !== 'settle' || !['succeeded', 'running_unverified'].includes(input.state))) {
     context.addIssue({ code: 'custom', path: ['expectedTargetLinkRevision'], message: 'Only a successful settlement can advance the uniform link.' });
+  }
+  if (input.servingDeploymentId !== undefined && input.expectedTargetLinkRevision === undefined) {
+    context.addIssue({ code: 'custom', path: ['servingDeploymentId'], message: 'Retaining a serving release requires a successful uniform settlement.' });
   }
   if (input.teardownProof && (input.kind !== 'settle' || input.state !== 'succeeded' || input.expectedTargetLinkRevision !== undefined)) {
     context.addIssue({ code: 'custom', path: ['teardownProof'], message: 'Only a complete successful teardown can prove removal.' });

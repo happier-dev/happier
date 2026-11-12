@@ -142,6 +142,8 @@ export type OwnServerDeploymentRuntime = Readonly<{
     acquire(request: OwnServerDeploymentRuntimeRequest, snapshot: Readonly<{
         environment: DeploymentEnvironmentDetailV1;
         content: DeploymentOwnServerContentV1;
+        /** Selected by the retained-serving source owner for a joining deployment. */
+        retainedSourceIntent?: DeploymentOwnServerContentV1['sourceIntent'];
         readReferenceEnvironment?: OwnServerDeploymentTargetHostInput['readEnvironment'];
         readPreviewDomain?: OwnServerDeploymentTargetHostInput['readPreviewDomain'];
         /** Absent only while reviewing a candidate before receipt acceptance. */

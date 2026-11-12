@@ -74,7 +74,6 @@ import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { ExternalActionInstalledMachineUnavailableSchema, readExternalActionInstalledMachineResult,
     readReviewedActionOperationCancelAddress } from '@/api/externalActionExecutionAuthorization';
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
-import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { captureRequesterCurrentnessRefusal } from '@/daemon/sessionEncryption/requesterCurrentness';
 import { ArtifactEncryptionMaterialUnavailableError, createCredentialedAccountArtifactStore, type ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accountArtifactStore';
@@ -582,12 +581,13 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     ? await readEnvironmentMetadata(request) : null;
                 const link = environment?.targetLinks.find(item => item.id === receipt.targetLinkId);
                 if (environment && !link) return failure('target_mismatch');
-                const expectedTargetLinkRevision = link?.source.kind === 'plugin' && request.content?.platform
+                const uniformProof = link?.source.kind === 'plugin' && request.content?.platform
                     && request.content.platform.targetLinkRevision === link.revision
-                    ? link.revision
+                    ? { expectedTargetLinkRevision: link.revision }
                     : link?.source.kind === 'host' ? readDeploymentUniformTargetLinkRevisionV1({ deploymentId: receipt.id,
+                        actionOperationId: receipt.actionOperationId,
                         targetLink: link, content: DeploymentOwnServerContentV1Schema.parse(request.content) }) : undefined;
-                if (link && expectedTargetLinkRevision == null) return failure('deployment_conflict');
+                if (link && uniformProof == null) return failure('deployment_conflict');
                 const body: Omit<DeploymentTransitionInputV1, 'proof'> = {
                     serverId: request.context.externalActionExecutionAuthorization?.binding.serverIdentityId ?? host.serverId,
                     environmentId: request.environmentId, deploymentId: request.deploymentId,
@@ -595,7 +595,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     machineId: host.machineId, installationId: identity.installationId,
                     kind: settled ? 'settle' : 'stage', state: request.state,
                     ...contentReference, ...(prepared ? { contentUpdate: prepared.mutation } : {}),
-                    ...(expectedTargetLinkRevision == null ? {} : { expectedTargetLinkRevision }),
+                    ...uniformProof,
                     ...(request.teardownProof ? { teardownProof: request.teardownProof } : {}),
                 };
                 const proof = signMachineInstallationProof({ payload: { version: 1, machineId: host.machineId,
@@ -1893,7 +1893,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                             envelope: fresh.originalActionEnvelope, signal: fresh.signal });
                         if (!address || address.operationId !== prepared.intent.actionOperationId
                             || address.machineId !== host.machineId
-                            || !await isServerProfileHomeIdentity(host.serverId, authorization.binding.serverIdentityId)) return refuse('action_forbidden');
+                            || host.serverId !== authorization.binding.serverIdentityId) return refuse('action_forbidden');
                         const currentContext = buildActionExecutorContextForRpc({ ...fresh,
                             actionId: 'action.operations.cancel', serverId: host.serverId,
                             runtimeAccountId: authorization.binding.accountId,

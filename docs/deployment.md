@@ -1,5 +1,15 @@
 # Deployment
 
+## Home target admission (0.3 development)
+
+Deployment Actions normalize the selected local profile to its admitted portable
+Home identity before preparation, destructive review, input digests and signing.
+The local profile remains available in invocation context for route and credential
+lookup. Backup/restore hosts and storage consume the canonical target; Machine
+and installation binding remain separate. Admitted repository workspace matching
+uses the same profile/Home relationship for both target and stored references,
+and refuses foreign or ambiguous workspace identities before effects.
+
 ## Platform variable roles (0.3 development)
 
 Vercel and Cloudflare platform targets project variable names, presence and
@@ -2040,7 +2050,8 @@ and requires a successful native restore before the existing Domain owner enroll
 routes. When the requested source is exactly the serving release, the rollout
 owner treats this as enrollment: it requires the same captured workload inputs,
 restores only joining installations, and observes existing members without a
-build, migration or activation. Changed workload inputs refuse before native
+build, migration or activation. Serving-receipt source selection retains exact
+repository or stored U even when the editor contains an undeployed B. Changed workload inputs refuse before native
 effects. A mixed current-version vector or failed observation leaves the joining
 receipt failed and membership unchanged; it does not redeploy existing members.
 An explicitly different source remains an ordinary deployment to the full fleet.

@@ -28,7 +28,8 @@ import { createDeploymentSourceMaterializationPort, readDeploymentSourceCommitSu
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { createOwnServerNativeImageAcquisition } from './nativeImageAcquisition';
 import { assertIrohServicePublications } from './privateServicePublication';
-import { admitOwnServerDeploymentSource, admitOwnServerDeploymentTargetLink, admitOwnServerDeploymentTargetSource } from './ownServerTargetAdmission';
+import { admitOwnServerDeploymentSource, admitOwnServerDeploymentTargetLink, admitOwnServerDeploymentTargetSource,
+    selectOwnServerRetainedServingSource } from './ownServerTargetAdmission';
 import { projectOwnServerDeploymentReview } from './ownServerDeploymentReview';
 import { captureOwnServerDeploymentStageLog, openOwnServerDeploymentStageLog } from './stageLog';
 import { recordDeploymentSourceProgress } from './sourceOperationLog';
@@ -148,7 +149,14 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         if (!host.dispatchMember && (receipt.content.machines.length !== 1
             || receipt.content.machines[0] !== host.machineId || receipt.content.buildMachineId !== host.machineId)) refuse('unsupported');
         if (request.context.operationAcceptance?.operationId !== receipt.deployment.actionOperationId) refuse('operation_unavailable');
-        if (phase === 'activate' && request.actionId !== 'deployments.rollback') admitOwnServerDeploymentSource(snapshot.environment, receipt.content.sourceIntent);
+        const servingReceipt = phase === 'activate' && snapshot.link.activeDeploymentId
+            && snapshot.link.members.some(member => member.state === 'joining')
+            ? await host.readReceipt({ environmentId: request.input.environmentId,
+                deploymentId: snapshot.link.activeDeploymentId, context: request.context }) : null;
+        const retainedSourceIntent = selectOwnServerRetainedServingSource({ actionId: request.actionId,
+            environmentId: request.input.environmentId, link: snapshot.link, sourceIntent: receipt.content.sourceIntent, servingReceipt });
+        if (phase === 'activate' && request.actionId !== 'deployments.rollback' && !retainedSourceIntent)
+            admitOwnServerDeploymentSource(snapshot.environment, receipt.content.sourceIntent);
         const approved = receipt.content.ownServer?.approvedInputBasis;
         if (phase === 'activate' && approved && (!isDeepStrictEqual(approved.bindings, snapshot.environment.content.bindings)
             || !isDeepStrictEqual(approved.ownServer, snapshot.environment.content.ownServer))) refuse('deployment_conflict');
@@ -167,14 +175,15 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 const state = current?.installationId === member.installationId ? current.state : 'active' as const;
                 return { ...member, state };
             }) } : snapshot.link;
-        return { ...snapshot, link,
+        return { ...snapshot, link, retainedSourceIntent, servingReceipt,
             environment: { ...snapshot.environment, targetLinks: snapshot.environment.targetLinks.map(item =>
                 item.targetLink.id === link.id ? { ...item, targetLink: link } : item) },
             receipt, content: receipt.content, deployment: receipt.deployment };
     }
 
     type Snapshot = Awaited<ReturnType<typeof readEnvironment>> & Readonly<{ content: OwnServerDeploymentReceipt['content'];
-        deployment?: OwnServerDeploymentReceipt['deployment']; servingReceipt?: OwnServerDeploymentReceipt | null }>;
+        deployment?: OwnServerDeploymentReceipt['deployment']; servingReceipt?: OwnServerDeploymentReceipt | null;
+        retainedSourceIntent?: OwnServerDeploymentReceipt['content']['sourceIntent'] | null }>;
     type StageOutput = Awaited<ReturnType<typeof openOwnServerDeploymentStageLog>>;
     async function openMemberStageOutput(request: OwnServerDeploymentRequest, receipt: OwnServerDeploymentReceipt,
         runtime: OwnServerDeploymentRuntimeAcquisition, onProvenance: NonNullable<Parameters<typeof openOwnServerDeploymentStageLog>[0]['onProvenance']>) {
@@ -203,6 +212,9 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         const nativeOrigin = environment.targetLinks.find(row => row.targetLink.id === link.id)?.content?.nativeOrigin;
         if (nativeOrigin?.capture && !link.members.some(member => member.installationId === nativeOrigin.capture!.installationId)) refuse('target_mismatch');
         const sourceIntent = content.sourceIntent;
+        const retainedSourceIntent = snapshot.retainedSourceIntent ?? selectOwnServerRetainedServingSource({
+            actionId: request.actionId, environmentId: environment.environment.id, link, sourceIntent,
+            servingReceipt: snapshot.servingReceipt });
         let rollbackReceipt: OwnServerDeploymentReceipt | undefined;
         let imageTargetLinkId = link.id;
         if (request.materialization.kind === 'restoration') {
@@ -224,7 +236,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             rollbackReceipt = retained;
         } else if (sourceIntent.kind === 'stored') {
             if (request.actionId === 'deployments.deploy' || request.actionId === 'deployments.promote') {
-                admitOwnServerDeploymentSource(environment, sourceIntent);
+                if (!retainedSourceIntent) admitOwnServerDeploymentSource(environment, sourceIntent);
                 if (request.actionId === 'deployments.promote') {
                     if (!('sourceDeploymentId' in request.input) || request.input.artifact !== 'image') refuse('unsupported');
                     const retained = await host.readReceipt({ environmentId: request.input.sourceEnvironmentId,
@@ -240,6 +252,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             : request.materialization.kind === 'restoration' ? request.materialization.sourceDeploymentId : request.materialization.deploymentId;
         const runtime = await host.runtime.acquire(request, { environment, content, readReferenceEnvironment: host.readEnvironment,
             readPreviewDomain: host.readPreviewDomain,
+            ...(retainedSourceIntent ? { retainedSourceIntent } : {}),
             ...(snapshot.deployment ? { deployment: snapshot.deployment } : {}) });
         let stageOutput: StageOutput | undefined;
         try {

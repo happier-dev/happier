@@ -819,8 +819,9 @@ it.each(['action_forbidden', 'outcome_unknown'] as const)(
     expect(receipt.content.machineResults[0]).toMatchObject({ activation: 'succeeded', currentDeploymentId: receipt.deployment.id });
 });
 
-it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingBaseline', 'missingPlatform', 'missingVariant', 'lostAck', 'buildLostAck', 'incompleteBuild', 'baselineObserve', 'keepPartialBaselineObserve', 'joiningNoRoute', 'joiningWriteRejected', 'joiningHealthy', 'joiningMultiple', 'joiningUnhealthy', 'joiningRouteRefused'] as const)('keeps %s transport settlement truthful without early aggregate success or uncertain replay', async mode => {
-    const enrollJoining = mode === 'joiningHealthy' || mode === 'joiningMultiple' || mode === 'joiningUnhealthy' || mode === 'joiningRouteRefused';
+it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingBaseline', 'missingPlatform', 'missingVariant', 'lostAck', 'buildLostAck', 'incompleteBuild', 'baselineObserve', 'keepPartialBaselineObserve', 'joiningNoRoute', 'joiningWriteRejected', 'joiningHealthy', 'joiningStored', 'joiningStoredEdited', 'joiningChangedRepository', 'joiningChangedStored', 'joiningChangedConfiguration', 'joiningMixed', 'joiningMultiple', 'joiningUnhealthy', 'joiningRouteRefused'] as const)('keeps %s transport settlement truthful without early aggregate success or uncertain replay', async mode => {
+    const enrollJoining = mode.startsWith('joining') && mode !== 'joiningNoRoute' && mode !== 'joiningWriteRejected';
+    const changedSource = mode === 'joiningChangedRepository' || mode === 'joiningChangedStored';
     const environment = createDeploymentEnvironmentDetailV1();
     const noticeBoundary = ['offline', 'unknown', 'staleSettlement', 'revokedSettlement'].includes(mode) ? createSettlementNoticeHttpBoundary('https://home.test') : null;
     if (mode === 'unknown' || mode === 'staleSettlement') environment.environment.protection = 'production';
@@ -851,6 +852,39 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
         runtimeProjections: link.members.map(({ machineId, installationId }) => ({ machineId, installationId, ...nativeBasis, platform: 'linux/amd64' })) }) };
     const uniform = structuredClone(receipt);
     uniform.deployment = { ...uniform.deployment, id: 'uniform-v1', state: 'succeeded' };
+    if (mode === 'joiningChangedConfiguration') {
+        environment.content.ownServer = OwnServerEnvironmentConfigurationV1Schema.parse({ ...environment.content.ownServer,
+            autoRestorePreviousRelease: !environment.content.ownServer?.autoRestorePreviousRelease });
+        receipt.content.ownServer!.approvedInputBasis.ownServer = environment.content.ownServer;
+    }
+    if (mode === 'joiningStored' || mode === 'joiningStoredEdited' || mode === 'joiningChangedStored') {
+        const document = 'services:\n  app:\n    image: example/app:v1\n';
+        const sourceIntent = { kind: 'stored' as const, document, contentRevision: 1, profiles: [], services: ['app'],
+            composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}` };
+        uniform.content.sourceIntent = sourceIntent;
+        uniform.content.ownServer!.approvedInputBasis.sourceIntent = sourceIntent;
+        receipt.content.sourceIntent = mode === 'joiningChangedStored' ? { ...sourceIntent, contentRevision: 2 } : sourceIntent;
+        receipt.content.ownServer!.approvedInputBasis.sourceIntent = receipt.content.sourceIntent;
+        environment.content.definition = receipt.content.sourceIntent;
+        if (mode === 'joiningStoredEdited') {
+            const edited = document.replace('v1', 'v2');
+            environment.content.definition = { ...sourceIntent, document: edited, contentRevision: 2,
+                composeDigest: `sha256:${createHash('sha256').update(edited).digest('hex')}` };
+        }
+    }
+    if (mode === 'joiningChangedRepository' && receipt.content.sourceIntent.kind === 'repository') {
+        receipt.content.sourceIntent = { ...receipt.content.sourceIntent, sha: 'b'.repeat(40) };
+        receipt.content.ownServer!.approvedInputBasis.sourceIntent = receipt.content.sourceIntent;
+    }
+    if (enrollJoining) {
+        uniform.content.images = uniform.content.images.map(image => ({ ...image,
+            configDigest: `sha256:${'c'.repeat(64)}`, manifestDigest: `sha256:${'d'.repeat(64)}` }));
+        uniform.content.ownServer!.approvedInputBasis.images = uniform.content.images;
+        receipt.content.machineResults = receipt.content.machineResults.map(row => ({ ...row,
+            currentDeploymentId: mode === 'joiningMixed' && row.machineId === 'machine-b' ? 'partial-v2' : 'uniform-v1',
+            activation: 'succeeded', health: 'healthy' }));
+        if (mode === 'joiningMixed') receipt.content.onFailure = 'keepPartial';
+    }
     if (mode === 'baselineObserve' || mode === 'keepPartialBaselineObserve' || enrollJoining) {
         // C joined after U. Only its actual read-only U render can establish
         // U's effective platform; A's host-default projection is not C's proof.
@@ -956,12 +990,12 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
                 } });
                 return { ok: false, errorCode, error: errorCode };
             }
-            if (input.phase !== 'observe') {
+            if (input.phase !== 'observe' || enrollJoining) {
                 receipt.content.machineResults = receipt.content.machineResults.map(row => row.machineId === input.machineId ? {
                     ...row, actionOperationId: receipt.deployment.actionOperationId,
                     health: mode === 'joiningUnhealthy' && input.phase === 'restore' ? 'unhealthy' : 'healthy',
-                    currentDeploymentId: input.selectedDeploymentId,
-                    ...(input.phase === 'restore' ? { restoration: 'succeeded' } : { activation: 'succeeded' }),
+                    currentDeploymentId: input.phase === 'observe' ? row.currentDeploymentId : input.selectedDeploymentId,
+                    ...(input.phase === 'restore' ? { restoration: 'succeeded' } : input.phase === 'activate' ? { activation: 'succeeded' } : {}),
                 } : row);
                 receipt.deployment.revision++;
             }
@@ -971,18 +1005,35 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
                 deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: 'running' };
         },
     });
+    if (mode === 'joiningChangedConfiguration') {
+        expect(await target.execute(request)).toMatchObject({ ok: false, errorCode: 'deployment_conflict' });
+        expect(dispatched).toEqual([]);
+        expect(buildDispatches).toBe(0);
+        expect(link.members[2].state).toBe('joining');
+        return;
+    }
     if (enrollJoining) {
-        const successful = mode === 'joiningHealthy' || mode === 'joiningMultiple';
+        const successful = mode !== 'joiningUnhealthy' && mode !== 'joiningRouteRefused' && mode !== 'joiningMixed';
         const outcome = await target.execute(request);
         expect(outcome, JSON.stringify({ outcome, dispatched, failure: receipt.content.failure })).toMatchObject({ ok: successful,
             ...(successful ? { state: 'succeeded' } : { errorCode: mode === 'joiningUnhealthy'
-                ? 'deployment_health_failed' : 'native_route_unavailable' }) });
+                ? 'deployment_health_failed' : mode === 'joiningMixed' ? 'deployment_conflict' : 'native_route_unavailable' }) });
         expect(dispatched[0]).toBe('restore:machine-c');
-        expect(dispatched).toContainEqual(mode === 'joiningUnhealthy' ? 'restore:machine-c' : 'enroll');
-        if (mode === 'joiningMultiple') expect(dispatched.slice(0, 3)).toEqual(['restore:machine-c', 'restore:machine-d', 'enroll']);
-        expect(dispatched.filter(phase => phase === 'enroll')).toHaveLength(mode === 'joiningUnhealthy' ? 0 : 1);
-        expect(dispatched.filter(phase => phase.startsWith('activate:'))).toHaveLength(successful ? link.members.length : 0);
-        expect(buildDispatches).toBe(successful ? 1 : 0);
+        expect(dispatched).toContainEqual(mode === 'joiningUnhealthy' || mode === 'joiningMixed' ? 'restore:machine-c' : 'enroll');
+        if (mode === 'joiningMultiple') expect(dispatched).toEqual([
+            'restore:machine-c', 'restore:machine-d', 'observe:machine-a', 'observe:machine-b', 'enroll',
+        ]);
+        expect(dispatched.filter(phase => phase === 'enroll')).toHaveLength(mode === 'joiningUnhealthy' || mode === 'joiningMixed' ? 0 : 1);
+        // P40-R56: a matching current release enrolls D without rebuilding or
+        // touching A/B. Changed provenance retains the ordinary deploy path.
+        const deployCandidate = changedSource;
+        expect(dispatched.filter(phase => phase.startsWith('activate:'))).toHaveLength(successful && deployCandidate ? link.members.length : 0);
+        expect(buildDispatches).toBe(successful && deployCandidate ? 1 : 0);
+        if (successful && !deployCandidate) {
+            expect(dispatched.filter(phase => phase.startsWith('observe:'))).toEqual(['observe:machine-a', 'observe:machine-b']);
+            expect(receipt.content.machineResults.every(row => row.currentDeploymentId === 'uniform-v1' && row.health === 'healthy')).toBe(true);
+            expect(receipt.content.images).toEqual(uniform.content.images);
+        }
         expect(receipt.deployment.state).toBe(successful ? 'succeeded' : 'failed');
         expect(uniform).toEqual(immutableUniform);
         // The server transition owner alone commits membership after final route proofs.

@@ -104,6 +104,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
         sha?: string;
         stageContent(sourceIntent: DeploymentSourceIntentV1): Promise<string>;
     }>), snapshot: Readonly<{ environment: DeploymentEnvironmentDetailV1; content?: DeploymentOwnServerContentV1;
+        retainedSourceIntent?: DeploymentOwnServerContentV1['sourceIntent'];
         deployment?: DeploymentReceiptHeaderV1;
         readReferenceEnvironment?: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readEnvironment'];
         readPreviewDomain?: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readPreviewDomain'] }>): Promise<OwnServerDeploymentRuntimeAcquisition & Readonly<{
@@ -136,12 +137,14 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
             // Admit installed custody once per acquisition; finite native work
             // retains that custody and observes cancellation through its local signal.
             await host.assertInstalledCurrent?.();
+            const retainedSourceIntent = snapshot.retainedSourceIntent
+                ?? (requestedMaterialization?.kind === 'restoration' ? content?.sourceIntent : undefined);
             const capturedSource = await readDeploymentSourceIntentForHost({ host: { ...host, signal, assertAuthority },
                 request: { environment, context: request.context, actionId: request.actionId,
+                    ...(retainedSourceIntent ? { retainedSourceIntent } : {}),
                     ...(content ? { sourceIntent: content.sourceIntent } : 'sourceIntent' in request && request.sourceIntent
                         ? { sourceIntent: request.sourceIntent } : {}),
-                    ...('sha' in request && request.sha ? { sha: request.sha } : {}),
-                    ...('materialization' in request && request.materialization.kind === 'restoration' ? { restoration: true } : {}) } });
+                    ...('sha' in request && request.sha ? { sha: request.sha } : {}) } });
             const { workspace, sourceRepository } = capturedSource;
             const nativeSource = DeploymentOwnServerContentV1Schema.shape.sourceIntent.safeParse(capturedSource.sourceIntent);
             if (!nativeSource.success) return refuse('deployment_invalid');

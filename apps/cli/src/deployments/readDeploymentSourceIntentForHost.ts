@@ -1,7 +1,7 @@
 import { refuseDeploymentAuthorization } from './deploymentAuthorizationFailure';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { readHostAdmittedReviewedChildV1, readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import type { DeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1, type DeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { DeploymentEnvironmentDetailV1, DeploymentSourceIntentV1 } from '@happier-dev/deployment-protocol';
@@ -26,7 +26,8 @@ type DeploymentSourceRequest = Readonly<{
     sha?: string;
     context: ActionExecutorContext;
     actionId?: 'deployments.deploy' | 'deployments.promote' | 'deployments.rollback' | 'deployments.environments.update' | DeploymentBackupActionIdV1;
-    restoration?: boolean;
+    /** Opened and selected by the native retained receipt owner for Add or restoration. */
+    retainedSourceIntent?: DeploymentSourceIntentV1;
     /** Native materialization needs a checkout; provider Git integration does not. */
     requireWorkspace?: boolean;
 }>;
@@ -54,8 +55,9 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
         : request.context.signal ?? host.signal;
     signal?.throwIfAborted();
     if (request.sha && (request.sourceIntent || environment.content.definition.kind !== 'repository')) return refuse('deployment_invalid');
-    let intent = request.sourceIntent ? structuredClone(request.sourceIntent) : undefined;
-    if (intent && request.actionId !== 'deployments.rollback' && !request.restoration) admitDeploymentSourceIntent(environment, intent);
+    const selected = request.retainedSourceIntent ?? request.sourceIntent;
+    let intent = selected ? structuredClone(selected) : undefined;
+    if (intent && request.actionId !== DEPLOYMENT_ROLLBACK_ACTION_ID_V1 && !request.retainedSourceIntent) admitDeploymentSourceIntent(environment, intent);
     const repository = (intent ?? environment.content.definition).kind === 'repository';
     const needsWorkspace = repository && request.requireWorkspace !== false;
     if (needsWorkspace) {

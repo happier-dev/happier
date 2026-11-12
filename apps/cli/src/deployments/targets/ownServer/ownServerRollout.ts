@@ -11,10 +11,11 @@ import { isDeploymentSettledV1, projectDeploymentReviewRevisionV1, type Deployme
 import type { OwnServerDeploymentRequest, OwnServerDeploymentResult, OwnServerDeploymentTargetHostInput, OwnServerDeploymentReceipt } from './ownServerDeploymentTarget';
 import { isOwnServerBuildReceiptComplete, requiresOwnServerBuildReceipt } from './buildReceipt';
 import { normalizeNativeComposePlatform } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
-import { admitOwnServerDeploymentSource } from './ownServerTargetAdmission';
+import { admitOwnServerDeploymentSource, selectOwnServerRetainedServingSource } from './ownServerTargetAdmission';
 import { MIGRATION_STEP } from './migration';
 import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { readDeploymentUniformTargetLinkRevisionV1 } from '../../deploymentUniformProof';
 
 export const OWN_SERVER_CANDIDATE_CLEANUP_STEP_ID = 'own-server-candidate-cleanup';
 export function recordOwnServerCandidateCleanup(row: DeploymentMachineResultV1, state: 'succeeded' | 'failed' | 'outcome_unknown'): DeploymentMachineResultV1 {
@@ -162,9 +163,12 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
             || !isDeepStrictEqual(approved.ownServer, environment.content.ownServer))) {
             throw Object.assign(new Error('deployment_conflict'), { code: 'deployment_conflict' });
         }
-        if (admitCandidate && request.actionId !== 'deployments.rollback') admitOwnServerDeploymentSource(environment, receipt.content.sourceIntent);
         const selected = link.activeDeploymentId ? await host.readReceipt({ environmentId: receipt.deployment.environmentId,
             deploymentId: link.activeDeploymentId, context }) : undefined;
+        const retainedSourceIntent = selectOwnServerRetainedServingSource({ actionId: request.actionId,
+            environmentId: receipt.deployment.environmentId, link, sourceIntent: receipt.content.sourceIntent, servingReceipt: selected });
+        if (admitCandidate && request.actionId !== 'deployments.rollback' && !retainedSourceIntent)
+            admitOwnServerDeploymentSource(environment, receipt.content.sourceIntent);
         if (selected && (!selected.content.images.length || selected.deployment.environmentId !== receipt.deployment.environmentId
             || !['succeeded', 'running_unverified'].includes(selected.deployment.state))) {
             throw Object.assign(new Error('rollback_image_unavailable'), { code: 'rollback_image_unavailable' });
@@ -183,7 +187,7 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
                         selectedProjection.servicePlatforms?.find(value => value.service === service)?.platform ?? projection.platform)));
             })) throw Object.assign(new Error('rollback_image_unavailable'), { code: 'rollback_image_unavailable' });
         }
-        return { link: { ...link, machines: initial.link.machines, members: initial.link.members }, selected };
+        return { link: { ...link, machines: initial.link.machines, members: initial.link.members }, selected, retainedSourceIntent };
     };
     // Read the existing pointer, never persist a second rollback target. The
     // failure branch reads current U again, without re-admitting the failed
@@ -197,6 +201,23 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
         throw error;
     }
     const joining = admitted.selected ? admitted.link.members.filter(member => member.state === 'joining') : [];
+    const joinOnly = admitted.retainedSourceIntent !== null;
+    if (joinOnly) {
+        const requested = receipt.content.ownServer!.approvedInputBasis;
+        const serving = admitted.selected!.content.ownServer!.approvedInputBasis;
+        // Membership, ingress and Environment revisions can change during Add;
+        // the captured workload inputs must still describe serving U exactly.
+        if (!isDeepStrictEqual(requested.bindings, serving.bindings)
+            || !isDeepStrictEqual(requested.ownServer, serving.ownServer)
+            || !isDeepStrictEqual(requested.services, serving.services)
+            || !isDeepStrictEqual(requested.profiles, serving.profiles)
+            || !isDeepStrictEqual(requested.health, serving.health)
+            || !isDeepStrictEqual(requested.configInputDigests, serving.configInputDigests)
+            || requested.manifestFingerprint !== serving.manifestFingerprint
+            || !isDeepStrictEqual(receipt.content.services, admitted.selected!.content.services)) {
+            return rejectBeforeEffects('deployment_conflict');
+        }
+    }
     // Keep the refusal until the deployed-current-image producer and ingress
     // owner are both mounted. Native success alone never commits membership.
     if (joining.length && !host.enrollMemberRoutes) {
@@ -214,11 +235,16 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
                 admitted.selected.content.sourceIntent, admitted.selected.content.commitSubject) } : null } });
     if (!started.ok) return started;
     await read();
+    const settle = async (content = receipt.content) => {
+        const settled = await write(content.machineResults.every(row => row.health === 'healthy') ? 'succeeded' : 'running_unverified', content);
+        if (settled.ok || settled.errorCode === 'outcome_unknown') return settled;
+        throw Object.assign(new Error(settled.errorCode), { code: settled.errorCode, cause: settled });
+    };
     try {
         if (admitted.selected) {
             for (const target of joining) {
-                // Join with U's retained artifacts first. The ordinary requested B
-                // build/rollout below remains independent of this enrollment.
+                // Join with U's retained artifacts. A distinct requested B may
+                // continue through ordinary build/rollout after enrollment.
                 const restored = await dispatch(target, 'restore', admitted.selected.deployment.id);
                 if (!current()) return finishChild(restored);
                 const row = member(target.machineId);
@@ -231,6 +257,19 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
                             restored.ok ? undefined : restored) });
                 }
             }
+            if (joinOnly) {
+                for (const target of admitted.link.members.filter(member => member.state !== 'joining')) {
+                    const observed = await dispatch(target, 'observe', admitted.selected.deployment.id);
+                    if (!current()) return finishChild(observed);
+                    if (!observed.ok) return await write(observed.errorCode === 'outcome_unknown' ? 'outcome_unknown' : 'failed',
+                        { ...receipt.content, failure: projectFailure('restore', observed.errorCode, observed) });
+                }
+                const proof = readDeploymentUniformTargetLinkRevisionV1({ deploymentId: receipt.deployment.id,
+                    actionOperationId: receipt.deployment.actionOperationId, targetLink: admitted.link, content: receipt.content });
+                if (proof?.servingDeploymentId !== admitted.selected.deployment.id) return await write('failed', {
+                    ...receipt.content, failure: projectFailure('restore', receipt.content.machineResults.some(row =>
+                        row.health === 'unknown' || row.health === 'unhealthy') ? 'deployment_health_failed' : 'deployment_conflict') });
+            }
             if (joining.length) {
                 // The ingress owner reconciles the complete admitted member set,
                 // after every joining receiver has restored serving U.
@@ -241,6 +280,8 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
                 if (!enrolled.ok) return await write(enrolled.errorCode === 'outcome_unknown' ? 'outcome_unknown' : 'failed',
                     { ...receipt.content, failure: projectFailure('activate', enrolled.errorCode, enrolled) });
             }
+            if (joinOnly) return await settle({ ...receipt.content, images: admitted.selected.content.images,
+                ownServer: { ...receipt.content.ownServer!, imageArchives: admitted.selected.content.ownServer?.imageArchives } });
         }
         if (admitted.selected) for (const target of admitted.link.members) {
             const observed = await dispatch(target, 'observe', admitted.selected.deployment.id);
@@ -308,12 +349,10 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
                     || executed.errorCode === 'effect_in_progress') ? executed : settled;
             }
         }
-        const settled = await write(receipt.content.machineResults.every(row => row.health === 'healthy') ? 'succeeded' : 'running_unverified');
         // A known refused settlement is an execution failure, just like a
         // thrown native refusal. An uncertain transport outcome must retain
         // its existing recovery path rather than overwrite a possible commit.
-        if (settled.ok || settled.errorCode === 'outcome_unknown') return settled;
-        throw Object.assign(new Error(settled.errorCode), { code: settled.errorCode, cause: settled });
+        return await settle();
     } catch (error) {
         await read();
         if (!current()) return result();
