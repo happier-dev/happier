@@ -63,7 +63,14 @@ export function readSessionProjectedPendingRequestCount(value: unknown): number 
 
 export function readSessionProjectedPendingInputCount(value: unknown): number | null {
     const record = asRecord(value);
-    return record ? readNonnegativeInteger(record.pendingCount) : null;
+    const pendingCount = record ? readNonnegativeInteger(record.pendingCount) : null;
+    if (pendingCount === null || !record) return null;
+    // A blocked row (the provider rejected it before any effect) is queued but
+    // not being consumed, so it is not an in-flight user turn. Counting it held the
+    // Session "busy" forever and failed every strict-idle proof, such as an Agent switch.
+    // Servers that predate the blocked count report none, which keeps the old meaning.
+    const pendingBlockedCount = readNonnegativeInteger(record.pendingBlockedCount) ?? 0;
+    return pendingCount - Math.min(pendingBlockedCount, pendingCount);
 }
 
 export function detectSessionTurnActivityFromProjection(value: unknown): SessionTurnActivity | null {
