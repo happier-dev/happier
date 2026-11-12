@@ -1,3 +1,6 @@
+import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
+import { QualifiedConnectedAccountRefSchema, type QualifiedConnectedAccountRef } from '../../connect/qualifiedConnectedAccountPersistence.js';
+import { QualifiedConnectedAccountPurposeV1Schema, type QualifiedConnectedAccountPurposeV1 } from '../../connect/connectedAccountPurposes.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
@@ -53,9 +56,15 @@ export const AgentSessionTeamProviderBindingV1Schema = lazyZodSchema(() => (<T e
   }),
 })));
 
+const AgentSessionConnectedAccountProviderBindingV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AgentSessionProviderBindingCommonV1Schema, {
+  source: z.strictObject({ kind: z.literal('connected_account'), purpose: QualifiedConnectedAccountPurposeV1Schema,
+    account: asProtocolZod(QualifiedConnectedAccountRefSchema) }),
+})));
+
 export const AgentSessionProviderBindingV1Schema = lazyZodSchema(() => z.union([
   AgentSessionAccountProviderBindingV1Schema,
   AgentSessionTeamProviderBindingV1Schema,
+  AgentSessionConnectedAccountProviderBindingV1Schema,
 ]));
 
 export type AgentSessionProviderBindingUpstream = Readonly<{
@@ -76,7 +85,7 @@ export type AgentSessionProviderBinding = Readonly<{
         kind: 'team_resource';
         resourceId: string;
         resourceRevision: number;
-      }>;
+      }> | Readonly<{ kind: 'connected_account'; purpose: QualifiedConnectedAccountPurposeV1; account: QualifiedConnectedAccountRef }>;
     }>
 );
 

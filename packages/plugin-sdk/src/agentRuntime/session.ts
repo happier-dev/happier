@@ -144,6 +144,9 @@ export type AgentSessionProviderBinding = Readonly<{
         kind: 'team_resource';
         resourceId: string;
         resourceRevision: number;
+      }> | Readonly<{ kind: 'connected_account';
+        purpose: Readonly<{ consumer: Readonly<{ pluginId: string; localId: string }>; purpose: string }>;
+        account: Readonly<{ service: Readonly<{ pluginId: string; localId: string }>; accountId: string }>;
       }>;
     }>
 );
@@ -439,6 +442,8 @@ export type AgentSessionRuntimeEvent =
       messageId: string;
       role: 'user' | 'assistant' | 'reasoning';
       text: string;
+      /** User-only opaque native content. Retained as data, never host authority or rendered markup. */
+      nativeContent?: JsonValue[];
       /**
        * The host-admitted turn proven to own this output. Omit for Session-scoped,
        * historical, replayed or late output; never infer it from the current turn.

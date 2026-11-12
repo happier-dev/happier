@@ -89,6 +89,20 @@ const runtimeBindingBasis = {
 } as const;
 
 describe('session provider binding metadata', () => {
+  it('admits the exact selected Connected Account without inventing a Provider connection', () => {
+    const source = {
+      kind: 'connected_account',
+      purpose: { consumer: { pluginId: 'acme.agent', localId: 'agent' }, purpose: 'inference' },
+      account: { service: { pluginId: 'acme.accounts', localId: 'subscription' }, accountId: 'account-1' },
+    };
+    const input = { source, model: { id: 'model', name: 'Model' },
+      upstream: { protocol: 'openai-responses', normalizedUrl: 'http://127.0.0.1:43123/v1', credential: 'apiKey' },
+      materialization: { v: 1, kind: 'spawnEnv' } };
+    expect(AgentSessionProviderBindingV1Schema.parse(input)).toEqual(input);
+    expect(AgentSessionProviderBindingV1Schema.safeParse({ ...input, connectionId: 'pc_fake' }).success).toBe(false);
+    expect(AgentSessionProviderBindingV1Schema.safeParse({ ...input, source: { ...source, secret: 'forbidden' } }).success).toBe(false);
+  });
+
   it('admits an exact Team-resource runtime binding without inventing a Provider Connection', () => {
     expect(AgentSessionProviderBindingV1Schema.parse({
       source: { kind: 'team_resource', resourceId: 'resource-1', resourceRevision: 3 },
