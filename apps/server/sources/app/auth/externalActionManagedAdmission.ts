@@ -1,7 +1,7 @@
 import { resolveManagedNativeCredentialActionMachineAdmissionInTx, isExternalActionManagedResourceAction, readExternalActionManagedRecoveryAdmission, type ExternalActionManagedAdmissionContext } from './externalActionManagedNativeAdmission';
-import { isManagedControlAdmissionActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isManagedControlAdmissionActionIdV1, isManagedEnrollmentPolicyChildActionIdV1, isManagedEnrollmentRecoveryChildV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 export { isExternalActionManagedResourceAction, readExternalActionManagedRecoveryAdmission, type ExternalActionManagedAdmissionContext } from './externalActionManagedNativeAdmission';
-import type { ExternalActionExecutionAuthorizationBindingV1, ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
+import type { ExternalActionExecutionAuthorizationBindingV1, ExternalActionRequestEnvelope, ExternalActionServerPrincipalV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ExternalActionManagedRecoveryAdmissionV1Schema, ExternalActionManagedControlAdmissionV1Schema, projectExternalActionManagedAdmissionV1,
     type ExternalActionManagedControlAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -13,6 +13,100 @@ import { isManagedMachineCreator, requireManagedCreationAccessInTx } from '@/app
 import { ManagedMachineError, readManagedMachineInTx, readManagedAdmissionState, sameManagedInput, resolveManagedMachineRole, resolveManagedMachineRoleInTx, type StoredManagedMachine } from '@/app/machines/managed/managedRows';
 import type { Tx } from '@/storage/inTx';
 import { resolveSignedManagedAccountExecutorInTx } from '@/app/machines/managed/managedRequestAuthority';
+
+import { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1, resolveManagedMachineEnrollmentAdminAccessV1, resolveManagedMachineEnrollmentAgentIsolationV1 } from '@happier-dev/protocol/machines/managed/enrollmentIdentityV1';
+import { projectManagedMachine, readManagedController, readManagedEnrollmentAccountId, requireCurrentManagedMachineInTx } from '@/app/machines/managed/managedRows';
+import { readAdmittedExternalActionMachineInTx } from './externalActionHandoffAdmission';
+
+type ManagedCreationChildScope = Pick<ExternalActionExecutionAuthorizationBindingV1,
+    'accountId' | 'custodianAccountId' | 'machineId' | 'serverIdentityId' | 'actionId' | 'requestEnvelopeDigest' | 'target' | 'managedContinuation'>
+    & Partial<Pick<ExternalActionExecutionAuthorizationBindingV1, 'installationId'>>;
+
+/** Host-only selected admission, consumed without another permission decision. */
+export type ManagedCreationChildAdmission = Readonly<{
+    scope: ManagedCreationChildScope;
+    principal: ExternalActionServerPrincipalV1;
+    sessionActionSource?: ExternalActionExecutionAuthorizationBindingV1['sessionActionSource'];
+    machineAdmission: Extract<MachineAdmission, { kind: 'admitted' }>;
+}>;
+
+export function readSelectedManagedCreationChildAdmission(admission: ManagedCreationChildAdmission,
+    binding: ManagedCreationChildScope): Extract<MachineAdmission, { kind: 'admitted' }> | null {
+    return sameManagedInput(admission.scope, { accountId: binding.accountId, custodianAccountId: binding.custodianAccountId,
+        machineId: binding.machineId, serverIdentityId: binding.serverIdentityId, actionId: binding.actionId,
+        target: binding.target, requestEnvelopeDigest: binding.requestEnvelopeDigest,
+        managedContinuation: binding.managedContinuation })
+        && (binding.installationId === undefined || admission.machineAdmission.installationId === binding.installationId)
+        ? admission.machineAdmission : null;
+}
+
+/** Signed creation custody admits bounded children; live grants belong to the next root admission. */
+export async function readAdmittedManagedCreationChildInTx(reader: Tx, binding: ManagedCreationChildScope): Promise<Readonly<{
+    row: StoredManagedMachine; machineAdmission: Extract<MachineAdmission, { kind: 'admitted' }>;
+}> | null> {
+    const continuation = binding.managedContinuation;
+    if (!continuation || !MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1.some(id => id === binding.actionId)
+        || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId) return null;
+    try {
+        const row = await requireCurrentManagedMachineInTx(reader, { homeId: binding.serverIdentityId,
+            managedId: continuation.managedId, requestId: continuation.creationRequestId,
+            expectedIntentRevision: continuation.expectedIntentRevision, controller: continuation.controller },
+            { requestAuthority: 'creation' });
+        const state = readManagedAdmissionState(row.admittedInput);
+        const policyChild = isManagedEnrollmentPolicyChildActionIdV1(binding.actionId);
+        const legacyPolicyChild = binding.actionId === 'machines.setup.adminAccess.set'
+            || binding.actionId === 'machines.agentIsolation.preview' || binding.actionId === 'machines.agentIsolation.set';
+        const machine = !policyChild || legacyPolicyChild ? projectManagedMachine(row) : undefined;
+        const setup = machine?.machineSetup;
+        const digest = policyChild ? continuation.acquireRequestEnvelopeDigest
+            : binding.actionId === 'machines.setup.apply' || binding.actionId === 'machines.setup.plan'
+                ? state.machineSetup?.requestEnvelopeDigest : state.continuation?.requestEnvelopeDigest;
+        if (readManagedEnrollmentAccountId(row) !== binding.accountId || binding.custodianAccountId !== binding.accountId
+            || row.enrolledMachineId !== binding.machineId || row.allocation !== 'bound' || !row.resource
+            || row.desired === 'delete' || digest !== continuation.acquireRequestEnvelopeDigest
+            || binding.actionId === 'machines.setup.adminAccess.set' && !resolveManagedMachineEnrollmentAdminAccessV1(machine?.enrollmentIdentity)
+            || (binding.actionId === 'machines.agentIsolation.preview' || binding.actionId === 'machines.agentIsolation.set')
+                && !resolveManagedMachineEnrollmentAgentIsolationV1(machine?.enrollmentIdentity)
+            || binding.actionId === 'machines.setup.apply' && (!setup || setup.state === 'skipped')
+            || binding.actionId === 'machines.setup.plan' && (!setup || ['succeeded', 'skipped'].includes(setup.state))
+            || binding.actionId === 'session.spawn_new' && setup && !['succeeded', 'skipped'].includes(setup.state)) return null;
+        const machineAdmission = await readAdmittedExternalActionMachineInTx(reader, binding, binding.machineId, binding.installationId);
+        return machineAdmission ? { row, machineAdmission } : null;
+    } catch (error) {
+        if (!(error instanceof ManagedMachineError)) throw error;
+        return null;
+    }
+}
+
+/** The exact signed parent retains its creator while the existing creation remains active. */
+export async function hasAdmittedManagedCreationRootInTx(reader: Tx,
+    binding: ExternalActionExecutionAuthorizationBindingV1): Promise<boolean | null> {
+    const acquiring = binding.actionId === 'machines.managed.acquire';
+    if (!acquiring && !isManagedEnrollmentRecoveryChildV1(binding.actionId, 'machines.agentIsolation.preview')) return null;
+    const recovery = ExternalActionManagedRecoveryAdmissionV1Schema.safeParse(binding.managedAdmission);
+    if (!acquiring && !(recovery.success && recovery.data.actionId === binding.actionId)) return null;
+    try {
+        const row = binding.actionId === 'machines.managed.acquire'
+            ? await readExternalActionManagedAcquireResourceInTx(reader, binding)
+            : recovery.success ? await readManagedMachineInTx(reader, recovery.data.input) : null;
+        if (!row) return null;
+        const retainedDigest = readManagedAdmissionState(row.admittedInput).requestEnvelopeDigest;
+        if (readManagedEnrollmentAccountId(row) !== binding.accountId || row.custodianAccountId !== binding.custodianAccountId
+            || row.controllerMachineId !== null && (row.controllerMachineId !== binding.machineId
+                || row.controllerInstallationId !== binding.installationId)
+            || binding.actionId === 'machines.managed.acquire' && retainedDigest !== undefined
+                && retainedDigest !== binding.requestEnvelopeDigest) return false;
+        const revision = recovery.success && 'expectedIntentRevision' in recovery.data.input
+            ? recovery.data.input.expectedIntentRevision : row.intentRevision;
+        await requireCurrentManagedMachineInTx(reader, { homeId: row.homeId, managedId: row.id,
+            requestId: row.admittedActionRequestId, expectedIntentRevision: revision,
+            controller: readManagedController(row) }, { requestAuthority: 'creation' });
+        return true;
+    } catch (error) {
+        if (!(error instanceof ManagedMachineError)) throw error;
+        return false;
+    }
+}
 
 /** Internal placement result consumed by the signer, never a caller-supplied grant. */
 export type ManagedCreationRecoveryAdmission = Readonly<{ managedCreationRecovery?: true }>;

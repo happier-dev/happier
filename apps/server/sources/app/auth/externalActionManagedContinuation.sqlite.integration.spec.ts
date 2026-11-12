@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { decodeBase64 } from 'privacy-kit';
 import tweetnacl from 'tweetnacl';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, MachineOperationProtocolCapabilitiesV1Schema, encodePlainMachineStoredContent } from '@happier-dev/protocol';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
@@ -21,7 +22,7 @@ describe('managed creation continuation authority', () => {
     }, 120_000);
     afterAll(async () => { if (harness) await harness.close(); });
 
-    it.each([false, true])('accepts the reviewed Account creator/custodian and refuses a guest Machine manager (controller=%s)', async controllerPresent => {
+    it.each([false, true].flatMap(controllerPresent => (['account', 'pat'] as const).map(credentialKind => ({ controllerPresent, credentialKind }))))('accepts the reviewed creator/custodian and refuses a guest Machine manager (controller=$controllerPresent credential=$credentialKind)', async ({ controllerPresent, credentialKind }) => {
         const owner = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const outsider = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const keys = tweetnacl.sign.keyPair();
@@ -47,14 +48,21 @@ describe('managed creation continuation authority', () => {
             launch: { provider, schemaVersion: 1, name: 'Reviewed guest', choices: {} },
             allocation: 'bound', resource: { contributionRef: provider, schemaVersion: 1, value: { id: 'reviewed-resource' } },
             enrolledMachineId: guest.id, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+        // Retained Home proof captures the root grant; the finite child does not
+        // require that bearer to remain live or grant the child as a new Action.
+        const capturedGrant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['machines.managed.acquire'] } };
+        const credential = credentialKind === 'account' ? { authentication: { kind: 'account', tokenEpoch: owner.tokenEpoch } }
+            : { principalId: owner.id, credentialId: 'withdrawn-creator-token', grant: capturedGrant };
         const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-signed-child', binding: {
             serverIdentityId: homeId, accountId: owner.id, custodianAccountId: owner.id,
-            authentication: { kind: 'account', tokenEpoch: owner.tokenEpoch }, actionId: 'session.spawn_new',
+            ...credential, actionId: 'session.spawn_new',
             machineId: guest.id, installationId: guest.installationId, requestId, requestEnvelopeDigest: digest,
             target: { kind: 'machine', machineId: guest.id }, managedContinuation: { managedId: row.id,
                 creationRequestId: requestId, expectedIntentRevision: row.intentRevision, acquireRequestEnvelopeDigest: digest,
                 ...(controller ? { controller: { machineId: controller.id, installationId: controller.installationId } } : {}) } } });
         if (!controllerPresent) expect(authorization.binding.managedContinuation).not.toHaveProperty('controller');
+        if (credentialKind === 'pat') await expect(verifyCurrentExternalActionPrincipal(authorization.binding)).resolves.toMatchObject({
+            accountId: owner.id, credentialId: 'withdrawn-creator-token', grant: capturedGrant, authority: 'account_automation' });
         await expect(verifyCurrentExternalActionPrincipal(authorization.binding)).resolves.toMatchObject({ accountId: owner.id });
 
         await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: owner.id, machineId: guest.id,
@@ -65,5 +73,19 @@ describe('managed creation continuation authority', () => {
         await expect(verifyCurrentExternalActionPrincipal(substitutedRequester)).resolves.toBeNull();
         await expect(verifyCurrentExternalActionPrincipal({ ...authorization.binding, custodianAccountId: outsider.id })).resolves.toBeNull();
         await expect(verifyCurrentExternalActionPrincipal(authorization.binding)).resolves.toMatchObject({ accountId: owner.id });
+        const continuation = authorization.binding.managedContinuation!;
+        for (const changed of [
+            { ...continuation, creationRequestId: 'other-creation' },
+            { ...continuation, expectedIntentRevision: continuation.expectedIntentRevision + 1 },
+            { ...continuation, acquireRequestEnvelopeDigest: 'b'.repeat(43) },
+            ...(controller ? [{ ...continuation, controller: { machineId: controller.id, installationId: crypto.randomUUID() } }] : []),
+        ]) await expect(verifyCurrentExternalActionPrincipal({ ...authorization.binding, managedContinuation: changed })).resolves.toBeNull();
+        await db.account.update({ where: { id: owner.id }, data: { tokenEpoch: { increment: 1 } } });
+        await expect(verifyCurrentExternalActionPrincipal(authorization.binding)).resolves.toMatchObject({ accountId: owner.id });
+        await db.machine.update({ where: { id: guest.id }, data: { installationId: crypto.randomUUID() } });
+        await expect(verifyCurrentExternalActionPrincipal(authorization.binding)).resolves.toBeNull();
+        await db.machine.update({ where: { id: guest.id }, data: { installationId: guest.installationId } });
+        await db.managedMachine.update({ where: { id: row.id }, data: { creationState: 'canceled' } });
+        await expect(verifyCurrentExternalActionPrincipal(authorization.binding)).resolves.toBeNull();
     });
 });

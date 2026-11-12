@@ -10,7 +10,9 @@ import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecution
 import { openExternalActionRequestV2, prepareExternalActionResponseV2, sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineAdminAccess, dispatchManagedMachineSetup, dispatchManagedMachineSetupPlan, dispatchManagedSessionStart, dispatchManagedMachineAdminAccess, isReviewedMachineSetupPlanChild,
     dispatchLocalManagedMachineAgentIsolation, dispatchManagedMachineAgentIsolation, verifyManagedCreationAgentIsolationInput,
-    verifyManagedCreationAdminAccessInput, createExternalActionMachineRpcExecution } from './externalActionExecutionAuthorization';
+    verifyManagedCreationAdminAccessInput, verifyManagedCreationRolesInput, createExternalActionMachineRpcExecution } from './externalActionExecutionAuthorization';
+import { machineRolesMetadataFieldV1, resolveManagedMachineEnrollmentRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
+import { resolveManagedMachineEnrollmentAgentIsolationV1 } from '@happier-dev/protocol/machines/managed/enrollmentIdentityV1';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { encodeStoredCredentials, updateSettings, writeStoredCredentialsForServerId, readStoredCredentialsForServerId,
@@ -529,7 +531,7 @@ describe('managed continuation through the ordinary public Action transport', ()
             allocation: 'bound', creationState: 'active', enrolledMachineId: 'guest', desired: 'start', desiredWhen: 'now', intentRevision: 3,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
             enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'deployTarget',
-                adminAccessAtCreation: 'ask', administrator: { username: 'operator' } } };
+                adminAccessAtCreation: 'ask', administrator: { username: 'operator' } } as const };
         const child = ExternalActionExecutionAuthorizationV1Schema.parse({ ...root, binding: { ...root.binding,
             actionId: 'machines.setup.adminAccess.set', machineId: 'guest', installationId: 'guest-installation',
             target: { kind: 'machine', machineId: 'guest' }, managedContinuation: { ...continuation,
@@ -585,8 +587,10 @@ describe('managed continuation through the ordinary public Action transport', ()
         expect(await verifyManagedCreationAdminAccessInput({ ...args, request: { ...request, serverId: 'srv_other' } })).toBe(false);
         post.mockResolvedValueOnce({ status: 200, data: { ...row, intentRevision: 4 } });
         expect(await verifyManagedCreationAdminAccessInput(args)).toBe(false);
-        const isolationRequest = { serverId: 'srv_home', machineId: 'guest', enabled: true,
-            expectedMetadataVersion: 2, expectedPolicy: { enabled: true }, expectedPlanDigest: 'reviewed-effects' };
+        const isolationPolicy = resolveManagedMachineEnrollmentAgentIsolationV1(row.enrollmentIdentity);
+        if (!isolationPolicy) throw new Error('Expected reviewed enrollment isolation');
+        const isolationRequest = { serverId: 'srv_home', machineId: 'guest', ...isolationPolicy,
+            expectedMetadataVersion: 2, expectedPolicy: isolationPolicy, expectedPlanDigest: 'reviewed-effects' };
         const isolationChild = ExternalActionExecutionAuthorizationV1Schema.parse({ ...child,
             binding: { ...child.binding, actionId: 'machines.agentIsolation.set', requestId: 'retry' } });
         const isolationContext = { ...context, actionRequestId: 'retry', externalActionExecutionAuthorization: isolationChild };
@@ -650,6 +654,35 @@ describe('managed continuation through the ordinary public Action transport', ()
             expect(mutations).toBe(1);
             expect(await invokeIsolation(isolationRequest)).toMatchObject({ kind: 'accepted', status: { kind: 'applying' } });
             expect(mutations).toBe(2);
+            const rolesPolicy = resolveManagedMachineEnrollmentRolesV1(row.enrollmentIdentity);
+            if (!rolesPolicy) throw new Error('Expected reviewed enrollment roles');
+            const rolesRequest = { serverId: 'srv_home', machineId: 'guest', expectedMetadataVersion: 0,
+                expectedPolicy: machineRolesMetadataFieldV1.defaultValue(), policy: rolesPolicy };
+            const rolesChild = { ...child, binding: { ...child.binding, actionId: 'machines.roles.set', accountEncryptionMode: 'plain' as const } };
+            const rolesContext = { ...context, externalActionExecutionAuthorization: rolesChild };
+            const rolesArgs = { ...args, request: rolesRequest, context: rolesContext };
+            expect(await verifyManagedCreationRolesInput(rolesArgs)).toBe(true);
+            expect(await verifyManagedCreationRolesInput({ ...rolesArgs, request: { ...rolesRequest,
+                policy: machineRolesMetadataFieldV1.defaultValue() } })).toBe(false);
+            expect(await verifyManagedCreationRolesInput({ ...rolesArgs, request: { ...rolesRequest,
+                expectedPolicy: rolesPolicy } })).toBe(false);
+            expect(await verifyManagedCreationRolesInput({ ...rolesArgs, request: { ...rolesRequest, machineId: 'other-guest' } })).toBe(false);
+            const rolesHttp = await projectExternalActionRequesterHttpAuthorization({ authorization: rolesChild,
+                serverId: 'home-profile', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'https://home.example',
+                target: rolesChild.binding.target, installationId: 'guest-installation', privateKey: keyPair.secretKey, isCurrent: async () => true });
+            if (!rolesHttp) throw new Error('Roles Home projection was not established');
+            const rolesAdmitted = await projectRequesterAccountActionAuthorization({ authorization: rolesHttp, serverIdentityId: 'srv_home',
+                bootstrap: { credentials, serverHttpBaseUrl: 'https://home.example', isCurrent: async () => true,
+                    attribution: { serverId: 'home-profile', accountId: 'account', machineId: 'guest', installationId: 'guest-installation' } } });
+            if (!rolesAdmitted) throw new Error('Roles requester custody was not established');
+            rpcResult = { status: 'applied', policy: rolesPolicy, metadataVersion: 4 };
+            const invokeRoles = (value: typeof rolesRequest) => deps.machineRolesAction!({ actionId: 'machines.roles.set', input: value,
+                context: { ...rolesContext, serverId: 'home-profile', externalActionExecutionAuthorization: rolesAdmitted }, signal: context.signal });
+            expect(await invokeRoles({ ...rolesRequest, policy: machineRolesMetadataFieldV1.defaultValue() }))
+                .toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+            expect(mutations).toBe(2);
+            expect(await invokeRoles(rolesRequest)).toMatchObject({ status: 'applied', policy: rolesPolicy });
+            expect(mutations).toBe(3);
             post.mockClear();
             expect(await verifyManagedCreationAdminAccessInput({ ...args, context: { surface: 'cli' } })).toBe(true);
             expect(post).not.toHaveBeenCalled(); // Ordinary policy Actions do no creation-row read.

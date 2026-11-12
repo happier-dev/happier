@@ -1,3 +1,5 @@
+import { isManagedEnrollmentPolicyChildActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { readAdmittedManagedCreationChildInTx, type ManagedCreationChildAdmission } from '@/app/auth/externalActionManagedAdmission';
 import { MACHINE_ADMIN_ACCESS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/adminAccessActionIdsV1';
 import { MACHINE_AGENT_ISOLATION_PREVIEW_ACTION_ID_V1, MACHINE_AGENT_ISOLATION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machine/agentIsolationActionIdsV1';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1, SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1, isManagedEnrollmentRecoveryChildV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -403,18 +405,19 @@ async function readHandoffPreflight(request: FastifyRequest, actionId: string,
     return principal ? { binding: child, principal, originalAuthorization: preflight.authorization } : null;
 }
 
+
 /** Both admitted hosts consume the same retained child recipe; Home never opens sealed input. */
 function requireManagedCreationChild(row: StoredManagedMachine, actionId: string,
     body: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>, parent: Readonly<{
         accountId: string; custodianAccountId: string; requestId: string; requestEnvelopeDigest: string;
     }>): boolean {
     const acquisition = readManagedAdmissionState(row.admittedInput);
-    const machine = projectManagedMachine(row);
-    const setup = machine.machineSetup;
+    const policyChild = isManagedEnrollmentPolicyChildActionIdV1(actionId);
+    const setup = policyChild ? undefined : projectManagedMachine(row).machineSetup;
     const administrator = actionId === MACHINE_ADMIN_ACCESS_SET_ACTION_ID_V1;
     const isolation = actionId === MACHINE_AGENT_ISOLATION_PREVIEW_ACTION_ID_V1 || actionId === MACHINE_AGENT_ISOLATION_SET_ACTION_ID_V1;
     const setupAction = actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1 || actionId === SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.plan.action;
-    const digest = administrator || isolation ? parent.requestEnvelopeDigest
+    const digest = policyChild ? parent.requestEnvelopeDigest
         : setupAction ? acquisition.machineSetup?.requestEnvelopeDigest : acquisition.continuation?.requestEnvelopeDigest;
     if (row.custodianAccountId !== parent.custodianAccountId || readManagedEnrollmentAccountId(row) !== parent.accountId
         || row.enrolledMachineId !== body.machineId || row.allocation !== 'bound' || !row.resource || row.desired === 'delete'
@@ -422,6 +425,7 @@ function requireManagedCreationChild(row: StoredManagedMachine, actionId: string
         || actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && setup && !['succeeded', 'skipped'].includes(setup.state)
         || setupAction && (!setup || ['succeeded', 'skipped'].includes(setup.state))) throw new ManagedMachineError('request_conflict');
     if (administrator) {
+        const machine = projectManagedMachine(row);
         if (!resolveManagedMachineEnrollmentAdminAccessV1(machine.enrollmentIdentity)
             || body.envelope.requestId !== parent.requestId) throw new ManagedMachineError('request_conflict');
         if (body.envelope.v === 1) {
@@ -431,6 +435,7 @@ function requireManagedCreationChild(row: StoredManagedMachine, actionId: string
         }
     }
     if (isolation) {
+        const machine = projectManagedMachine(row);
         if (!resolveManagedMachineEnrollmentAgentIsolationV1(machine.enrollmentIdentity)
             || body.envelope.requestId !== parent.requestId) throw new ManagedMachineError('request_conflict');
         if (body.envelope.v === 1) {
@@ -475,6 +480,7 @@ async function readManagedGuestContinuation(
     originalPrincipal?: ExternalActionServerPrincipalV1 | null,
 ): Promise<Readonly<{
     principal: ExternalActionServerPrincipalV1;
+    admission?: ManagedCreationChildAdmission;
     managedContinuation: NonNullable<ExternalActionExecutionAuthorizationBindingV1['managedContinuation']>;
     sessionActionSource?: ExternalActionExecutionAuthorizationBindingV1['sessionActionSource'];
 }> | null> {
@@ -549,11 +555,14 @@ async function readManagedGuestContinuation(
         const retained = await readManagedMachineInTx(tx, { homeId: root.serverIdentityId,
             managedId: continuation.managedId });
         const controller = readManagedController(retained);
-        const row = await requireCurrentManagedMachineInTx(tx, { homeId: root.serverIdentityId,
-            managedId: retained.id,
-            expectedIntentRevision: continuation.expectedIntentRevision,
-            requestId: continuation.creationRequestId, controller }, { requestAuthority: 'creation' });
-        return requireManagedCreationChild(row, actionId, body, root) ? { controller } : null;
+        const scope = { accountId: root.accountId, custodianAccountId: root.accountId, machineId: body.machineId,
+            serverIdentityId: root.serverIdentityId, actionId, target: body.envelope.target!,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.envelope),
+            managedContinuation: { ...continuation, ...(controller ? { controller } : {}),
+                acquireRequestEnvelopeDigest: root.requestEnvelopeDigest } };
+        const admitted = await readAdmittedManagedCreationChildInTx(tx, scope);
+        return admitted && requireManagedCreationChild(admitted.row, actionId, body, root)
+            ? { controller, scope, machineAdmission: admitted.machineAdmission } : null;
     });
     if (!retainedParent) return null;
     // The shared projector retains the accepted root grant and can only lower
@@ -561,6 +570,8 @@ async function readManagedGuestContinuation(
     const continuationPrincipal = projectExternalActionBoundPrincipal(root, principal, request.authAuthority);
     if (!continuationPrincipal) return null;
     return { principal: continuationPrincipal,
+        admission: { scope: retainedParent.scope, principal: continuationPrincipal, machineAdmission: retainedParent.machineAdmission,
+            ...(root.sessionActionSource ? { sessionActionSource: root.sessionActionSource } : {}) },
         ...(root.sessionActionOrigin ? { sessionActionSource: root.sessionActionSource } : {}),
         managedContinuation: { ...body.managedContinuation,
             ...(retainedParent.controller ? { controller: retainedParent.controller } : {}),
@@ -758,6 +769,7 @@ export function registerExternalActionRoutes(
                     }))) return sendExternalActionHttpError(reply, 'target_unavailable', body.data.envelope.requestId);
             const admission = handoffContinuation
                 ? await readAdmittedExternalActionHandoffMachineInTx(db, handoffContinuation.binding)
+                : continuation?.admission ? continuation.admission.machineAdmission
                 : handoffPreflight ? await readAdmittedExternalActionHandoffMachineInTx(db, handoffPreflight.binding)
                 : handoffAdmission
                 ? await resolveMachineAdmission({ actorAccountId: principal.accountId, machineId: receivingMachineId })
@@ -844,6 +856,7 @@ export function registerExternalActionRoutes(
                         ? { ...mintInput, authentication: mintInput.authentication }
                         : { ...mintInput, authentication: mintInput.authentication }
                     : mintInput, { ...(workflowAdmission ? { workflowAdmission } : {}),
+                    ...(continuation?.admission ? { managedCreationAdmission: continuation.admission } : {}),
                     ...('managedCreationRecovery' in admission && admission.managedCreationRecovery === true
                         ? { managedCreationRecovery: true } : {}),
                     browserSessionId: body.data.envelope.v === 2 ? body.data.envelope.browserSessionId : undefined,
@@ -1051,6 +1064,7 @@ export function registerExternalActionRoutes(
                     ...(admittedRoot.authorization.binding.sessionActionSource
                         ? { sessionActionSource: admittedRoot.authorization.binding.sessionActionSource } : {}) } : {}),
                 ...(continuation ? { managedContinuation: continuation.managedContinuation,
+                    ...(continuation.admission ? { managedCreationAdmission: continuation.admission } : {}),
                     ...(continuation.sessionActionSource ? { sessionActionSource: continuation.sessionActionSource } : {}) } : {}),
                 ...(wrapped.success && wrapped.data.sessionActionOrigin && !continuation
                     ? { sessionActionSource: wrapped.data.sessionActionSource } : {}),

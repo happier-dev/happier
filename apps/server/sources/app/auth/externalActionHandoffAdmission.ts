@@ -40,7 +40,7 @@ export async function readAdmittedExternalActionHandoffMachineInTx(
 /** The admitted scope owner supplies captured installation identity when present; this reader never re-admits grants. */
 export async function readAdmittedExternalActionMachineInTx(
     reader: Tx,
-    binding: ExternalActionExecutionAuthorizationBindingV1,
+    binding: Pick<ExternalActionExecutionAuthorizationBindingV1, 'accountId' | 'machineId' | 'custodianAccountId'>,
     machineId: string,
     installationId: string | undefined,
     retained?: SocketRpcMachineAdmissionContextV1,

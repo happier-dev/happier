@@ -3,11 +3,7 @@ import { lazyDefinition } from '../../lazyZodSchema.js';
 import { MachineAdministratorUsernameV1Schema, MachineAdminAccessFieldV1, type MachineAdminAccessV1, type MachineAdminAccessMutationV1 } from '../adminAccessV1.js';
 import { agentIsolationMetadataFieldV1, type MachineAgentIsolationPolicyV1, type MachineAgentIsolationPreviewInputV1, type MachineAgentIsolationSetInputV1 } from '../agentIsolationV1.js';
 
-/** Exact child Actions of the retained creation, never a general guest grant. */
-export const MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1 = [
-  'session.spawn_new', 'machines.setup.plan', 'machines.setup.apply', 'machines.setup.adminAccess.set',
-  'machines.agentIsolation.preview', 'machines.agentIsolation.set',
-] as const;
+export { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1 } from './actionIdsV1.js';
 
 /** Reviewed creation intent; credentials never belong to this retained value. */
 export const ManagedMachineEnrollmentIdentityV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [

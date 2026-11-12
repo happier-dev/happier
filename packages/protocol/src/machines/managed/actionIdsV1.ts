@@ -109,10 +109,24 @@ export function isManagedCreationMutationActionIdV1(actionId: string): actionId 
   return MANAGED_CREATION_MUTATION_ACTION_IDS_V1.some(id => id === actionId);
 }
 
+/** Creation and recovery consume the same reviewed enrollment policy children. */
+export const MANAGED_ENROLLMENT_POLICY_CHILD_ACTION_IDS_V1 = [
+  'machines.setup.adminAccess.set', 'machines.agentIsolation.preview', 'machines.agentIsolation.set', 'machines.roles.set',
+] as const;
+
+/** Exact child Actions of the retained creation, never a general guest grant. */
+export const MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1 = [
+  'session.spawn_new', 'machines.setup.plan', 'machines.setup.apply', ...MANAGED_ENROLLMENT_POLICY_CHILD_ACTION_IDS_V1,
+] as const;
+
+export function isManagedEnrollmentPolicyChildActionIdV1(actionId: string): boolean {
+  return MANAGED_ENROLLMENT_POLICY_CHILD_ACTION_IDS_V1.some(id => id === actionId);
+}
+
 /** Recovery completes only the retained enrollment policy, never unrelated creation effects. */
 export function isManagedEnrollmentRecoveryChildV1(rootActionId: string, childActionId: string): boolean {
   const isolation = childActionId === 'machines.agentIsolation.preview' || childActionId === 'machines.agentIsolation.set';
-  return rootActionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 && (childActionId === 'machines.setup.adminAccess.set' || childActionId === 'machines.roles.set' || isolation)
+  return rootActionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 && isManagedEnrollmentPolicyChildActionIdV1(childActionId)
     || rootActionId === 'machines.managed.inspect' && isolation;
 }
 

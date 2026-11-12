@@ -34,8 +34,9 @@ import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/action
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import { MachineSetupSourcesApplyInputV1Schema, ManagedControllerContextOutputV1Schema, ManagedEnrollmentCorrelationV1Schema,
-    ManagedControllerCredentialDeliveryReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+    ManagedControllerCredentialDeliveryReportV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { sealManagedCreationActionCodecV1, openManagedCreationActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { machineRolesMetadataFieldV1, resolveManagedMachineEnrollmentRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import {
     defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV1Schema,
@@ -1237,12 +1238,27 @@ describe('ordinary Account managed Action origination', () => {
             expect(submitted.statusCode, submitted.body).toBe(200);
             expect(submitted.json()).toMatchObject({ submitted: true });
             expect((await report(submitBody)).json()).toMatchObject({ submitted: false });
+            // A root minted before the first submission cannot replace its
+            // pending claim at the serialized native-policy mutation owner.
+            await expect(inTx(tx => submitSessionTeamCredentialNativeDeliveryInTx(tx, {
+                ...input, accountId: f.creator.id, requestId: competing.binding.requestId,
+                operation: 'install', authentication: TEST_AUTHENTICATION,
+            }))).resolves.toEqual({ ok: false, code: 'resource_changed' });
+            expect(await inTx(tx => readSessionTeamCredentialNativeSelectionInTx(tx, { sessionId: f.session.id })))
+                .toMatchObject({ ok: true, binding: { submission: { requestId: root.binding.requestId, operation: 'install' } } });
+            await expect(inTx(tx => submitSessionTeamCredentialNativeDeliveryInTx(tx, {
+                ...siblingMutation, requestId: crypto.randomUUID(),
+            }))).resolves.toEqual({ ok: false, code: 'resource_changed' });
             // Losing the completion transport must leave a durable obstacle to
             // a different ordinary Action, even with the same accepted inputs.
             const pendingCalls = calls.length;
             expect((await issue()).statusCode).toBe(409);
             expect((await issue(siblingInput)).statusCode).toBe(409);
-            expect((await report(reportBody, controllerKeys.secretKey, competing)).statusCode).toBe(401);
+            const competingReport = await report(reportBody, controllerKeys.secretKey, competing);
+            expect(competingReport.statusCode, competingReport.body).toBe(200);
+            expect(competingReport.json().credentialDeliveryResult).toEqual({ kind: 'unknown', code: 'credential_unavailable' });
+            expect(await inTx(tx => readSessionTeamCredentialNativeSelectionInTx(tx, { sessionId: f.session.id })))
+                .toMatchObject({ ok: true, binding: { submission: { requestId: root.binding.requestId, operation: 'install' } } });
             expect(calls).toHaveLength(pendingCalls);
             const applied = await inTx(tx => readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx(tx, {
                 accountId: f.creator.id, request: input, authentication: TEST_AUTHENTICATION,
@@ -1277,7 +1293,15 @@ describe('ordinary Account managed Action origination', () => {
             if (!settled.ok) throw new Error(settled.code);
             expect(settled.binding.submission).toBeUndefined();
             expect(calls).toHaveLength(terminalCalls);
-            if (terminalSettlement === 'unknown') return;
+            if (terminalSettlement === 'unknown') {
+                // Settled uncertainty withholds new installation material, but
+                // the owning lifetime can still remove its installed rule.
+                await expect(inTx(tx => submitSessionTeamCredentialNativeDeliveryInTx(tx, {
+                    ...input, accountId: f.creator.id, requestId: crypto.randomUUID(),
+                    operation: 'release', authentication: TEST_AUTHENTICATION,
+                }))).resolves.toEqual({ ok: true, submitted: true });
+                return;
+            }
             await db.teamCredentialResource.update({ where: { id: f.credential.id }, data: { enabled: true } });
             await db.session.update({ where: { id: f.session.id }, data: { active: true, archivedAt: null } });
             await db.teamCredentialResource.update({ where: { id: siblingCredential.id }, data: { memberGrants: { deleteMany: {} } } });
@@ -2909,10 +2933,11 @@ describe('ordinary Account managed Action origination', () => {
     });
 
     it.each((['plain', 'e2ee'] as const).flatMap(mode =>
-        (['adminAccess', 'isolationPreview', 'isolationSet'] as const).map(policyKind => ({ mode, policyKind }))))('delegates reviewed $policyKind only to its enrolled $mode creation target', async ({ mode, policyKind }) => {
+        (['adminAccess', 'isolationPreview', 'isolationSet', 'roles'] as const).flatMap(policyKind =>
+            [false, true].map(withdrawal => ({ mode, policyKind, withdrawal })))))('delegates reviewed $policyKind only to its enrolled $mode creation target (withdrawal=$withdrawal)', async ({ mode, policyKind, withdrawal }) => {
         const selected = await fixture(true, mode);
         const identity = { kind: 'dedicatedDaemonUser' as const, username: 'happier' as const, serviceMode: 'user' as const,
-            role: 'deployTarget' as const, adminAccessAtCreation: 'ask' as const, administrator: { username: 'operator' } };
+            role: 'server' as const, adminAccessAtCreation: 'ask' as const, administrator: { username: 'operator' } };
         const acquire = ManagedAcquireInputV1Schema.parse({ ...selected.input, enrollmentIdentity: identity });
         const guestKeys = tweetnacl.sign.keyPair();
         const guest = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: selected.account.id, active: true,
@@ -2946,28 +2971,49 @@ describe('ordinary Account managed Action origination', () => {
                     envelope: seal('machines.managed.acquire', selected.controller.machineId, acquire) } });
             expect(rootResponse.statusCode, rootResponse.body).toBe(200);
             let root = ExternalActionExecutionAuthorizationV1Schema.parse(rootResponse.json());
+            const otherRootResponse = policyKind === 'roles' && !withdrawal ? await instance.inject({ method: 'POST',
+                url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.acquire'),
+                headers: { authorization: `Bearer ${selected.token}` }, payload: { v: 1, machineId: selected.controller.machineId,
+                    envelope: { ...seal('machines.managed.acquire', selected.controller.machineId, acquire), idempotencyKey: 'other-reviewed-root' } } }) : null;
+            if (otherRootResponse) expect(otherRootResponse.statusCode, otherRootResponse.body).toBe(403);
+            const otherControllerRootResponse = policyKind === 'roles' && !withdrawal ? await instance.inject({ method: 'POST',
+                url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.acquire'),
+                headers: { authorization: `Bearer ${selected.token}` }, payload: { v: 1, machineId: guest.id,
+                    envelope: seal('machines.managed.acquire', guest.id, { ...acquire,
+                        selection: { ...acquire.selection, controller: { machineId: guest.id, installationId: guest.installationId } } }) } }) : null;
+            if (otherControllerRootResponse && otherControllerRootResponse.statusCode !== 200) {
+                expect(otherControllerRootResponse.statusCode, otherControllerRootResponse.body).toBe(403);
+            }
             const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: selected.account.id,
                 controllerMachineId: selected.controller.machineId, controllerInstallationId: selected.controller.installationId,
-                admittedActionRequestId: selected.requestId, admittedInput: { computeInput: acquire, continuation: null },
+                admittedActionRequestId: selected.requestId, admittedInput: { computeInput: acquire, continuation: null,
+                    requestEnvelopeDigest: root.binding.requestEnvelopeDigest },
                 launch: selected.input.selection.launch, allocation: 'bound', resource: { contributionRef: selected.input.selection.launch.provider,
                     schemaVersion: 1, value: { id: 'same-reviewed-target' } },
                 retention: selected.input.selection.retention, wakeOnAcceptedMessage: false } });
             await inTx(tx => linkManagedEnrollmentInTx(tx, ManagedEnrollmentCorrelationV1Schema.parse({ homeId, managedId: row.id, controller: selected.controller,
                 requestId: selected.requestId, expectedIntentRevision: 0, resource: row.resource }), selected.account.id, guest.id));
             expect(await verifyCurrentExternalActionPrincipal(root.binding)).not.toBeNull();
+            const creationRoot = root;
             const actionId = policyKind === 'adminAccess' ? 'machines.setup.adminAccess.set'
+                : policyKind === 'roles' ? 'machines.roles.set'
                 : policyKind === 'isolationPreview' ? 'machines.agentIsolation.preview' : 'machines.agentIsolation.set';
             const path = bindExternalActionExecutionAuthorizationHttpPathV1(actionId);
             const policy = { version: 1 as const, mode: 'ask' as const, administratorUsername: 'operator' };
             const input = { serverId: homeId, machineId: guest.id,
                 ...(policyKind === 'adminAccess' ? { expectedMetadataVersion: 0,
                     expectedAdminAccess: { version: 1 as const, mode: 'none' as const }, adminAccess: policy, comparison: 'field' as const }
+                    : policyKind === 'roles' ? { expectedMetadataVersion: 0, expectedPolicy: machineRolesMetadataFieldV1.defaultValue(),
+                        policy: resolveManagedMachineEnrollmentRolesV1(identity)! }
                     : { enabled: true, memberProvisioning: 'linuxUsersV1' as const, ...(policyKind === 'isolationSet' ? { expectedMetadataVersion: 0,
                         expectedPolicy: { enabled: false }, expectedPlanDigest: 'reviewed-current-effects' } : {}) }) };
             let recipient: ReturnType<typeof ManagedControllerContextOutputV1Schema.parse>['enrollmentInstallation'];
             let childEnvelope: ReturnType<typeof ExternalActionRequestEnvelopeSchema.parse> | undefined;
+            let childRevision = 0;
+            let childCreationRequestId = selected.requestId;
+            let rootSigningKey = selected.keys.secretKey;
             const mint = (value = input) => {
-                const continuation = { managedId: row.id, creationRequestId: selected.requestId, expectedIntentRevision: 0 };
+                const continuation = { managedId: row.id, creationRequestId: childCreationRequestId, expectedIntentRevision: childRevision };
                 const baseEnvelope = seal(actionId, value.machineId, value, root.binding.requestId);
                 const envelope = recipient && value.machineId === recipient.machineId
                     ? sealManagedCreationActionCodecV1({ authorization: root, actionId, continuation, envelope: baseEnvelope,
@@ -2981,14 +3027,67 @@ describe('ordinary Account managed Action origination', () => {
                     [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(root.binding.target),
                     [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: root.token,
                         effectActionId: root.binding.actionId, target: root.binding.target, installationId: root.binding.installationId,
-                        requestId: root.binding.requestId, method: 'POST', path, body, privateKey: selected.keys.secretKey }) } });
+                        requestId: root.binding.requestId, method: 'POST', path, body, privateKey: rootSigningKey }) } });
             };
+            if (withdrawal) await db.account.update({ where: { id: selected.account.id }, data: { tokenEpoch: { increment: 1 } } });
             const response = await mint();
             expect(response.statusCode, response.body).toBe(200);
             const child = ExternalActionExecutionAuthorizationV1Schema.parse(response.json());
             expect(child.binding).toMatchObject({ actionId, requestId: selected.requestId,
                 machineId: guest.id, managedContinuation: { managedId: row.id, controller: selected.controller } });
             expect(await verifyCurrentExternalActionPrincipal(child.binding)).not.toBeNull();
+            if (withdrawal || policyKind === 'roles') {
+                // This is the daemon's exact retained-policy read, signed by its enrolled installation.
+                const readPath = managedMachineActionEndpointPathV1('machines.managed.get');
+                const readBody = { homeId, managedId: row.id };
+                let readRefusal = 'none';
+                const admittedRead = await verifyExternalActionDomainExecutionRequest({ authorizationToken: child.token,
+                    onRefusal: phase => { readRefusal = phase; },
+                    effectActionId: actionId, encodedTarget: encodeExternalActionResolvedTargetV1(child.binding.target),
+                    machineSignature: signExternalActionMachineRequestV1({ authorizationToken: child.token,
+                        effectActionId: actionId, target: child.binding.target, installationId: guest.installationId!,
+                        requestId: child.binding.requestId, method: 'POST', path: readPath, body: readBody, privateKey: guestKeys.secretKey }),
+                    method: 'POST', path: readPath, body: readBody });
+                expect(admittedRead, readRefusal).not.toBeNull();
+                expect((await mint({ ...input, machineId: selected.controller.machineId })).statusCode).not.toBe(200);
+                if (mode === 'plain' && policyKind !== 'roles') expect((await mint({ ...input, ...(policyKind === 'adminAccess' ? { adminAccess: { ...policy, administratorUsername: 'different' } }
+                    : { enabled: false }) })).statusCode).not.toBe(200);
+                childCreationRequestId = 'other-creation';
+                expect((await mint()).statusCode).not.toBe(200);
+                childCreationRequestId = selected.requestId;
+                if (otherRootResponse) {
+                    // A same-request altered digest is refused at root issuance above.
+                    // If the other controller can originate a root, it still cannot borrow this creation.
+                    if (otherControllerRootResponse?.statusCode === 200) {
+                        root = ExternalActionExecutionAuthorizationV1Schema.parse(otherControllerRootResponse.json());
+                        rootSigningKey = guestKeys.secretKey;
+                        expect.soft((await mint()).statusCode).not.toBe(200);
+                        rootSigningKey = selected.keys.secretKey;
+                        root = creationRoot;
+                    }
+                    const retry = await instance.inject({ method: 'POST',
+                        url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.bootstrap.retry'),
+                        headers: { authorization: `Bearer ${selected.token}` }, payload: { v: 1, machineId: selected.controller.machineId,
+                            envelope: seal('machines.managed.bootstrap.retry', selected.controller.machineId,
+                                { homeId, managedId: row.id, expectedIntentRevision: 0 }, `${selected.requestId}-roles-retry`) } });
+                    expect(retry.statusCode, retry.body).toBe(200);
+                    root = ExternalActionExecutionAuthorizationV1Schema.parse(retry.json());
+                    const retried = await mint();
+                    expect(retried.statusCode, retried.body).toBe(200);
+                    expect(ExternalActionExecutionAuthorizationV1Schema.parse(retried.json()).binding).toMatchObject({
+                        requestId: `${selected.requestId}-roles-retry`,
+                        managedContinuation: { creationRequestId: selected.requestId, managedId: row.id } });
+                    await db.managedMachine.update({ where: { id: row.id }, data: { intentRevision: 1 } });
+                    childRevision = 1;
+                    // An old signed Retry cannot adopt a replacement intent by changing its child tuple.
+                    expect.soft((await mint()).statusCode).not.toBe(200);
+                }
+                await db.managedMachine.update({ where: { id: row.id }, data: { creationState: 'canceled', intentRevision: 1 } });
+                expect(await verifyCurrentExternalActionPrincipal(child.binding)).toBeNull();
+                root = creationRoot;
+                expect((await mint()).statusCode).not.toBe(200);
+                return;
+            }
             if (policyKind === 'adminAccess' && mode === 'plain') {
                 const dispatchPath = `/v1/actions/${actionId}`;
                 const envelope = seal(actionId, guest.id, input, root.binding.requestId);
@@ -3323,6 +3422,7 @@ describe('ordinary Account managed Action origination', () => {
             const childResponse = await mintChild();
             expect(childResponse.statusCode, childResponse.body).toBe(200);
             const child = ExternalActionExecutionAuthorizationV1Schema.parse(childResponse.json());
+            expect(await auth.verifyExternalActionExecutionAuthorization(child.token)).toStrictEqual(child.binding);
             expect(child.binding).toMatchObject({ machineId: guest.id, installationId: guest.installationId,
                 actionId: 'session.spawn_new', requestId: childRequestId, accountId: selected.account.id });
             if (origin) {
@@ -3552,10 +3652,14 @@ describe('ordinary Account managed Action origination', () => {
             expect(retiredRejoin.statusCode, retiredRejoin.body).toBe(401);
             expect(await db.session.findUniqueOrThrow({ where: { id: retainedSession.id } }))
                 .toMatchObject({ active: false, archivedAt });
-            expect((await mintChild()).statusCode).toBe(409);
+            const canceledChildMint = await mintChild();
+            expect(canceledChildMint.statusCode, canceledChildMint.body).toBe(401);
+            expect(canceledChildMint.json()).toMatchObject({ error: 'invalid_token' });
             expect((await verifyChild()).statusCode).toBe(401);
             deliveredChild = undefined;
-            expect((await forwardChild()).statusCode).toBe(409);
+            const canceledChildForward = await forwardChild();
+            expect(canceledChildForward.statusCode, canceledChildForward.body).toBe(401);
+            expect(canceledChildForward.json()).toMatchObject({ error: 'invalid_token' });
             expect(deliveredChild).toBeUndefined();
         } finally { await instance.close(); }
     });

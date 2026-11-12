@@ -7,7 +7,7 @@ import { PasswordCredentialMutationDigestV1Schema } from '@happier-dev/protocol/
 import { parseAccountApiTokenBearerV1, AccountApiTokenCreateEncryptionV1Schema, AccountApiTokenEncryptionAccessV1Schema, type AccountApiTokenCreateEncryptionV1, type AccountApiTokenEncryptionAccessV1, type AccountApiTokenEncryptionAccessResponseV1, type ParsedAccountApiTokenBearerV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { ApiTokenGrantV1Schema, StoredApiTokenGrantV1Schema, API_TOKEN_FULL_GRANT_V1, evaluateApiTokenGrantV1, isApiTokenGrantWithinV1, type ApiTokenGrantDenialReasonV1, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { projectDeploymentNativeAdmissionV1,
-    isDeploymentDomainNativeAdmissionV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1,
+    isDeploymentDomainNativeAdmissionV1, isDeploymentDomainDnsNativeAdmissionV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1,
     createDeploymentCandidatePublicationV1, projectExternalActionDeploymentMetadataEnvironmentIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentDomainChildActionIdV1, isDeploymentChildRootActionIdV1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol';
 import { isDeploymentBackupReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, isDeploymentControllerSetActionIdV1,
@@ -328,6 +328,7 @@ export type ExternalActionGrantEvaluationContext = Readonly<{ input?: unknown;
     managedCreationRecovery?: true;
     browserSessionId?: string;
     workflowAdmission?: WorkflowExternalActionAdmission;
+    managedCreationAdmission?: import('./externalActionManagedAdmission').ManagedCreationChildAdmission;
     deploymentLinkEnvironmentId?: string;
     workspaceSyncAdmission?: WorkspaceSyncAdmissionInputV1;
     deploymentNativeAdmission?: ReturnType<typeof projectDeploymentNativeAdmissionV1>;
@@ -603,7 +604,8 @@ class AuthModule {
             || isDeploymentBackupActionIdV1(input.actionId);
         // Domain API roots need the canonical sealed requester projection first.
         if (domainRoot && !('authentication' in input)) throw new ApiTokenOperationError('credential_scope_denied');
-        if (domainRoot && (!isDeploymentDomainNativeAdmissionV1(nativeAdmission) || nativeAdmission.actionId !== input.actionId)) {
+        if (domainRoot && (!(isDeploymentDomainNativeAdmissionV1(nativeAdmission) || isDeploymentDomainDnsNativeAdmissionV1(nativeAdmission))
+            || nativeAdmission.actionId !== input.actionId)) {
             throw new ApiTokenOperationError('credential_scope_denied');
         }
         const admittedPrincipal = context.workflowAdmission?.principal;
@@ -719,7 +721,7 @@ class AuthModule {
             ...(managedAccountExecutor ? { managedAccountExecutor } : {}),
             ...(automationId ? { automationId } : {}),
             ...(environmentId ? { environmentId } : {}),
-            ...((ingressUpdateRoot || configureRoot || domainRoot && isDeploymentDomainNativeAdmissionV1(nativeAdmission)
+            ...((ingressUpdateRoot || configureRoot || domainRoot && (isDeploymentDomainNativeAdmissionV1(nativeAdmission) || isDeploymentDomainDnsNativeAdmissionV1(nativeAdmission))
                 || nativeMemberRoot && nativeAdmission && 'kind' in nativeAdmission
                     && (nativeAdmission.kind === 'restart' || nativeAdmission.kind === 'restore' || nativeAdmission.kind === 'backup'))
                 ? { deploymentNativeAdmission: nativeAdmission } : {}),
@@ -765,6 +767,30 @@ class AuthModule {
             if (!workspaceSyncAdmission) throw new ApiTokenOperationError('credential_scope_denied');
             supplied = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...supplied, workspaceSyncAdmission });
         };
+        if (supplied.managedContinuation && context.managedCreationAdmission) {
+            const { readSelectedManagedCreationChildAdmission } = await import('./externalActionManagedAdmission');
+            if (!readSelectedManagedCreationChildAdmission(context.managedCreationAdmission, supplied)) {
+                throw new ApiTokenOperationError('target_unavailable');
+            }
+            // The selected root owns identity, grant, ceiling and Session source.
+            // A child request cannot replace those facts with its own body fields.
+            const principal = context.managedCreationAdmission.principal;
+            const admittedBinding = { ...supplied };
+            delete admittedBinding.sessionActionOrigin;
+            delete admittedBinding.sessionActionSource;
+            delete admittedBinding.workflowActionOrigin;
+            supplied = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...admittedBinding,
+                ...('authentication' in principal ? { authentication: principal.authentication }
+                    : { principalId: principal.principalId, credentialId: principal.credentialId, grant: principal.grant }),
+                ...('sessionActionOrigin' in principal && principal.sessionActionOrigin ? { sessionActionOrigin: principal.sessionActionOrigin } : {}),
+                ...(context.managedCreationAdmission.sessionActionSource
+                    ? { sessionActionSource: context.managedCreationAdmission.sessionActionSource } : {}),
+                ...('workflowActionOrigin' in principal && principal.workflowActionOrigin ? { workflowActionOrigin: principal.workflowActionOrigin } : {}),
+            });
+            const token = await this.externalActionExecutionAuthorizationTokens.generator.new({ user: supplied.accountId,
+                extras: { externalActionExecutionAuthorizationV1: supplied } });
+            return ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token, binding: supplied });
+        }
         if ('authentication' in supplied) {
             const { isOriginalTerminalExecutionAction, hasCurrentOriginalSessionActionTargetInTx, hasCurrentExternalActionSessionSource,
                 verifyCurrentExternalActionPrincipalInTx, readExternalActionBindingAuthority } = await import('./externalActionExecutionAuthorization');

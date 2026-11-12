@@ -104,6 +104,7 @@ export type ExternalActionDaemonDispatcher = (
         /** The authenticated front door's exact already-admitted root. */
         executionAuthorization?: ExternalActionExecutionAuthorizationV1;
         workflowAdmission?: WorkflowExternalActionAdmission;
+        managedCreationAdmission?: import('@/app/auth/externalActionManagedAdmission').ManagedCreationChildAdmission;
     }>,
     options?: Readonly<{ signal?: AbortSignal }>,
 ) => Promise<ExternalActionDaemonDispatchResult>;
@@ -125,6 +126,7 @@ type ResolveMachine = (params: Readonly<{
     handoffAdmission?: ExternalActionRequestEnvelope['handoffAdmission'] | ExternalActionExecutionAuthorizationBindingV1['handoffAdmission'];
     executionBinding?: ExternalActionExecutionAuthorizationBindingV1;
     workflowAdmission?: WorkflowExternalActionAdmission;
+    managedCreationAdmission?: import('@/app/auth/externalActionManagedAdmission').ManagedCreationChildAdmission;
     capturedMachineAdmission?: SocketRpcMachineAdmissionContextV1;
     envelope?: ExternalActionRequestEnvelope;
     expectedCustodianAccountId?: string;
@@ -417,6 +419,7 @@ async function resolveMachineFromServer(params: Parameters<ResolveMachine>[0]): 
                     sessionActionOrigin: params.sessionActionOrigin,
                     executionBinding: params.executionBinding,
                     workflowAdmission: params.workflowAdmission,
+                    managedCreationAdmission: params.managedCreationAdmission,
                     capturedMachineAdmission: params.capturedMachineAdmission,
                     envelope: params.envelope,
                     requireOnline: params.requireOnline ?? true,
@@ -583,6 +586,7 @@ function createExactMachineDaemonGuard(params: Readonly<{
                 ...(params.handoffAdmission ? { handoffAdmission: params.handoffAdmission } : {}),
                 ...(params.executionBinding ? { executionBinding: params.executionBinding } : {}),
                 ...(params.workflowAdmission ? { workflowAdmission: params.workflowAdmission } : {}),
+                ...(params.managedCreationAdmission ? { managedCreationAdmission: params.managedCreationAdmission } : {}),
                 ...(params.capturedMachineAdmission ? { capturedMachineAdmission: params.capturedMachineAdmission } : {}),
                 expectedCustodianAccountId: params.custodianAccountId,
                 expectedInstallationId: params.installationId,
@@ -823,6 +827,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 ...(request.sessionActionSource ? { sessionActionSource: request.sessionActionSource } : {}),
             };
             const context = { ...(request.workflowAdmission ? { workflowAdmission: request.workflowAdmission } : {}),
+                ...(request.managedCreationAdmission ? { managedCreationAdmission: request.managedCreationAdmission } : {}),
                 ...(capturedMachineAdmission?.managedCreationRecovery ? { managedCreationRecovery: true as const } : {}),
                 input: request.envelope.v === 1 ? request.envelope.input
                 : deploymentMetadataEnvironmentId === undefined
@@ -928,6 +933,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
         let finiteWake: Awaited<ReturnType<typeof prepareManagedFiniteActionWake>> | undefined;
         const finiteSignal = options.signal ?? new AbortController().signal;
         const managedWakeRoot = isExternalActionManagedWakeRootV1({ actionId: request.actionId, machineId, target, machineRuntimeDemand });
+        if (request.managedContinuation) executionAuthorization ??= await mint();
         const machine = await runDispatchPhase('machine_resolution', machineId, () => (
             resolveMachine({
                 accountId: request.principal.accountId,
@@ -936,6 +942,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 actionId: request.actionId,
                 ...requesterContext,
                 ...(request.workflowAdmission ? { workflowAdmission: request.workflowAdmission } : {}),
+                ...(request.managedCreationAdmission ? { managedCreationAdmission: request.managedCreationAdmission } : {}),
                 ...(executionAuthorization ? { executionBinding: executionAuthorization.binding } : {}),
                 ...(!request.executionAuthorization ? { envelope: request.envelope } : {}),
                 ...((executionAuthorization?.binding.handoffAdmission ?? request.envelope.handoffAdmission)
