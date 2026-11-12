@@ -36,6 +36,7 @@ export function createSharedGatewayRegistryTestkit(input: Readonly<{
     compatibilityOverrides?: ProviderContributionV1['compatibilityOverrides'];
     catalog?: ProviderContributionV1['catalog'];
     catalogModels?: readonly ProviderCatalogProbeModelV1[];
+    connectedAccountModels?: readonly Readonly<{ id: string; name: string }>[];
     holdResponseForInput?: string;
     upstreamUrl?: string;
 }>) {
@@ -57,12 +58,12 @@ export function createSharedGatewayRegistryTestkit(input: Readonly<{
         store: { read: async () => ({ v: 1, bindings: [] }), update: unexpected,
             subscribe: () => ({ dispose() {} }) },
         selectTarget: unexpected, resolveTarget: input.resolveAccountTarget ?? unexpected,
-        ...(input.upstreamUrl ? { resolveCredentialRevision: async () => 'csr_0123456789ABCDEFGHJKMNPQRS' } : {}),
-        materializeAccount: input.upstreamUrl ? async request => {
+        resolveCredentialRevision: async () => 'csr_0123456789ABCDEFGHJKMNPQRS',
+        materializeAccount: async request => {
             request.signal.throwIfAborted();
             request.credentialRevisionBasis?.captureCredentialRevision('csr_0123456789ABCDEFGHJKMNPQRS');
             return { kind: 'httpHeaders' as const, headers: { authorization: 'Bearer fixture-upstream' } };
-        } : unexpected,
+        },
         projectTargetAccounts: unexpected, assertTargetAccountMaterializable: unexpected,
     });
     const requestAuthRegistry = createConnectedAccountRequestAuthSubjectRegistry();
@@ -89,7 +90,7 @@ export function createSharedGatewayRegistryTestkit(input: Readonly<{
                         capabilities: { streaming: 'supported', toolRoundTrips: 'supported', statefulResponses: 'unknown', reasoningControls: 'supported' } }],
                     catalog: input.catalog ?? { source: 'static', manualModelPolicy: 'allowed', staticModels: [{ id: 'example', name: 'Example' }] },
                     managedRuntime: { kind: 'managed', sharing: 'connectionMachine', endpointTemplateIds: ['api'],
-                        connectedAccounts: [{ purpose: 'upstream', title: { key: 'upstream.title', fallback: 'Upstream account' }, service: 'accounts', required: false, materializationKinds: ['httpHeaders'] }],
+                        connectedAccounts: [{ purpose: 'upstream', title: { key: 'upstream.title', fallback: 'Upstream account' }, service: 'accounts', required: false, materializationKinds: ['httpHeaders'], ...(input.connectedAccountModels ? { staticModels: input.connectedAccountModels, endpointTemplateIds: ['api'] } : {}) }],
                         requestAuthUses: [{ purpose: 'upstream', materialization: { kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'] } }] } }],
             } : {},
         }));
