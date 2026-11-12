@@ -10,7 +10,8 @@ import { buildApprovalExecutionOriginV1, createActionExecutor, type ActionExecut
 import { computeExternalActionRequestEnvelopeDigestV1 } from './externalActionExecutionAuthorization.js';
 import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionExecutionAuthorizationV1 } from './externalActionApi.js';
 import { isApprovalRequiredByActionsSettings, requiresAgentEgressRedaction } from './actionApprovalPolicy.js';
-import { resolveApprovalRequestApproveAdmission } from './actionApprovalPresentation.js';
+import { projectApprovalRequestForPublicRead, resolveApprovalRequestApproveAdmission } from './actionApprovalPresentation.js';
+import { readApprovalExecutionFailure } from '../approvals/approvalExecutionFailure.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { createWorkflowTriggerActions } from './executor/workflowTriggerActions.js';
@@ -61,6 +62,15 @@ it.each(['approve', 'cancel', 'replay'] as const)('keeps retired Publish approva
       } } } };
   const stored = StoredApprovalRequestSchema.parse(JSON.parse(JSON.stringify(historical)));
   expect(stored).toEqual(historical);
+  const terminalFailure = StoredApprovalRequestSchema.parse({ ...historical, status: 'failed', updatedAtMs: 3,
+    decision: { kind: 'approve', decidedAtMs: 2 }, execution: { ok: false, executedAtMs: 3,
+      errorCode: 'deployment_failed', error: 'Publish failed', details: { token: 'private-failure-detail' } } });
+  const expectedFailure = { ok: false, errorCode: 'deployment_failed', error: 'Publish failed' };
+  expect(readApprovalExecutionFailure(terminalFailure)).toEqual(expectedFailure);
+  const publicFailure = projectApprovalRequestForPublicRead(terminalFailure);
+  expect(readApprovalExecutionFailure(publicFailure)).toEqual(expectedFailure);
+  expect(publicFailure.execution).toMatchObject(expectedFailure);
+  expect(publicFailure.execution).not.toHaveProperty('details');
   expect(ApprovalRequestV2Schema.safeParse(historical).success).toBe(false);
   expect(resolveApprovalExecutor(stored)).toEqual({ kind: 'unavailable', reason: 'invalid_input' });
   expect(resolveApprovalRequestApproveAdmission(stored)).toMatchObject({ status: 'unavailable', reason: 'legacy_request' });
@@ -318,7 +328,10 @@ describe('Environment binding pending-input hold', () => {
       presentUserConfirmation: { actionId: 'deployments.bindings.set', accountId: 'account', serverId: 'stable-home',
         requestId: 'native-binding-choice', target: null,
         inputDigest: computeActionInputApprovalDigestV1('deployments.bindings.set', pending) },
-    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'binding-choice' } });
+    })).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required', details: {
+      review: { actionArgs: pending }, reviewDigest: expect.any(String),
+    } });
+    expect(request).toBeNull();
     expect(writes).toEqual([]);
     expect(await executor.execute('deployments.bindings.set', pending, context)).toMatchObject({
       ok: true, result: { kind: 'approval_request_created', artifactId: 'binding-choice' },
@@ -3278,7 +3291,7 @@ describe('createActionExecutor (approvals)', () => {
         artifactId: 'agent-live-invitation-approval', decision: 'approve',
       }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
         runtimeAccountId: 'account-1', serverId: 'server-1' })).toMatchObject({ ok: true });
-      await expect(pending).resolves.toEqual({ ok: true, result: rawResult });
+      await expect(pending).resolves.toEqual({ ok: true, result: { invitation, joinUrl: null } });
 
       const terminal = persisted.at(-1);
       expect(terminal?.execution).toEqual({

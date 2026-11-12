@@ -1,3 +1,5 @@
+import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
+import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
@@ -13591,7 +13593,7 @@ settingsSession: {
   projects: {
         deployments: {
             databaseQuery: {
-                title: "唯讀查詢", run: "執行查詢", sql: "SQL", parameters: "參數 (JSON)",
+                title: "唯讀查詢", database: "資料庫名稱", run: "執行查詢", sql: "SQL", parameters: "參數 (JSON)",
                 setup: "唯讀登入", password: "密碼", reviewSetup: "審核設定", working: "執行中…",
                 setupDescription: "為專用唯讀密碼選擇已儲存的密鑰。設定會在修改資料庫角色及其環境綁定之前開啟一般審核。",
                 unavailable: "查詢無法使用", empty: "未傳回任何資料列", incomplete: "結果可能不完整",
@@ -13613,8 +13615,10 @@ settingsSession: {
             rollbackCodeOnly: '僅回復程式碼',
             creationDefaults: '新建部署的預設設定',
             creationReview: deploymentCreationReviewTranslations['zh-Hant'],
+      recommendation: deploymentRecommendationTranslations['zh-Hant'],
       defaultsEditor: deploymentDefaultsTranslations['zh-Hant'],
             copy: deploymentCopyTranslations['zh-Hant'],
+            move: deploymentMoveTranslations['zh-Hant'],
             overviewStatus: deploymentOverviewTranslations['zh-Hant'],
             editors: deploymentEditorsTranslations['zh-Hant'],
       preparation: deploymentPreparationTranslations['zh-Hant'],

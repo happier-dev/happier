@@ -27,6 +27,7 @@ type Copy = Readonly<{
   connectGithub: string;
   githubNeeded: string;
   computerNeeded: string;
+  machineHomeMismatch: string;
   addComputer: string;
   details: string;
   detailStarter: string;
@@ -107,6 +108,7 @@ export const newAppTranslations: Readonly<
     computerNeeded:
       'An agent needs a computer to build on. Add one; nothing you wrote here is lost.',
     addComputer: 'Add a computer',
+    machineHomeMismatch: "This computer joined another Home. Use it from that Home, or add a computer here.",
     details: 'Details for developers',
     detailStarter: 'Starter',
     detailBuiltWith: 'Built with',
@@ -170,6 +172,7 @@ export const newAppTranslations: Readonly<
     computerNeeded:
       'Un agent necessita un ordinador on construir. Afegeix-ne un; no es perd res del que has escrit.',
     addComputer: 'Afegeix un ordinador',
+    machineHomeMismatch: "Aquest ordinador s’ha unit a una altra llar. Fes-lo servir des d’allà o afegeix un ordinador aquí.",
     details: 'Detalls per a desenvolupadors',
     detailStarter: 'Plantilla',
     detailBuiltWith: 'Fet amb',
@@ -233,6 +236,7 @@ export const newAppTranslations: Readonly<
     computerNeeded:
       'Ein Agent braucht einen Computer zum Bauen. Füge einen hinzu; nichts von deinem Text geht verloren.',
     addComputer: 'Computer hinzufügen',
+    machineHomeMismatch: "Dieser Computer ist einem anderen Zuhause beigetreten. Verwende ihn dort oder füge hier einen Computer hinzu.",
     details: 'Details für Entwickler',
     detailStarter: 'Vorlage',
     detailBuiltWith: 'Gebaut mit',
@@ -296,6 +300,7 @@ export const newAppTranslations: Readonly<
     computerNeeded:
       'Un agente necesita un ordenador donde construir. Añade uno; no se pierde nada de lo que escribiste.',
     addComputer: 'Añadir un ordenador',
+    machineHomeMismatch: "Este ordenador se ha unido a otro hogar. Úsalo desde allí o añade un ordenador aquí.",
     details: 'Detalles para desarrolladores',
     detailStarter: 'Plantilla',
     detailBuiltWith: 'Hecha con',
@@ -359,6 +364,7 @@ export const newAppTranslations: Readonly<
     computerNeeded:
       'Un agent a besoin d’un ordinateur pour construire. Ajoutez-en un ; rien de ce que vous avez écrit n’est perdu.',
     addComputer: 'Ajouter un ordinateur',
+    machineHomeMismatch: "Cet ordinateur a rejoint un autre foyer. Utilisez-le depuis ce foyer ou ajoutez un ordinateur ici.",
     details: 'Détails pour les développeurs',
     detailStarter: 'Modèle',
     detailBuiltWith: 'Construit avec',
@@ -422,6 +428,7 @@ export const newAppTranslations: Readonly<
     computerNeeded:
       'Un agente ha bisogno di un computer su cui costruire. Aggiungine uno; niente di ciò che hai scritto va perso.',
     addComputer: 'Aggiungi un computer',
+    machineHomeMismatch: "Questo computer si è unito a un’altra Home. Usalo da quella Home oppure aggiungi un computer qui.",
     details: 'Dettagli per sviluppatori',
     detailStarter: 'Modello',
     detailBuiltWith: 'Fatto con',
@@ -485,6 +492,7 @@ export const newAppTranslations: Readonly<
     computerNeeded:
       'エージェントが作業するにはコンピューターが必要です。追加しても、ここに書いた内容は失われません。',
     addComputer: 'コンピューターを追加',
+    machineHomeMismatch: "このコンピューターは別のホームに参加しました。そのホームから使用するか、ここにコンピューターを追加してください。",
     details: '開発者向けの詳細',
     detailStarter: 'スターター',
     detailBuiltWith: '使用技術',
@@ -548,6 +556,7 @@ export const newAppTranslations: Readonly<
     computerNeeded:
       'Agent potrzebuje komputera, na którym zbuduje aplikację. Dodaj go; nic z tego, co napisano, nie zginie.',
     addComputer: 'Dodaj komputer',
+    machineHomeMismatch: "Ten komputer dołączył do innego domu. Użyj go z tamtego domu lub dodaj komputer tutaj.",
     details: 'Szczegóły dla programistów',
     detailStarter: 'Szablon',
     detailBuiltWith: 'Zbudowane z',
@@ -611,6 +620,7 @@ export const newAppTranslations: Readonly<
     computerNeeded:
       'Um agente precisa de um computador para construir. Adicione um; nada do que você escreveu se perde.',
     addComputer: 'Adicionar um computador',
+    machineHomeMismatch: "Este computador entrou em outra Home. Use-o por lá ou adicione um computador aqui.",
     details: 'Detalhes para desenvolvedores',
     detailStarter: 'Modelo',
     detailBuiltWith: 'Feito com',
@@ -674,6 +684,7 @@ export const newAppTranslations: Readonly<
     computerNeeded:
       'Агенту нужен компьютер для работы. Добавьте его — написанное здесь не пропадёт.',
     addComputer: 'Добавить компьютер',
+    machineHomeMismatch: "Этот компьютер подключился к другому дому. Используйте его оттуда или добавьте компьютер здесь.",
     details: 'Подробности для разработчиков',
     detailStarter: 'Шаблон',
     detailBuiltWith: 'Технологии',
@@ -736,6 +747,7 @@ export const newAppTranslations: Readonly<
     computerNeeded:
       '智能体需要一台电脑来构建。添加一台吧，你写的内容不会丢失。',
     addComputer: '添加电脑',
+    machineHomeMismatch: "这台电脑已加入另一个主页。请从那个主页使用它，或在此处添加一台电脑。",
     details: '开发者详情',
     detailStarter: '模板',
     detailBuiltWith: '技术',
@@ -795,6 +807,7 @@ export const newAppTranslations: Readonly<
     computerNeeded:
       '代理程式需要一台電腦來建構。新增一台吧，你寫的內容不會遺失。',
     addComputer: '新增電腦',
+    machineHomeMismatch: "這台電腦已加入另一個主頁。請從那個主頁使用它，或在此處新增一台電腦。",
     details: '開發者詳細資訊',
     detailStarter: '範本',
     detailBuiltWith: '技術',

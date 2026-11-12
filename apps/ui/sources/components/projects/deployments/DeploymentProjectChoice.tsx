@@ -57,7 +57,7 @@ export type DeploymentProjectChoiceModel = ReturnType<typeof useDeploymentProjec
 /** Above this many choices a select offers search, as the Machine field does. */
 const SEARCH_FROM = 8;
 /** The Project field's choice id for a new Project; a Source id is never this word. */
-const NEW_PROJECT = 'new';
+export const DEPLOYMENT_NEW_PROJECT_CHOICE_ID = 'new';
 
 /**
  * The Project field (a select: an Account can hold many Projects), then a new Project's own inputs directly
@@ -73,7 +73,7 @@ export function DeploymentProjectChoiceGroups(props: Readonly<{
   const [projectMenuOpen, setProjectMenuOpen] = React.useState(false);
   const [ownerMenuOpen, setOwnerMenuOpen] = React.useState(false);
   const projectItems = React.useMemo((): DropdownMenuItem[] => [
-    { id: NEW_PROJECT, title: t('capabilities.store.appPage.projectNew'), subtitle: props.newProjectHint,
+    { id: DEPLOYMENT_NEW_PROJECT_CHOICE_ID, title: t('capabilities.store.appPage.projectNew'), subtitle: props.newProjectHint,
       checked: model.newProject },
     ...model.sources.rows.map((row): DropdownMenuItem => ({ id: row.id, title: row.name,
       checked: !model.newProject && model.sourceId === row.id })),
@@ -84,7 +84,7 @@ export function DeploymentProjectChoiceGroups(props: Readonly<{
       .filter((row) => row.address.serverId === model.serverId)
       .map((row): DropdownMenuItem => ({ id: `team:${row.team.id}`, title: row.team.name, checked: model.ownerId === `team:${row.team.id}` })),
   ], [model.ownerId, model.serverId, model.teams]);
-  const selectedId = model.newProject ? NEW_PROJECT : model.sourceId ?? '';
+  const selectedId = model.newProject ? DEPLOYMENT_NEW_PROJECT_CHOICE_ID : model.sourceId ?? '';
   return (
     <ItemGroup testID={`${testIDPrefix}.group`} title={t('capabilities.store.appPage.projectTitle')} description={props.description}>
       <DropdownMenu
@@ -96,7 +96,7 @@ export function DeploymentProjectChoiceGroups(props: Readonly<{
         selectedId={selectedId}
         onSelect={(id) => {
           setProjectMenuOpen(false);
-          if (id === NEW_PROJECT) { model.setNewProject(true); model.setSourceId(null); }
+          if (id === DEPLOYMENT_NEW_PROJECT_CHOICE_ID) { model.setNewProject(true); model.setSourceId(null); }
           else if (id) { model.setNewProject(false); model.setSourceId(id); }
         }}
         itemTrigger={{

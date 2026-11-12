@@ -1,3 +1,5 @@
+import { DeploymentTargetRecommendationV1Schema } from './deploymentTargetRecommendationV1.js';
+import { RegistryAppMappingV1Schema } from '../registries/registryAppMappingV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
@@ -12,6 +14,7 @@ export const DeploymentPublishPrepareInputV1Schema = lazyZodSchema(() => z.stric
   serverId: id, machineId: id, installationId: id, projectSourceId: z.optional(id), sourceRevision: z.optional(revision),
   newProject: z.optional(DeploymentNewProjectV1Schema),
   templateRef: DeploymentTemplateRefV1Schema,
+  appMappingCorrection: z.optional(RegistryAppMappingV1Schema),
   explicit: z.optional(DeploymentCreationDefaultsV1Schema),
 }).check(z.refine(input => hasOneDeploymentProjectV1(input.projectSourceId, input.newProject)
   && (input.projectSourceId === undefined ? input.sourceRevision === undefined : input.sourceRevision !== undefined),
@@ -28,6 +31,7 @@ export const DeploymentPublishPrepareResultV1Schema = lazyZodSchema(() => z.stri
       { message: 'Prepared Project selection retains its exact existing or intended owner.' })),
   machine: z.strictObject({ machineId: id, installationId: id }),
   template: DeploymentTemplateV1Schema,
+  recommendation: z.optional(DeploymentTargetRecommendationV1Schema),
   creationDefaults: ResolvedDeploymentCreationDefaultsV1Schema,
   creationDefaultsBasis: DeploymentTemplateInstantiationReviewV1Schema.shape.creationDefaultsBasis,
 }));

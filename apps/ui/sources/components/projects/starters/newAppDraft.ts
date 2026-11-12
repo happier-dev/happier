@@ -1,3 +1,4 @@
+import type { ProjectStarterCreateInputV1, ProjectStarterCreateResumeV1 } from '@happier-dev/protocol/projects/starters/createV1';
 import { projectCheckoutParentPath } from '../activation/projectOpenChoices';
 import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
 import { ScmOperationErrorCodeSchema } from '@happier-dev/protocol/scm';
@@ -7,20 +8,7 @@ import { ScmOperationErrorCodeSchema } from '@happier-dev/protocol/scm';
  * STARTER-ACTION-1110 "For UI lanes"). The Action owns every effect; this module only assembles the
  * reviewed operands and reads its result into one state with one next step.
  */
-export type StarterCreateInput = Readonly<{
-  serverId: string;
-  machineId: string;
-  requestKey: string;
-  starterId: string;
-  description: string;
-  destinationParentPath: string;
-  destinationDirectoryName: string;
-  repository: Readonly<{
-    owner: string;
-    name: string;
-    visibility: 'private' | 'public';
-  }>;
-}>;
+export type StarterCreateInput = Readonly<ProjectStarterCreateInputV1>;
 
 export type StarterSessionHandoff = Readonly<{
   machineId: string;
@@ -43,6 +31,7 @@ export type StarterCreateOutcome =
       code: string;
       repositoryCreated: boolean;
       remediation: string | null;
+      resume?: ProjectStarterCreateResumeV1;
     }>;
 
 export type NewAppDraft = Readonly<{
@@ -100,6 +89,7 @@ const text = (value: unknown): string | null =>
 
 export function readStarterCreateOutcome(
   result: unknown,
+  previousResume?: ProjectStarterCreateResumeV1,
 ): StarterCreateOutcome {
   const value = (result && typeof result === 'object' ? result : {}) as Record<
     string,
@@ -125,18 +115,21 @@ export function readStarterCreateOutcome(
     }
   }
   if (value.kind === 'failed' || value.kind === 'partial') {
+    // The Action executor already parsed this optional field; a transport failure cannot withdraw acknowledged effects.
+    const resume = (value.resume as ProjectStarterCreateResumeV1 | undefined) ?? previousResume;
     const code = text(value.code) ?? 'starter_create_failed';
     if (code === 'scm_account_required') return { kind: 'needsScmAccount' };
     if (code === 'outcome_unknown')
       return {
         kind: 'outcomeUnknown',
-        repositoryUrl: text(value.repositoryUrl),
+        repositoryUrl: text(value.repositoryUrl) ?? resume?.repositoryUrl ?? null,
       };
     return {
       kind: 'failed',
       phase: text(value.phase),
       code,
-      repositoryCreated: text(value.repositoryUrl) !== null,
+      repositoryCreated: text(value.repositoryUrl) !== null || resume !== undefined,
+      ...(resume ? { resume } : {}),
       // The SCM owner's remediation carries its own label (Choose another name, Connect GitHub…).
       remediation: (() => {
         const carried = value.remediation && typeof value.remediation === 'object'

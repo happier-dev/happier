@@ -2064,6 +2064,11 @@ The managed-data sheet reuses template Connect’s replacement review: each exis
 runtime variable whose value changes must be selected independently before Bind.
 A matching existing binding needs no replacement. Binding identities come from
 the shared Environment binding owner, and its revision CAS retains write authority.
+The link’s optional private `data` leaf retains the native result’s engine, version
+and provider-console link. The Data card and Database page share engine naming;
+missing facts retain the target title and do not invent a console. These are
+link-time facts, not live provider observations. Already-linked adoption preserves
+the original content; it does not refresh or overwrite that stored presentation.
 Provider link intent is prepared by the existing mode-aware client Artifact
 writer; server-visible target metadata receives references, not provider content
 or connection strings. The Resource leaves are explicit-refresh snapshots, not

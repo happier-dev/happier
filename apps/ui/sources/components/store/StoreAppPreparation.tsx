@@ -1,3 +1,4 @@
+import { deploymentRecommendationDescription } from '@/components/projects/deployments/deploymentRecommendationDescription';
 import * as React from 'react';
 import { useStore } from 'zustand';
 import { DeploymentTemplateChoices } from '@/components/projects/deployments/DeploymentTemplateChoices';
@@ -283,7 +284,7 @@ export function StoreAppPreparationReview(
       cancelTestID={creating ? 'store.app.prepare.cancel' : 'store.app.prepare.back'}
       note={creating || refusal?.step === 'create' ? null : t('capabilities.store.appPage.prepareDescription')}
       primary={{
-        label: t(creating ? 'common.working' : 'capabilities.store.appPage.install'),
+        label: t(creating ? 'status.working' : 'capabilities.store.appPage.install'),
         testID: 'store.app.prepare.confirm',
         loading: creating,
         disabled: creating || approval.approvalPending,
@@ -347,7 +348,7 @@ export function StoreAppPreparationReview(
     <>
     <ItemGroup
       testID="store.app.prepare.prepared"
-      title={creating ? t('common.working') : refusal?.step === 'create' ? undefined : t('capabilities.store.appPage.preparedTitle')}
+      title={creating ? t('status.working') : refusal?.step === 'create' ? undefined : t('capabilities.store.appPage.preparedTitle')}
       description={creating || refusal?.step === 'create' ? undefined : t('capabilities.store.appPage.preparedDescription')}
     >
       <Item
@@ -378,6 +379,8 @@ export function StoreAppPreparationReview(
               })
         }
       />
+      {prepared.recommendation ? <Item mode="info" testID="store.app.prepare.recommendation"
+        title={deploymentRecommendationDescription(prepared.recommendation)} /> : null}
       {prepared.template.domains.flatMap((domain) => {
         const hostname = domainHostnames[domain.key];
         return hostname ? [(

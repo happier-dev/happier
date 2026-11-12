@@ -1013,7 +1013,7 @@ describe('mounted managed configurator', () => {
     }
     expect(onUse).not.toHaveBeenCalled();
   });
-  it('keeps the Lume native-image editor reachable while catalog image tiles are available', () => withPopoverWebGlobals(async () => {
+  it.each(['published', 'private', 'private-after-catalog'])('retains the Lume native-image editor through options settling (%s)', imageKind => withPopoverWebGlobals(async () => {
     const { PLUGIN_MANIFEST: manifest } = await import('../../../../../../../packages/plugins/machine-lume/src/manifest');
     const { LumeOptionsInputV1Schema } = await import('../../../../../../../packages/plugins/machine-lume/src/machine/schemas');
     const descriptor = MachineProvisionerContributionV1Schema.parse(manifest.contributes.machineProvisioners?.[0]);
@@ -1034,28 +1034,41 @@ describe('mounted managed configurator', () => {
     const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://lume-image-editor.example',
       serverIdentityId: 'srv_lume_image_editor', accountId: 'owner', currentAccount: true });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'host', installationId: 'installation' })]);
-    const catalogReference = 'ghcr.io/trycua/macos-sequoia-cua:latest';
-    const options = createMachineProvisionerOptionsFixture({ base: { launch: { cpu: 4, memoryBytes: 8 * 1024 ** 3 } },
-      dimensions: { image: [{ id: catalogReference, title: 'macOS Sequoia',
-        assignments: [{ path: 'image', value: { kind: 'catalog', id: catalogReference } }] }],
-        location: [{ id: 'home', title: 'Home', assignments: [{ path: 'storage', value: 'home' }] }],
-        size: [], network: [], duration: [] } });
+    const catalogReference = 'ghcr.io/trycua/macos:26';
+    const { createLumeProvider } = await import('../../../../../../../packages/plugins/machine-lume/src/machine/provider');
+    const { createLumeNativeClient } = await import('../../../../../../../packages/plugins/machine-lume/src/machine/nativeClient');
+    // Only the native/registry HTTP boundary is substituted; provider options and form settling are real.
+    const provider = createLumeProvider({ observedAt: 123, native: createLumeNativeClient({ baseUrl: 'http://localhost:7777',
+      fetch: async input => {
+        const url = new URL(String(input));
+        if (url.pathname === '/token') return Response.json({ token: 'public-fixture' });
+        if (url.pathname.endsWith('/tags/list')) return Response.json({
+          name: url.pathname.includes('macos-tahoe-cua') ? 'trycua/macos-tahoe-cua' : 'trycua/macos', tags: ['26'] });
+        if (url.pathname.includes('/manifests/')) return Response.json({ annotations: { 'org.trycua.lume.disk-size': '161061273600' } });
+        if (url.pathname === '/lume/config/locations') return Response.json([{ name: 'home', path: '/fixture' }]);
+        if (url.pathname === '/lume/vms') return Response.json([]);
+        throw new Error(`Unexpected Lume request: ${url.pathname}`);
+      } }) });
     for (const [actionId, result] of [
       ['machines.provisioners.list', { controller: defaultController, provisioners: [{ contribution, occurrenceId: 'lume-image-editor', acquireExecutionTarget: 'daemon' as const, descriptor, credentialPurposes: [] }] }],
       ['machines.provisioners.check', { available: true }],
-      ['machines.provisioners.options', options],
-    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
+      ['machines.provisioners.options', null],
+    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: async value => {
       const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-      return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
+      return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result: actionId === 'machines.provisioners.options'
+        ? await provider.options(ProvisionerOptionsInputV1Schema.parse(request.input).selectors) : result } } };
     } });
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const { ManagedMachineConfigurator } = await import('./ManagedMachineConfigurator');
+    const screenText = await import('@/text');
+    const { ManagedImageTiles } = await import('./ManagedChoiceSections');
     const { HappierInputField } = await import('@happier-dev/plugin-ui/presentation');
     const { pressTestInstanceAsync } = await import('@/dev/testkit');
     const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
       provisioner={buildQualifiedPluginContributionKey(contribution)} initialController={defaultController} />);
     try {
       await waitForHomeGovernance(() => expect(screen.findByTestId(`managed-config.images:${catalogReference}`)).not.toBeNull());
-      await screen.pressByTestIdAsync(`managed-config.images:${catalogReference}`);
+      if (imageKind === 'private-after-catalog') await screen.pressByTestIdAsync(`managed-config.images:${catalogReference}`);
       // A catalog tile supplies its id; it cannot choose the declaration's custom-image representation.
       expect(screen.findByTestId('managed-config.field:image.id')).toBeNull();
       const select = async (path: string, value: string) => {
@@ -1077,17 +1090,36 @@ describe('mounted managed configurator', () => {
       };
       await select('image.kind', 'native-image');
       await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.field:image.reference')).not.toBeNull());
-      const nativeReference = 'ghcr.io/example/prepared-linux:latest';
+      const nativeReference = imageKind === 'published' ? catalogReference : 'ghcr.io/example/prepared-linux:latest';
       await act(async () => screen.changeTextByTestId('managed-config.field:image.reference', nativeReference));
-      await select('image.privateCarrier.kind', 'lume-default-password');
-      await select('image.privateCarrier.guestOs', 'linux');
-      await act(async () => screen.changeTextByTestId('managed-config.field:image.privateCarrier.user', 'developer'));
+      if (imageKind !== 'published') {
+        await select('image.privateCarrier.kind', 'lume-default-password');
+        await select('image.privateCarrier.guestOs', 'linux');
+        await act(async () => screen.changeTextByTestId('managed-config.field:image.privateCarrier.user', 'developer'));
+      }
+      await screen.pressByTestIdAsync('managed-config.locations:home');
       await waitForHomeGovernance(() => {
         const request = harness.requestsFor('/v1/actions/machines.provisioners.options').at(-1);
         const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request?.input);
         const input = ProvisionerOptionsInputV1Schema.parse(envelope.input);
-        expect(LumeOptionsInputV1Schema.parse(input.selectors).image).toMatchObject({ kind: 'native-image', reference: nativeReference,
-          privateCarrier: { kind: 'lume-default-password', guestOs: 'linux', user: 'developer' } });
+        expect(LumeOptionsInputV1Schema.parse(input.selectors)).toMatchObject({ storage: 'home',
+          image: { kind: 'native-image', reference: nativeReference } });
+        expect(screen.tree.findAllByType(ManagedImageTiles)[0]?.props.value).toBe(nativeReference);
+        const disk = screen.tree.findAllByType(HappierInputField).find(node => node.props.field.path === 'diskBytes');
+        expect(disk).toBeDefined();
+        if (imageKind !== 'private-after-catalog') {
+          expect(screen.tree.findAllByType(ManagedMachineConfigurator)[0]?.props.summary.spec).toBe(
+            screenText.t('session.actionsDraft.validation.requiredField', { field: disk?.props.field.title }));
+          expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
+        }
+      });
+      // Native references have no catalog disk default: supply the displayed disk requirement.
+      await act(async () => screen.changeTextByTestId('managed-config.field:diskBytes', '150'));
+      await waitForHomeGovernance(() => {
+        const request = harness.requestsFor('/v1/actions/machines.provisioners.options').at(-1);
+        const input = ProvisionerOptionsInputV1Schema.parse(ExternalActionRequestEnvelopeV1Schema.parse(request?.input).input);
+        expect(LumeOptionsInputV1Schema.parse(input.selectors).image).toMatchObject({ kind: 'native-image', reference: nativeReference });
+        expect(screen.findByTestId('managed-config.create')?.props.disabled, screen.getTextContent()).toBe(false);
       });
       expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
     } finally { await screen.unmount(); }
@@ -1672,7 +1704,7 @@ describe('mounted managed configurator', () => {
       expect(onCancel).toHaveBeenCalledOnce();
       expect(screen.findByTestId('managed-config.save-preset')).not.toBeNull();
       await screen.pressByTestIdAsync('managed-config.create');
-      await waitForHomeGovernance(() => expect(onCreated).toHaveBeenCalledWith({ serverId, managedId: 'retained-resource' }));
+      await waitForHomeGovernance(() => expect(onCreated).toHaveBeenCalledWith({ serverId: 'srv_add_server', managedId: 'retained-resource' }));
       expect(route.replace).not.toHaveBeenCalled();
       expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(1);
     } finally { await screen.unmount(); }

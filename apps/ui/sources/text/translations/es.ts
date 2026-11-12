@@ -1,3 +1,5 @@
+import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
+import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
@@ -18681,8 +18683,10 @@ settingsSession: {
         keptForRollback: "Guardados para revertir",
         keptCount: ({ count }: { count: number }) => `${count} ${count === 1 ? 'anterior' : 'anteriores'}`,
         creationReview: deploymentCreationReviewTranslations['es'],
+      recommendation: deploymentRecommendationTranslations['es'],
       defaultsEditor: deploymentDefaultsTranslations['es'],
       copy: deploymentCopyTranslations['es'],
+                move: deploymentMoveTranslations['es'],
       overviewStatus: deploymentOverviewTranslations['es'],
       editors: deploymentEditorsTranslations['es'],
       preparation: deploymentPreparationTranslations['es'],
@@ -18949,6 +18953,7 @@ settingsSession: {
       databaseBackToOverview: "Volver al resumen",
       databaseQuery: {
         title: "Consulta de solo lectura",
+        database: "Nombre de la base de datos",
         run: "Ejecutar consulta",
         sql: "SQL",
         parameters: "Parámetros (JSON)",

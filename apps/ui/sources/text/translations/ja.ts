@@ -1,3 +1,5 @@
+import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
+import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
@@ -18595,8 +18597,10 @@ settingsSession: {
         keptForRollback: "ロールバック用に保持",
         keptCount: ({ count }: { count: number }) => `以前の ${count} 件`,
         creationReview: deploymentCreationReviewTranslations['ja'],
+      recommendation: deploymentRecommendationTranslations['ja'],
       defaultsEditor: deploymentDefaultsTranslations['ja'],
       copy: deploymentCopyTranslations['ja'],
+                move: deploymentMoveTranslations['ja'],
       overviewStatus: deploymentOverviewTranslations['ja'],
       editors: deploymentEditorsTranslations['ja'],
       preparation: deploymentPreparationTranslations['ja'],
@@ -18863,6 +18867,7 @@ settingsSession: {
       databaseBackToOverview: "概要に戻る",
       databaseQuery: {
         title: "読み取り専用クエリ",
+        database: "データベース名",
         run: "クエリを実行",
         sql: "SQL",
         parameters: "パラメーター (JSON)",

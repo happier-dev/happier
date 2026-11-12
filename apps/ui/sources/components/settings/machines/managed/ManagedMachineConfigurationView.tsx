@@ -7,14 +7,14 @@ import { describeManagedNativeFailureDiagnostic } from './managedNativeFailurePr
 import { randomUUID } from '@/platform/randomUUID';
 import { hasManagedMachinePresetCreationV1, type ManagedMachinePresetV1, type PresetMutationResultV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { machinePresetEditContinuationDraft, type MachinePresetEditContinuation, type MachinePresetEditDraft } from './machinePresetEditDraft';
-import type { ManagedControllerV1, ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { createManagedCredentialSelectionV1, readManagedCredentialSelectionValueV1, type ManagedControllerV1, type ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ExternalActionManagedAdmissionReceiptV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { isMachineProvisionerCredentialPurposeRequiredV1, readMachineProvisionerCredentialPurposeSelectorPathsV1, readMachineProvisionerPrerequisitesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { QualifiedConnectedAccountRefSchema, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
-import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import { ConnectedAccountActionFormSelectionV1Schema, qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readInputPath } from '@happier-dev/protocol/inputs';
 import { seedInputByFieldHints, writeInputPath } from '@happier-dev/protocol/inputs/inputFieldRuntime';
@@ -75,7 +75,7 @@ import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1'
 import { ManagedMachineConfigurator } from './ManagedMachineConfigurator';
 import { ManagedCreationDisabledBanner } from './ManagedMachineStateRow';
 import { useManagedControllerScope } from './useManagedControllerScope';
-import { buildManagedConfigurationReceipt, describeLocalHeadroom, describeManagedConfigurationSummary, formatManagedSizeBytes, managedAgentSignInReceiptFacts, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
+import { buildManagedConfigurationReceipt, describeLocalHeadroom, describeManagedConfigurationSummary, formatManagedSizeBytes, managedAgentSignInReceiptFacts, managedCredentialReceiptTargets, managedCredentialPresentations } from './managedConfigurationPresentation';
 import { MachineSetupSection, describeMachineSetup } from './MachineSetupSection';
 import { ManagedEnrollmentIdentitySection, isManagedEnrollmentIdentityReviewed } from './ManagedEnrollmentIdentitySection';
 import { ManagedFieldRow, managedPresetLimitRow } from './MachinePresetDetail';
@@ -114,6 +114,10 @@ export type ManagedMachineConfigurationViewProps = Readonly<{
     initialOptionsSelectors?: Readonly<Record<string, unknown>>;
     initialEnrollmentIdentity?: ManagedMachineEnrollmentIdentityV1;
     initialConnectPurpose?: string;
+    /** A retained creation flow keeps the admitted resource here rather than opening the Machine route. */
+    onCreated?: (machine: Readonly<{ serverId: string; managedId: string }>) => void;
+    /** The host's Back shares the receipt's busy lifecycle, so acquisition cannot lose its result. */
+    onCancel?: () => void;
     /** Composer review returns intent; its creation owner admits any requested acquisition. */
     onUse?: ManagedMachineUse;
     /** Add returns to the original composer, whose creation owner creates only the Machine. */
@@ -265,7 +269,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             || !accountAcquire && (!catalogController || !scope.selection)) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) return;
-        const selected = draft.credentials?.find(entry => qualifiedPurposeKey(entry.purpose) === qualifiedPurposeKey(purpose))?.account ?? null;
+        const credential = draft.credentials?.find(entry => qualifiedPurposeKey(entry.purpose) === qualifiedPurposeKey(purpose));
+        const selected = credential && 'account' in credential ? credential.account : null;
         const setup: ConnectedAccountPurposeSetupHandoff = { request: { scope: binding.scope, ...(catalogController ? { machineId: catalogController.machineId } : {}), purpose }, lifetime,
             ...(catalogController ? { controller: catalogController } : {}), occurrenceId: catalogProvisioner.occurrenceId };
         const selection = accountAcquire ? undefined : scope.selection;
@@ -311,8 +316,10 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const credentialsCurrent = pluginJsonValuesEqual(requiredCredentials, requiredCredentialSelections);
     const credentialsReady = delegatedReview !== undefined || requiredCredentialPurposes !== undefined
         && requiredCredentialSelections.length === requiredCredentialPurposes.length && credentialsCurrent;
-    const credentialInput = React.useMemo(() => Object.fromEntries((credentialPurposes ?? []).map(({ purpose }, index) => [String(index),
-        credentialSelections.find(credential => qualifiedPurposeKey(credential.purpose) === qualifiedPurposeKey(purpose))?.account])), [credentialPurposes, credentialSelections]);
+    const credentialInput = React.useMemo(() => Object.fromEntries((credentialPurposes ?? []).map(({ purpose }, index) => {
+        const selected = credentialSelections.find(credential => qualifiedPurposeKey(credential.purpose) === qualifiedPurposeKey(purpose));
+        return [String(index), selected ? readManagedCredentialSelectionValueV1(selected) : undefined];
+    })), [credentialPurposes, credentialSelections]);
     // A retained draft describes what was reviewed; only the current catalog admits new reads or mutations.
     const provisioner = catalogProvisioner ?? draft?.provisioner;
     const controller = hostAvailability ? hostAvailability.controller : requestedController;
@@ -586,24 +593,27 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // Agents sign in as the Account's per-agent defaults on any machine; one presenter names them beside the provider accounts.
     const agentSignInTargets = useAgentSignInTargets();
     const credentialTargets = React.useMemo(() => props.presetOnly ? [] : [
-        ...(credentialPurposes ?? []).flatMap(({ options }) => options.map(({ value }) => ({
+        ...(credentialPurposes ?? []).flatMap(({ options }) => options.flatMap(({ value }) => 'accountId' in value ? [{
             key: `credential-choice:${actionInputOptionValueKey(value)}`,
             target: { kind: 'account' as const, account: value },
             serviceTitle: resolveQualifiedConnectedServiceRegistryDisplayName(connectedServices, value.service, t, localizeServiceText),
-        }))),
+        }] : [])),
         ...agentSignInTargets,
         ...(receiptFacts ? managedCredentialReceiptTargets(receiptFacts.launch) : []),
     ], [props.presetOnly, credentialPurposes, connectedServices, localizeServiceText, receiptFacts?.launch, agentSignInTargets]);
     const credentialAccounts = useQualifiedConnectedAccountTargetPresentations({ binding: catalog.binding, targets: credentialTargets });
+    const credentialPresentations = React.useMemo(() => managedCredentialPresentations({ credentialPurposes,
+        credentials: receiptFacts?.launch.credentials, personal: credentialAccounts.presentationsByKey }),
+    [credentialAccounts.presentationsByKey, credentialPurposes, receiptFacts?.launch.credentials]);
     // The chooser and receipt consume the same Account names, rather than native option placeholders.
     const credentialFields = React.useMemo(() => resolveEffectiveActionInputFields({ inputHints: { fields: (credentialPurposes ?? []).flatMap(({ purpose, options }, index) => options.length === 0 ? [] : [{
         path: String(index), title: purposeAccountTitle(purpose.purpose) ?? t('managedMachines.receipt.account'), widget: 'select' as const,
         required: requiredCredentialPurposes?.some(entry => qualifiedPurposeKey(entry.purpose) === qualifiedPurposeKey(purpose)) === true,
         options: options.map(option => {
-            const name = credentialAccounts.presentationsByKey[`credential-choice:${actionInputOptionValueKey(option.value)}`]!;
+            const name = credentialPresentations[`credential-choice:${actionInputOptionValueKey(option.value)}`]!;
             return { ...option, label: name.primaryLabel, description: name.secondaryLabel };
         }),
-    }]) } }, credentialInput), [credentialPurposes, requiredCredentialPurposes, credentialInput, purposeAccountTitle, credentialAccounts.presentationsByKey]);
+    }]) } }, credentialInput), [credentialPurposes, requiredCredentialPurposes, credentialInput, purposeAccountTitle, credentialPresentations]);
     // Pending only until the Account's names are first read (a refresh keeps them); a failed read says Unavailable.
     const agentSignIn = props.presetOnly ? undefined : agentSignInTargets.map(entry => ({ agent: entry.agent,
         account: credentialAccounts.loading && !credentialAccounts.resolved ? null
@@ -648,7 +658,11 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const editSetupInputs = () => {
         if (draft?.preset) router.push(`/settings/machines/presets/${encodeURIComponent(draft.preset.id)}?serverId=${encodeURIComponent(props.serverId)}&edit=true` as never);
     };
-    const missingLaunchField = launchFields.find(field => field.required && isBlankInput(readInputPath(fieldInput, field.path)));
+    // The options query accepts partial hardware; the launch declaration names what Create still needs.
+    const requiredLaunchPaths = new Set(deriveActionInputHints(provisioner?.descriptor.launchSchema)?.fields
+        ?.filter(field => field.required).map(field => field.path));
+    const missingLaunchField = launchFields.find(field => (field.required || requiredLaunchPaths.has(field.path))
+        && isBlankInput(readInputPath(fieldInput, field.path)));
     const missingDimension = draft ? managedConfiguratorMissingDimension(draft, projection) : undefined;
     // One decision owns both admission of the Create control and the reason beside it.
     const creationUnavailableReason = busy ? t('common.loading')
@@ -755,13 +769,14 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     };
     const maySaveSetupOnly = !!setupOnlyDraft && !!preset && preset.archivedAt === undefined && !!presetClient
         && teamWritable && !!activeBinding?.isCurrent() && !busy;
-    const created = (value: ManagedMachineActionOutputV1<'machines.managed.acquire'>) => {
-        if (activeBinding?.isCurrent()) router.replace(`/settings/machines/managed/${encodeURIComponent(value.managedId)}?serverId=${encodeURIComponent(activeBinding.serverId)}` as never);
+    const completeCreation = (managedId: string) => {
+        if (!activeBinding?.isCurrent()) return;
+        if (props.onCreated) props.onCreated({ serverId: activeBinding.serverId, managedId });
+        else router.replace(`/settings/machines/managed/${encodeURIComponent(managedId)}?serverId=${encodeURIComponent(activeBinding.serverId)}` as never);
     };
+    const created = (value: ManagedMachineActionOutputV1<'machines.managed.acquire'>) => completeCreation(value.managedId);
     // A correlated waiting admission opens its managed row; it is not a completed native Action.
-    const admitted = (receipt: ExternalActionManagedAdmissionReceiptV1) => {
-        if (activeBinding?.isCurrent()) router.replace(`/settings/machines/managed/${encodeURIComponent(receipt.managedId)}?serverId=${encodeURIComponent(activeBinding.serverId)}` as never);
-    };
+    const admitted = (receipt: ExternalActionManagedAdmissionReceiptV1) => completeCreation(receipt.managedId);
     const reviewedAcquireInput = () => {
         if (!effectiveDraft || !facts || !catalog.homeId || !mayCreate || !activeBinding?.isCurrent() || !catalog.client) return;
         return managedConfiguratorAcquireInput(effectiveDraft, catalog.homeId);
@@ -789,12 +804,13 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         const name = await Modal.prompt(t('managedMachines.receipt.rename'), undefined, { defaultValue: draft.name });
         if (name?.trim() && activeBinding.isCurrent()) setDraft(current => current ? { ...current, name: name.trim() } : current);
     };
-    const billedAccount = credentialAccounts.presentationsByKey['credential:0']?.primaryLabel;
+    const billedAccount = credentialPresentations['credential:0']?.primaryLabel;
     // A local machine's receipt already says where it runs and that nobody bills it.
     const billingFootnote = billing?.location === 'cloud' && billedAccount
         ? t('managedMachines.receipt.cloudFootnote', { provider: title, account: billedAccount }) : null;
     // A hand-off into the editor goes back the way it came; leaving writes nothing.
-    const continuationCancel: ManagedReceiptModel['secondary'] = continuation ? [{ label: t('common.cancel'), onPress: continuation.onReturn,
+    const cancelContinuation = continuation?.onReturn ?? props.onCancel;
+    const continuationCancel: ManagedReceiptModel['secondary'] = cancelContinuation ? [{ label: t('common.cancel'), onPress: cancelContinuation,
         disabled: busy, testID: 'managed-config.continuation-cancel', tone: 'text' }] : undefined;
     // A Preset with setup changes the new Machine: the receipt's Create opens one review of what it does, and that review's confirm is the Create.
     const reviewsSetup = !props.presetOnly && !!draft?.preset && describeMachineSetup(draft.setup).length > 0;
@@ -816,7 +832,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         ...(receiptFacts ? buildManagedConfigurationReceipt({ caption: receiptCaption, launch: receiptFacts.launch, reviewedFacts: receiptFacts, providerTitle: title, controllerName: delegatedAcquire || pooledDraft ? controllerName : knownControllerName, homeName, mark: receiptMark, localized,
             ...(pooledDraft ? { pooledController: { sentenceName: controllerSentence } } : {}),
             ...(acquireTarget === 'account' && !receiptController ? { managedBy: 'account' as const } : {}), agentSignIn,
-            credentialPresentations: credentialAccounts.presentationsByKey, keepEditedBelow: Boolean(keepPolicy && defaultPolicy),
+            credentialPresentations, keepEditedBelow: Boolean(keepPolicy && defaultPolicy),
             enrollmentIdentity: props.presetOnly ? undefined : draft?.enrollmentIdentity })
             // Before choices exist the receipt still tells the truth: a local VM bills nobody, and an unnamed draft
             // names its kind under the provider rather than repeating the provider twice.
@@ -858,7 +874,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             // Why the action is off, or who bills, under the action that starts the billing.
             ...(props.presetOnly ? saveUnavailableReason ? { footnote: saveUnavailableReason } : {}
                 : creationUnavailableReason ?? billingFootnote ? { footnote: creationUnavailableReason ?? billingFootnote! } : {}) },
-        secondary: !props.presetOnly ? [{ label: t('managedMachines.receipt.saveAsPreset'), onPress: () => { void save(); }, disabled: !maySave, testID: 'managed-config.save-preset', tone: 'text' }]
+        secondary: !props.presetOnly ? [...(continuationCancel ?? []), { label: t('managedMachines.receipt.saveAsPreset'), onPress: () => { void save(); }, disabled: !maySave, testID: 'managed-config.save-preset', tone: 'text' }]
             : continuationCancel,
         secondaryNote: !props.presetOnly && presetRetention?.kind === 'deadline' ? t('machinePresets.deadlineOmitted') : undefined,
     };
@@ -926,7 +942,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         // A refused delegated review (a pool with no machine, an unavailable controller) is this page's read failure too.
         const readError = presetQuery.state.error ?? catalog.error ?? (error?.during === 'read' ? error.code : undefined);
         return <ItemList pageColumn="wide">
-            <PageHeader title={props.presetOnly ? t('machinePresets.title') : t('managedMachines.picker.newMachine')} actions={compact ? undefined : pageChip} />
+            <PageHeader title={props.presetOnly ? t('machinePresets.title') : t('managedMachines.picker.newMachine')} actions={compact ? undefined : pageChip}
+                cancelAction={cancelContinuation ? { label: t('common.cancel'), onPress: cancelContinuation, disabled: busy,
+                    testID: 'managed-config.continuation-cancel' } : undefined} />
             {creationDisabledNotice}
             {compact && pageChip ? <ManagedScopeRow testID="managed-config.scope" chip={pageChip} /> : null}
             <ItemGroup surface="none">
@@ -947,7 +965,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const repairs = (receiptFacts?.prerequisites ?? readMachineProvisionerPrerequisitesV1(draft?.check, draft?.options))
         .filter(prerequisite => prerequisite.status !== 'available' && (prerequisite.repairAction || prerequisite.status === 'unknown'));
     // Nothing to choose from yet is not "no choices" while the launch still waits on a required field: the field says what it needs.
-    const awaitsRequiredInput = launchFields.some(field => field.required && isBlankInput(readInputPath(fieldInput, field.path)));
+    const awaitsRequiredInput = !!missingLaunchField;
     // A failed read leaves nothing to fill a blank required field from: the failure takes the fields' place, not a column of empty boxes.
     const readFailed = error?.during === 'read';
     // A conditional purpose needs its launch selectors before an account: choosing a native variant can waive it.
@@ -1086,20 +1104,20 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             {credentialFields.length ? <SectionContentRow><ActionInputFields fields={credentialFields} input={credentialInput}
                 editable={!!catalogProvisioner && catalogPlacementAvailable && !busy && (!preset || props.presetOnly === true)} busy={busy}
                 resolveFieldOptions={credentialFieldOptions} resolveFieldTestID={field => `managed-config.credential:${credentialPurposes?.[Number(field.path)]?.purpose.purpose}`}
-                getChipAccessibilityLabel={({ option }) => credentialAccounts.presentationsByKey[`credential-choice:${actionInputOptionValueKey(option.value)}`]?.accessibilityLabel}
+                getChipAccessibilityLabel={({ option }) => credentialPresentations[`credential-choice:${actionInputOptionValueKey(option.value)}`]?.accessibilityLabel}
                 onPatch={patch => {
                     if (!catalogProvisioner || !catalogPlacementAvailable || busy || preset && !props.presetOnly) return;
                     const input = { ...credentialInput, ...patch };
                     const selections = (credentialPurposes ?? []).flatMap(({ purpose }, index) => {
-                        const parsed = QualifiedConnectedAccountRefSchema.safeParse(input[String(index)]);
-                        return parsed.success ? [{ purpose, account: parsed.data }] : [];
+                        const parsed = ConnectedAccountActionFormSelectionV1Schema.safeParse(input[String(index)]);
+                        return parsed.success ? [createManagedCredentialSelectionV1(purpose, parsed.data)] : [];
                     });
                     setDraft(current => current ? setManagedConfiguratorCredentials(current,
                         managedConfiguratorCredentialSelections({ credentials: selections }, catalogProvisioner)) : current);
                 }} /></SectionContentRow> : null}
             {credentialPurposes?.map(({ purpose }) => <Item key={qualifiedPurposeKey(purpose)}
                 testID={`managed-config.connect:${purpose.purpose}`} title={t(credentialSelections.some(entry =>
-                    qualifiedPurposeKey(entry.purpose) === qualifiedPurposeKey(purpose)) ? 'connectedServices.detail.actions.reconnect' : 'managedMachines.add.action.connect')}
+                    'account' in entry && qualifiedPurposeKey(entry.purpose) === qualifiedPurposeKey(purpose)) ? 'connectedServices.detail.actions.reconnect' : 'managedMachines.add.action.connect')}
                 subtitle={purposeAccountTitle(purpose.purpose)}
                 // It opens the Connect sheet: the service's own mark, or Connect's plug while the service is not named.
                 icon={purposeService(purpose.purpose) ? <ConnectedServiceMark legacyServiceId={null}

@@ -1,3 +1,5 @@
+import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
+import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
@@ -17486,8 +17488,10 @@ La meva pregunta: `,
             keptForRollback: "Desats per revertir",
             keptCount: ({ count }: { count: number }) => `${count} ${count === 1 ? 'anterior' : 'anteriors'}`,
             creationReview: deploymentCreationReviewTranslations['ca'],
+      recommendation: deploymentRecommendationTranslations['ca'],
       defaultsEditor: deploymentDefaultsTranslations['ca'],
       copy: deploymentCopyTranslations['ca'],
+                move: deploymentMoveTranslations['ca'],
       overviewStatus: deploymentOverviewTranslations['ca'],
       editors: deploymentEditorsTranslations['ca'],
       preparation: deploymentPreparationTranslations['ca'],
@@ -17754,6 +17758,7 @@ La meva pregunta: `,
       databaseBackToOverview: "Torna al resum",
       databaseQuery: {
         title: "Consulta de només lectura",
+        database: "Nom de la base de dades",
         run: "Executa la consulta",
         sql: "SQL",
         parameters: "Paràmetres (JSON)",

@@ -9,7 +9,7 @@ import {
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { resolveDeploymentCreationDefaultsV1 } from '@happier-dev/deployments';
+import { resolveDeploymentCreationDefaultsV1, resolvePublishTargetRecommendation } from '@happier-dev/deployments';
 import type { DeploymentCreationDefaultInputsForHost } from '@/deployments/readCreationDefaultsForHost';
 
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
@@ -40,6 +40,9 @@ export function createPublishCatalogPreparation(host: Readonly<{
         project: selected.newProject ? { newProject: selected.newProject, owner }
           : { projectSourceId: selected.source?.id, sourceRevision: selected.source?.revision, owner },
         machine: { machineId: input.machineId, installationId: input.installationId }, template: selected.template,
+        recommendation: resolvePublishTargetRecommendation({ definition: { from: 'compose' },
+          explicitTarget: { id: input.machineId, targetClass: 'ownServer' },
+          targets: [{ id: input.machineId, targetClass: 'ownServer', availability: 'unknown' }] }),
         creationDefaults, ...(selected.defaultInputs.reviewBasis ? { creationDefaultsBasis: selected.defaultInputs.reviewBasis } : {}) });
     } catch (error) {
       return failure(error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'

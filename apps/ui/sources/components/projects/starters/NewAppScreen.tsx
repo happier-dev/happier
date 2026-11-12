@@ -32,6 +32,7 @@ import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { randomUUID } from '@/platform/randomUUID';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useActiveMachineFacts } from '@/sync/store/hooks';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
@@ -56,12 +57,21 @@ import {
   deriveRepositoryName,
   readStarterCreateOutcome,
   type StarterCreateOutcome,
+  type StarterCreateInput,
 } from './newAppDraft';
 import { projectCheckoutParentPath } from '../activation/projectOpenChoices';
+import { StarterPreview, resolveStarterPreviewShape } from './StarterPreview';
+import { StoreAppDefinitionEntriesFor } from '@/components/store/StoreAppDefinitionEntries';
+import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
+
+import type { MachineCreationContinuationDraft } from '@/components/machines/add/MachineCreationContinuation';
+
+const NewAppMachineSetup = React.lazy(() => import('./NewAppMachineSetup').then(module => ({ default: module.NewAppMachineSetup })));
 
 type Step = 'start' | 'describe' | 'create';
 const STEPS: readonly Step[] = ['start', 'describe', 'create'];
-const STARTER_PREVIEW_ASPECT_RATIO = 3.2;
+// The lab's starter tile: a sketch about twice as wide as it is tall (s1 gallery, desktop and phone).
+const STARTER_PREVIEW_ASPECT_RATIO = 1.8;
 
 /** The Action each control uses (lab s1 NOTES "actions"). */
 const CREATE_ACTION = 'projects.starters.create' as const;
@@ -133,12 +143,16 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const [description, setDescription] = React.useState('');
   const [name, setName] = React.useState('');
   const [machineId, setMachineId] = React.useState<string | null>(null);
+  const [addingMachine, setAddingMachine] = React.useState(false);
+  const [machineHomeMismatch, setMachineHomeMismatch] = React.useState(false);
+  const [machineCreationDraft, setMachineCreationDraft] = React.useState<MachineCreationContinuationDraft | null>(null);
   const [detailsOpen, setDetailsOpen] = React.useState(false);
   const [machineMenuOpen, setMachineMenuOpen] = React.useState(false);
   const [owner, setOwner] = React.useState<OwnerFact>({ kind: 'loading' });
   const [create, setCreate] = React.useState<CreateState | null>(null);
   // One create intent per reviewed draft: a retry of the same review reuses it, so nothing is created twice.
   const [intentKeyFor] = React.useState(() => createStarterIntentKeys(randomUUID));
+  const submittedInput = React.useRef<StarterCreateInput | null>(null);
 
   const starter =
     starters.find((candidate) => candidate.itemId === starterId) ?? null;
@@ -218,16 +232,35 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   }, [props.onClose, router]);
 
   const connectGithub = React.useCallback(() => {
-    close();
-    router.push({
-      pathname: '/(app)/settings/connected-services/[serviceId]',
-      params: { serviceId: 'github' },
-    } as never);
-  }, [close, router]);
+    void (async () => {
+      const [{ presentConnectSheet }, { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID }] = await Promise.all([
+        import('@/components/settings/connectedServices/setup/ConnectedServiceSetupModal'),
+        import('@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility'),
+      ]);
+      await presentConnectSheet({
+        scope,
+        service: BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID.github.service,
+        intent: 'link',
+      });
+      // The SCM owner reads the repaired credential; the starter and writing stay in this screen.
+      probeOwner();
+    })();
+  }, [probeOwner, scope]);
   const addComputer = React.useCallback(() => {
-    close();
-    router.push('/machines/add' as never);
-  }, [close, router]);
+    setMachineHomeMismatch(false);
+    setAddingMachine(true);
+  }, []);
+  const returnFromMachineSetup = React.useCallback(() => setAddingMachine(false), []);
+  const selectAddedMachine = React.useCallback((added: Readonly<{ machineId: string; serverId: string }>) => {
+    if (!scope || !areServerProfileIdentifiersEquivalent(added.serverId, scope.serverId)) {
+      setMachineHomeMismatch(true);
+      return false;
+    }
+    setMachineHomeMismatch(false);
+    setMachineId(added.machineId);
+    setAddingMachine(false);
+    return true;
+  }, [scope]);
 
   const startSession = React.useCallback(
     async (
@@ -263,8 +296,14 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     [name, scope],
   );
 
-  const submit = React.useCallback(async () => {
-    if (!input || !scope) return;
+  const submit = React.useCallback(async (retry = false) => {
+    const reviewedInput = retry ? submittedInput.current ?? input : input;
+    if (!reviewedInput || !scope) return;
+    const actionInput = retry && create?.kind === 'failed' && create.resume
+      ? { ...reviewedInput, resume: create.resume }
+      : reviewedInput;
+    // A visible retry keeps the submitted operands, including an earlier continuation after transport failure.
+    submittedInput.current = actionInput;
     setStep('create');
     setCreate({ kind: 'running' });
     let outcome: StarterCreateOutcome;
@@ -275,7 +314,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       });
       // This review is the Action's designed confirmation (uiConfirmation: 'direct').
       outcome = readStarterCreateOutcome(
-        await execute(CREATE_ACTION, input, { confirmed: true }),
+        await execute(CREATE_ACTION, actionInput, { confirmed: true }),
+        actionInput.resume,
       );
     } catch (error) {
       const code =
@@ -285,16 +325,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         typeof error.code === 'string'
           ? error.code
           : 'starter_create_failed';
-      outcome =
-        code === 'scm_account_required'
-          ? { kind: 'needsScmAccount' }
-          : {
-              kind: 'failed',
-              phase: null,
-              code,
-              repositoryCreated: false,
-              remediation: null,
-            };
+      outcome = readStarterCreateOutcome({ kind: 'failed', code }, actionInput.resume);
     }
     setCreate(outcome);
     if (outcome.kind === 'needsScmAccount') {
@@ -306,21 +337,22 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       if (await startSession(outcome)) close();
       else setCreate({ kind: 'projectReady', created: outcome });
     }
-  }, [close, input, scope, startSession]);
+  }, [close, create, input, scope, startSession]);
 
   const back = React.useCallback(() => {
-    if (step === 'describe') setStep('start');
+    if (addingMachine) setAddingMachine(false);
+    else if (step === 'describe') setStep('start');
     else if (
       step === 'create' &&
       (create?.kind === 'failed' || create?.kind === 'outcomeUnknown')
     )
       setStep('describe');
     else close();
-  }, [close, create?.kind, step]);
+  }, [addingMachine, close, create?.kind, step]);
   const pageBack = usePageBackControl('newApp.back', back);
 
   const stepIndex = STEPS.indexOf(step);
-  const primary =
+  const primary = addingMachine ? null :
     step === 'start'
       ? {
           title: t('common.continue'),
@@ -351,22 +383,25 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         : create?.kind === 'failed' || create?.kind === 'outcomeUnknown'
           ? {
               title: t('newApp.retry'),
-              disabled: !input,
+              disabled: !submittedInput.current && !input,
               onPress: () => {
-                void submit();
+                void submit(true);
               },
               testID: 'newApp.retry',
             }
           : null;
-  const footerNote =
+  const footerNote = addingMachine ? null :
     step === 'start' && !starter
       ? t('newApp.startPick')
       : step === 'describe'
         ? t('newApp.reviewNote')
         : null;
-  const showBack =
+  // A selected managed creation owns Cancel, including its disabled state while acquisition is pending.
+  const machineOwnsExit = addingMachine && machineCreationDraft !== null;
+  const showBack = !machineOwnsExit && (
     step === 'describe' ||
-    (step === 'create' && (create?.kind === 'failed' || create?.kind === 'outcomeUnknown'));
+    (step === 'create' && (create?.kind === 'failed' || create?.kind === 'outcomeUnknown'))
+  );
   const primaryRef = React.useRef(primary);
   primaryRef.current = primary;
   const backRef = React.useRef(back);
@@ -414,7 +449,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   useModalCardChrome(props.setChrome, dialogChrome);
 
   const header = (title: string, descriptionText: string) => (
-    <NavigationBackChromeProvider control={dialog ? null : pageBack}>
+    <NavigationBackChromeProvider control={dialog || machineOwnsExit ? null : pageBack}>
       <PageHeader title={title} description={descriptionText} alwaysShowTitle />
     </NavigationBackChromeProvider>
   );
@@ -446,10 +481,51 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   );
 
   let body: React.ReactNode;
-  if (step === 'start') {
+  if (addingMachine && scope) {
+    body = (
+      <View testID="newApp.addMachine">
+        {header(t('newApp.addComputer'), t('newApp.computerNeeded'))}
+        {machineHomeMismatch ? (
+          <SurfaceStateCard testID="newApp.machineHomeMismatch" kind="unavailable" layout="inline"
+            title={t('newApp.machineHomeMismatch')} />
+        ) : null}
+        <React.Suspense fallback={<SurfaceStateCard kind="loading" layout="inline" title={t('common.loading')} />}>
+          <NewAppMachineSetup serverId={scope.serverId} draft={machineCreationDraft}
+            onDraftChange={setMachineCreationDraft} onArrived={selectAddedMachine} onCancel={returnFromMachineSetup} />
+        </React.Suspense>
+      </View>
+    );
+  } else if (step === 'start') {
     body = (
       <>
         {header(t('newApp.startTitle'), t('newApp.startDescription'))}
+        {starterCatalog.loading && starters.length === 0 ? (
+          <SurfaceStateCard testID="newApp.loading" kind="loading" layout="inline" title={t('common.loading')} />
+        ) : null}
+        {starterCatalog.sourceFailures.map((failure) => (
+          <SurfaceStateCard
+            key={failure.sourceId}
+            testID={`newApp.catalogFailure:${failure.sourceId}`}
+            kind="error"
+            layout="inline"
+            title={t('capabilities.store.listing.failed')}
+            reason={failure.message}
+            action={{ label: t('common.retry'), onPress: failure.onRetry }}
+          />
+        ))}
+        {starterCatalog.error ? (
+          <SurfaceStateCard
+            testID="newApp.catalogFailure"
+            kind="error"
+            layout="inline"
+            title={t('capabilities.store.listing.failed')}
+            reason={starterCatalog.error}
+            action={{ label: t('common.retry'), onPress: starterCatalog.refresh }}
+          />
+        ) : null}
+        {!starterCatalog.loading && !starterCatalog.error && starterCatalog.sourceFailures.length === 0 && starters.length === 0 ? (
+          <SurfaceStateCard kind="empty" layout="inline" title={t('capabilities.store.emptyTitle')} />
+        ) : null}
         <ItemGroup surface="none">
           <View style={dialog ? styles.dialogInset : null}>
             <SelectionTiles
@@ -466,6 +542,27 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             />
           </View>
         </ItemGroup>
+        {/* Lab s1 `ways`: an app that already exists runs without a repository, through the Store's own entries. */}
+        {scope ? (
+          <View testID="newApp.ways" style={styles.ways}>
+            <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
+              {t('newApp.runExisting')}
+            </Text>
+            <View style={styles.waysEntries}>
+              <RoundButton
+                testID="newApp.fromCatalog"
+                size="small"
+                display="secondary"
+                title={t('newApp.fromCatalog')}
+                onPress={() => {
+                  close();
+                  router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app' }) as never);
+                }}
+              />
+              <StoreAppDefinitionEntriesFor scope={scope} onNavigate={close} />
+            </View>
+          </View>
+        ) : null}
         {props.onClone ? (
           <View style={styles.haveCode}>
             <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
@@ -635,12 +732,6 @@ export const NewAppScreen = React.memo(function NewAppScreen(
                 />
                 <Item
                   mode="info"
-                  title={t('newApp.detailRevision')}
-                  detail={starter.version ?? 'current'}
-                  showChevron={false}
-                />
-                <Item
-                  mode="info"
                   title={t('newApp.detailBranch')}
                   detail="main"
                   showChevron={false}
@@ -753,6 +844,7 @@ function starterTile(starter: RegistryCatalogItemSummary) {
     id: starter.itemId,
     title: starter.title,
     subtitle: starter.description,
+    preview: <StarterPreview shape={resolveStarterPreviewShape(starter.appMetadata?.tags)} />,
   };
 }
 
@@ -768,6 +860,8 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.space.s16,
     paddingTop: theme.space.s4,
   },
+  ways: { gap: theme.space.s8, paddingTop: theme.space.s8, paddingHorizontal: theme.space.s16 },
+  waysEntries: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 },
   // The card has no page gutter; inline sections take the sheet's inset there.
   dialogInset: { paddingHorizontal: theme.space.s16 },
 

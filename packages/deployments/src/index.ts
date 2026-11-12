@@ -36,3 +36,7 @@ export { readDeploymentSecretRevisionFacts } from './secrets/readDeploymentSecre
 export { environmentSecretBindingInstallationsV1, projectEnvironmentSecretBindingRequiredUsesV1, type EnvironmentSecretRequiredUseV1,
     type EnvironmentSecretRequiredUsesProjectionV1 } from './secrets/projectEnvironmentSecretBindingRequiredUsesV1.js';
 export * from './secrets/sealMachineSecretGrantEnvelopeV1.js';
+
+export { buildMoveWorkflowDefinition } from './move/buildMoveWorkflowDefinition.js';
+
+export { resolvePublishTargetRecommendation, type PublishTargetRecommendationInput } from './targets/resolvePublishTargetRecommendation.js';

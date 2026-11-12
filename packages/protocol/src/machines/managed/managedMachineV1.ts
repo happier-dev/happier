@@ -7,6 +7,7 @@ import { PluginContributionIdentityV1Schema } from '../../plugins/contributionId
 import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.js';
 import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';
 import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connectedAccountPurposeIdentity.js';
+import { QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema, type ConnectedAccountActionFormSelectionV1 } from '../../connect/connectedAccountPurposeBindings.js';
 import { createManagedConfigurationFactsV1Schema } from './managedConfigurationV1.js';
 import { ManagedNativeOperationReferenceV1Schema, ManagedRecoveryHintV1Schema, ProviderObservationV1Schema, SharedSavedSecretRefV1Schema, SupportedNativeIntentSchema } from './providerFactsV1.js';
 import { DevcontainerChildProjectionV1Schema, DevcontainerNativeObservationV1Schema, deriveManagedDevcontainerChildProjectionV1, managedDevcontainerChildProjectionsEqualV1 } from './devcontainerV1.js';
@@ -89,7 +90,17 @@ export const SubmittedNativeEffectV1Schema = lazyDefinition(() => z.strictObject
   intentRevision: z.int().check(z.gte(0)), requestId: id(), intent: SupportedNativeIntentSchema, controller: z.optional(ManagedControllerV1Schema),
   reviewedEffectDigest: z.optional(id()),
 }));
-export const ManagedCredentialSelectionV1Schema = lazyDefinition(() => z.strictObject({ purpose: QualifiedConnectedAccountPurposeV1Schema, account: asProtocolZod(QualifiedConnectedAccountRefSchema) }));
+const ManagedAccountCredentialSelectionV1Schema = lazyDefinition(() => z.strictObject({ purpose: QualifiedConnectedAccountPurposeV1Schema, account: asProtocolZod(QualifiedConnectedAccountRefSchema) }));
+export const ManagedCredentialSelectionV1Schema = lazyDefinition(() => z.union([
+  ManagedAccountCredentialSelectionV1Schema, QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema,
+]));
+export type ManagedCredentialSelectionV1 = z.infer<typeof ManagedCredentialSelectionV1Schema>;
+export function readManagedCredentialSelectionValueV1(credential: ManagedCredentialSelectionV1): ConnectedAccountActionFormSelectionV1 {
+  return 'account' in credential ? credential.account : { teamId: credential.teamId, selection: credential.selection };
+}
+export function createManagedCredentialSelectionV1(purpose: ManagedCredentialSelectionV1['purpose'], value: ConnectedAccountActionFormSelectionV1): ManagedCredentialSelectionV1 {
+  return 'accountId' in value ? { purpose, account: value } : { purpose, ...value };
+}
 function credentialSelections<T extends z.core.$ZodType<z.infer<typeof ManagedCredentialSelectionV1Schema>>>(schema: T) {
   return z.array(schema).check(z.superRefine((credentials, context) => {
     const seen = new Set<string>();
@@ -101,9 +112,9 @@ function credentialSelections<T extends z.core.$ZodType<z.infer<typeof ManagedCr
   }));
 }
 export const ManagedCredentialSelectionsV1Schema = lazyDefinition(() => credentialSelections(ManagedCredentialSelectionV1Schema));
-export const RetainedManagedCredentialSelectionsV1Schema = lazyDefinition(() => credentialSelections(z.strictObject({
-  ...ManagedCredentialSelectionV1Schema.shape, configurationRevision: z.optional(z.nullable(id())),
-})));
+export const RetainedManagedCredentialSelectionsV1Schema = lazyDefinition(() => credentialSelections(z.union([z.strictObject({
+  ...ManagedAccountCredentialSelectionV1Schema.shape, configurationRevision: z.optional(z.nullable(id())),
+}), QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema])));
 export function createValidatedLaunchSnapshotV1Schema<T extends z.core.$ZodType>(choices: T) {
   return z.strictObject({ provider: asProtocolZod(PluginContributionIdentityV1Schema), schemaVersion: z.int().check(z.gt(0)), name: id(), choices, credentials: z.optional(ManagedCredentialSelectionsV1Schema) });
 }

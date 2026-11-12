@@ -1,6 +1,8 @@
+import { WorkflowDefinitionCreateResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import { z } from 'zod/mini';
 import type { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentActionOutputSchemasV1, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateActionResultV1Schema, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1, type DeploymentTargetLinkInputV1, type DeploymentTargetLinkIntentInputV1, type DeploymentTargetLinkProviderIntentInputV1, type DeploymentEnvironmentHeaderV1, type DeploymentEnvironmentUpdateInputV1, type DeploymentDeployInputV1, type DeploymentRollbackInputV1, type DeploymentTargetUnlinkInputV1, type DeploymentEnvironmentDeleteInputV1, type DeploymentCancelInputV1, type DeploymentRestartInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentActionOutputSchemasV1, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateActionResultV1Schema, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1, type DeploymentTargetLinkInputV1, type DeploymentTargetLinkIntentInputV1, type DeploymentTargetLinkProviderIntentInputV1, type DeploymentTargetLinkCreateIntentInputV1, type DeploymentEnvironmentHeaderV1, type DeploymentEnvironmentUpdateInputV1, type DeploymentDeployInputV1, type DeploymentRollbackInputV1, type DeploymentTargetUnlinkInputV1, type DeploymentEnvironmentDeleteInputV1, type DeploymentCancelInputV1, type DeploymentRestartInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentBindingsPatchInputV1, DeploymentTeardownActionInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { type DeploymentDeployIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';
 import type { DeploymentPromoteIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentPromoteIntentV1';
@@ -35,13 +37,14 @@ import type { DeploymentCreationDefaultsV1 } from '@happier-dev/protocol/project
 
 type PreparedCreate = Omit<DeploymentEnvironmentCreateInputV1, 'serverId' | 'projectSourceId'>;
 export type DeploymentUiCreateInput = Omit<DeploymentEnvironmentCreateIntentInputV1,
-    'serverId' | 'projectSourceId' | 'requestKey' | 'mode'> & Readonly<{ requestKey?: string }>;
+    'serverId' | 'requestKey' | 'mode'> & Readonly<{ requestKey?: string }>;
 type PreparedLink = Omit<DeploymentTargetLinkInputV1, 'serverId'>;
 /** The parent Action authors native or provider content through its canonical preparation owner. */
 export type DeploymentUiLinkInput = (Omit<DeploymentTargetLinkIntentInputV1, 'serverId' | 'requestKey' | 'source'> & Readonly<{
     source?: Extract<NonNullable<DeploymentTargetLinkIntentInputV1['source']>, { kind: 'host' }>;
     requestKey?: string;
-}>) | (Omit<DeploymentTargetLinkProviderIntentInputV1, 'serverId' | 'requestKey'> & Readonly<{ requestKey?: string }>);
+}>) | (Omit<DeploymentTargetLinkProviderIntentInputV1, 'serverId' | 'requestKey'> & Readonly<{ requestKey?: string }>)
+    | (Omit<DeploymentTargetLinkCreateIntentInputV1, 'serverId' | 'requestKey'> & Readonly<{ requestKey?: string }>);
 type PreparedRollback = Omit<DeploymentRollbackInputV1, 'serverId'>;
 /** Only the controller authors teardown candidates, including native resource inventory. */
 export type DeploymentUiTeardownInput = DeploymentTeardownActionInputV1 extends infer T
@@ -62,7 +65,7 @@ export type DeploymentUiDomainInput = Omit<DeploymentDomainRemoveInputV1, 'serve
 type DeploymentStepConfirmation = NonNullable<NonNullable<Parameters<typeof createFrontDoorActionExecute>[1]>['presentUserActionConfirmation']>;
 
 /** Prepared content is admitted by the Action owner under the captured Home/Account. */
-export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, projectSourceId: string) {
+export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, projectSourceId?: string) {
     const execute = createFrontDoorUiActionExecutor(undefined, {
         serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId,
     });
@@ -316,6 +319,12 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
             assertCurrent();
             return result;
         },
+        async saveMoveWorkflow(definitionId: string, definition: WorkflowDefinitionV1, title: string) {
+            assertCurrent();
+            return WorkflowDefinitionCreateResultV1Schema.parse(await execute('workflow.definition.create', {
+                definitionId, definition, metadata: { title },
+            }));
+        },
         async setBindings(input: DeploymentUiBindingsInput, operation?: UiActionOperation) {
             assertCurrent();
             return DeploymentActionOutputSchemasV1['deployments.bindings.set'].parse(await invoke('deployments.bindings.set', {
@@ -377,7 +386,7 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
             assertCurrent();
             const preview = DeploymentEnvironmentCreateActionResultV1Schema.parse(await invoke(
                 'deployments.environments.create', { ...input, mode: 'preview', requestKey: input.requestKey ?? randomUUID(),
-                    serverId: lifetime.scope.serverId, projectSourceId }, operation));
+                    serverId: lifetime.scope.serverId, ...(projectSourceId ? { projectSourceId } : {}) }, operation));
             if ('ok' in preview) {
                 const code = preview.ok ? 'invalid_action_output' : preview.error;
                 throw new HappyError(code, false, { code, details: preview });

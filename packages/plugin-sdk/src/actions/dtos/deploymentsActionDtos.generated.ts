@@ -400,6 +400,7 @@ export type DeploymentsActionInputById = {
             templateVolumeId: string;
             source: string;
         }[];
+        companions?: string[] | undefined;
         deploy?: undefined | {
             requestKey: string;
         };
@@ -669,7 +670,13 @@ export type DeploymentsActionInputById = {
         };
     } | {
         kind: 'runtime';
-        service: {
+        environmentId: string;
+        deploymentId: string;
+        targetLinkId: string;
+        machineId: string;
+        installationId: string;
+        serverId: string;
+        service?: undefined | {
             kind: 'deployment';
             machineId: string;
             environmentId: string;
@@ -677,12 +684,6 @@ export type DeploymentsActionInputById = {
             composeService: string;
             serviceId: string;
         };
-        environmentId: string;
-        deploymentId: string;
-        targetLinkId: string;
-        machineId: string;
-        installationId: string;
-        serverId: string;
         cursor?: undefined | {
             sourceRevision: string;
             token: string;
@@ -941,10 +942,51 @@ export type DeploymentsActionInputById = {
                         role: 'readOnlyPassword';
                     };
                 })[];
-                data: {
+                data: ({
                     targetLinkId: string;
-                    kind: 'createEmpty' | 'omit' | 'restoreBackup' | 'reuse';
-                }[];
+                    kind: 'createEmpty';
+                    provision: {
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        input: Record<string, unknown>;
+                    };
+                } | {
+                    targetLinkId: string;
+                    kind: 'omit';
+                } | {
+                    targetLinkId: string;
+                    kind: 'restoreBackup';
+                } | {
+                    targetLinkId: string;
+                    kind: 'reuse';
+                    bindings?: ({
+                        purpose: 'backupDestination';
+                        configKey: 'destination';
+                        role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                    } | {
+                        purpose: 'domainCredential';
+                        domainId: string;
+                        role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                    } | {
+                        purpose: 'registry';
+                        targetLinkId: string;
+                        registryOrigin: string;
+                    } | {
+                        purpose: 'variable';
+                        name: string;
+                        phase: 'build' | 'runtime';
+                    } | {
+                        service: string;
+                        purpose: 'dataRole';
+                        role: 'readOnlyPassword';
+                    } | {
+                        targetLinkId: string;
+                        purpose: 'dataRole';
+                        role: 'readOnlyPassword';
+                    })[] | undefined;
+                })[];
                 retainPreviousDeployments?: 'copy' | 'default' | undefined;
             };
         };
@@ -1022,6 +1064,22 @@ export type DeploymentsActionInputById = {
                 role: 'readOnlyPassword';
             })[];
             sourceRuntimeTargetLinkId?: string | undefined;
+            data?: undefined | {
+                targetLinkId: string;
+                targetId: string;
+                targetKind: string;
+                contribution: {
+                    pluginId: string;
+                    localId: string;
+                };
+                provision: {
+                    action: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    input: Record<string, unknown>;
+                };
+            }[];
         };
         copyIntentCommitment?: string | undefined;
     } | {
@@ -1326,10 +1384,51 @@ export type DeploymentsActionInputById = {
                         role: 'readOnlyPassword';
                     };
                 })[];
-                data: {
+                data: ({
                     targetLinkId: string;
-                    kind: 'createEmpty' | 'omit' | 'restoreBackup' | 'reuse';
-                }[];
+                    kind: 'createEmpty';
+                    provision: {
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        input: Record<string, unknown>;
+                    };
+                } | {
+                    targetLinkId: string;
+                    kind: 'omit';
+                } | {
+                    targetLinkId: string;
+                    kind: 'restoreBackup';
+                } | {
+                    targetLinkId: string;
+                    kind: 'reuse';
+                    bindings?: ({
+                        purpose: 'backupDestination';
+                        configKey: 'destination';
+                        role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                    } | {
+                        purpose: 'domainCredential';
+                        domainId: string;
+                        role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                    } | {
+                        purpose: 'registry';
+                        targetLinkId: string;
+                        registryOrigin: string;
+                    } | {
+                        purpose: 'variable';
+                        name: string;
+                        phase: 'build' | 'runtime';
+                    } | {
+                        service: string;
+                        purpose: 'dataRole';
+                        role: 'readOnlyPassword';
+                    } | {
+                        targetLinkId: string;
+                        purpose: 'dataRole';
+                        role: 'readOnlyPassword';
+                    })[] | undefined;
+                })[];
                 retainPreviousDeployments?: 'copy' | 'default' | undefined;
             };
         };
@@ -1740,6 +1839,163 @@ export type DeploymentsActionInputById = {
     };
     readonly "deployments.targets.link": {
         targetId: string;
+        machines: {
+            machineId: string;
+            installationId: string;
+        }[];
+        requestKey: string;
+        environmentId: string;
+        expectedRevision: number;
+        serverId: string;
+        source: {
+            kind: 'plugin';
+            contribution: {
+                pluginId: string;
+                localId: string;
+            };
+        };
+        targetKind: string;
+        role: 'runtime';
+        providerCreate: {
+            credentialRef: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            credentialPrincipal: {
+                kind: 'account';
+                accountId: string;
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                target: {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
+            } | {
+                kind: 'team';
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                teamId: string;
+                selection: {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'direct';
+                    disclosedMember: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                };
+            };
+            providerAccountId: string;
+            providerEnvironment: {
+                kind: 'custom';
+                id: string;
+            } | {
+                kind: 'preview';
+                gitBranch?: string | undefined;
+            } | {
+                kind: 'preview';
+                scriptName: string;
+                previewName: string;
+            } | {
+                kind: 'production';
+            } | {
+                kind: 'script';
+                scriptName: string;
+            };
+            resourceName: string;
+            repository?: undefined | {
+                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                deployment: string;
+                repository: string;
+            };
+            targetLinkId?: undefined;
+            providerIdentity?: undefined;
+            repositoryAccess?: undefined | {
+                status: 'needsGitAccess';
+                repository: {
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                    deployment: string;
+                    repository: string;
+                };
+                grantUrl?: string | undefined;
+            } | {
+                status: 'ready';
+                repository: {
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                    deployment: string;
+                    repository: string;
+                };
+            };
+            preparedNative?: undefined | {
+                projectName: string;
+                reviewNotice?: string | undefined;
+                gitSource?: undefined | {
+                    type: 'github';
+                    repoId: string;
+                };
+                triggerUuid?: string | undefined;
+                previewId?: string | undefined;
+                gitBranch?: string | undefined;
+                workerTag?: string | undefined;
+                scriptName?: string | undefined;
+                pages?: undefined | {
+                    projectMode: 'directUpload' | 'gitIntegration';
+                    productionBranch: string;
+                    buildCommand?: string | undefined;
+                    buildOutputDirectory?: string | undefined;
+                    rootDirectory?: string | undefined;
+                };
+            };
+            productionBranch?: string | undefined;
+            expectedTargetLinkRevision?: undefined;
+            sourceMethod?: 'gitIntegration' | 'upload' | undefined;
+        };
+        managedRetention?: 'keep' | 'until-delete' | undefined;
+        provisioned?: true | undefined;
+        machineId?: string | undefined;
+        installationId?: string | undefined;
+        replacesLinkId?: string | undefined;
+        drainedDeploymentId?: string | undefined;
+        expectedTargetLinkRevision?: number | undefined;
+        title?: string | undefined;
+    } | {
+        targetId: string;
         role: 'data' | 'runtime';
         machines: {
             machineId: string;
@@ -1753,6 +2009,7 @@ export type DeploymentsActionInputById = {
         contentHeaderVersion: number;
         contentBodyVersion: number;
         managedRetention?: 'keep' | 'until-delete' | undefined;
+        provisioned?: true | undefined;
         source?: undefined | {
             kind: 'host';
             id: string;
@@ -1781,6 +2038,7 @@ export type DeploymentsActionInputById = {
         expectedRevision: number;
         serverId: string;
         managedRetention?: 'keep' | 'until-delete' | undefined;
+        provisioned?: true | undefined;
         targetKind?: string | undefined;
         machineId?: string | undefined;
         installationId?: string | undefined;
@@ -1931,8 +2189,10 @@ export type DeploymentsActionInputById = {
                 desiredRevision: number;
                 providerRevision?: string | undefined;
             }[];
+            providerUrl?: string | undefined;
         };
         managedRetention?: 'keep' | 'until-delete' | undefined;
+        provisioned?: true | undefined;
         machineId?: string | undefined;
         installationId?: string | undefined;
         replacesLinkId?: string | undefined;
@@ -2316,6 +2576,15 @@ export type DeploymentsActionInputById = {
         };
     } | {
         intent: 'markNotNeeded';
+        serverId: string;
+        environmentId: string;
+        expectedRevision: number;
+    } | {
+        intent: 'rekeyAndSave';
+        replacement: {
+            ref: string;
+            resourceRevision: number;
+        };
         serverId: string;
         environmentId: string;
         expectedRevision: number;
@@ -2806,7 +3075,10 @@ export type DeploymentsActionInputById = {
             resourceId: string;
             revision: number;
             requiredBindings?: ({
-                purpose: 'backupDestination' | 'dataRole' | 'domainCredential';
+                purpose: 'backupDestination';
+                role?: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey' | undefined;
+            } | {
+                purpose: 'dataRole' | 'domainCredential';
             } | {
                 purpose: 'registry';
                 targetLinkId: string;
@@ -4112,6 +4384,27 @@ export type DeploymentsActionResultById = {
                 scheme?: string | undefined;
                 env?: Record<string, string> | undefined;
             }> | undefined;
+            companions?: undefined | {
+                id: string;
+                title: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, number | string> | undefined;
+                };
+                services: string[];
+                description?: string | undefined | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, number | string> | undefined;
+                };
+                exports?: Record<string, {
+                    service: string;
+                    port: number;
+                    defaultExposure: 'internal' | 'privateNetwork' | 'public';
+                    scheme?: string | undefined;
+                    env?: Record<string, string> | undefined;
+                }> | undefined;
+            }[];
             loginFields?: undefined | {
                 password: string;
                 username?: string | undefined;
@@ -4168,6 +4461,20 @@ export type DeploymentsActionResultById = {
                 backupRetention?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                 alertChannels?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
             };
+        };
+        recommendation?: undefined | {
+            target: null | {
+                id: string;
+                targetClass: 'ownServer' | 'platform';
+            };
+            compatibleTargetIds: string[];
+            offeredTargetIds: string[];
+            evidence: ('existing_target' | 'explicit_target' | 'repository_compose' | 'stored_definition')[];
+            uncertainty: ('machine_availability_unknown' | 'platform_source_capability_unknown' | 'project_shape_unknown')[];
+            corrections: {
+                targetId: string;
+                kind: 'choose_machine' | 'prepare_repository' | 'repair_target';
+            }[];
         };
         creationDefaultsBasis?: undefined | {
             projectSourceId: string;
@@ -4448,6 +4755,23 @@ export type DeploymentsActionResultById = {
             };
         };
         continuation?: undefined | {
+            actionId: 'action.invoke';
+            input: {
+                action: {
+                    pluginId: string;
+                    localId: string;
+                };
+                input?: JsonValue;
+                expectedContributorOccurrenceId?: string;
+                clientId?: string;
+                messageActionReference?: {
+                    v: 1;
+                    sessionId: string;
+                    messageId: string;
+                    observedRevision: string;
+                };
+            };
+        } | {
             actionId: 'deployments.bindings.set';
             input: {
                 set: ({
@@ -4816,10 +5140,51 @@ export type DeploymentsActionResultById = {
                                 role: 'readOnlyPassword';
                             };
                         })[];
-                        data: {
+                        data: ({
                             targetLinkId: string;
-                            kind: 'createEmpty' | 'omit' | 'restoreBackup' | 'reuse';
-                        }[];
+                            kind: 'createEmpty';
+                            provision: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input: Record<string, JsonValue>;
+                            };
+                        } | {
+                            targetLinkId: string;
+                            kind: 'omit';
+                        } | {
+                            targetLinkId: string;
+                            kind: 'restoreBackup';
+                        } | {
+                            targetLinkId: string;
+                            kind: 'reuse';
+                            bindings?: ({
+                                purpose: 'backupDestination';
+                                configKey: 'destination';
+                                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                            } | {
+                                purpose: 'domainCredential';
+                                domainId: string;
+                                role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            } | {
+                                purpose: 'registry';
+                                targetLinkId: string;
+                                registryOrigin: string;
+                            } | {
+                                purpose: 'variable';
+                                name: string;
+                                phase: 'build' | 'runtime';
+                            } | {
+                                service: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            } | {
+                                targetLinkId: string;
+                                purpose: 'dataRole';
+                                role: 'readOnlyPassword';
+                            })[] | undefined;
+                        })[];
                         retainPreviousDeployments?: 'copy' | 'default' | undefined;
                     };
                 };
@@ -4897,8 +5262,177 @@ export type DeploymentsActionResultById = {
                         role: 'readOnlyPassword';
                     })[];
                     sourceRuntimeTargetLinkId?: string | undefined;
+                    data?: undefined | {
+                        targetLinkId: string;
+                        targetId: string;
+                        targetKind: string;
+                        contribution: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        provision: {
+                            action: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            input: Record<string, JsonValue>;
+                        };
+                    }[];
                 };
                 copyIntentCommitment?: string | undefined;
+            };
+        } | {
+            actionId: 'deployments.targets.link';
+            input: {
+                targetId: string;
+                role: 'data' | 'runtime';
+                machines: {
+                    machineId: string;
+                    installationId: string;
+                }[];
+                requestKey: string;
+                environmentId: string;
+                expectedRevision: number;
+                serverId: string;
+                source: {
+                    kind: 'plugin';
+                    contribution: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                };
+                targetKind: string;
+                provider: {
+                    credentialPrincipal: {
+                        kind: 'account';
+                        accountId: string;
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        target: {
+                            kind: 'account';
+                            account: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            kind: 'group';
+                            service: {
+                                pluginId: 'happier';
+                                localId: 'mcp-sign-in';
+                            } | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            groupId: string;
+                        };
+                    } | {
+                        kind: 'team';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        teamId: string;
+                        selection: {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        };
+                    };
+                    providerIdentity: {
+                        providerAccountId: string;
+                        providerResourceId: string;
+                        providerEnvironment: string;
+                    };
+                    providerEnvironment: {
+                        kind: 'custom';
+                        id: string;
+                    } | {
+                        kind: 'preview';
+                        gitBranch?: string | undefined;
+                    } | {
+                        kind: 'preview';
+                        scriptName: string;
+                        previewName: string;
+                    } | {
+                        kind: 'production';
+                    } | {
+                        kind: 'script';
+                        scriptName: string;
+                    };
+                    repositoryAccess?: undefined | {
+                        status: 'needsGitAccess';
+                        repository: {
+                            kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                            deployment: string;
+                            repository: string;
+                        };
+                        grantUrl?: string | undefined;
+                    } | {
+                        status: 'ready';
+                        repository: {
+                            kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                            deployment: string;
+                            repository: string;
+                        };
+                    };
+                    preparedNative?: undefined | {
+                        projectName: string;
+                        reviewNotice?: string | undefined;
+                        gitSource?: undefined | {
+                            type: 'github';
+                            repoId: string;
+                        };
+                        triggerUuid?: string | undefined;
+                        previewId?: string | undefined;
+                        gitBranch?: string | undefined;
+                        workerTag?: string | undefined;
+                        scriptName?: string | undefined;
+                        pages?: undefined | {
+                            projectMode: 'directUpload' | 'gitIntegration';
+                            productionBranch: string;
+                            buildCommand?: string | undefined;
+                            buildOutputDirectory?: string | undefined;
+                            rootDirectory?: string | undefined;
+                        };
+                    };
+                    ownedVariables?: undefined | {
+                        key: string;
+                        providerId: string;
+                        desiredRevision: number;
+                        providerRevision?: string | undefined;
+                    }[];
+                    providerUrl?: string | undefined;
+                };
+                managedRetention?: 'keep' | 'until-delete' | undefined;
+                provisioned?: true | undefined;
+                machineId?: string | undefined;
+                installationId?: string | undefined;
+                replacesLinkId?: string | undefined;
+                drainedDeploymentId?: string | undefined;
+                expectedTargetLinkRevision?: number | undefined;
+                title?: string | undefined;
             };
         };
         unknownSecret?: undefined | {
@@ -5435,7 +5969,7 @@ export type DeploymentsActionResultById = {
             };
             files?: undefined | {
                 path: string;
-                before: null;
+                before: null | string;
                 content: string;
             }[];
         };
@@ -5754,6 +6288,7 @@ export type DeploymentsActionResultById = {
         native: null | {
             phase: 'running' | 'stopped' | 'unknown';
             readiness: 'not_ready' | 'not_reported' | 'ready';
+            composeServices?: string[] | undefined;
             displayName?: string | undefined;
         };
         health: 'healthy' | 'running_unverified' | 'unhealthy' | 'unknown';
@@ -6090,6 +6625,7 @@ export type DeploymentsActionResultById = {
                     token: string;
                 };
                 truncated: boolean;
+                rowId?: string | undefined;
                 secretMasking?: 'incomplete' | undefined;
             };
         } | {
@@ -6122,6 +6658,7 @@ export type DeploymentsActionResultById = {
                     token: string;
                 };
                 truncated: boolean;
+                rowId?: string | undefined;
                 secretMasking?: 'incomplete' | undefined;
             };
         } | {
@@ -6136,7 +6673,13 @@ export type DeploymentsActionResultById = {
                 revision: string;
             };
         };
-        service: {
+        environmentId: string;
+        deploymentId: string;
+        targetLinkId: string;
+        machineId: string;
+        installationId: string;
+        ok: true;
+        service?: undefined | {
             kind: 'deployment';
             machineId: string;
             environmentId: string;
@@ -6144,12 +6687,6 @@ export type DeploymentsActionResultById = {
             composeService: string;
             serviceId: string;
         };
-        environmentId: string;
-        deploymentId: string;
-        targetLinkId: string;
-        machineId: string;
-        installationId: string;
-        ok: true;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -6549,10 +7086,51 @@ export type DeploymentsActionResultById = {
                             role: 'readOnlyPassword';
                         };
                     })[];
-                    data: {
+                    data: ({
                         targetLinkId: string;
-                        kind: 'createEmpty' | 'omit' | 'restoreBackup' | 'reuse';
-                    }[];
+                        kind: 'createEmpty';
+                        provision: {
+                            action: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            input: Record<string, JsonValue>;
+                        };
+                    } | {
+                        targetLinkId: string;
+                        kind: 'omit';
+                    } | {
+                        targetLinkId: string;
+                        kind: 'restoreBackup';
+                    } | {
+                        targetLinkId: string;
+                        kind: 'reuse';
+                        bindings?: ({
+                            purpose: 'backupDestination';
+                            configKey: 'destination';
+                            role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                        } | {
+                            purpose: 'domainCredential';
+                            domainId: string;
+                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                        } | {
+                            purpose: 'registry';
+                            targetLinkId: string;
+                            registryOrigin: string;
+                        } | {
+                            purpose: 'variable';
+                            name: string;
+                            phase: 'build' | 'runtime';
+                        } | {
+                            service: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        } | {
+                            targetLinkId: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        })[] | undefined;
+                    })[];
                     retainPreviousDeployments?: 'copy' | 'default' | undefined;
                 };
             };
@@ -6630,6 +7208,22 @@ export type DeploymentsActionResultById = {
                     role: 'readOnlyPassword';
                 })[];
                 sourceRuntimeTargetLinkId?: string | undefined;
+                data?: undefined | {
+                    targetLinkId: string;
+                    targetId: string;
+                    targetKind: string;
+                    contribution: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    provision: {
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        input: Record<string, JsonValue>;
+                    };
+                }[];
             };
             copyIntentCommitment?: string | undefined;
         } | {
@@ -6934,10 +7528,51 @@ export type DeploymentsActionResultById = {
                             role: 'readOnlyPassword';
                         };
                     })[];
-                    data: {
+                    data: ({
                         targetLinkId: string;
-                        kind: 'createEmpty' | 'omit' | 'restoreBackup' | 'reuse';
-                    }[];
+                        kind: 'createEmpty';
+                        provision: {
+                            action: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            input: Record<string, JsonValue>;
+                        };
+                    } | {
+                        targetLinkId: string;
+                        kind: 'omit';
+                    } | {
+                        targetLinkId: string;
+                        kind: 'restoreBackup';
+                    } | {
+                        targetLinkId: string;
+                        kind: 'reuse';
+                        bindings?: ({
+                            purpose: 'backupDestination';
+                            configKey: 'destination';
+                            role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                        } | {
+                            purpose: 'domainCredential';
+                            domainId: string;
+                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                        } | {
+                            purpose: 'registry';
+                            targetLinkId: string;
+                            registryOrigin: string;
+                        } | {
+                            purpose: 'variable';
+                            name: string;
+                            phase: 'build' | 'runtime';
+                        } | {
+                            service: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        } | {
+                            targetLinkId: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        })[] | undefined;
+                    })[];
                     retainPreviousDeployments?: 'copy' | 'default' | undefined;
                 };
             };
@@ -7307,6 +7942,7 @@ export type DeploymentsActionResultById = {
         environmentId: string;
         revision: number;
         projectSourceId?: string | undefined;
+        replayed?: true | undefined;
         runtimeTargetLinkId?: string | undefined;
         previewDataTargets?: undefined | {
             templateDataTargetLinkId: string;
@@ -7580,6 +8216,7 @@ export type DeploymentsActionResultById = {
         environmentId: string;
         revision: number;
         projectSourceId?: string | undefined;
+        replayed?: true | undefined;
         runtimeTargetLinkId?: string | undefined;
         previewDataTargets?: undefined | {
             templateDataTargetLinkId: string;
@@ -7654,6 +8291,172 @@ export type DeploymentsActionResultById = {
             step: 'target_link.associate' | 'target_link.environment_read' | 'target_link.provider_links_read';
             field: string;
             rule: 'constraint' | 'invalid_type' | 'invalid_value' | 'path_mismatch' | 'unrecognized_keys';
+        };
+    } | {
+        ok: false;
+        error: 'deployment_link_incomplete';
+        recovery: {
+            targetId: string;
+            role: 'data' | 'runtime';
+            machines: {
+                machineId: string;
+                installationId: string;
+            }[];
+            requestKey: string;
+            environmentId: string;
+            expectedRevision: number;
+            serverId: string;
+            source: {
+                kind: 'plugin';
+                contribution: {
+                    pluginId: string;
+                    localId: string;
+                };
+            };
+            targetKind: string;
+            provider: {
+                credentialPrincipal: {
+                    kind: 'account';
+                    accountId: string;
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    target: {
+                        kind: 'account';
+                        account: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        kind: 'group';
+                        service: {
+                            pluginId: 'happier';
+                            localId: 'mcp-sign-in';
+                        } | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        groupId: string;
+                    };
+                } | {
+                    kind: 'team';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    teamId: string;
+                    selection: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    };
+                };
+                providerIdentity: {
+                    providerAccountId: string;
+                    providerResourceId: string;
+                    providerEnvironment: string;
+                };
+                providerEnvironment: {
+                    kind: 'custom';
+                    id: string;
+                } | {
+                    kind: 'preview';
+                    gitBranch?: string | undefined;
+                } | {
+                    kind: 'preview';
+                    scriptName: string;
+                    previewName: string;
+                } | {
+                    kind: 'production';
+                } | {
+                    kind: 'script';
+                    scriptName: string;
+                };
+                repositoryAccess?: undefined | {
+                    status: 'needsGitAccess';
+                    repository: {
+                        kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                        deployment: string;
+                        repository: string;
+                    };
+                    grantUrl?: string | undefined;
+                } | {
+                    status: 'ready';
+                    repository: {
+                        kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                        deployment: string;
+                        repository: string;
+                    };
+                };
+                preparedNative?: undefined | {
+                    projectName: string;
+                    reviewNotice?: string | undefined;
+                    gitSource?: undefined | {
+                        type: 'github';
+                        repoId: string;
+                    };
+                    triggerUuid?: string | undefined;
+                    previewId?: string | undefined;
+                    gitBranch?: string | undefined;
+                    workerTag?: string | undefined;
+                    scriptName?: string | undefined;
+                    pages?: undefined | {
+                        projectMode: 'directUpload' | 'gitIntegration';
+                        productionBranch: string;
+                        buildCommand?: string | undefined;
+                        buildOutputDirectory?: string | undefined;
+                        rootDirectory?: string | undefined;
+                    };
+                };
+                ownedVariables?: undefined | {
+                    key: string;
+                    providerId: string;
+                    desiredRevision: number;
+                    providerRevision?: string | undefined;
+                }[];
+                providerUrl?: string | undefined;
+            };
+            managedRetention?: 'keep' | 'until-delete' | undefined;
+            provisioned?: true | undefined;
+            machineId?: string | undefined;
+            installationId?: string | undefined;
+            replacesLinkId?: string | undefined;
+            drainedDeploymentId?: string | undefined;
+            expectedTargetLinkRevision?: number | undefined;
+            title?: string | undefined;
+        };
+        failure?: undefined | {
+            ok: false;
+            errorCode: string;
+            error: string;
+            requestId?: string | undefined;
+            effectAttempted?: boolean | undefined;
+            details?: unknown;
+            failureCause?: ActionFailureCauseV1 | undefined;
+            goalControlFailure?: undefined | {
+                phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+            };
         };
     } | {
         ok: false;
@@ -8977,6 +9780,78 @@ export type DeploymentsActionResultById = {
                 totalFilesProcessed: number;
                 producerChecksumSha256?: string | undefined;
             };
+            sourceFormat: 'sqlite';
+            target: {
+                service: string;
+                adapter: 'sqlite-v1';
+                path: string;
+            };
+            configuration: {
+                configRevision: number;
+                destinationRef: {
+                    pluginId: string;
+                    localId: string;
+                };
+                occurrenceId: string;
+                config: Record<string, JsonValue>;
+                credentialBindings: {
+                    purpose: 'backupDestination';
+                    configKey: 'destination';
+                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                }[];
+                sources: ({
+                    kind: 'dump';
+                    sourceId: string;
+                    service: string;
+                    consistency: 'logical';
+                } | {
+                    kind: 'volume';
+                    sourceId: string;
+                    service: string;
+                    volume: string;
+                    consistency: 'stopDuringCopy';
+                })[];
+                ownership: {
+                    environmentId: string;
+                    prefix: string;
+                };
+                retention: {
+                    kind: 'keep';
+                    last?: number | undefined;
+                    daily?: number | undefined;
+                    weekly?: number | undefined;
+                    monthly?: number | undefined;
+                } | {
+                    kind: 'keepEverything';
+                };
+            };
+            repository: {
+                repository: string;
+                s3?: undefined | {
+                    region?: string | undefined;
+                    addressing?: 'auto' | 'dns' | 'path' | undefined;
+                };
+            };
+        } | {
+            source: {
+                schemaVersion: 1;
+                environmentId: string;
+                sourceId: string;
+                kind: 'dump' | 'volume';
+                configRevision: number;
+                repositoryId: string;
+                snapshot: {
+                    snapshotId: string;
+                    treeId: string;
+                    hostname: string;
+                    time: string;
+                    paths: string[];
+                    tags: string[];
+                };
+                totalBytesProcessed: number;
+                totalFilesProcessed: number;
+                producerChecksumSha256?: string | undefined;
+            };
             sourceFormat: 'volume';
             target: {
                 service: string;
@@ -9584,7 +10459,10 @@ export type DeploymentsActionResultById = {
             resourceId: string;
             revision: number;
             requiredBindings?: ({
-                purpose: 'backupDestination' | 'dataRole' | 'domainCredential';
+                purpose: 'backupDestination';
+                role?: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey' | undefined;
+            } | {
+                purpose: 'dataRole' | 'domainCredential';
             } | {
                 purpose: 'registry';
                 targetLinkId: string;

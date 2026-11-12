@@ -78,6 +78,7 @@ export const workspaceRouteFiles: Readonly<Record<string, string>> = {
     "projects/[workspaceRefId]/scripts": "./(app)/projects/[workspaceRefId]/scripts.tsx",
     "projects/[workspaceRefId]/services": "./(app)/projects/[workspaceRefId]/services.tsx",
     "projects/[workspaceRefId]/deployments": "./(app)/projects/[workspaceRefId]/deployments.tsx",
+    "deployments/new": "./(app)/deployments/new.tsx",
     "deployments/[projectSourceId]": "./(app)/deployments/[projectSourceId].tsx",
     "projects/[workspaceRefId]/context": "./(app)/projects/[workspaceRefId]/context.tsx",
     "projects/[workspaceRefId]/memory": "./(app)/projects/[workspaceRefId]/memory.tsx",

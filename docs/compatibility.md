@@ -181,6 +181,16 @@ contracts under `packages/protocol/src/machines/peer/mediation`.
 
 ## Database copy and reference components (unreleased 0.3)
 
+Protected provider target-link content optionally carries `data` presentation:
+engine, version and a credential-free HTTP(S) provider-console URL and label.
+The existing mode-aware link artifact writer captures these provider-produced
+facts; target metadata and authority are unchanged. New readers accept links
+without the leaf. Matching development Protocol, CLI and UI readers reload
+together because older strict readers reject it. This is the unpublished 0.3
+direct cut, with no new envelope, wire epoch or compatibility adapter. The
+inspected `../0.2` frontier at `91e2afbaca33e8589652c2d2b7e2abfa9a2cf049`
+has no deployment target-role contract, including scoped local changes.
+
 Native deploy intent can restrict one operation with an explicit, nonempty
 `services` subset. Preparation retains that restriction in the private receipt
 and pending intent while keeping the complete `sourceIntent` unchanged. Native
@@ -476,6 +486,22 @@ The wire epoch, package version and persisted approval format do not change.
 The inspected `../0.2` frontier `d370a14c49f3383ca145938462bdfb257f6e453c`,
 including scoped staged and unstaged paths, has no Session Action origin or
 request-attribution contract; no predecessor adapter is introduced.
+
+## Availability digest-only declaration claims (unreleased 0.3)
+
+The existing Collection-writer claim accepts either its unchanged closed full
+manifest input or a closed `{ pluginId, manifestDigestSha256, prepare? }` input.
+A held digest resolves only an already-admitted declaration for that Account and
+plugin and follows the existing Collection/intent merge and publisher proof.
+A miss returns HTTP 404 `plugin_declaration_not_found`; the host then sends the
+full declaration. Responses and persisted declarations are unchanged. Unknown
+fields reject, and a digest grants no identity, routing or effect authority.
+Protocol, CLI and server reload together under the unpublished 0.3 direct cut;
+earlier strict development servers reject the new input arm. Full-manifest
+producers remain accepted. No wire epoch, capability gate or predecessor adapter
+is added. The scoped-clean `../0.2` frontier
+`7b0f74960b1393886b994dbda71dcb3439c1ab57` has no corresponding claim owner or
+Availability actions module.
 
 ## Availability Machine declaration demand (unreleased 0.3)
 
@@ -8140,8 +8166,13 @@ omit an independent response ID when the vendor exposes only call IDs; existing
 call/result grouping IDs are unchanged. The host binds person origin only to
 finished microphone input or typed composer input, preserves it through tool
 continuations, and treats missing origin as synthetic. These authority-relevant
-facts are consumed by the existing spoken Action confirmation owner, not a new
-approval rule. Matching SDK, UI and bundled Provider source readers refresh
+facts are consumed by the existing spoken Action confirmation owner. Provider
+connections notify the host immediately before actual greeting or host-readback
+input opens a response. Context-only sends do not open responses. When distinct
+inputs overlap before an uncorrelated response-created event, the host treats
+that response as synthetic and retains ordinary review rather than guessing its
+opening input. This can require an extra, recoverable review during overlap;
+it introduces no new approval rule. Matching SDK, UI and bundled Provider source readers refresh
 together under the unpublished 0.3 direct cut; this introduces no wire epoch,
 persisted format or compatibility adapter. The scoped-clean `../0.2` frontier
 `91e2afbaca33e8589652c2d2b7e2abfa9a2cf049` has no

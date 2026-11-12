@@ -1,3 +1,5 @@
+import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
+import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
@@ -18634,8 +18636,10 @@ settingsSession: {
         keptForRollback: "Сохранено для отката",
         keptCount: ({ count }: { count: number }) => `Предыдущих: ${count}`,
         creationReview: deploymentCreationReviewTranslations['ru'],
+      recommendation: deploymentRecommendationTranslations['ru'],
       defaultsEditor: deploymentDefaultsTranslations['ru'],
       copy: deploymentCopyTranslations['ru'],
+                move: deploymentMoveTranslations['ru'],
       overviewStatus: deploymentOverviewTranslations['ru'],
       editors: deploymentEditorsTranslations['ru'],
       preparation: deploymentPreparationTranslations['ru'],
@@ -18902,6 +18906,7 @@ settingsSession: {
       databaseBackToOverview: "Назад к обзору",
       databaseQuery: {
         title: "Запрос только для чтения",
+        database: "Имя базы данных",
         run: "Выполнить запрос",
         sql: "SQL",
         parameters: "Параметры (JSON)",

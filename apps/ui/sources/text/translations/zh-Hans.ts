@@ -1,3 +1,5 @@
+import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
+import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
@@ -18300,8 +18302,10 @@ settingsSession: {
         keptForRollback: "为回滚保留",
         keptCount: ({ count }: { count: number }) => `之前的 ${count} 个`,
         creationReview: deploymentCreationReviewTranslations['zh-Hans'],
+      recommendation: deploymentRecommendationTranslations['zh-Hans'],
       defaultsEditor: deploymentDefaultsTranslations['zh-Hans'],
       copy: deploymentCopyTranslations['zh-Hans'],
+                move: deploymentMoveTranslations['zh-Hans'],
       overviewStatus: deploymentOverviewTranslations['zh-Hans'],
       editors: deploymentEditorsTranslations['zh-Hans'],
       preparation: deploymentPreparationTranslations['zh-Hans'],
@@ -18568,6 +18572,7 @@ settingsSession: {
       databaseBackToOverview: "返回概览",
       databaseQuery: {
         title: "只读查询",
+        database: "数据库名称",
         run: "运行查询",
         sql: "SQL",
         parameters: "参数 (JSON)",

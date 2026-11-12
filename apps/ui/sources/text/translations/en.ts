@@ -1,3 +1,5 @@
+import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
+import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import type { AgentStartupFailureCode, RequesterSessionRuntimeRefusalCode, SESSION_PREPARATION_FAILURE_PREVIEWS } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { SessionUsageLimitRecoveryOperationResultErrorStatusV1 } from '@happier-dev/protocol/sessions/control/sessionUsageLimitRecoveryOperationResultV1';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
@@ -22129,8 +22131,10 @@ const enProjects = {
       keptForRollback: "Kept for rollback",
       keptCount: ({ count }: { count: number }) => `${count} previous`,
       creationReview: deploymentCreationReviewTranslations['en'],
+      recommendation: deploymentRecommendationTranslations['en'],
       defaultsEditor: deploymentDefaultsTranslations['en'],
       copy: deploymentCopyTranslations['en'],
+                move: deploymentMoveTranslations['en'],
       overviewStatus: deploymentOverviewTranslations['en'],
       editors: deploymentEditorsTranslations['en'],
       preparation: deploymentPreparationTranslations['en'],
@@ -22413,6 +22417,7 @@ const enProjects = {
       databaseBackToOverview: "Back to Overview",
       databaseQuery: {
         title: "Read-only query",
+        database: "Database name",
         run: "Run query",
         sql: "SQL",
         parameters: "Parameters (JSON)",

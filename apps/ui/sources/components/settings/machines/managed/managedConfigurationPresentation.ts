@@ -1,5 +1,8 @@
 import type * as React from 'react';
-import type { ManagedMachineEnrollmentIdentityV1, ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { readManagedCredentialSelectionValueV1, type ManagedMachineEnrollmentIdentityV1, type ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { actionInputOptionValueKey } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import { deliveryModeLabel } from '@/sync/domains/teams/teamCredentialDeliveryPresentation';
 import { describeManagedSize as describeSharedManagedSize, managedSizeDimensions as sharedManagedSizeDimensions,
     formatManagedSizeBytes, resolveManagedConfigurationCost,
     type ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
@@ -14,13 +17,35 @@ import { describeRetention, describeRetentionPolicy, formatRetentionDuration } f
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import type { PluginLocalizedStringV2 } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { presentQualifiedConnectedAccountTarget, type QualifiedConnectedAccountTargetPresentation } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
+import { presentQualifiedConnectedAccountTarget, presentConnectedAccountPurposeTeamResource, type QualifiedConnectedAccountTargetPresentation } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 
 /** These are display targets from already validated selections, never new purpose authorizations. */
 export function managedCredentialReceiptTargets(launch: ValidatedLaunchSnapshotV1) {
-    return (launch.credentials ?? []).map((credential, index) => ({ key: `credential:${index}`,
-        target: { kind: 'account' as const, account: credential.account } }));
+    return (launch.credentials ?? []).flatMap((credential, index) => 'account' in credential ? [{ key: `credential:${index}`,
+        target: { kind: 'account' as const, account: credential.account } }] : []);
+}
+
+/** Team display facts come from offered choices, never from their underlying personal Account. */
+export function managedCredentialPresentations(input: Readonly<{
+    credentialPurposes: MachineProvisionersListResultV1['provisioners'][number]['credentialPurposes'];
+    credentials: ValidatedLaunchSnapshotV1['credentials'];
+    personal: Readonly<Record<string, QualifiedConnectedAccountTargetPresentation>>;
+}>): Readonly<Record<string, QualifiedConnectedAccountTargetPresentation>> {
+    const names = { ...input.personal };
+    for (const { options } of input.credentialPurposes ?? []) for (const { value, label } of options) {
+        if ('accountId' in value) continue;
+        const mode = deliveryModeLabel(value.selection.deliveryMode);
+        names[`credential-choice:${actionInputOptionValueKey(value)}`] = {
+            primaryLabel: label, secondaryLabel: mode, accessibilityLabel: `${label} · ${mode}`,
+        };
+    }
+    for (const [index, credential] of (input.credentials ?? []).entries()) {
+        if ('account' in credential) continue;
+        const name = names[`credential-choice:${actionInputOptionValueKey(readManagedCredentialSelectionValueV1(credential))}`];
+        if (name) names[`credential:${index}`] = { ...name, primaryLabel: name.accessibilityLabel };
+    }
+    return names;
 }
 
 export type ManagedConfigurationReceiptInput = Readonly<{
@@ -109,9 +134,9 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
     const credentials = input.launch.credentials ?? [];
     for (const [index, credential] of credentials.entries()) {
         const id = `credential:${index}`;
-        const account = input.credentialPresentations?.[id] ?? presentQualifiedConnectedAccountTarget({
+        const account = input.credentialPresentations?.[id] ?? ('account' in credential ? presentQualifiedConnectedAccountTarget({
             target: { kind: 'account', account: credential.account }, accounts: [], groups: [], labelsByKey: {}, serviceTitle: null,
-        });
+        }) : presentConnectedAccountPurposeTeamResource({ teamResource: credential, teamResources: [], serviceTitle: null }));
         // One account is simply "Account"; several are told apart by the purpose each one serves.
         rows.push({ id, label: credentials.length === 1 ? t('managedMachines.receipt.account')
             : `${buildQualifiedPluginContributionKey(credential.purpose.consumer)} · ${credential.purpose.purpose}`,

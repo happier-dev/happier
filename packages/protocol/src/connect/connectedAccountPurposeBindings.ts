@@ -51,6 +51,16 @@ export const QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema = laz
   selection: TeamResourceConnectedServiceSelectionV2Schema,
 }));
 
+/** Exact credential choice shared by Action forms and managed provisioning. */
+export const ConnectedAccountActionFormTeamSelectionV1Schema = lazyZodSchema(() => z.strictObject({
+  teamId: QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema.shape.teamId,
+  selection: QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema.shape.selection,
+}));
+export const ConnectedAccountActionFormSelectionV1Schema = lazyZodSchema(() => z.union([
+  asProtocolZod(QualifiedConnectedAccountRefSchema), ConnectedAccountActionFormTeamSelectionV1Schema,
+]));
+export type ConnectedAccountActionFormSelectionV1 = z.infer<typeof ConnectedAccountActionFormSelectionV1Schema>;
+
 /**
  * Forward read of a Team purpose default an earlier 0.3 build persisted as a
  * `kind: 'team_resource'` purpose target. It is moved, in the parsed value

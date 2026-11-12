@@ -894,9 +894,15 @@ describe('Environment draft Machine Home', () => {
         } });
       await publishMachineInventoryForTest(account.accountLifetime.scope,
         [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
-      const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
-        phone={false} platformAvailable actions={createDeploymentActions(account.accountLifetime, 'source-app')}
-        onApprovalRequested={() => {}} onSaved={(id, next) => saved.push([id, next])} onDiscard={() => {}} />);
+      const draftOwner = { refresh: () => {} };
+      function DraftOwner() {
+        const [lifetime, setLifetime] = React.useState(account.accountLifetime);
+        draftOwner.refresh = () => setLifetime({ ...account.accountLifetime });
+        return <DeploymentEnvironmentDraft lifetime={lifetime} sourceId="source-app"
+          phone={false} platformAvailable actions={createDeploymentActions(account.accountLifetime, 'source-app')}
+          onApprovalRequested={() => {}} onSaved={(id, next) => saved.push([id, next])} onDiscard={() => {}} />;
+      }
+      const screen = await renderScreen(<DraftOwner />);
       const header = () => screen.findAllByType(PageHeader)[0]!;
       await act(async () => header().props.titleEditor.onChangeText('Marketing site'));
       // Each platform the plugins declare is a choice of its own, beside the person's Machines.
@@ -919,7 +925,7 @@ describe('Environment draft Machine Home', () => {
       await screen.pressByTestIdAsync('project-deployments.platform.check');
       await waitForHomeGovernance(async () => {
         await act(async () => {});
-        expect(inspections, JSON.stringify({ boundary: receiver.boundaryDiagnostics, outcome: screen.findAllByType(DeploymentPlatformInspectState).map(node => node.props.outcome), screen: screen.getTextContent(), requests: homes.requests.map(({ method, path }) => ({ method, path })) })).toHaveLength(1);
+        expect(inspections, JSON.stringify({ outcome: screen.findAllByType(DeploymentPlatformInspectState).map(node => node.props.outcome), screen: screen.getTextContent(), requests: homes.requests.map(({ method, path }) => ({ method, path })) })).toHaveLength(1);
       });
       expect(inspections[0]).not.toHaveProperty('environmentId');
       expect(inspections[0]).not.toHaveProperty('expectedRevision');
@@ -929,7 +935,9 @@ describe('Environment draft Machine Home', () => {
       await waitForHomeGovernance(async () => { await act(async () => {});
         expect(header().props.primaryAction.disabled, screen.getTextContent()).toBe(false); });
       if (targetDisappears) {
-        await act(async () => installed.dispose());
+        // Disabling the admitted release removes its declarations on the next owner refresh.
+        // Unloading the executable alone does not withdraw the Account's declared target.
+        await act(async () => { installed.disable(); draftOwner.refresh(); });
         await waitForHomeGovernance(async () => { await act(async () => {});
           expect(screen.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(0); });
         const { SelectionTiles } = await import('@/components/ui/forms/SelectionTiles');
@@ -975,7 +983,9 @@ describe('Environment draft Machine Home', () => {
         const agentResult = await createFrontDoorActionExecute()('action.invoke', {
           action: { pluginId, localId: 'inspect-beta' }, input: inspections[0],
         }, { surface: 'cli', serverId, expectedAccountId: 'alice' });
-        expect(agentResult).toMatchObject({ ok: true, result: JSON.parse(linkedContent.body) });
+        expect(agentResult, JSON.stringify(agentResult.ok ? { phase: 'cli.frontdoor', ok: true }
+          : { phase: 'cli.frontdoor', ok: false, code: agentResult.errorCode, effectAttempted: agentResult.effectAttempted }))
+          .toMatchObject({ ok: true, result: JSON.parse(linkedContent.body) });
       }
       if (linkRefused) {
         expect(saved).toEqual([]);

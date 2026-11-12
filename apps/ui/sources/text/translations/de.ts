@@ -1,3 +1,5 @@
+import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
+import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
@@ -18789,8 +18791,10 @@ settingsSession: {
             keptForRollback: "Für Rollback behalten",
             keptCount: ({ count }: { count: number }) => `${count} vorherige`,
             creationReview: deploymentCreationReviewTranslations['de'],
+      recommendation: deploymentRecommendationTranslations['de'],
       defaultsEditor: deploymentDefaultsTranslations['de'],
       copy: deploymentCopyTranslations['de'],
+                move: deploymentMoveTranslations['de'],
       overviewStatus: deploymentOverviewTranslations['de'],
       editors: deploymentEditorsTranslations['de'],
       preparation: deploymentPreparationTranslations['de'],
@@ -19057,6 +19061,7 @@ settingsSession: {
       databaseBackToOverview: "Zurück zur Übersicht",
       databaseQuery: {
         title: "Schreibgeschützte Abfrage",
+        database: "Datenbankname",
         run: "Abfrage ausführen",
         sql: "SQL",
         parameters: "Parameter (JSON)",

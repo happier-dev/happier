@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { MachineCreationContinuation, type MachineCreationContinuationDraft } from '@/components/machines/add/MachineCreationContinuation';
 import { View } from 'react-native';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -11,6 +12,7 @@ import { ListPresentationProvider } from '@/components/ui/lists/listPresentation
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
+import { DeploymentMachinesEmpty } from './DeploymentMachinesEmpty';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { useMachineListForServer } from '@/sync/store/hooks';
@@ -57,12 +59,12 @@ function DeploymentLinkMachineSheet(
       ),
     [all],
   );
-  const [chosenId, setChosenId] = React.useState<string | null>(
-    props.suggestedMachineId,
-  );
+  const [creatingMachine, setCreatingMachine] = React.useState(false);
+  const [machineCreationDraft, setMachineCreationDraft] = React.useState<MachineCreationContinuationDraft | null>(null);
+  const [chosenId, setChosenId] = React.useState<string | null>(null);
   const chosen =
-    machines.find((machine) => machine.id === chosenId) ??
-    (machines.length === 1 ? machines[0] : null);
+    chosenId !== null ? machines.find((machine) => machine.id === chosenId) ?? null :
+    machines.find((machine) => machine.id === props.suggestedMachineId) ?? (machines.length === 1 ? machines[0] : null);
   const chosenName = chosen ? getMachineDisplayName(chosen, machines) : null;
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [retention, setRetention] =
@@ -70,15 +72,17 @@ function DeploymentLinkMachineSheet(
   // The same Machine select as the new-environment draft's "Where it runs": a Home can hold many Machines.
   const machineItems = React.useMemo(
     (): DropdownMenuItem[] =>
-      machines.map((machine) => ({
+      [...(chosenId && !machines.some(machine => machine.id === chosenId) ? [{
+        id: chosenId, title: t('approvals.machineNotKnown'), subtitle: t('common.unavailable'), checked: true,
+      }] : []), ...machines.map((machine) => ({
         id: machine.id,
         title: getMachineDisplayName(machine, machines),
         subtitle: isMachineOnline(machine)
           ? undefined
           : t('projects.deployments.machineAway'),
         checked: machine.id === chosen?.id,
-      })),
-    [chosen?.id, machines],
+      }))],
+    [chosen?.id, chosenId, machines],
   );
   const [busy, setBusy] = React.useState(false);
   const [refused, setRefused] = React.useState<string | null>(null);
@@ -124,9 +128,14 @@ function DeploymentLinkMachineSheet(
   );
   const { setChrome } = props;
   React.useEffect(() => {
-    setChrome?.({ kind: 'card', footer });
+    setChrome?.({ kind: 'card', footer: creatingMachine ? null : footer });
   });
   React.useEffect(() => () => setChrome?.(null), [setChrome]);
+
+  if (creatingMachine) return <MachineCreationContinuation serverId={props.serverId}
+    testID="project-deployments.link.createMachine" draft={machineCreationDraft} onDraftChange={setMachineCreationDraft}
+    onCancel={() => setCreatingMachine(false)}
+    onArrived={({ machineId }) => { setChosenId(machineId); setCreatingMachine(false); }} />;
 
   return (
     <ListPresentationProvider value="page" pageInsets="contained">
@@ -134,14 +143,17 @@ function DeploymentLinkMachineSheet(
         <Text style={deploymentSheetStyles.lead}>
           {t('projects.deployments.linkLead', { name: props.name })}
         </Text>
-        {machines.length === 0 ? (
-          <SurfaceStateCard
-            testID="project-deployments.link.noMachine"
-            size="line"
-            kind="empty"
-            title={t('projects.deployments.noMachineTitle')}
-            reason={t('projects.deployments.noMachineBody')}
-          />
+        {machines.length === 0 && chosenId === null ? (
+          <DeploymentMachinesEmpty serverId={props.serverId} testID="project-deployments.link" empty={
+            <SurfaceStateCard
+              testID="project-deployments.link.noMachine"
+              size="line"
+              kind="empty"
+              title={t('projects.deployments.noMachineTitle')}
+              reason={t('projects.deployments.noMachineBody')}
+              action={{ label: t('managedMachines.add.createPath'), onPress: () => setCreatingMachine(true),
+                testID: 'project-deployments.link.noMachine.create' }}
+            />} />
         ) : (
           <ItemGroup header="none">
             <DropdownMenu
@@ -149,7 +161,7 @@ function DeploymentLinkMachineSheet(
               open={menuOpen}
               onOpenChange={setMenuOpen}
               items={machineItems}
-              selectedId={chosen?.id ?? null}
+              selectedId={chosenId ?? chosen?.id ?? null}
               onSelect={(id) => {
                 setMenuOpen(false);
                 setChosenId(id);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ProjectStarterCreateResumeV1 } from '@happier-dev/protocol/projects/starters/createV1';
 
 import {
   buildStarterCreateInput,
@@ -125,4 +126,42 @@ describe('New app draft (projects.starters.create operands)', () => {
     expect(outcome).toMatchObject({ kind: 'failed', code: 'ROOT_NOT_FOUND', phase: 'account',
       remediation: expect.stringMatching(/folder.*choose another folder/i) });
   });
+});
+
+it.each([
+  { phase: 'source', sourceId: undefined },
+  { phase: 'project', sourceId: 'source-already-created' },
+])('retains the published checkout continuation after a $phase failure', ({ phase, sourceId }) => {
+  const resume = {
+    directory: '/home/alice/src/rye-co-orders',
+    repositoryUrl: 'https://github.com/alice/rye-co-orders',
+    repository: {
+      provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+      repository: { nameWithOwner: 'alice/rye-co-orders', cloneUrl: 'https://github.com/alice/rye-co-orders.git' },
+      protocol: 'https',
+    },
+    commit: '6c7a360ddb4a0d75be06044bf8a914f260ff10c7',
+    ...(sourceId ? { sourceId } : {}),
+  } satisfies ProjectStarterCreateResumeV1;
+  const outcome = readStarterCreateOutcome({
+    kind: 'partial', phase, code: 'source_backend_unavailable',
+    repositoryUrl: resume.repositoryUrl, resume,
+  });
+  expect(outcome).toMatchObject({ kind: 'failed', phase, repositoryCreated: true, resume });
+});
+
+it('keeps acknowledged work visible when a continuation retry loses its transport', () => {
+  const resume: ProjectStarterCreateResumeV1 = {
+    directory: '/home/alice/src/rye-co-orders', repositoryUrl: 'https://github.com/alice/rye-co-orders',
+    repository: {
+      provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+      repository: { nameWithOwner: 'alice/rye-co-orders' }, protocol: 'https',
+    },
+    commit: '6c7a360ddb4a0d75be06044bf8a914f260ff10c7', sourceId: 'source-already-created',
+  };
+  const partial = readStarterCreateOutcome({ kind: 'partial', phase: 'project', code: 'project_unavailable',
+    repositoryUrl: resume.repositoryUrl, resume });
+  if (partial.kind !== 'failed') throw new Error('Expected a retryable partial');
+  const failedRetry = readStarterCreateOutcome({ kind: 'failed', code: 'transport_lost' }, partial.resume);
+  expect(failedRetry).toMatchObject({ kind: 'failed', repositoryCreated: true, resume });
 });
