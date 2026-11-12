@@ -660,6 +660,8 @@ const USED_BY_KINDS: Readonly<Record<AccountSettingsSavedSecretReference['owner'
 export const SecretUsedBySection = React.memo(function SecretUsedBySection(props: Readonly<{
     testID: string;
     usedBy: readonly AccountSettingsSavedSecretReference[] | null;
+    /** Whether this viewer can delete the secret: only then does an unknown census promise Delete's own check. */
+    deletable: boolean;
     onOpen?: (route: string) => void;
 }>) {
     const empty = useSecretUsedByRows(props.usedBy).length === 0;
@@ -670,7 +672,8 @@ export const SecretUsedBySection = React.memo(function SecretUsedBySection(props
                 <Item
                     testID={props.testID}
                     title={props.usedBy === null ? t('secretsSettings.usedByUnknown') : t('secretsSettings.usedByEmpty')}
-                    subtitle={props.usedBy === null ? t('secretsSettings.usedByUnknownDetail') : t('secretsSettings.usedByEmptyDetail')}
+                    subtitle={props.usedBy !== null ? t('secretsSettings.usedByEmptyDetail')
+                        : props.deletable ? t('secretsSettings.usedByUnknownDetail') : undefined}
                     mode="info"
                     showChevron={false}
                 />
@@ -884,7 +887,7 @@ const SharedSecretPage = React.memo(function SharedSecretPage(props: Readonly<{
                 ) : null}
             </ItemGroup>
 
-            <SecretUsedBySection testID={`${testID}:used-by`} usedBy={usedBy} onOpen={props.onOpenUsedBy} />
+            <SecretUsedBySection testID={`${testID}:used-by`} usedBy={usedBy} deletable={canDelete} onOpen={props.onOpenUsedBy} />
 
             {canShare ? (
                 <ItemGroup title={t('secretsSettings.sharingTitle')} description={t('secretsSettings.sharingDescription')}>

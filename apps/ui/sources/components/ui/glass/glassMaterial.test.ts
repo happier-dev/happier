@@ -563,4 +563,14 @@ describe('floating menus solve like Elements', () => {
             expect(resolveGlassPanelCoatOpacity(settings, dark, 'livePicture')).toBeGreaterThan(0.5);
         }
     });
+    it('keeps a panel its panel coat over a live picture under a chosen glass, and gives it the picture coat under the default', () => {
+        const chosen = { glassSurfaceMaterials: glassPresetMaterials('everywhere'), glassTintIntensity: DEFAULT_GLASS_TINT_INTENSITY };
+        for (const dark of [true, false]) {
+            // A chosen glass applies as set: the panel keeps exactly the coat it has anywhere else, never the menu's hair.
+            expect(resolveGlassPanelCoatOpacity(chosen, dark, 'livePicturePanel')).toBe(resolveGlassPanelCoatOpacity(chosen, dark, true));
+            expect(resolveGlassPanelCoatOpacity(chosen, dark, 'livePicture')).toBeUndefined();
+            // The default glass gives every floating surface over a picture the same readable coat.
+            expect(resolveGlassPanelCoatOpacity(settings, dark, 'livePicturePanel')).toBe(resolveGlassPanelCoatOpacity(settings, dark, 'livePicture'));
+        }
+    });
 });

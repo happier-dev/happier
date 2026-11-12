@@ -170,7 +170,9 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
     // Over a live picture (arbitrary pixels) every floating surface takes Strong's panel coat; over the plain
     // page that coat still lands on the floating paint, so only the picture case changes.
     const overLivePicture = React.useContext(GlassLivePictureBackdropContext);
-    const panel: GlassFloatingCoat = group !== 'floating' ? false : overLivePicture ? 'livePicture' : props.floatingRole === 'panel';
+    const panel: GlassFloatingCoat = group !== 'floating' ? false
+        : overLivePicture ? props.floatingRole === 'panel' ? 'livePicturePanel' : 'livePicture'
+        : props.floatingRole === 'panel';
     const [tintColor, backdropTone, panelCoatOpacity] = React.useMemo(() => {
         if (props.noCoat) return ['transparent', '', undefined] as const;
         const toneEnvironment = { ...environment, reduceTransparency: toneReduceTransparency };

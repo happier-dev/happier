@@ -97,8 +97,12 @@ export type CustomModalShowConfig<C extends CustomModalComponentType<any>> = Omi
 
 export type CustomModalChromeCardConfig = Readonly<{
     kind: 'card';
-    /** Forms can request opaque paper while ordinary modal chrome retains the chosen glass material. */
-    material?: 'glass' | 'solid';
+    /**
+     * Forms can request opaque paper while ordinary modal chrome retains the chosen glass material.
+     * `overContent` is that glass hung without a scrim over whatever the page shows (a PDF, a picture, a
+     * shared screen): it takes the live-picture coat, so a white page never washes a dark card grey.
+     */
+    material?: 'glass' | 'solid' | 'overContent';
     /**
      * `none` renders no title band: the content is the top of the card (search, command palette).
      * `title` stays the dialog's accessible name. Esc and the backdrop still close it.

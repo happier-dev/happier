@@ -235,6 +235,7 @@ function ViewerStreamInput(props: Readonly<{
     controls: RemoteViewerStageControls;
     controlling: boolean;
     onRemoteActionsChange?: (actions: RemoteViewerHostActions | null) => void;
+    onControlsLayout(event: LayoutChangeEvent): void;
     testID: string;
 }>): React.ReactElement {
     const { send, sourceId, streamId } = props.input;
@@ -282,7 +283,8 @@ function ViewerStreamInput(props: Readonly<{
             <TextInput ref={keyboard.inputRef} {...keyboard.sentinelProps}
                 style={{position: 'absolute', left: 0, bottom: 0, width: 1, height: 1, opacity: 0}}
                 accessibilityLabel={t('browserPresence.interaction.showKeyboard')} testID={`${props.testID}-keyboard-sentinel`} />
-            <RemoteViewerControlBar actions={published} controls={props.controls} enabled={props.controlling} testID={`${props.testID}-controls`} />
+            <RemoteViewerControlBar actions={published} controls={props.controls} enabled={props.controlling}
+                onLayout={props.onControlsLayout} testID={`${props.testID}-controls`} />
         </View>
     );
 }
@@ -313,9 +315,16 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
         if (width > 0 && height > 0) setViewport((current) => (current && current.width === width && current.height === height ? current : { width, height }));
     }, []);
     const frameSize = useFirstFrameSize(pictureUp ? playerState?.lastFrameUrl : null, playerState?.phase);
-    // A shared window is a small picture: it fits down to the stage but is never drawn past its own
-    // pixels, so a small window stays sharp, centred on the neutral stage, instead of being blown up.
-    const pageRect = pictureUp && viewport ? containRect(viewport, frameSize, 1 / PixelRatio.get()) : null;
+    // A finger's input bar stands at the foot of the stage. The picture fits above it, with the bar's own
+    // gap, so its labels stand on the stage and never on the remote screen, whatever glass the person chose.
+    // The tallest bar seen holds that room: closing a panel never slides the picture back under it.
+    const [controlsRoom, setControlsRoom] = React.useState(0);
+    const onControlsLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const { y, height } = event.nativeEvent.layout;
+        const stageHeight = viewport?.height ?? 0;
+        const room = stageHeight > 0 ? 2 * (stageHeight - y) - height : 0;
+        setControlsRoom(current => room > current ? room : current);
+    }, [viewport?.height]);
     const failure = props.failure ?? playerState?.diagnostic?.reasonCode;
     const failureCause = props.failure ? props.failureCause : undefined;
     const recovery = failure ? resolveComputerRecovery({ kind: 'failed', code: failure }, resolveComputerAccess(props.access)) : null;
@@ -372,6 +381,11 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
             : undefined;
     const inputOpen = surfaceState === 'live' && !hasRecovery
         && props.presence.kind !== 'unconfirmed' && props.presence.kind !== 'stopping';
+    const pictureArea = viewport && inputOpen && props.stream?.input && controlsRoom > 0 && controlsRoom < viewport.height
+        ? { width: viewport.width, height: viewport.height - controlsRoom } : viewport;
+    // A shared window is a small picture: it fits down to the stage but is never drawn past its own
+    // pixels, so a small window stays sharp, centred on the neutral stage, instead of being blown up.
+    const pageRect = pictureUp && pictureArea ? containRect(pictureArea, frameSize, 1 / PixelRatio.get()) : null;
     const [menuOpen, setMenuOpen] = React.useState(false);
     const onPictureChange = props.onPictureChange;
     const frameWidth = frameSize?.width;
@@ -475,6 +489,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                 renderInput={controls => props.stream?.input && viewport && pageRect && inputOpen ? (
                     <ViewerStreamInput input={props.stream.input} viewport={viewport} content={pageRect} controls={controls}
                         controlling={props.presence.kind === 'human'} onRemoteActionsChange={props.onRemoteActionsChange}
+                        onControlsLayout={onControlsLayout}
                         label={t('computerUse.presentation.inputA11y', {target})} testID={`${testID}-input`} />
                 ) : null}>
             <View

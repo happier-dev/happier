@@ -15,9 +15,11 @@ import { CORE_CAPSULE_HOST } from '@/components/ui/status/capsuleHost';
 import { KeyHint } from '@/components/ui/keyboard/KeyHint';
 import { t } from '@/text';
 
+// Cold Browser imports can reach this binding before capsuleHost finishes loading.
+// Keep the host stable and resolve its canonical leaves when the bar renders.
 const HOST: RemoteViewerControlBarHost = {
-    Surface: CORE_CAPSULE_HOST.Surface,
-    Button: CORE_CAPSULE_HOST.Button,
+    get Surface() { return CORE_CAPSULE_HOST.Surface; },
+    get Button() { return CORE_CAPSULE_HOST.Button; },
     IconButton,
     SegmentedTabBar,
     KeyHint,
@@ -29,13 +31,13 @@ const HOST: RemoteViewerControlBarHost = {
  * mouse and keyboard drive the picture directly (labs Q, H, LV have no bar). It always floats over the
  * live picture, so it takes that picture's coat: a white page never washes a dark bar out.
  */
-export function RemoteViewerControlBar(props: Pick<RemoteViewerControlBarProps, 'actions' | 'controls' | 'enabled' | 'testID'>) {
+export function RemoteViewerControlBar(props: Pick<RemoteViewerControlBarProps, 'actions' | 'controls' | 'enabled' | 'testID' | 'onLayout'>) {
     const touch = useHappierTouchPrimaryPointer(Platform.OS);
     if (!touch) return null;
     return <TouchRemoteViewerControlBar {...props} />;
 }
 
-function TouchRemoteViewerControlBar(props: Pick<RemoteViewerControlBarProps, 'actions' | 'controls' | 'enabled' | 'testID'>) {
+function TouchRemoteViewerControlBar(props: Pick<RemoteViewerControlBarProps, 'actions' | 'controls' | 'enabled' | 'testID' | 'onLayout'>) {
     const { theme } = useUnistyles();
     return <GlassLivePictureBackdropContext.Provider value><SharedRemoteViewerControlBar {...props} host={HOST}
         spacing={{ inset: theme.space.s12, gap: theme.space.s8 }} labels={{

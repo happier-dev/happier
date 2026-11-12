@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ScrollView, View } from 'react-native';
+import { ScrollView, View, type LayoutChangeEvent } from 'react-native';
 
 import type { HappierCapsuleHost } from '../status/capsuleHost.js';
 import { HAPPIER_GESTURE_TIMING, type HappierLiveStreamInputMode } from './inputGesture.js';
@@ -59,6 +59,8 @@ export type RemoteViewerControlBarProps = Readonly<{
     host: RemoteViewerControlBarHost;
     labels: RemoteViewerControlBarLabels;
     spacing: Readonly<{ inset: number; gap: number }>;
+    /** Where the bar stands over the stage, so a host can keep its picture clear of it. */
+    onLayout?: (event: LayoutChangeEvent) => void;
 }>;
 
 type Panel = 'touch' | 'modifiers' | 'arrows' | 'clipboard';
@@ -84,7 +86,7 @@ export function RemoteViewerControlBar(props: RemoteViewerControlBarProps) {
         lastModifierTap.current = doubleTap ? null : { modifier, at };
         actions.tapModifier(modifier, doubleTap ? { clickCount: 2 } : undefined);
     };
-    return <View style={styles.root} testID={testID}>
+    return <View style={styles.root} testID={testID} onLayout={props.onLayout}>
         <Surface elevation="low" testID={`${testID}-surface`}>
             {panel ? <ScrollView horizontal contentContainerStyle={styles.row}>
                 {panel === 'touch' ? <>

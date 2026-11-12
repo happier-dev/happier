@@ -1,11 +1,15 @@
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import type { CustomModalChromeCardConfig } from '@/modal/types';
 
-/** Shared Share/Connect placement: anchored on wide layouts, a bottom sheet on phones. */
+/**
+ * Shared Share/Connect placement: anchored on wide layouts, a bottom sheet on phones. Either way it hangs over
+ * whatever the page shows, so its glass takes the picture-safe coat.
+ */
 export function createAnchoredSheetChrome(input: Pick<CustomModalChromeCardConfig,
     'title' | 'subtitle' | 'testID' | 'anchor'>): CustomModalChromeCardConfig {
     return {
         kind: 'card',
+        material: 'overContent',
         phonePresentation: 'sheet',
         testID: input.testID,
         title: input.title,

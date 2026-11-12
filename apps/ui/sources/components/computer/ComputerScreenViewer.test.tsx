@@ -145,6 +145,36 @@ describe('ComputerScreenViewer', () => {
     expect(screen.findByTestId('v-presence-frame')).toBeNull();
     await screen.unmount();
   });
+  it('fits the picture above the touch controls, so their labels never stand on the remote screen', async () => {
+    const viewerProps = props({ presence: { kind: 'human', controlEpoch: 1, interruptedCompletion: null },
+      stream: { machineName: 'machine', input: { sourceId: 'computer-source', streamId: 'stream', send: vi.fn() },
+        playerState: { phase: 'playing', selectedCodec: 'image.mjpeg', activeRenderer: 'mjpeg',
+          lastFrameUrl: 'data:image/jpeg;base64,AQID', decodedFrames: 1, droppedFrames: 0, bufferedBytes: 0 } } });
+    const pictureBottom = (screen: Awaited<ReturnType<typeof renderScreen>>) => {
+      const picture = StyleSheet.flatten(screen.findHostByTestId('v-picture')!.props.style) as { top: number; height: number };
+      return picture.top + picture.height;
+    };
+    // A mouse drives the picture directly: no bar, so the picture keeps the whole stage and reaches
+    // below where a finger's bar would stand.
+    const mouse = await renderScreen(<ComputerScreenViewer {...viewerProps} />);
+    await act(async () => pictureStage(mouse).props.onLayout({ nativeEvent: { layout: { width: 800, height: 400 } } }));
+    expect(mouse.findHostByTestId('v-input-controls')).toBeNull();
+    expect(pictureBottom(mouse)).toBeGreaterThan(300);
+    await mouse.unmount();
+
+    pointer.coarse = true;
+    const touch = await renderScreen(<ComputerScreenViewer {...viewerProps} />);
+    await act(async () => pictureStage(touch).props.onLayout({ nativeEvent: { layout: { width: 800, height: 400 } } }));
+    // The bar stands 12 above the stage's foot and is 88 tall: its top edge is at 300.
+    await act(async () => touch.findHostByTestId('v-input-controls')!.props.onLayout({
+      nativeEvent: { layout: { x: 12, y: 300, width: 776, height: 88 } } }));
+    expect(pictureBottom(touch)).toBeLessThanOrEqual(300);
+    // Closing a panel shortens the bar; the picture does not jump back under it.
+    await act(async () => touch.findHostByTestId('v-input-controls')!.props.onLayout({
+      nativeEvent: { layout: { x: 12, y: 344, width: 776, height: 44 } } }));
+    expect(pictureBottom(touch)).toBeLessThanOrEqual(300);
+    await touch.unmount();
+  });
   it('mounts remote control panels on the live Machine viewer and sends keys and clipboard through its input owner', async () => {
     pointer.coarse = true;
     const send = vi.fn();

@@ -97,9 +97,10 @@ export type FloatingSurfaceRole = 'menu' | 'panel';
  * The coat a floating surface carries: the tint's hair (`false`), the tint's panel coat (`true`), or,
  * over a live picture (a shared screen or browser page: arbitrary pixels, not atmosphere), Strong's
  * panel coat, so a black terminal never turns a light menu into a grey wash of itself. Only the shipped
- * default glass takes it: a customized preset, blur or tint applies as set there too (owner, 2026-10-04).
+ * default glass takes it: a customized preset, blur or tint applies as set there too (owner, 2026-10-04), so
+ * there a panel over a picture (`livePicturePanel`) keeps its own panel coat and a menu its hair.
  */
-export type GlassFloatingCoat = boolean | 'livePicture';
+export type GlassFloatingCoat = boolean | 'livePicture' | 'livePicturePanel';
 const GLASS_LIVE_PICTURE_PANEL_COAT = resolveGlassTintValues(100).panelCoat;
 
 /** The glass the app ships with: the Auto preset at regular blur and the default tint. Anything else is the person's choice. */
@@ -117,8 +118,9 @@ function isDefaultGlassAppearance(settings: GlassMaterialSettings): boolean {
  * exactly this coat (it has no backdrop tone to solve against).
  */
 export function resolveGlassPanelCoatOpacity(settings: GlassMaterialSettings, dark: boolean, panel: GlassFloatingCoat = false, environment: Pick<GlassMaterialEnvironment, 'nativeRenderer'> = {}): number | undefined {
-    const readable = isDefaultGlassAppearance(settings) && (panel === 'livePicture' || (!dark && environment.nativeRenderer === true));
-    const coat: GlassFloatingCoat = readable ? 'livePicture' : panel === 'livePicture' ? false : panel;
+    const overPicture = panel === 'livePicture' || panel === 'livePicturePanel';
+    const readable = isDefaultGlassAppearance(settings) && (overPicture || (!dark && environment.nativeRenderer === true));
+    const coat: GlassFloatingCoat = readable ? 'livePicture' : panel === 'livePicture' ? false : panel === 'livePicturePanel' ? true : panel;
     if (!coat || readGlassPreset(settings) === 'custom') return undefined;
     const tint = resolveGlassTintValues(settings.glassTintIntensity);
     return coat === 'livePicture' ? Math.max(tint.panelCoat, GLASS_LIVE_PICTURE_PANEL_COAT) : tint.panelCoat;

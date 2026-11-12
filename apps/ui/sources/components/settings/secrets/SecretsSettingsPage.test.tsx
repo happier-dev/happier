@@ -99,7 +99,7 @@ describe('SecretUsedBySection', () => {
             references: [{ owner: 'provider', path: 'p.apiKey', referrer: { kind: 'provider', id: 'pc_work', displayName: 'Studio models' } }],
             deploymentReferenceState: 'referenced',
         });
-        const screen = await renderScreen(<SecretUsedBySection testID="used-by" usedBy={usedBy} onOpen={onOpen} />);
+        const screen = await renderScreen(<SecretUsedBySection testID="used-by" deletable usedBy={usedBy} onOpen={onOpen} />);
         const rows = rowsOf(screen);
         expect(rows).toHaveLength(2);
         const environment = rows.find((row) => row.props.title === t('projects.deployments.review.environment'));
@@ -113,7 +113,7 @@ describe('SecretUsedBySection', () => {
 
     it('links a named Provider to its own page and a family without a name to its page', async () => {
         const onOpen = vi.fn();
-        const screen = await renderScreen(<SecretUsedBySection testID="used-by" onOpen={onOpen} usedBy={[
+        const screen = await renderScreen(<SecretUsedBySection testID="used-by" deletable onOpen={onOpen} usedBy={[
             { owner: 'provider', path: 'p.apiKey', referrer: { kind: 'provider', id: 'pc_work', displayName: 'Studio models' } },
             { owner: 'mcp', path: 'mcp.a' },
         ]} />);
@@ -126,7 +126,7 @@ describe('SecretUsedBySection', () => {
 
     it('shows one thing that reads the secret through two fields as one row', async () => {
         const provider = { kind: 'provider' as const, id: 'pc_work', displayName: 'Studio models' };
-        const screen = await renderScreen(<SecretUsedBySection testID="used-by" usedBy={[
+        const screen = await renderScreen(<SecretUsedBySection testID="used-by" deletable usedBy={[
             { owner: 'provider', path: 'p.apiKey', referrer: provider },
             { owner: 'provider', path: 'p.other', referrer: provider },
         ]} />);
@@ -134,7 +134,7 @@ describe('SecretUsedBySection', () => {
     });
 
     it('preserves distinct referrers with equal labels and unidentified reference paths', async () => {
-        const screen = await renderScreen(<SecretUsedBySection testID="used-by" usedBy={[
+        const screen = await renderScreen(<SecretUsedBySection testID="used-by" deletable usedBy={[
             { owner: 'connectedAccountCredential', path: 'credentials.a', referrer: { kind: 'connectedAccountCredential', id: 'a', displayName: 'Work' } },
             { owner: 'connectedAccountCredential', path: 'credentials.b', referrer: { kind: 'connectedAccountCredential', id: 'b', displayName: 'Work' } },
             { owner: 'profile', path: 'profiles.a', referrer: { kind: 'profile', id: 'a', displayName: 'Work' } },
@@ -146,12 +146,22 @@ describe('SecretUsedBySection', () => {
     });
 
     it('never presents unknown coverage as not used, and gives no row a dead link', async () => {
-        const unknown = await renderScreen(<SecretUsedBySection testID="used-by" usedBy={null} />);
-        const empty = await renderScreen(<SecretUsedBySection testID="used-by" usedBy={[]} />);
+        const unknown = await renderScreen(<SecretUsedBySection testID="used-by" deletable usedBy={null} />);
+        const empty = await renderScreen(<SecretUsedBySection testID="used-by" deletable usedBy={[]} />);
         const titleOf = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAll((node) => node.props.testID === 'used-by' && node.props.title !== undefined)[0]!.props.title;
         expect(titleOf(unknown)).not.toBe(titleOf(empty));
-        const unidentified = await renderScreen(<SecretUsedBySection testID="used-by" onOpen={vi.fn()} usedBy={[{ owner: 'unknown', path: 'future.carrier' }]} />);
+        const unidentified = await renderScreen(<SecretUsedBySection testID="used-by" deletable onOpen={vi.fn()} usedBy={[{ owner: 'unknown', path: 'future.carrier' }]} />);
         expect(rowsOf(unidentified)[0]!.props.onPress).toBeUndefined();
+    });
+
+    it('promises the delete check only to a viewer who can delete the secret', async () => {
+        const subtitleOf = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAll((node) => node.props.testID === 'used-by' && node.props.title !== undefined)[0]!.props.subtitle;
+        const owner = await renderScreen(<SecretUsedBySection testID="used-by" usedBy={null} deletable />);
+        const recipient = await renderScreen(<SecretUsedBySection testID="used-by" usedBy={null} deletable={false} />);
+        expect(subtitleOf(owner)).toBeTruthy();
+        expect(subtitleOf(recipient)).toBeUndefined();
+        // Not used yet still says how to use it, whoever reads it.
+        expect(subtitleOf(await renderScreen(<SecretUsedBySection testID="used-by" usedBy={[]} deletable={false} />))).toBeTruthy();
     });
 });
 

@@ -9,6 +9,7 @@ import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
 import { surfaceUsesRim } from '@/components/ui/surfaces/surfaceEdgeTreatment';
 import { RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
+import { GlassLivePictureBackdropContext } from '@/components/ui/glass/livePictureBackdrop';
 import { ContainedPageScopeProvider } from '@/components/ui/lists/listPresentation';
 import { SurfaceFreshnessOnSheetProvider } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { ModalCardBody } from './ModalCardBody';
@@ -24,7 +25,8 @@ type ModalCardFrameProps = Readonly<{
     children: React.ReactNode;
     /** Raw custom-modal bodies retain this same ancestry when they publish card chrome. */
     framed?: boolean;
-    material?: 'glass' | 'solid';
+    /** `overContent`: the card's glass stands over whatever the page shows (see the chrome's `material`). */
+    material?: 'glass' | 'solid' | 'overContent';
     /** `none`: no title band; the content is the top of the card. The title remains the accessible name. */
     header?: 'band' | 'none';
     /** `wide`: the band's text and close stand on the content's 24 edge (a phone keeps the page gutter). */
@@ -134,6 +136,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 
 export function ModalCardFrame(props: ModalCardFrameProps) {
     const { theme } = useUnistyles();
+    const overLivePicture = React.useContext(GlassLivePictureBackdropContext);
     const styles = stylesheet;
     const framed = props.framed !== false;
     const scrollHost = framed ? props.scrollHost ?? 'overlay' : 'overlay';
@@ -239,6 +242,7 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                 props.style,
             ]}
         >
+            <GlassLivePictureBackdropContext.Provider value={overLivePicture || props.material === 'overContent'}>
             <GlassSurface surfaceGroup="floating" floatingRole="panel" enabled={framed && !fullscreen && props.material !== 'solid'}
                 finishRole={framed ? undefined : null}
                 solidColor={!framed ? 'transparent' : fullscreen ? theme.colors.surface.base : undefined} style={[
@@ -303,6 +307,7 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                 ) : null}
                 {framed && !fullscreen ? <SurfaceRim role="floating" radius={theme.borderRadius.modalCard} border="modal" /> : null}
             </GlassSurface>
+            </GlassLivePictureBackdropContext.Provider>
         </Animated.View>
     );
 }
