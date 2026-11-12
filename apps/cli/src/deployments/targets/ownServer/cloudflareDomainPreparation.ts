@@ -70,7 +70,7 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
             signal: context.signal ?? new AbortController().signal,
             domainAdmissions: admissions.flatMap(item => item.domainAdmission ? [item.domainAdmission] : []),
             assertCurrent: async () => { context.signal?.throwIfAborted(); }, onGrant: grant => acknowledged.push(grant) });
-        const result = await child.invoke({ action: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare-named/configure' }, role: 'configure',
+        const result = await child.invoke({ action: { pluginId: purpose.credentialRef.account.service.pluginId, localId: 'cloudflare-named/configure' }, role: 'configure',
             input: { credentialRef: purpose.credentialRef.account, accountId: selected.controller.accountId, zoneId: selected.controller.zoneId,
                 tunnel: previous ? { kind: 'adopt', tunnelId: previous.tunnelId, name: selected.controller.tunnel.name } : selected.controller.tunnel,
                 owned: previous?.owned ?? selected.controller.owned, desired, dnsOwnership: previous?.dnsOwnership ?? selected.controller.dnsOwnership },
@@ -111,11 +111,12 @@ export async function disableCloudflareDomainForHost(content: DeploymentDomainCo
     const purpose = selected.selection.credentialRefs.find(item => item.purpose === 'tunnel.manage');
     if (!context.hostReviewedChild) return refuse('required_fact_unavailable', { requiredFact: 'reviewed_cloudflare_child' });
     if (purpose?.credentialRef.kind !== 'connectedAccount') return refuse('connected_account_required');
+    const pluginId = purpose.credentialRef.account.service.pluginId;
     const recovered = context.hostReviewedChild.preparedChildren?.find(child => child.role === 'disable'
-        && typeof child.action !== 'string' && child.action.pluginId === 'happier.deploy.cloudflare'
+        && typeof child.action !== 'string' && child.action.pluginId === pluginId
         && child.action.localId === 'cloudflare-named/disable');
     const request: HostReviewedChildInvocationV1 | undefined = prepared ? {
-        action: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare-named/disable' }, role: 'disable',
+        action: { pluginId, localId: 'cloudflare-named/disable' }, role: 'disable',
         input: { credentialRef: purpose.credentialRef.account, accountId: selected.controller.accountId,
             zoneId: selected.controller.zoneId, tunnelId: prepared.tunnelId,
             owned: prepared.owned, dnsOwnership: prepared.dnsOwnership },

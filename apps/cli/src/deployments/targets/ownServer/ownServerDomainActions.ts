@@ -246,13 +246,13 @@ export async function prepareOwnServerDomainReviewedChildren(
         if (!discovered.ok) return discovered;
         const origin = discovered.topology.tunnelOrigin;
         if (!origin) return failure('required_fact_unavailable', { requiredFact: 'cloudflare_tunnel_origin' });
-        return { children: [{ action: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare-named/disable' }, role: 'disable',
+        return { children: [{ action: { pluginId: purpose.credentialRef.account.service.pluginId, localId: 'cloudflare-named/disable' }, role: 'disable',
             input: { credentialRef: purpose.credentialRef.account, accountId, zoneId, tunnelName: tunnel.name,
                 owned: [{ hostname: content.hostname, ...(content.target.path ? { path: content.target.path } : {}),
                     expectedService: origin.service }], dnsOwnership: [] } }] };
     }
     const role = isDeploymentDomainAddActionIdV1(actionId) ? 'configure' : 'disable';
-    return { children: [{ action: { pluginId: 'happier.deploy.cloudflare', localId: `cloudflare-named/${role}` }, role,
+    return { children: [{ action: { pluginId: purpose.credentialRef.account.service.pluginId, localId: `cloudflare-named/${role}` }, role,
         scopeInput: { credentialRef: purpose.credentialRef.account, accountId, zoneId,
             owned: prepared?.owned ?? selected.controller.owned,
             dnsOwnership: prepared?.dnsOwnership ?? selected.controller.dnsOwnership,
