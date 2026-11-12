@@ -89,6 +89,7 @@ type ConnectedAccountCatalogInput = Readonly<{
 
 type ConnectedAccountSourceGroup = Omit<DaemonProviderModelProjectionGroupV1, 'rows'> & Readonly<{
   application: ProviderBrokerSourceApplicationBindingV1;
+  source: ConnectedAccountCatalogSource;
   rows: ProviderSourceModelCatalog['rows'];
 }>;
 
@@ -100,7 +101,7 @@ export async function readConnectedAccountModelCatalog(input: Omit<ConnectedAcco
   const target = input.request.connectedAccountTarget;
   if (!target) throw new TypeError('Connected Account catalog requires an exact target');
   const signal = input.signal ?? new AbortController().signal;
-  if (input.request.application && !isCpxBrokerApplication(input.registry, input.request.application)) {
+  if (input.request.application && !input.provider && !isCpxBrokerApplication(input.registry, input.request.application)) {
     return { groups: [], error: createProviderErrorV1('provider_incompatible_with_agent'), isCurrent: async () => !signal.aborted };
   }
   const groups: ConnectedAccountSourceGroup[] = [];
@@ -123,7 +124,7 @@ export async function readConnectedAccountModelCatalog(input: Omit<ConnectedAcco
         endpointTemplateId: endpoint.id,
       });
       if (!application || (input.request.application && !pluginJsonValuesEqual(application, input.request.application))) continue;
-      if (!input.request.application && !isCpxBrokerApplication(input.registry, application)) continue;
+      if (!input.request.application && !input.provider && !isCpxBrokerApplication(input.registry, application)) continue;
       selections.add(selection);
       if (!observations.has(selection)) {
         const observation = input.observeModels && !input.request.includeDirectMaterialization
@@ -169,7 +170,7 @@ export async function readConnectedAccountModelCatalog(input: Omit<ConnectedAcco
         input.registry.providerActivationOccurrenceIdsByPluginId?.get(provider.identity.pluginId) ?? 'no-provider-activation-occurrence',
       ]);
       groups.push({
-        application,
+        application, source,
         connectionId, connectedAccountTarget: target, catalogObserved: observed !== null, providerName: provider.definition.name, connectionName: selection.resolved.displayName,
         connectionRole: 'named', connectionDisplayNameMode: 'automatic', connectionRevision: 0, sourceRevision,
         modelLoadAction: 'descriptor_absent', modelLoadPreflightPolicy: null, authorization: { authorized: true },
@@ -211,7 +212,7 @@ export async function projectConnectedAccountCatalog(input: ConnectedAccountCata
           : !input.request.sourceCatalog && compatibility.result.status === 'verified' },
       }];
     });
-    const { application: _sourceApplication, ...presentation } = group;
+    const { application: _sourceApplication, source: _source, ...presentation } = group;
     return [{ ...presentation, rows, suppressedConnectedServiceIds: input.support?.authIsolation.suppressConnectedServiceIds ?? [] }];
   }) };
 }

@@ -231,14 +231,14 @@ export function resolveAgentSpawnPurposeDeclarations(input: Readonly<{
     );
     const fileMaterializationPurposes = Object.freeze(
         declarations.data.flatMap((declaration) => {
-            if (declaration.materializationKinds?.includes('files') !== true) return [];
+            if (declaration.managedProviderEndpoint || declaration.materializationKinds?.includes('files') !== true) return [];
             const scope = authorizedPurposesByLocalId.get(declaration.purpose);
             return scope ? [scope] : [];
         }),
     );
     const qualifiedRequestAuthUses: readonly QualifiedConnectedAccountRequestAuthUseV1[] | null =
         requestAuthUses?.success
-            ? Object.freeze(requestAuthUses.data.map((use): QualifiedConnectedAccountRequestAuthUseV1 =>
+            ? Object.freeze(requestAuthUses.data.filter(use => !declarationsByPurpose.get(use.purpose)?.managedProviderEndpoint).map((use): QualifiedConnectedAccountRequestAuthUseV1 =>
                 Object.freeze({
                     purpose: Object.freeze({
                         consumer,
@@ -252,7 +252,7 @@ export function resolveAgentSpawnPurposeDeclarations(input: Readonly<{
             : null;
     const qualifiedFileEnvironmentUses = fileEnvironmentUses === undefined
         ? null
-        : Object.freeze(fileEnvironmentUses.map((use): AgentSpawnQualifiedFileEnvironmentUse => {
+        : Object.freeze(fileEnvironmentUses.filter(use => !declarationsByPurpose.get(use.purpose)?.managedProviderEndpoint).map((use): AgentSpawnQualifiedFileEnvironmentUse => {
             const scope = authorizedPurposesByLocalId.get(use.purpose);
             if (!scope) throw new Error('connected_account_launch_file_environment_purpose_unavailable');
             return Object.freeze({
@@ -273,7 +273,7 @@ export function resolveAgentSpawnPurposeDeclarations(input: Readonly<{
                 environmentKey: use.environmentKey,
             });
         }));
-    const qualifiedEnvironmentUses = qualifyEnvironmentUses(environmentUses);
+    const qualifiedEnvironmentUses = qualifyEnvironmentUses(environmentUses?.filter(use => !declarationsByPurpose.get(use.purpose)?.managedProviderEndpoint));
     const qualifiedEnvironmentUnsetUses = qualifyEnvironmentUses(environmentUnsetUses);
     return Object.freeze({
         consumer,

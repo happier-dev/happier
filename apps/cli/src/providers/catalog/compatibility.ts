@@ -31,20 +31,36 @@ export function resolveProviderModelCompatibility(input: Readonly<{
   const declaredManagedModel = input.record.deployment.kind === 'managedLocal'
     && 'staticModels' in facts.catalog
     && facts.catalog.staticModels.some(model => model.id === input.model.id);
-  const declarationSatisfiesEvidence = declaredManagedModel
-    && compatibility.result.status === 'experimental'
+  return resolveProviderCompatibilityConfirmation({ compatibility, declaredManagedModel,
+    providerSettings: input.providerSettings, confirmationSource: { connectionId: input.record.connectionId },
+    agentTargetKey: input.agentTargetKey, modelId: input.model.id,
+    teamCredentialResource: input.teamCredentialResource });
+}
+
+/** Shared consent decision for saved connections and exact Connected Account sources. */
+export function resolveProviderCompatibilityConfirmation(input: Readonly<{
+  compatibility: ReturnType<typeof resolveProviderBindingCompatibilityWithFingerprintV1>;
+  declaredManagedModel: boolean;
+  providerSettings?: Pick<ProviderSettingsV1, 'experimentalBindingConfirmations'> | null;
+  confirmationSource: Pick<Parameters<typeof hasProviderExperimentalConfirmation>[0], 'connectionId' | 'catalogSourceKey' | 'connectedAccountTarget'>;
+  agentTargetKey: string;
+  modelId: string;
+  teamCredentialResource?: Readonly<{ resourceId: string; resourceRevision: number }>;
+}>) {
+  const { compatibility } = input;
+  const declarationSatisfiesEvidence = input.declaredManagedModel
     && isProviderBindingCompatibilityDeclarationSatisfiableV1(compatibility.result);
   return Object.freeze({
     ...compatibility,
     confirmed: compatibility.result.status === 'experimental'
-      ? declarationSatisfiesEvidence || input.teamCredentialResource !== undefined || hasProviderExperimentalConfirmation({
+      ? declarationSatisfiesEvidence || input.teamCredentialResource !== undefined || Boolean(input.providerSettings && hasProviderExperimentalConfirmation({
           providerSettings: input.providerSettings,
-          connectionId: input.record.connectionId,
+          ...input.confirmationSource,
           agentTargetKey: input.agentTargetKey,
-          modelId: input.model.id,
+          modelId: input.modelId,
           compatibilityFingerprint: compatibility.compatibilityFingerprint,
           confirmationScope: compatibility.result.confirmationScope,
-        })
+        }))
       : compatibility.result.status === 'verified',
   });
 }

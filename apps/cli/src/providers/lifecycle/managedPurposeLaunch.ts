@@ -1,0 +1,186 @@
+import { join } from 'node:path';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createProviderErrorV1, ProviderErrorV1Schema, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { resolveProviderBindingCompatibilityFromSourceFactsV1 } from '@happier-dev/protocol/providers/binding-compatibility';
+import type { ConnectedServiceBindingsV2, PluginExecutionScopeV1, SessionEnvOverlayV1, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
+import { resolveAgentSpawnPurposeDeclarations } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
+import { projectConnectedServiceBindingsToQualifiedPurposeBindingSnapshot } from '@/daemon/connectedServices/requestAuth/firstPartyConnectedAccountRequestAuthAdapter';
+import { readLeasedAgentProviderBindingAdapter, prepareLeasedAgentProviderBinding, materializeLeasedAgentProviderBinding, readLeasedAgentProviderNativeHome } from '@/plugins/runtime/providerBindings/adapter';
+import { resolveProviderContributionRegistryView } from '@/providers/registry/contributions';
+import { getProviderContribution } from '@/providers/registry/lookup';
+import { readConnectedAccountModelCatalog, type ResolveManagedProviderPurposeBindingIntentSelection } from '@/providers/modelManagement/connectedAccountCatalog';
+import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import { resolveManagedProviderPurposeBindingSnapshot } from '@/providers/managed/resolvePurposeBindingSnapshot';
+import { createManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
+import { acquireBrokerSourceOperation } from '@/providers/broker/brokerSourceOperationAcquisition';
+import { startManagedProviderConsumerApplication } from '@/providers/broker/managedProviderConsumerApplication';
+import { teamCredentialBrokerLocalCredentialTransport } from '@/providers/broker/providerBrokerPrivateProtocol';
+import { composeProviderBindingMaterialization } from '@/providers/spawn/compose';
+import { resolveProviderCompatibilityConfirmation } from '@/providers/catalog/compatibility';
+import type { ProviderSettingsV1 } from '@happier-dev/protocol';
+import { createProviderLaunchResourceScope } from './resourceScope';
+
+export type ManagedPurposeLaunchContext = Readonly<{
+  lease: PluginRuntimeRegistryLease;
+  happyHomeDir: string;
+  readProviderSettings?: () => ProviderSettingsV1 | null;
+  accountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
+  signal?: AbortSignal;
+  resolveManagedPurposeBindingIntentSelection?: ResolveManagedProviderPurposeBindingIntentSelection;
+}>;
+
+export type MaterializedManagedPurposeLaunch = Readonly<{
+  ok: true;
+  kind: 'managedPurpose';
+  agentTargetKey: string;
+  providerBinding: AgentSessionProviderBinding;
+  environmentOverlay: SessionEnvOverlayV1;
+  additionalRedactionValues: readonly string[];
+  connectedServices: ConnectedServiceBindingsV2;
+  revalidateBeforeCommit(signal?: AbortSignal): Promise<Readonly<{ ok: true } | { ok: false; error: ProviderErrorV1 }>>;
+  cleanup(): Promise<void>;
+}>;
+
+export type PreparedManagedPurposeLaunch = Readonly<{
+  ok: true;
+  kind: 'managedPurpose';
+  agentTargetKey: string;
+  selection: NonNullable<SessionModelSelectionV1['ref']>;
+  model: AgentSessionProviderBinding['model'];
+  connectedServices: ConnectedServiceBindingsV2;
+  materialize(scope: Extract<PluginExecutionScopeV1, { kind: 'session' | 'execution_run' }>): Promise<MaterializedManagedPurposeLaunch | Readonly<{ ok: false; error: ProviderErrorV1 }>>;
+}>;
+
+/** Admits an Agent-declared source through the existing catalog, purpose and
+ * managed broker custody owners. It never creates a Provider connection. */
+export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchContext & Readonly<{
+  agentId: string;
+  featureEnabled: boolean;
+  machineId?: string;
+  selection?: SessionModelSelectionV1;
+  connectedServices: ConnectedServiceBindingsV2 | null;
+}>): Promise<PreparedManagedPurposeLaunch | Readonly<{ ok: false; error: ProviderErrorV1 }> | null> {
+  const declarations = resolveAgentSpawnPurposeDeclarations({ agentId: input.agentId, contributions: input.lease.registry.contributes });
+  if (!declarations || !input.connectedServices) return null;
+  const selected = projectConnectedServiceBindingsToQualifiedPurposeBindingSnapshot({ consumer: declarations.consumer,
+    declarations: declarations.declarations, bindings: input.connectedServices });
+  const candidates = declarations.declarations.flatMap(declaration => {
+    if (!declaration.managedProviderEndpoint) return [];
+    const binding = selected?.bindings.find(binding => binding.purpose.purpose === declaration.purpose);
+    if (!binding || binding.target.kind !== 'account' && binding.target.kind !== 'group') return [];
+    const prefix = declaration.managedProviderEndpoint.modelIdPrefix;
+    if (input.selection && prefix && !input.selection.ref.modelId.startsWith(prefix)) return [];
+    return [{ declaration, binding }];
+  });
+  if (candidates.length === 0) return null;
+  const refuse = (code: Parameters<typeof createProviderErrorV1>[0]) => ({ ok: false as const,
+    error: createProviderErrorV1(code, input.machineId ? { machineId: input.machineId } : {}) });
+  if (!input.featureEnabled) return refuse('provider_feature_disabled');
+  if (!input.selection) return refuse('provider_model_not_found');
+  if (!input.machineId || !input.resolveManagedPurposeBindingIntentSelection) return refuse('provider_endpoint_unavailable');
+  const machineId = input.machineId;
+  const agentTargetKey = input.selection.ref.agentTargetKey;
+  const signal = input.signal ?? new AbortController().signal;
+  const registry = resolveProviderContributionRegistryView(input.lease.registry.contributes, undefined);
+  await activateAgentRuntimeContributionOnDemand(input.lease.registry, input.agentId);
+  const adapter = readLeasedAgentProviderBindingAdapter(input);
+  if (!adapter) return refuse('provider_incompatible_with_agent');
+  const admitted = [];
+  let unconfirmed = false;
+  for (const candidate of candidates) {
+    const route = candidate.declaration.managedProviderEndpoint!;
+    const provider = getProviderContribution(registry, buildQualifiedPluginContributionKey(route.provider));
+    if (!provider?.definition.managedRuntime) return refuse('provider_contribution_unavailable');
+    const catalog = await readConnectedAccountModelCatalog({ registry, provider, purpose: route.purpose,
+      request: { machineId: input.machineId, agentTargetKey: agentTargetKey,
+        connectedAccountTarget: candidate.binding.target, mode: 'management', includeDirectMaterialization: true },
+      resolveSelection: input.resolveManagedPurposeBindingIntentSelection, signal });
+    const modelId = route.modelIdPrefix ? input.selection.ref.modelId.slice(route.modelIdPrefix.length) : input.selection.ref.modelId;
+    for (const group of catalog.groups) {
+      if (!adapter.support.acceptsProtocols.includes(group.application.protocol)) continue;
+      const row = group.rows.find(row => row.descriptor.id === modelId || row.descriptor.aliases?.includes(modelId));
+      if (!row?.sourceFacts) continue;
+      const transport = teamCredentialBrokerLocalCredentialTransport(group.application.protocol, adapter.support);
+      const compatibility = resolveProviderBindingCompatibilityFromSourceFactsV1({
+        agentTargetKey: agentTargetKey, agent: adapter.support, adapterVersion: adapter.adapter.adapterVersion,
+        endpoints: [row.sourceFacts.endpoint], credential: { kind: 'apiKey', required: true, slotId: 'apiKey', transports: [transport] },
+        compatibilityOverrides: row.sourceFacts.compatibilityOverrides, model: row.descriptor });
+      if (compatibility.result.status === 'incompatible') continue;
+      const confirmed = resolveProviderCompatibilityConfirmation({ compatibility,
+        declaredManagedModel: group.source.family.staticModels?.some(model => model.id === row.descriptor.id) === true,
+        providerSettings: compatibility.result.status === 'experimental' ? input.readProviderSettings?.() : undefined,
+        confirmationSource: row.confirmationSource!, agentTargetKey, modelId: row.descriptor.id });
+      if (!confirmed.confirmed) { unconfirmed = true; continue; }
+      admitted.push({ candidate, provider, group, row, selection: group.source.selection, catalog, transport, compatibility });
+    }
+  }
+  const chosen = admitted[0];
+  if (!chosen) return refuse(unconfirmed ? 'provider_compatibility_unverified' : 'provider_model_not_found');
+  // A single Agent binding consumes one endpoint. Provider endpoint declaration
+  // order resolves equivalent accepted protocols, as it does for catalog routing.
+  const { candidate, provider, group, row, selection, catalog, transport, compatibility } = chosen;
+  const connectedServices = input.connectedServices;
+  const selectedModelRef = input.selection.ref;
+  return { ok: true, kind: 'managedPurpose', agentTargetKey, selection: selectedModelRef,
+    model: row.descriptor, connectedServices,
+    materialize: async scope => {
+  const runtime = resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity: provider.identity,
+    managedRuntime: provider.definition.managedRuntime! });
+  const family = runtime.connectedAccounts.find(family => family.purpose === candidate.declaration.managedProviderEndpoint!.purpose);
+  if (!family) return refuse('provider_contribution_unavailable');
+  const exactTarget = { kind: 'account' as const, account: selection.resolved.account };
+  const purpose = { consumer: provider.identity, purpose: family.purpose };
+  const purposeBindings = await resolveManagedProviderPurposeBindingSnapshot({ implementationIdentity: provider.identity,
+    connectedAccounts: [family], purposeBindingIntents: { v: 1, bindings: [{ purpose, target: exactTarget }] },
+    resolveBindingIntent: async () => ({ purpose, target: exactTarget }), signal });
+  const resources = createProviderLaunchResourceScope();
+  try {
+    const custody = createManagedProviderExplicitStartCustody({ machineId, happyHomeDir: input.happyHomeDir,
+      runtimeRegistryLease: input.lease, accountAuthority: input.accountAuthority });
+    const source = await acquireBrokerSourceOperation({ custody, identity: provider.identity,
+      contributionKey: buildQualifiedPluginContributionKey(provider.identity), endpointTemplateId: group.application.endpointTemplateId,
+      operationClaim: { kind: 'providerBroker', operation: scope }, purposeBindings,
+      isSourceCurrent: async currentSignal => !currentSignal.aborted && await catalog.isCurrent(),
+      callerSignal: signal });
+    if (!source || 'unavailable' in source) return refuse('provider_endpoint_unavailable');
+    resources.register(source.retire);
+    resources.register(source.projection.cleanup);
+    const endpointUrl = source.projection.access.endpointUrl(group.application.endpointTemplateId);
+    if (!endpointUrl) return refuse('provider_endpoint_unavailable');
+    const consumer = await startManagedProviderConsumerApplication({ signal, endpointUrl, credentialTransport: transport,
+      request: async request => ({ ok: true, response: await source.projection.access.request(request) }) });
+    resources.register(consumer.cleanup);
+    const bindingKey = 'connected_account:' + JSON.stringify(candidate.binding.purpose);
+    const prepared = prepareLeasedAgentProviderBinding({ ...input,
+      input: { v: 1, agentTargetKey: agentTargetKey, bindingKey } });
+    const materialization = await materializeLeasedAgentProviderBinding({ ...input, prepared,
+      binding: { v: 1, agentTargetKey: agentTargetKey,
+        selection: { bindingKey, model: row.descriptor }, contributionKey: buildQualifiedPluginContributionKey(provider.identity),
+        endpoint: { endpointTemplateId: group.application.endpointTemplateId, normalizedUrl: consumer.endpointUrl,
+          protocol: group.application.protocol, publicHeaders: {} }, runtimeCredentialTransport: transport,
+        compatibilityFingerprint: compatibility.compatibilityFingerprint },
+      credential: { kind: 'apiKey', transport, value: consumer.credential } });
+    const composed = await composeProviderBindingMaterialization({ materialization,
+      materializationBaseDir: join(input.happyHomeDir, 'providers', 'materialized'),
+      nativeHome: readLeasedAgentProviderNativeHome(input),
+      sessionId: scope.kind === 'session' ? scope.sessionId : scope.executionRunId });
+    resources.register(composed.takeCleanupOwnership() ?? (() => {}));
+    const cleanup = resources.transfer() ?? (async () => {});
+    return { ok: true, kind: 'managedPurpose', agentTargetKey: agentTargetKey,
+      providerBinding: { source: { kind: 'connected_account', purpose: candidate.binding.purpose, account: selection.resolved.account },
+        model: row.descriptor, upstream: { protocol: group.application.protocol, normalizedUrl: consumer.endpointUrl, credential: 'apiKey' },
+        materialization: composed.launchMaterialization }, environmentOverlay: composed.providerEnvironmentOverlay,
+      additionalRedactionValues: [consumer.credential, consumer.renderedCredential, ...composed.additionalRedactionValues],
+      connectedServices, cleanup: async () => { await cleanup(); },
+      revalidateBeforeCommit: async currentSignal => !currentSignal?.aborted && consumer.isCurrent()
+        && await source.revalidateSourceCurrentness(currentSignal) === true
+        ? { ok: true } : refuse('provider_authorization_changed') };
+  } catch (error) {
+    const typed = ProviderErrorV1Schema.safeParse(error);
+    return typed.success ? { ok: false, error: typed.data } : refuse('provider_materialization_failed');
+  } finally { await resources.release(); }
+    } };
+}

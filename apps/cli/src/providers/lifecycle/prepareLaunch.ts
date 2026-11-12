@@ -13,6 +13,7 @@ import {
   type ProviderSpawnAuthorizationAttempt,
 } from '../spawn/authorize';
 import { resolveSpawnBindingContinuity } from '../sessions/resolveSpawnBindingContinuity';
+import { prepareManagedPurposeLaunch, type ManagedPurposeLaunchContext, type PreparedManagedPurposeLaunch } from './managedPurposeLaunch';
 
 type ProviderLaunchPrerequisiteContext = Readonly<{
   agentTargetKey: string;
@@ -40,6 +41,7 @@ export type PreparedProviderLaunch = Readonly<{
 export type PrepareProviderLaunchResult<PrerequisiteFailure extends Readonly<{ ok: false }> = never> =
   | Readonly<{ ok: true; kind: 'native' }>
   | PreparedProviderLaunch
+  | PreparedManagedPurposeLaunch
   | Readonly<{ ok: false; error: ProviderErrorV1 }>
   | PrerequisiteFailure;
 
@@ -58,6 +60,7 @@ export type PrepareProviderLaunchInput<PrerequisiteFailure extends Readonly<{ ok
   ) => Promise<boolean>;
   connectedServices: ConnectedServiceBindingsV2 | null;
   featureEnabled: boolean;
+  managedPurposeContext?: ManagedPurposeLaunchContext;
   resolvePrerequisites: (
     context: ProviderLaunchPrerequisiteContext,
   ) => Promise<Readonly<{ ok: true } | { ok: false; error: ProviderErrorV1 }> | PrerequisiteFailure>;
@@ -87,6 +90,12 @@ export async function prepareProviderLaunch<PrerequisiteFailure extends Readonly
     if (!isPermissionModeGrantedV1(input.callerInputConstraints, input.permissionMode ?? 'default')) {
       return { ok: false, error: createProviderErrorV1('permission_mode_not_granted') };
     }
+  }
+  if ((!selection || selection.ref.providerConnectionId === null) && input.agentId && input.managedPurposeContext) {
+    const managed = await prepareManagedPurposeLaunch({ ...input.managedPurposeContext,
+      agentId: input.agentId, machineId: input.machineId, selection, connectedServices: input.connectedServices,
+      featureEnabled: input.featureEnabled });
+    if (managed) return managed;
   }
   if (!selection) {
     if (input.previousBinding) {

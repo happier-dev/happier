@@ -10,8 +10,34 @@ import { CLAUDE_PLUGIN } from '../../../../../../packages/plugins/claude/src/man
 import { parseConnectedServiceBindingSelections } from '../parseConnectedServicesBindings';
 import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from './prepareConnectedAccountRequestAuthForSpawn';
 import { assertQualifiedPurposeAuthorityForSelections } from './qualifiedPurposeAuthority';
+import { resolveAgentSpawnPurposeDeclarations } from './agentPurposeDeclarations';
 
 describe('admitted Agent connected-account purpose declarations', () => {
+  it('retains managed purpose intent while suppressing only its raw credential uses', () => {
+    const identity = { pluginId: 'acme.agent', localId: 'agent' };
+    const service = { pluginId: 'acme.accounts', localId: 'subscription' };
+    const purposes = ['managed', 'native'] as const;
+    const contributions = { agentDefinitionsById: new Map([['agent', { identity,
+      richDefinition: { definition: { connectedAccounts: purposes.map(purpose => ({ purpose, service,
+        materializationKinds: ['environment', 'files', 'httpHeaders'],
+        ...(purpose === 'managed' ? { managedProviderEndpoint: { provider: { pluginId: 'acme.provider', localId: 'gateway' }, purpose: 'upstream' } } : {}),
+      })) } },
+      catalogEntry: {
+        connectedAccountRequestAuthUses: purposes.map(purpose => ({ purpose, materialization: { kind: 'httpHeaders', origin: 'https://example.test', headerNames: ['authorization'] } })),
+        connectedAccountFileEnvironmentUses: purposes.map(purpose => ({ purpose, fileId: 'auth.json', environmentKey: purpose.toUpperCase() + '_FILE' })),
+        connectedAccountEnvironmentUses: purposes.map(purpose => ({ purpose, environmentKey: purpose.toUpperCase() + '_TOKEN' })),
+        connectedAccountEnvironmentUnsetUses: purposes.map(purpose => ({ purpose, environmentKey: purpose.toUpperCase() + '_TOKEN' })),
+      },
+    }]]) };
+    const result = resolveAgentSpawnPurposeDeclarations({ agentId: 'agent', contributions });
+    expect(result).not.toBeNull();
+    expect(result?.snapshot.authorizedPurposes.map(scope => scope.purpose.purpose)).toEqual(purposes);
+    for (const uses of [result?.snapshot.requestAuthUses, result?.snapshot.fileEnvironmentUses,
+      result?.snapshot.environmentUses, result?.snapshot.fileMaterializationPurposes]) {
+      expect(uses?.map(use => use.purpose.purpose)).toEqual(['native']);
+    }
+    expect(result?.snapshot.environmentUnsetUses?.map(use => use.purpose.purpose)).toEqual(purposes);
+  });
   it.each([
     ['opencode', 'happier.agent.codex/openai-codex'],
     ['opencode', 'happier.agent.claude/claude-subscription'],

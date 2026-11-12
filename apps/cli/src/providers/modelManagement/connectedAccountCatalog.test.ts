@@ -54,6 +54,7 @@ it('replaces static membership with one exact current account observation across
     resolveSelection: purposes.resolveBindingIntentSelection, request, observeModels };
   const observed = await projectConnectedAccountCatalog(input);
   expect(observed.groups).toHaveLength(3);
+  expect(observed.groups.every(group => !('source' in group))).toBe(true);
   expect(observed.groups.every(group => group.catalogObserved === true)).toBe(true);
   expect(observed.groups.every(group => group.rows.length === 1 && group.rows[0]?.descriptor.id === 'gpt-6.1-sol'
     && group.rows[0].confidence === 'probe' && group.rows[0].sources.probe && !group.rows[0].sources.static)).toBe(true);

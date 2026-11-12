@@ -21,6 +21,7 @@ import type { AgentProviderRequirementsV1 } from '@happier-dev/protocol/provider
  * supplied by each test; no authorization, registry or materializer is mocked. */
 export async function createManagedRunLaunchFixture(input: Readonly<{ directory?: string; happyHomeDir?: string; controller?: PluginReloadController; remote?: boolean; probeCatalog?: boolean; physicalGateway?: boolean; materializationUrl?: string; signedOutAgentCli?: boolean;
   catalogModels?: Parameters<typeof createSharedGatewayRegistryTestkit>[0]['catalogModels'];
+  connectedAccountModels?: Parameters<typeof createSharedGatewayRegistryTestkit>[0]['connectedAccountModels'];
   modelLoad?: ProviderModelLoadDescriptorV1;
   manualModelPolicy?: 'allowed' | 'catalog-only';
   supportsFreeformModelIds?: boolean;
@@ -47,6 +48,7 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
     ...(input.includeBundledDeclarations ? { includeBundledDeclarations: true } : {}),
     ...(input.happyHomeDir ? { happyHomeDir: input.happyHomeDir } : {}),
     ...(input.catalogModels ? { catalogModels: input.catalogModels } : {}),
+    ...(input.connectedAccountModels ? { connectedAccountModels: input.connectedAccountModels } : {}),
     ...(input.holdResponseForInput ? { holdResponseForInput: input.holdResponseForInput } : {}),
     ...(input.upstreamUrl ? { upstreamUrl: input.upstreamUrl } : {}),
     ...(input.controller ? { controller: input.controller } : {}),
