@@ -37,6 +37,58 @@ function vendor(options: { failCreate?: boolean; duplicate?: boolean; processByt
 }
 
 describe('E2B native REST leaf', () => {
+  it.each(['headers', 'body'] as const)('retains completed native execution output after late cancellation at %s', async phase => {
+    const abort = new AbortController();
+    const bytes = output(Buffer.from('completed').toString('base64'), 17);
+    const request: typeof fetch = async input => {
+      if (!String(input).includes('/process.Process/Start')) return Response.json(native);
+      if (phase === 'headers') { abort.abort(); return new Response(bytes); }
+      return new Response(new ReadableStream({ pull(body) { body.enqueue(bytes); body.close(); abort.abort(); } }));
+    };
+    expect(await createE2bNativeClient(request, abort.signal, 1000).exec({ resource, argv: ['true'] }))
+      .toMatchObject({ stdoutBase64: Buffer.from('completed').toString('base64'), termination: { observed: { kind: 'exit', exitCode: 17 } } });
+  });
+
+  it('rejects cancellation while a native execution body is still incomplete', async () => {
+    const abort = new AbortController(); const reason = new Error('body cancelled');
+    const request: typeof fetch = async input => {
+      if (!String(input).includes('/process.Process/Start')) return Response.json(native);
+      return new Response(new ReadableStream({ start(body) {
+        body.enqueue(frame({ event: { start: { pid: 42 } } }));
+        abort.signal.addEventListener('abort', () => body.error(reason), { once: true });
+      }, pull() { abort.abort(reason); } }));
+    };
+    await expect(createE2bNativeClient(request, abort.signal, 1000).exec({ resource, argv: ['true'] })).rejects.toBe(reason);
+  });
+  it('retains a completed delete acknowledgement after late cancellation', async () => {
+    const abort = new AbortController();
+    const request: typeof fetch = async (_input, init) => {
+      if (init?.method === 'DELETE') { abort.abort(); return new Response(null, { status: 204 }); }
+      return Response.json(native);
+    };
+    expect(await createE2bNativeClient(request, abort.signal, 1000).destroy({ resource })).toEqual({ kind: 'confirmed' });
+  });
+  it('preserves completed upload failures instead of replacing them with late cancellation', async () => {
+    const abort = new AbortController();
+    const request: typeof fetch = async input => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/files') { abort.abort(); return new Response(null, { status: 503 }); }
+      if (path === '/process.Process/Start') return new Response(output(Buffer.from('/tmp/input\n').toString('base64')));
+      return Response.json(native);
+    };
+    await expect(createE2bNativeClient(request, abort.signal, 1000).exec({ resource, argv: ['cat'], inputBase64: 'YQ==' }))
+      .rejects.toMatchObject({ code: 'e2b_http_503' });
+  });
+  it('cancels before dispatch and keeps incomplete allocation bodies unconfirmed', async () => {
+    const abort = new AbortController(); const reason = new Error('cancelled'); abort.abort(reason);
+    let calls = 0;
+    const request: typeof fetch = async () => { calls++; return Response.json(native); };
+    await expect(createE2bNativeClient(request, abort.signal, 1000).destroy({ resource })).rejects.toBe(reason);
+    expect(calls).toBe(0);
+    const incomplete: typeof fetch = async () => new Response(new ReadableStream({ start(body) { body.error(new Error('body disconnected')); } }));
+    expect(await createE2bNativeClient(incomplete, new AbortController().signal, 1000).acquire(launch, resource.managedId)).toMatchObject({ kind: 'pending' });
+  });
+
   it('preserves a typed HTTP refusal during a native read', async () => {
     const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Interceptor activation failed',
       details: { phase: 'activation' } });

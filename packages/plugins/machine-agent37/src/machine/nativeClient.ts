@@ -27,7 +27,7 @@ export function createAgent37NativeClient(request: typeof fetch, signal: AbortSi
     signal.throwIfAborted();
     const response = await request(origin + path, { method, redirect: 'error', signal, headers: { 'content-type': 'application/json' },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    signal.throwIfAborted(); return response;
+    return response;
   }
   async function json(response: Response): Promise<unknown> {
     if (!response.ok) throw new PluginError({ code: response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'provider_unavailable' });

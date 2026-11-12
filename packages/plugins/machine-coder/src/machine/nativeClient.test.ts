@@ -14,7 +14,7 @@ const workspace = (status = 'running', transition = 'start', id = 'build-create'
   dormant_at: null, latest_build: build(status, transition, id) });
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
-async function fixture(options: { lostCreate?: boolean; lostDelete?: boolean; owner?: string; missing?: boolean; readFails?: boolean; mismatchedVersion?: boolean } = {}) {
+async function fixture(options: { lostCreate?: boolean; lostDelete?: boolean; owner?: string; missing?: boolean; readFails?: boolean; mismatchedVersion?: boolean; postResponse?: 'late-abort' | 'incomplete' } = {}) {
   const requests: Array<{ method: string; path: string; body: unknown }> = [];
   let current = workspace(), deleted = false;
   const handler = async (req: IncomingMessage, res: ServerResponse) => {
@@ -50,8 +50,16 @@ async function fixture(options: { lostCreate?: boolean; lostDelete?: boolean; ow
   const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing fixture port');
   const origin = `http://127.0.0.1:${address.port}`;
   cleanup.push(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
+  const abort = new AbortController();
   let observations = 0;
-  const client = createCoderClient({ request: (path, init) => fetch(origin + path, init), signal: new AbortController().signal,
+  const client = createCoderClient({ request: async (path, init) => {
+    const response = await fetch(origin + path, init);
+    if (init?.method !== 'POST' || !options.postResponse) return response;
+    if (options.postResponse === 'incomplete') return new Response(new ReadableStream({ start(body) { body.error(new Error('body disconnected')); } }));
+    const bytes = await response.arrayBuffer();
+    abort.abort();
+    return new Response(bytes, { status: response.status });
+  }, signal: abort.signal,
     observedAt: 1000, waitForObservation: async () => {
       observations++; current = workspace(current.latest_build.transition === 'stop' ? 'stopped' : 'running', current.latest_build.transition, current.latest_build.id);
     } });
@@ -59,6 +67,23 @@ async function fixture(options: { lostCreate?: boolean; lostDelete?: boolean; ow
 }
 
 describe('Coder finite lifecycle through its REST boundary', () => {
+  it('retains completed workspace and build correlation after late cancellation', async () => {
+    const create = await fixture({ postResponse: 'late-abort' });
+    expect(await create.client.acquire(launch, managedId)).toMatchObject({ kind: 'pending',
+      nativeOperationRef: { value: { workspaceId: 'workspace', buildId: 'build-create' } } });
+    const deletion = await fixture({ postResponse: 'late-abort' });
+    expect(await deletion.client.destroy({ resource })).toMatchObject({ kind: 'accepted',
+      nativeOperationRef: { value: { buildId: 'build-delete' } } });
+  });
+  it('keeps an incomplete allocation body pending without fabricating native identity', async () => {
+    const h = await fixture({ postResponse: 'incomplete' });
+    const result = await h.client.acquire(launch, managedId);
+    expect(result).toMatchObject({ kind: 'pending' });
+    if (result.kind !== 'pending') throw new Error('Missing acquisition handle');
+    expect(result.nativeOperationRef.value).not.toHaveProperty('workspaceId');
+    expect(result.nativeOperationRef.value).not.toHaveProperty('buildId');
+  });
+
   it('retains qualified create correlation after a lost reply and recovers the same allocation without another POST', async () => {
     const h = await fixture({ lostCreate: true });
     const created = RECONCILIATION.result.parse(await h.client.acquire(launch, managedId));

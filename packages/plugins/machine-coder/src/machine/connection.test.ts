@@ -9,7 +9,8 @@ import { createCoderClient } from './nativeClient.js';
 const token = 'coder-private-test-token';
 const closes: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); });
-async function fixture(status = 200) {
+async function fixture(status = 200, abortAfterReply = false) {
+  const abort = new AbortController();
   const credentialsSeen: Array<string | undefined> = [];
   const server = createServer((req, res) => { credentialsSeen.push(req.headers['coder-session-token'] as string | undefined);
     res.writeHead(status, { 'content-type': 'application/json' });
@@ -30,12 +31,22 @@ async function fixture(status = 200) {
   const http: PluginInvocationContext['services']['http'] = { request: async (request, options) => {
     const response = await fetch(request.url, { method: request.method, headers: request.headers, body: request.body,
       signal: options?.signal, redirect: request.redirect });
-    return { status: response.status, finalUrl: response.url, headers: Object.fromEntries(response.headers), body: new Uint8Array(await response.arrayBuffer()) };
+    const body = new Uint8Array(await response.arrayBuffer());
+    if (abortAfterReply) abort.abort(new Error('role-ended'));
+    return { status: response.status, finalUrl: response.url, headers: Object.fromEntries(response.headers), body };
   } };
-  const prepared = await prepareCoderConnection(accounts, http, new AbortController().signal);
+  const prepared = await prepareCoderConnection(accounts, http, abort.signal);
   return { prepared, credentialsSeen, counts: () => ({ selections, materializations }) };
 }
 describe('Coder connected account invocation custody', () => {
+  it('preserves a completed connection HTTP reply and cancels the next dispatch', async () => {
+    const h = await fixture(200, true);
+    const response = await h.prepared.request('/api/v2/users/me', { method: 'POST' });
+    expect(await response.json()).toEqual({ id: 'user-a', username: 'alice' });
+    await expect(h.prepared.request('/api/v2/users/me', { method: 'POST' })).rejects.toThrow('role-ended');
+    expect(h.credentialsSeen).toHaveLength(1);
+  });
+
   it('materializes once per finite invocation and sends the secret solely in the deployment header', async () => {
     const h = await fixture(); const client = createCoderClient({ request: h.prepared.request,
       signal: new AbortController().signal, observedAt: 1, waitForObservation: async () => {} });

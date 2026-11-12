@@ -41,7 +41,6 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
     signal.throwIfAborted();
     const response = await request(origin + path, { method, redirect: 'error', signal,
       headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    signal.throwIfAborted();
     return response;
   }
   function requireSuccess(response: Response) {
@@ -161,7 +160,7 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
       response = await request(origin + pathOf(resource) + '/files?' + new URLSearchParams({ path: guestPath }), {
         method: 'PUT', body: new Uint8Array(bytes), headers: { 'content-type': 'application/octet-stream' }, redirect: 'error', signal });
     }
-    signal.throwIfAborted(); requireSuccess(response);
+    requireSuccess(response);
   }
   async function exec(input: ReturnType<typeof ROLE_SCHEMAS.execInput.parse>): Promise<MachineProvisionerNativeExecResultV1> {
     if (input.allowWake === false) {

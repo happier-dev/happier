@@ -44,7 +44,6 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
     const response = await input.request('/api/v2' + path, { method, redirect: 'error', signal: input.signal,
       headers: { Accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    input.signal.throwIfAborted();
     if (response.status === 401) throw coderCredentialUnavailable();
     if (response.status === 403) throw new PluginError({ code: 'permission_denied' });
     if (response.status === 404 && acceptMissing) return null;

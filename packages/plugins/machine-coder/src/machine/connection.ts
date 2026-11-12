@@ -25,7 +25,6 @@ function requestWithConnection(selected: ReturnType<typeof connection>, http: Ht
     if (method !== 'GET' && method !== 'POST') throw new PluginError({ code: 'invalid_request' });
     const response = await http.request({ url, method, headers, redirect: 'error',
       ...(init.body === undefined ? {} : { body: new TextEncoder().encode(String(init.body)) }) }, { signal });
-    signal.throwIfAborted();
     if (response.finalUrl !== url) throw coderCredentialUnavailable();
     return new Response(Uint8Array.from(response.body), { status: response.status, headers: response.headers });
   };

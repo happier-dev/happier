@@ -23,10 +23,8 @@ export async function executeEnvd(request: typeof fetch, signal: AbortSignal, se
     headers: { 'content-type': 'application/connect+json', 'connect-protocol-version': '1',
       'x-access-token': session.token, authorization: 'Basic cm9vdDo=',
       ...(timeoutMs && timeoutMs > 0 ? { 'connect-timeout-ms': String(timeoutMs) } : {}) } });
-  signal.throwIfAborted();
   if (!response.ok) throw new E2bNativeError({ code: 'e2b_guest_http_' + response.status });
   const bytes = new Uint8Array(await response.arrayBuffer());
-  signal.throwIfAborted();
   const stdout: Uint8Array[] = [], stderr: Uint8Array[] = [];
   let exitCode: number | undefined, terminal = false;
   for (let offset = 0; offset < bytes.length;) {

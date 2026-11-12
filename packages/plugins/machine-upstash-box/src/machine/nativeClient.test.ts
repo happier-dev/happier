@@ -36,6 +36,24 @@ function vendor() {
   return { home, calls, request, dto, loseCreate() { lost = true; }, deferDelete() { deleting = true; }, deleted() { present = false; }, fail() { unavailable = true; }, cleanup() { rmSync(home, { recursive: true, force: true }); } };
 }
 describe('Upstash Box HTTP qualification', () => {
+  it('retains a completed allocation body after late cancellation', async () => {
+    const abort = new AbortController();
+    const bytes = new TextEncoder().encode(JSON.stringify({ id: resource.boxId, name: resource.name, labels: ['happier-managed:managed'], status: 'idle' }));
+    const request: typeof fetch = async () => new Response(new ReadableStream({ pull(body) {
+      body.enqueue(bytes); body.close(); abort.abort();
+    } }));
+    expect(await createUpstashBoxNativeClient(request, abort.signal).acquire(launch, 'managed'))
+      .toMatchObject({ kind: 'bound', resource: { value: resource } });
+  });
+  it('cancels before dispatch and keeps incomplete allocation bodies unconfirmed', async () => {
+    const abort = new AbortController(); abort.abort(); let calls = 0;
+    const request: typeof fetch = async () => { calls++; throw new Error('must not dispatch'); };
+    expect(await createUpstashBoxNativeClient(request, abort.signal).acquire(launch, 'managed')).toMatchObject({ kind: 'pending' });
+    expect(calls).toBe(0);
+    const incomplete: typeof fetch = async () => new Response(new ReadableStream({ start(body) { body.error(new Error('body disconnected')); } }));
+    expect(await createUpstashBoxNativeClient(incomplete).acquire(launch, 'managed')).toMatchObject({ kind: 'pending' });
+  });
+
   it('preserves a typed HTTP refusal during a native read', async () => {
     const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Interceptor activation failed',
       details: { phase: 'activation' } });

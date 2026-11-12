@@ -32,7 +32,6 @@ async function send(
     ...(credentialBinding === undefined ? {} : { credentialBinding }),
     ...(body === undefined ? {} : { body }),
   }, { signal });
-  signal.throwIfAborted();
   if (response.finalUrl !== request.url || response.status >= 300 && response.status < 400) {
     throw failure('provider_unavailable');
   }

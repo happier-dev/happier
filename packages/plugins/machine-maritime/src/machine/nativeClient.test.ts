@@ -54,6 +54,35 @@ function vendor(options: { lostCreate?: boolean; duplicate?: boolean; asleep?: b
 }
 
 describe('Maritime managed-machine REST leaf', () => {
+  it('retains a completed delete acknowledgement after late cancellation', async () => {
+    const abort = new AbortController();
+    const request: typeof fetch = async () => { abort.abort(); return new Response(null, { status: 204 }); };
+    expect(await createMaritimeNativeClient(request, abort.signal, 1000).destroy({ resource: boxResource })).toEqual({ kind: 'confirmed' });
+  });
+  it.each([boxResource, computerResource])('preserves completed upload failures after late cancellation (%j)', async resource => {
+    const abort = new AbortController();
+    const request: typeof fetch = async input => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith('/files/upload') || path.endsWith('/files')) { abort.abort(); return new Response(null, { status: 503 }); }
+      if (path.endsWith('/exec')) return Response.json({ executionId: 'execution-one', status: 'completed', exitCode: 0,
+        stdout: resource.kind === 'agent-box' ? '/data/input\n' : '/home/desk/input\n', stderr: '' });
+      return Response.json(resource.kind === 'agent-box' ? box : computer);
+    };
+    await expect(createMaritimeNativeClient(request, abort.signal, 1000).exec({ resource, argv: ['cat'], inputBase64: 'YQ==' }))
+      .rejects.toMatchObject({ code: 'maritime_http_503' });
+  });
+  it('cancels before dispatch and rejects incomplete execution bodies', async () => {
+    const abort = new AbortController(); const reason = new Error('cancelled'); abort.abort(reason);
+    let calls = 0;
+    const request: typeof fetch = async () => { calls++; return Response.json(box); };
+    await expect(createMaritimeNativeClient(request, abort.signal, 1000).destroy({ resource: boxResource })).rejects.toBe(reason);
+    expect(calls).toBe(0);
+    const incomplete: typeof fetch = async input => String(input).endsWith('/exec')
+      ? new Response(new ReadableStream({ start(body) { body.error(new Error('body disconnected')); } })) : Response.json(box);
+    await expect(createMaritimeNativeClient(incomplete, new AbortController().signal, 1000).exec({ resource: boxResource, argv: ['true'], allowWake: false }))
+      .rejects.toMatchObject({ code: 'maritime_invalid_response' });
+  });
+
   it('preserves a typed HTTP refusal during a native read', async () => {
     const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Interceptor activation failed',
       details: { phase: 'activation' } });

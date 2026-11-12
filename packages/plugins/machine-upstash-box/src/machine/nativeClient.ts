@@ -27,7 +27,6 @@ export function createUpstashBoxNativeClient(request: typeof fetch, signal?: Abo
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     if (!response.ok) throw new NativeError(response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'upstash_box_http_' + response.status, response.status);
     const content = await response.text();
-    signal?.throwIfAborted();
     if (!content) return null;
     try { return JSON.parse(content) as unknown; } catch { throw new NativeError('upstash_box_invalid_response'); }
   }

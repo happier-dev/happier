@@ -35,7 +35,6 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
     const response = await request(origin + path, { method, redirect: 'error', signal,
       headers: { 'content-type': 'application/json', ...Object.fromEntries(new Headers(headers)) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    signal.throwIfAborted();
     return response;
   }
   function requireSuccess(response: Response) {
@@ -66,7 +65,7 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
       method: 'POST', redirect: 'error', signal,
       headers: { 'content-type': 'application/octet-stream', 'x-access-token': session.token }, body: new Uint8Array(bytes),
     });
-    signal.throwIfAborted(); requireSuccess(response);
+    requireSuccess(response);
   }
   async function recover(operation: E2bOperation): Promise<Acquisition> {
     try {

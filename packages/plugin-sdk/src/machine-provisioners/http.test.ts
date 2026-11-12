@@ -13,6 +13,27 @@ function boundary() {
 }
 
 describe('machine provisioner host HTTP bridge', () => {
+  it.each(['bound', 'materialized'] as const)('preserves completed buffered HTTP receipts after late cancellation (%s)', async mode => {
+    for (const status of [200, 503]) {
+      const b = boundary();
+      b.request.mockImplementationOnce(async input => {
+        b.role.abort(new Error('role-ended'));
+        return { status, finalUrl: input.url, headers: {}, body: new Uint8Array([0, 255, 128]) };
+      });
+      const materialize = async () => ({ kind: 'httpHeaders' as const, headers: { authorization: 'captured-api-key' } });
+      const request = mode === 'bound'
+        ? createMachineProvisionerFetch(b.context, { purpose: 'cloud-api', origins: [origin], headerName: 'authorization' })
+        : createMachineProvisionerMaterializedFetch({ ...b.context, services: { ...b.context.services, connectedAccounts: { materialize } } }, {
+          purpose: 'cloud-api', origin, headerName: 'authorization', methods: ['POST'],
+        });
+      const response = await request(origin, { method: 'POST' });
+      expect(response.status).toBe(status);
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([0, 255, 128]));
+      await expect(request(origin, { method: 'POST' })).rejects.toThrow('role-ended');
+      expect(b.request).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it('preserves authored failures for reads and mutations while keeping untyped transport uncertain', async () => {
     const b = boundary();
     const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Interceptor activation failed' });
@@ -54,7 +75,7 @@ describe('machine provisioner host HTTP bridge', () => {
     b.request.mockImplementationOnce(async (input, options) => {
       b.role.abort(new Error('role-ended'));
       expect(options?.signal?.aborted).toBe(true);
-      return { status: 200, finalUrl: input.url, headers: {}, body: new Uint8Array() };
+      throw options?.signal?.reason;
     });
     await expect(request(origin, { signal: new AbortController().signal })).rejects.toThrow('role-ended');
   });

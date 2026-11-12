@@ -36,6 +36,26 @@ function vendor(options: { lostCreate?: boolean; startPending?: boolean; truncat
 }
 
 describe('Agent37 native HTTP lifecycle', () => {
+  it('retains completed power and delete bodies after late cancellation', async () => {
+    for (const effect of ['stop', 'delete'] as const) {
+      const abort = new AbortController();
+      const request: typeof fetch = async () => { abort.abort(); return Response.json(effect === 'stop'
+        ? { id: resource.instanceId, status: 'stopped' } : { id: resource.instanceId, deleted: true }); };
+      const client = createAgent37NativeClient(request, abort.signal, 1000);
+      expect(await (effect === 'stop' ? client.power(resource, effect) : client.destroy({ resource }))).toEqual({ kind: 'confirmed' });
+    }
+  });
+  it('cancels before dispatch and rejects incomplete mutation bodies', async () => {
+    const abort = new AbortController(); const reason = new Error('cancelled'); abort.abort(reason);
+    let calls = 0;
+    const request: typeof fetch = async () => { calls++; return Response.json({ id: resource.instanceId, deleted: true }); };
+    await expect(createAgent37NativeClient(request, abort.signal, 1000).destroy({ resource })).rejects.toBe(reason);
+    expect(calls).toBe(0);
+    const incomplete: typeof fetch = async () => new Response(new ReadableStream({ start(body) { body.error(new Error('body disconnected')); } }));
+    await expect(createAgent37NativeClient(incomplete, new AbortController().signal, 1000).destroy({ resource }))
+      .rejects.toMatchObject({ code: 'agent37_invalid_response' });
+  });
+
   it.each(['vm', 'default', 'performance'] as const)('creates %s with persistent daemon home and sleep disabled', async kind => {
     const h = vendor();
     expect(await h.client.acquire({ ...launch, kind }, resource.managedId)).toMatchObject({ kind: 'bound', resource: { value: { ...resource, kind } } });
