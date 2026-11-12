@@ -18,7 +18,7 @@ import { buildExecutionRunProfileStartParams } from './profileStart';
 import { resolveExecutionRunLifecycle } from './resolveExecutionRunLifecycle';
 import { resolveExecutionRunResumeBackendOptions } from './resolveExecutionRunResumeBackendOptions';
 import { resolveExecutionRunRuntimeBackendTarget } from './backendTargets';
-import { readScmDiffSummaryIntent } from './kinds/scmDiffSummary/publishSavedScmDiffSummaryTurn';
+import { readScmDiffSummaryIntent } from './kinds/scmDiffSummary/readScmDiffSummaryIntent';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import type { ExecutionRunEnsureResult } from './ensureExecutionRun';
 import type { ExecutionRunActionResult, ExecutionRunManagerStartParams, ExecutionRunStartResult, ExecutionRunState } from './executionRunTypes';

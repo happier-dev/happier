@@ -5,7 +5,8 @@ import { readCapturedScmComparison } from '@/scm/comparisons/captureScmCompariso
 import { buildDiffSummaryPrompt } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/buildDiffSummaryPrompt';
 import { planDiffSummaryAnalysis } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/advanceDiffSummaryAnalysis';
 import { ScmDiffSummaryProfile } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/ScmDiffSummaryProfile';
-import { readOrCreateSavedScmResult, readScmDiffSummaryIntent } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/publishSavedScmDiffSummaryTurn';
+import { readOrCreateSavedScmResult } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/publishSavedScmDiffSummaryTurn';
+import { readScmDiffSummaryIntent } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/readScmDiffSummaryIntent';
 import { scmDiffSummaryResultStore } from '../../tasks/scmDiffSummary/results/resultStore';
 import { collectReviewFindingCitations, presentReviewFindingCitations, findingCitationInstructions } from './reviewFindingCitations';
 

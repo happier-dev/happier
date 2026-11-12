@@ -1,5 +1,5 @@
 import { ScmDiffSummaryReviewProvenanceSchema } from '@happier-dev/protocol/scm/diffSummary';
-import { readScmDiffSummaryIntent } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/publishSavedScmDiffSummaryTurn';
+import { readScmDiffSummaryIntent } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/readScmDiffSummaryIntent';
 import { collectReviewFindingCitations, findingCitationInstructions, presentReviewFindingCitations,
   reviewFindingCitationsSchema } from './reviewFindingCitations';
 

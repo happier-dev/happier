@@ -11,7 +11,8 @@ import { stripTrailingJsonObjectFromText } from '../shared/stripTrailingJsonObje
 import { resolveReviewScmScope } from '../../../reviews/scope/resolve';
 import { readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
 import { ScmDiffSummaryProfile } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/ScmDiffSummaryProfile';
-import { readScmDiffSummaryIntent, readInitialScmDiffSummaryInputId } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/publishSavedScmDiffSummaryTurn';
+import { readInitialScmDiffSummaryInputId } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/publishSavedScmDiffSummaryTurn';
+import { readScmDiffSummaryIntent } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/readScmDiffSummaryIntent';
 import { prepareSavedReviewWalkthroughInput, readReviewNarration } from './reviewWalkthroughTurn';
 import { scmDiffSummaryResultStore } from '../../tasks/scmDiffSummary/results/resultStore';
 import { readRetainedReviewFindings } from '../../../reviews/normalize/readRetainedReviewFindings';

@@ -10,10 +10,7 @@ import { scmDiffSummaryResultStore, type ScmDiffSummaryResultScope } from '@/age
 import { parseDiffSummaryModelOutput, type DiffSummaryModelOutput } from './parseDiffSummaryModelOutput';
 import { resolveExecutionRunInitialInputLocalId } from '../../initialInput';
 import { readReviewNarration } from '@/agent/executionRuns/profiles/review/reviewNarrationContext';
-
-export function readScmDiffSummaryIntent(input: unknown): Readonly<Record<string, unknown>> {
-  return input && typeof input === 'object' && !Array.isArray(input) ? input as Readonly<Record<string, unknown>> : {};
-}
+import { readScmDiffSummaryIntent } from './readScmDiffSummaryIntent';
 
 export function readScmDiffSummaryProducerModelId(start: ExecutionRunProfileStartParams): string | undefined {
   // Native usage wins; without it, retain the Run's admitted model selection.

@@ -14,7 +14,7 @@ import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structure
 import { ReviewPublicationEvidenceSchema } from '@happier-dev/protocol/reviews/reviewPublicationEvidence';
 import { ScmDiffSummaryResultErrorCodeSchema, ScmDiffSummaryPublicationReceiptSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { readReviewNarration } from '@/agent/executionRuns/profiles/review/reviewWalkthroughTurn';
-import { readScmDiffSummaryIntent } from './kinds/scmDiffSummary/publishSavedScmDiffSummaryTurn';
+import { readScmDiffSummaryIntent } from './kinds/scmDiffSummary/readScmDiffSummaryIntent';
 import { buildExecutionRunProfileStartParams } from './profileStart';
 
 /** One host publisher for retained structured turns, independent of input transport. */
