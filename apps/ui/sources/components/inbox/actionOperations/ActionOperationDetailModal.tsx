@@ -3,6 +3,10 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
+import { isDeploymentBackupEvidenceActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import type { TriageFailureSubjectV1 } from '@happier-dev/triage-protocol/v1';
+import { FailureInvestigationActions } from '@/components/inbox/detail/FailureInvestigationActions';
+import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 
 import type { CustomModalInjectedProps } from '@/modal';
 import { Text } from '@/components/ui/text/Text';
@@ -275,6 +279,13 @@ export const ActionOperationDetailModal = React.memo(
     const isolationReceipt = isolationUnknown
       ? { quiet: true, text: t('inbox.actionOperations.isolationRecovery.receiptChecked') }
       : null;
+    const failedAddress = snapshot.state === 'failed' && operation.serverId ? {
+      serverId: operation.serverId, machineId: snapshot.scope.machineId, operationId: snapshot.operationId,
+    } : null;
+    const investigationSubject: TriageFailureSubjectV1 | null = !failedAddress ? null
+      : isDeploymentBackupEvidenceActionIdV1(snapshot.actionId) ? { kind: 'backupRun', operation: failedAddress }
+      : snapshot.domainRef?.kind === 'managedMachine' || snapshot.domainRef?.kind === 'machineSetup'
+        ? { kind: 'managedMachineOperation', operation: failedAddress } : null;
     const pluginIdentity = readActionOperationPluginIdentity(snapshot.actionId);
     const detail = projectActionOperationDetail(snapshot, observation);
     const recoveryDescription = translateRecovery(detail);
@@ -603,6 +614,11 @@ export const ActionOperationDetailModal = React.memo(
             ) : null}
           </ItemGroup>
         ) : null}
+
+        {investigationSubject && operation.serverId ? <SectionContentRow>
+          <FailureInvestigationActions subject={investigationSubject} serverId={operation.serverId}
+            controllerMachineId={snapshot.scope.machineId} compact={false} testID="action-operation-investigate" />
+        </SectionContentRow> : null}
 
         <ActionOperationDetailControls
           operation={operation}

@@ -13,11 +13,11 @@ import { OwnServerDeploymentInputBasisV1Schema } from '@happier-dev/deployment-p
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import {
   act,
-  renderScreen,
   standardCleanup,
   waitForTestEvent,
 } from '@/dev/testkit';
 import { t } from '@/text';
+import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
 import type { DomainIngressInspection } from './DeploymentDomainIngressFields';
 
 vi.mock('react-native', async () =>
@@ -121,6 +121,7 @@ async function renderDomains(
   domainActions: Record<string, unknown>,
   healthSetup = false,
   receipt = createDeploymentReceiptDetailV1(),
+  phone = false,
 ) {
   const transport: Partial<DeploymentReadTransportV1> = {
     listEnvironments: async () => ({
@@ -150,7 +151,7 @@ async function renderDomains(
         demand={shown}
         accountId="account-owner"
         serverId="home"
-        phone={false}
+        phone={phone}
         deploy={null}
         review={noReview}
         onOpenReceipt={() => {}}
@@ -176,6 +177,19 @@ async function renderDomains(
   };
   return { screen, controller, settle };
 }
+
+it('offers the shared investigation on a Domain needing attention and keeps a healthy Domain quiet', async () => {
+  const detail = createDeploymentEnvironmentDetailV1();
+  const healthy = domain('healthy-domain', 'healthy.example.test');
+  const failing = domain('attention-domain', 'attention.example.test');
+  const attention = { ...failing, domain: { ...failing.domain, state: 'warning' as const } };
+  const { screen, controller, settle } = await renderDomains(detail, [healthy, attention], domainActions(detail));
+  try {
+    await settle('project-deployments.environment.domains.attention-domain');
+    expect(screen.findByTestId('project-deployments.environment.domains.attention-domain.investigate')).not.toBeNull();
+    expect(screen.findByTestId('project-deployments.environment.domains.healthy-domain.investigate')).toBeNull();
+  } finally { await screen.unmount(); controller.retire(); }
+});
 
 function domainActions(detail: Detail) {
   return {
@@ -217,8 +231,7 @@ describe('Environment → Domains: add form (P6)', () => {
     try {
       await settle('project-deployments.environment.domains.recorded');
       const text = screen.getTextContent();
-      // Only the recorded Domain names its replicas; Machine and container ids stay out of the page.
-      expect(text.split('Recorded routed replicas').length - 1).toBe(1);
+      // Machine and container ids stay out of the page.
       expect(text).not.toContain('shop-web-1');
       expect(text).not.toContain('machine-a ·');
     } finally {
@@ -548,6 +561,23 @@ describe('Environment → Domains: Service never starts on the database (PAGE-AC
       const select = (testID: string) => screen.findAllByType(DropdownMenu).find(node => node.props.testID === testID);
       expect(select(`${id}.service`)?.props.selectedId).toBe('web');
       expect(select(`${id}.port`)?.props.selectedId).toBe('8080');
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('prefills Port from the port the stored Compose service exposes (SOS-SURFACES-1112)', async () => {
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const detail = withDatabase({ kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`,
+      document: 'services:\n  app:\n    image: nginx:alpine\n    expose:\n      - "80"\n',
+      profiles: [], services: ['app'], primaryService: 'app' });
+    const { screen, controller, settle } = await renderDomains(detail, [], domainActions(detail));
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      const select = (testID: string) => screen.findAllByType(DropdownMenu).find(node => node.props.testID === testID);
+      await act(async () => {
+        await vi.waitFor(() => expect(select(`${id}.port`)?.props.selectedId).toBe('80'));
+      });
+      expect(select(`${id}.service`)?.props.selectedId).toBe('app');
     } finally { await screen.unmount(); controller.retire(); }
   });
 });
@@ -917,4 +947,44 @@ describe('Environment → Domains: whether the address reaches this Machine (#2)
       expect(screen.getTextContent()).not.toContain('Needs a look');
     } finally { await screen.unmount(); controller.retire(); }
   });
+
+  it('puts Check again beneath the state line on a phone, leaving only ⋯ beside the address (DEPLOY-REACCEPT-1113 D1)', async () => {
+    const detail = createDeploymentEnvironmentDetailV1();
+    const known = domain('elsewhere', 'shop.example.com');
+    const item = { ...known, domain: { ...known.domain, dnsHealth: dnsHealth('down', 'dns_not_this_machine') } };
+    const rowId = 'project-deployments.environment.domains.elsewhere';
+    const { Item } = await import('@/components/ui/lists/Item');
+    for (const phone of [true, false]) {
+      const { screen, controller, settle } = await renderDomains(detail, [item], domainActions(detail), false, undefined, phone);
+      try {
+        await settle(rowId);
+        const row = screen.findAllByType(Item).find(node => node.props.testID === rowId);
+        expect(row).toBeDefined();
+        expect(holdsTestID(row!.props.bottomElement, `${rowId}.checkAgain`)).toBe(phone);
+        expect(holdsTestID(row!.props.rightElement, `${rowId}.checkAgain`)).toBe(!phone);
+        // ⋯ stays beside the address on every width.
+        expect(row!.props.rightElement).toBeTruthy();
+      } finally { await screen.unmount(); controller.retire(); }
+    }
+  });
 });
+
+describe('Environment → Domains: where an address leads (DEPLOY-REACCEPT-1113 D2)', () => {
+  it('names replica Machines only when they are not just the Environment\'s own Machine', async () => {
+    const { domainRouteMachineIds } = await import('./DeploymentDomainRow');
+    const replica = (machineId: string) => ({ machineId, installationId: `i-${machineId}`, containerName: `c-${machineId}` });
+    expect(domainRouteMachineIds([replica('own'), replica('own')], 'own')).toEqual([]);
+    expect(domainRouteMachineIds([replica('other')], 'own')).toEqual(['other']);
+    expect(domainRouteMachineIds([replica('own'), replica('other'), replica('other')], 'own')).toEqual(['own', 'other']);
+    expect(domainRouteMachineIds(undefined, 'own')).toEqual([]);
+    expect(domainRouteMachineIds([replica('own')], null)).toEqual(['own']);
+  });
+});
+
+/** Whether a rendered slot holds the element with this testID, at any depth of its own element tree. */
+function holdsTestID(node: unknown, testID: string): boolean {
+  if (Array.isArray(node)) return node.some(child => holdsTestID(child, testID));
+  if (!React.isValidElement(node)) return false;
+  const props = node.props as Record<string, unknown>;
+  return props.testID === testID || holdsTestID(props.children, testID);
+}

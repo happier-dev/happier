@@ -26,7 +26,7 @@ export type CurrentContributedAction = Readonly<{ action: PluginUiActionProjecti
 export function resolveCurrentContributedAction(readProjection: () => PluginUiProjectionModel | null,
     identity: PluginContributionIdentityV1): CurrentContributedAction | null {
     const action = createPluginUiProjectedActionResolver(readProjection()?.actionsById)(identity);
-    if (action && (action.execution.target === 'account' || 'hostAccountOrigin' in action)) {
+    if (action && ('hostAccountOrigin' in action || action.execution.target === 'account' && action.execution.invokingUi)) {
         const origin = readPluginUiAccountExecutableOrigin(action);
         const accountRegistration = resolvePluginUiClientActionRegistration({ action, platform: resolvePluginUiClientExecutablePlatform() });
         if (!origin || !accountRegistration || accountRegistration.registration.accountLifetime?.isCurrent() === false
@@ -147,7 +147,7 @@ export async function executeCapturedScopeContributedAction(
         ...(request.context.invocationServices?.managedBootstrapCredential
             ? { managedBootstrapCredential: request.context.invocationServices.managedBootstrapCredential } : {}),
         ...(request.context.actionRequestId ? { actionRequestId: request.context.actionRequestId } : {}),
-        invocationSurface: 'ui', hostAction, pluginUiProjection: readProjection(),
+        invocationSurface: 'ui', hostAction, actionAccountLifetime: accountLifetime, pluginUiProjection: readProjection(),
         resolveContributedAction: identity => createPluginUiProjectedActionResolver(readProjection()?.actionsById)(identity),
         clientAction: { ...(sessionId ? { sessionId } : {}),
             ...(request.messageActionReference ? { messageActionReference: request.messageActionReference } : {}) },

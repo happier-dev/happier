@@ -34,6 +34,7 @@ import {
 } from './DeploymentEnvironmentDetail';
 import { useDeploymentDomainIngressFields, type DomainIngressInspection } from './DeploymentDomainIngressFields';
 import { DeploymentTabState } from './DeploymentTabState';
+import { readDeploymentDeclaredContainerPorts } from './deploymentPreflightWarnings';
 import { useDeploymentEnvironmentDomains, useDeploymentEnvironmentRecord } from './useDeploymentReads';
 import { projectDeploymentDomainDnsReadinessV1, type DeploymentDomainDnsReadinessV1 } from '@happier-dev/deployments';
 import { DeploymentDomainRow, type DomainCredentialRole, type DomainItem } from './DeploymentDomainRow';
@@ -79,6 +80,8 @@ export function DeploymentDomainsPanel(
     environmentId: string;
     demand: DeploymentReadDemandV1;
     phone?: boolean;
+    /** The Machine the Environment's header names; a Domain route that leads only there doesn't repeat it. */
+    ownMachineId?: string | null;
     runtimeProjections?: readonly OwnServerDeploymentRuntimeProjectionV1[];
     /** Absent where the page cannot write: the addresses stay read-only. */
     editing?: DeploymentDomainEditing | null;
@@ -111,7 +114,26 @@ export function DeploymentDomainsPanel(
   const environment = record.snapshot.value;
   const content: EnvironmentContent | null = environment?.content ?? null;
   const services = React.useMemo(() => content ? composeServices(content) : NO_SERVICES, [content]);
-  const routeExports = content?.ownServer?.serviceExports ?? NO_EXPORTS;
+  // A recorded export names a service's port; otherwise the port its stored Compose service declares fills Port.
+  const explicitExports = content?.ownServer?.serviceExports ?? NO_EXPORTS;
+  const storedDocument = content?.definition.kind === 'stored' ? content.definition.document : null;
+  const [declared, setDeclared] = React.useState<Readonly<{ document: string; exports: readonly RouteExport[] }> | null>(null);
+  React.useEffect(() => {
+    if (!storedDocument) return;
+    let current = true;
+    void readDeploymentDeclaredContainerPorts(storedDocument).then(exports => {
+      if (current) setDeclared({ document: storedDocument, exports });
+    }, () => {
+      // Compose that does not parse declares no port; Port stays typed and the add's own check refuses it.
+    });
+    return () => { current = false; };
+  }, [storedDocument]);
+  const routeExports = React.useMemo(() => {
+    const declaredExports = declared && declared.document === storedDocument ? declared.exports : NO_EXPORTS;
+    if (declaredExports.length === 0) return explicitExports;
+    const named = new Set(explicitExports.map(entry => entry.service));
+    return [...explicitExports, ...declaredExports.filter(entry => !named.has(entry.service))];
+  }, [declared, explicitExports, storedDocument]);
   const bound = React.useMemo(() => content ? new Set(content.bindings.flatMap(binding => binding.purpose === 'domainCredential'
     ? [credentialKey(binding.domainId, binding.role)] : [])) : NO_BOUND, [content]);
   const setBindings = editing?.actions.setBindings;
@@ -208,7 +230,10 @@ export function DeploymentDomainsPanel(
           key={item.domain.id}
           item={item}
           accountId={props.controller.scope.accountId}
+          serverId={props.controller.scope.serverId}
           demand={props.demand}
+          phone={props.phone === true}
+          ownMachineId={props.ownMachineId ?? null}
           disabled={running}
           onVerify={editing ? () => { void press(() => editing.actions.verifyDomain(domainOperands(props.environmentId, editing, item))); } : undefined}
           onRemove={editing ? () => { void press(() => editing.actions.removeDomain(domainOperands(props.environmentId, editing, item))); } : undefined}
@@ -344,6 +369,10 @@ function DomainAddForm(
   const [basicAuthUser, setBasicAuthUser] = React.useState('');
   const servicePorts = React.useMemo(() => [...new Set(props.routeExports
     .filter(item => item.service === service).map(item => item.containerPort))], [props.routeExports, service]);
+  // Declared ports can arrive after the form opens; an empty Port then takes the service's one port.
+  React.useEffect(() => {
+    if (servicePorts.length === 1) setPort(current => current === '' ? String(servicePorts[0]) : current);
+  }, [servicePorts]);
   const [ingressMode, setIngressMode] = React.useState(props.recordedIngress?.kind === 'cloudflareTunnel' ? 'cloudflare' : 'environment');
   const provider = props.provider !== undefined;
   const needsZone = props.provider?.providerEnvironment?.kind === 'script';

@@ -46,3 +46,25 @@ export async function readDeploymentAddDeclaredInputs(document: string, services
     });
     return { services: selected, query: { ports: [...published], nativeNames: [] }, unresolved: true };
 }
+
+/**
+ * The container ports each Compose service declares: its `expose` entries and the container side of its `ports`.
+ * Literal numbers only; an interpolated, ranged or unreadable entry declares nothing.
+ */
+export async function readDeploymentDeclaredContainerPorts(document: string): Promise<ReadonlyArray<Readonly<{ service: string; containerPort: number }>>> {
+    const source = await parseDeploymentComposeSourceV1(document);
+    const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
+    const literal = (value: unknown): number | null => {
+        const text = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.split('/')[0]!.split(':').at(-1)! : '';
+        const port = LocalServiceEndpointV1Schema.shape.port.safeParse(/^\d+$/u.test(text) ? Number(text) : Number.NaN);
+        return port.success ? port.data : null;
+    };
+    const declarations = record(source.services) ? source.services : {};
+    return Object.entries(declarations).flatMap(([service, declaration]) => {
+        if (!record(declaration)) return [];
+        const entries = [...(Array.isArray(declaration.expose) ? declaration.expose : []),
+            ...(Array.isArray(declaration.ports) ? declaration.ports.map(port => record(port) ? port.target : port) : [])];
+        const ports = new Set(entries.map(literal).filter((port): port is number => port !== null));
+        return [...ports].map(containerPort => ({ service, containerPort }));
+    });
+}

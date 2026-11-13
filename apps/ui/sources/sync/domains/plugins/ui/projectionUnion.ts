@@ -118,9 +118,14 @@ export function resolvePluginUiExecutionDeclaration<T extends UnknownRecord & Re
     if (execution?.target === 'account') {
         const captured = readPluginUiAccountExecutableOrigin(declaration);
         const selected = readPluginUiAccountExecutableOrigin(current);
-        if (!selected || captured && (captured.serverId !== selected.serverId || captured.accountId !== selected.accountId
-            || captured.custodyId !== selected.custodyId)) return null;
-        return current;
+        if (captured || selected || execution.invokingUi === true) {
+            if (!selected || captured && (captured.serverId !== selected.serverId || captured.accountId !== selected.accountId
+                || captured.custodyId !== selected.custodyId)) return null;
+            return current;
+        }
+        // Machine-hosted Account declarations retain their selected Machine
+        // occurrence and origin through the same comparison below.
+        if (!readPluginUiContributionOrigin(current)) return null;
     }
     // An occurrence-less union row has not captured an executable yet. Once
     // bound, replacement is a retirement, including source changes in place.

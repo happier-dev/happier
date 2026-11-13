@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { act, createSessionFixture, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, createSessionFixture, pressTestInstanceAsync, standardCleanup } from '@/dev/testkit';
+import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
+import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -59,6 +61,25 @@ afterEach(async () => {
 const { ActionOperationDetailModal } = await import('./ActionOperationDetailModal');
 
 describe('ActionOperationDetailModal', () => {
+    it.each([
+        { kind: 'backup', failed: true }, { kind: 'managed-install', failed: true },
+        { kind: 'machine-setup', failed: true }, { kind: 'backup', failed: false },
+    ] as const)('offers the shared investigation only for a failed receipt ($kind, failed=$failed)', async ({ kind, failed }) => {
+        const snapshot = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'retained-failure', revision: 1,
+            actionId: kind === 'backup' ? DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 : kind === 'machine-setup' ? MACHINE_SETUP_APPLY_ACTION_ID_V1 : 'machines.managed.acquire', state: failed ? 'failed' : 'succeeded',
+            scope: { accountId: 'account-1', machineId: 'machine-1' }, title: 'Retained failure',
+            createdAt: 100, startedAt: 110, settledAt: 120, cancellation: 'unsupported',
+            ...(failed ? { error: { errorCode: 'native_failed', error: 'Native operation failed' } } : {}),
+            ...(kind === 'managed-install' ? { domainRef: { kind: 'managedMachine', id: 'removed-managed-resource' } }
+                : kind === 'machine-setup' ? { domainRef: { kind: 'machineSetup', serverId: 'home-a', machineId: 'machine-1', terminalId: 'install-output' } } : {}),
+        });
+        actionOperationStore.mergeSnapshots({ serverId: 'home-a', snapshots: [snapshot] });
+        const screen = await renderScreen(<ActionOperationDetailModal serverId="home-a" operationId={snapshot.operationId} onClose={() => {}} />);
+        try {
+            expect(screen.findByTestId('action-operation-investigate') !== null).toBe(failed);
+        } finally { await screen.unmount(); }
+    });
+
     it.each(['plain', 'e2ee'] as const)('shows the pushed Software Apply outcome after the daemon loses its receipt (%s)', async mode => {
         const homeId = 'home-a';
         const serverId = homeId;

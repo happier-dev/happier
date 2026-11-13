@@ -21,6 +21,9 @@ export function executeAccountActionAtRuntimeHost(params: Readonly<{
     action: PluginContributionIdentityV1;
     execution: Extract<PluginActionExecutionV2, { target: 'account' }>;
     input: unknown;
+    /** Selected Machine declaration; no browser executable is required there. */
+    sourceMachineId?: string;
+    expectedContributorOccurrenceId?: string;
     context: ActionExecutorContext;
     signal: AbortSignal;
     /** Produced only after the mounted presenter approved and its gate admitted. */
@@ -32,14 +35,16 @@ export function executeAccountActionAtRuntimeHost(params: Readonly<{
 
     async function executeOnSelectedHost() {
         const endpointUrl = getServerProfileById(params.accountScope.serverId)?.serverUrl ?? params.accountScope.serverId;
-        if (!params.context.externalActionTarget && await readRuntimeFetchHost(endpointUrl) === 'native') {
+        if (!params.context.externalActionTarget && !params.sourceMachineId && await readRuntimeFetchHost(endpointUrl) === 'native') {
             return await params.executeLocal();
         }
         const account = await captureLazyActionAccountContext(params.accountScope.serverId, params.signal);
         try {
-            const input = { action: params.action, ...(params.input === undefined ? {} : { input: params.input }) };
+            const input = { action: params.action,
+                ...(params.expectedContributorOccurrenceId === undefined ? {} : { expectedContributorOccurrenceId: params.expectedContributorOccurrenceId }),
+                ...(params.input === undefined ? {} : { input: params.input }) };
             const fallbackMachineId = params.context.externalActionTarget ? null
-                : await resolveUiAccountActionReceiverMachineId(account, { actionId: ACTION_INVOKE_ACTION_ID_V1, input,
+                : params.sourceMachineId ?? await resolveUiAccountActionReceiverMachineId(account, { actionId: ACTION_INVOKE_ACTION_ID_V1, input,
                     context: params.context, signal: params.signal });
             const target = params.context.externalActionTarget
                 ?? (fallbackMachineId ? { kind: 'machine' as const, machineId: fallbackMachineId } : undefined);
@@ -61,9 +66,10 @@ export function executeAccountActionAtRuntimeHost(params: Readonly<{
             const parsed = ActionExecuteResultSchema.safeParse(response);
             if (parsed.success && !parsed.data.ok) {
                 const failure = parsed.data;
-                const data = { code: failure.errorCode, message: failure.error,
-                    ...readPluginActionFailureAuthorPayload(failure.details),
-                    failureCause: failure.failureCause ?? projectActionFailureCauseV1({ code: failure.errorCode }, 'dispatch') };
+                const authored = readPluginActionFailureAuthorPayload(failure.details);
+                const data = { code: failure.errorCode, message: failure.error, ...authored,
+                    failureCause: failure.failureCause ?? authored.failureCause
+                        ?? projectActionFailureCauseV1({ code: failure.errorCode }, 'dispatch') };
                 throw readPluginActionFailureHandlerInvocation({ code: failure.errorCode, message: failure.error, data: failure.details })
                     ? createPluginActionHandlerNotStartedError(data) : new PluginError(data);
             }

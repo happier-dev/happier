@@ -22,12 +22,15 @@ import { t } from '@/text';
 import { deploymentDomainAttention, type DomainCredentialRole, type DomainItem } from './deploymentDomainAttention';
 import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
+import { FailureInvestigationActions } from '@/components/inbox/detail/FailureInvestigationActions';
 
 export type { DomainCredentialRole, DomainItem } from './deploymentDomainAttention';
 type OperationAddress = NonNullable<DomainItem['domain']['operationAddress']>;
 type DomainRowProps = Readonly<{
   item: DomainItem;
   accountId: string;
+  serverId: string;
   demand: DeploymentReadDemandV1;
   disabled: boolean;
   onVerify?: () => void;
@@ -36,6 +39,10 @@ type DomainRowProps = Readonly<{
   /** Credentials this address's content asks for that no binding supplies; absent where the page cannot bind. */
   missingCredentials?: readonly DomainCredentialRole[];
   onChooseCredential?: (role: DomainCredentialRole) => void;
+  /** A phone keeps only ⋯ beside the address; Check again moves beneath its state line. */
+  phone?: boolean;
+  /** The Machine the Environment's header already names; a route that leads only there doesn't repeat it. */
+  ownMachineId?: string | null;
 }>;
 
 /** A legacy capture has no controller address to inspect; it keeps the Domain owner's desired state. */
@@ -86,16 +93,27 @@ function DomainRowContent(props: DomainRowProps & Readonly<{ observation: Action
   // One state per row, from the Domain attention owner the live address reads too.
   const state = deploymentDomainAttention(item, lifecycle, missing);
   const tag = domainTag(item.content);
-  // Recorded routed replicas say where the address leads, by Machine name; raw ids stay out of the row.
-  const replicaMachineIds = React.useMemo(() => item.domain.routedReplicas?.replicas.map(replica => replica.machineId) ?? [],
-    [item.domain.routedReplicas]);
-  const replicaNames = useMachineDisplayNamesById(replicaMachineIds);
-  const replicas = item.domain.routedReplicas && replicaMachineIds.length > 0
-    ? `${t('projects.deployments.domainRecordedRoutedReplicas')} · ${[...new Set(replicaMachineIds
-      .map(machineId => replicaNames[machineId] ?? t('projects.deployments.aMachine')))].join(', ')}` : null;
-  const route = [domainRoute(item.content), replicas].filter(Boolean).join(' · ') || null;
+  // Where the address leads, by Machine name, unless it is only the Machine the page already names; raw ids stay out.
+  const routedMachineIds = React.useMemo(() => domainRouteMachineIds(item.domain.routedReplicas?.replicas, props.ownMachineId ?? null),
+    [item.domain.routedReplicas, props.ownMachineId]);
+  const routedNames = useMachineDisplayNamesById(routedMachineIds);
+  const routedOn = routedMachineIds.length > 0 ? t('projects.deployments.domainRoutedOn', {
+    machines: [...new Set(routedMachineIds.map(machineId => routedNames[machineId] ?? t('projects.deployments.aMachine')))].join(', '),
+  }) : null;
+  const route = [domainRoute(item.content), routedOn].filter(Boolean).join(' · ') || null;
   // An address that needs the person shows its recovery beside it, not only in ⋯.
   const checkAgain = state && props.onVerify && lifecycle !== 'removing' ? props.onVerify : null;
+  const actionable = props.onRemove && props.onVerify;
+  const checkAgainButton = actionable && checkAgain ? <RoundButton testID={`project-deployments.environment.domains.${item.domain.id}.checkAgain`}
+    size="small" display="secondary" title={t('projects.deployments.domainCheckAgain')} disabled={props.disabled}
+    onPress={checkAgain} /> : null;
+  const menu = actionable ? <DomainRowMenu item={item} disabled={props.disabled}
+    retryRemoval={retryRemoval} onVerify={props.onVerify!} onRemove={props.onRemove!}
+    onConfigureChecks={props.onConfigureChecks}
+    missingCredentials={missing} onChooseCredential={props.onChooseCredential} /> : null;
+  // A phone keeps only a short control beside a label: ⋯ stays, Check again sits beneath the state line,
+  // as the Overview's live address places its actions.
+  const phone = props.phone === true;
   return <>
     <Item
       testID={`project-deployments.environment.domains.${item.domain.id}`}
@@ -104,15 +122,8 @@ function DomainRowContent(props: DomainRowProps & Readonly<{ observation: Action
       titleAccessory={tag ? <StatusPill variant="neutral" hideDot label={tag} /> : undefined}
       subtitle={state ? <DomainStateLine state={state} route={route} /> : route}
       mode="info"
-      rightElement={props.onRemove && props.onVerify ? <View style={styles.rowActions}>
-        {checkAgain ? <RoundButton testID={`project-deployments.environment.domains.${item.domain.id}.checkAgain`}
-          size="small" display="secondary" title={t('projects.deployments.domainCheckAgain')} disabled={props.disabled}
-          onPress={checkAgain} /> : null}
-        <DomainRowMenu item={item} disabled={props.disabled}
-          retryRemoval={retryRemoval} onVerify={props.onVerify} onRemove={props.onRemove}
-          onConfigureChecks={props.onConfigureChecks}
-          missingCredentials={missing} onChooseCredential={props.onChooseCredential} />
-      </View> : undefined}
+      {...(phone ? { rightElement: menu ?? undefined, bottomElement: checkAgainButton ? <View style={styles.rowActions}>{checkAgainButton}</View> : undefined, bottomElementInset: 'text' as const }
+        : { rightElement: actionable ? <View style={styles.rowActions}>{checkAgainButton}{menu}</View> : undefined })}
     />
     {item.content.providerObservation?.dns.map((record, index) => (
       <FieldItem key={JSON.stringify([record.type, record.name, index])} label={`${record.type} · ${record.name}`}>
@@ -120,6 +131,12 @@ function DomainRowContent(props: DomainRowProps & Readonly<{ observation: Action
       </FieldItem>
     ))}
     {failure ? <ApprovalTechnicalDetails lines={presentActionFailureTechnicalDetails(failure)} /> : null}
+    {state && (state.variant === 'attention' || state.variant === 'danger') ? <SectionContentRow>
+      <FailureInvestigationActions subject={{ kind: 'domain', serverId: props.serverId,
+        environmentId: item.domain.environmentId, domainId: item.domain.id }} serverId={props.serverId}
+        controllerMachineId={item.domain.operationAddress?.machineId} compact emphasis="secondary"
+        testID={`project-deployments.environment.domains.${item.domain.id}.investigate`} />
+    </SectionContentRow> : null}
   </>;
 }
 
@@ -222,6 +239,15 @@ export function DomainStateLine(
       {props.route ? ` · ${props.route}` : null}
     </Text>
   );
+}
+
+/** The Machines a route names: none when its replicas run only on the Machine the page already names. */
+export function domainRouteMachineIds(
+  replicas: ReadonlyArray<Readonly<{ machineId: string }>> | undefined,
+  ownMachineId: string | null,
+): readonly string[] {
+  const ids = [...new Set(replicas?.map(replica => replica.machineId) ?? [])];
+  return ids.length === 1 && ids[0] === ownMachineId ? [] : ids;
 }
 
 /** Where the address leads: a redirect, or the service and port (and path, when it is not every path). */

@@ -1,7 +1,5 @@
 import * as React from 'react';
-import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
-import { InvestigationAgentActionButtons } from '@/components/inbox/detail/InvestigationAgentActionButtons';
-import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
+import { FailureInvestigationActions } from '@/components/inbox/detail/FailureInvestigationActions';
 import { View, type ViewStyle } from 'react-native';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveManagedConfigurationCost } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
@@ -229,22 +227,14 @@ function FailedInstallationCard(props: Readonly<{
     const subject = React.useMemo(() => ({ kind: 'managedMachineOperation' as const,
         operation: { serverId, machineId: snapshot.scope.machineId, operationId: snapshot.operationId } }),
     [serverId, snapshot.scope.machineId, snapshot.operationId]);
-    const investigationOptions = React.useMemo(() => ({ agentActions: 'withDefault' as const,
-        externalActionTarget: { kind: 'machine' as const, machineId: snapshot.scope.machineId },
-    }), [snapshot.scope.machineId]);
-    const investigation = useInvestigateFailure(subject, investigationOptions);
     return <>
-        {/* Retry when the failed install is confirmed; while its history can't be read, Check now re-reads it. */}
+        {/* Retry when the failed install is confirmed; Check now re-reads unavailable history. */}
         <AttentionBanner tone="danger" title={props.title} testID="managed-machine.installation-error"
             details={props.detail ? [props.detail] : undefined}
             action={props.action ? { label: props.action.label, onPress: () => { void props.action?.onPress(); },
-                disabled: props.action.disabled, loading: props.action.busy, testID: props.action.testID } : undefined}
-            control={<InvestigationAgentActionButtons actions={investigation.actions ?? [{
-                label: t('inbox.work.healthNotice.investigate'), launchMode: 'review', startable: true,
-            }]} pending={investigation.pending} compact={false}
-                onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }} />} />
-        {investigation.showOutcome && investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome} serverId={serverId}
-            testID="managed-machine.investigate" onChoosePlacement={investigation.investigateWithPlacement} pending={investigation.pending} /> : null}
+                disabled: props.action.disabled, loading: props.action.busy, testID: props.action.testID } : undefined} />
+        <FailureInvestigationActions subject={subject} serverId={serverId}
+            controllerMachineId={snapshot.scope.machineId} testID="managed-machine.investigate" compact={false} emphasis="secondary" />
     </>;
 }
 

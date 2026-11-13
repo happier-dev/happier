@@ -100,7 +100,7 @@ import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/acti
 import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
 import { createActionOperationRunner } from '../../../../../cli/src/daemon/actionOperations/actionOperationRunner';
 import { createActionOperationStore } from '../../../../../cli/src/daemon/actionOperations/actionOperationStore';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { NotificationsNotifyMeResultV1Schema } from '@happier-dev/protocol/account/notifications/notifyMeV1';
 import { ReviewCommentV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
 import { DOC_EDIT_PROPOSAL_HTTP_PATHS_V1, DocCollaborationActionOutputSchemasV1,
@@ -2439,7 +2439,8 @@ describe('Account Action placement through the executable dispatcher', () => {
             actionsById: { 'acme.placement/read': action } };
         const release = publishCommittedAppShellPluginUiProjection(() => projection);
         const payload = { choices: [{ id: 'investigate', startable: true }], linkedSessionId: 'retained-finding' };
-        const failureCause = { phase: 'dispatch', errorClass: 'PluginError', errorCode: 'admission_unavailable', httpStatus: null };
+        const failureCause = ActionFailureCauseV1Schema.parse({ phase: 'dispatch', errorClass: 'ManagedMachineControllerError',
+            errorCode: 'admission_unavailable', httpStatus: null });
         const received: unknown[] = [];
         const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://server-client-action',
             serverIdentityId: 'srv_client_action', accountId: lifetime.scope.accountId, machineId: CLIENT_ACTION_HOST_ORIGIN.machineId,

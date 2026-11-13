@@ -191,7 +191,7 @@ afterAll(() => browser.restore());
 
 /** Exact Home read boundary: the declared native controllers exist independently of the UI's loaded list. */
 function managedControllerReadBatch(machine: ManagedMachineV1, url: URL, init?: RequestInit,
-    controllers: readonly ManagedMachineV1['controller'][] = [machine.controller]): Response | null {
+    controllers: readonly NonNullable<ManagedMachineV1['controller']>[] = machine.controller ? [machine.controller] : []): Response | null {
     if (url.pathname !== '/v1/machines/read-batch') return null;
     return createMachineReadBatchResponseFixture(init?.body, id => {
         const controller = controllers.find(candidate => candidate.machineId === id);
@@ -202,7 +202,7 @@ function managedControllerReadBatch(machine: ManagedMachineV1, url: URL, init?: 
 
 /** Home's signed-root HTTP issuer; confirmation and policy stay in the real executors. */
 function managedControllerAuthorization(machine: ManagedMachineV1, url: URL, init?: RequestInit,
-    controllers: readonly ManagedMachineV1['controller'][] = [machine.controller]): Response | null {
+    controllers: readonly NonNullable<ManagedMachineV1['controller']>[] = machine.controller ? [machine.controller] : []): Response | null {
     if (!url.pathname.startsWith('/v1/actions/') || !url.pathname.endsWith('/execution-authorization')) return null;
     const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
     const controller = controllers.find(value => value.machineId === request.machineId);
@@ -1167,6 +1167,11 @@ describe('managed Machine detail', () => {
             expect(screen.getTextContent()).toContain(failed.error!.errorCode);
             expect(screen.findByTestId('managed-machine.installation-retry')).not.toBeNull();
             expect(retries).toEqual([]);
+            // An unavailable catalog cannot authorize Start now; Review still offers setup through the shared owner.
+            await waitForHomeGovernance(async () => {
+                await flushHookEffects();
+                expect(screen.findAllByType(AgentActionButton)[0]!.props.startUnavailableReason).toBeTruthy();
+            });
             // A failed install task is evidence: Investigate sits beside Retry and hands this exact operation to
             // configured Triage. This Home has none, so the shared owner's typed refusal is shown (D5).
             await act(async () => { screen.findAllByType(AgentActionButton)[0]!.props.onLaunch('review'); });
@@ -3176,7 +3181,7 @@ describe('managed Machine detail', () => {
                 await flushHookEffects();
                 expect(screen.findByTestId(`managed-machine.installation-prompt-${hostKey ? 'review' : 'approve'}`), screen.getTextContent()).not.toBeNull();
             });
-            if ('host' in prompt) {
+            if (prompt.host !== undefined) {
                 // The row names the question; the key itself is the trust sheet's, never inline (lab af-ssh Kp).
                 expect(screen.getTextContent()).toContain(kind === 'ssh.replaceHostKey'
                     ? t('addFlows.hostKeyChangedTitle', { host: prompt.host }) : t('addFlows.hostKeyTitle'));
@@ -3497,7 +3502,7 @@ describe('managed Machine detail', () => {
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation').length).toBe(0);
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation-retry').length).toBe(0);
         await act(async () => screen.tree.update(<AccountNoticeInvestigationBoundary><ManagedCreationProgress {...{ machine: { ...machine,
-            controller: { ...machine.controller, installationId: 'replacement-installation' } }, operation: failed,
+            controller: { ...machine.controller!, installationId: 'replacement-installation' } }, operation: failed,
             handlers: { reinstall: () => retried.push('wrong-installation') } }} /></AccountNoticeInvestigationBoundary>));
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation').length).toBe(0);
         await act(async () => screen.tree.update(<AccountNoticeInvestigationBoundary><ManagedCreationProgress {...{ machine,
@@ -3527,8 +3532,9 @@ describe('managed Machine detail', () => {
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
             schemaVersion: 1, name: 'Stopped resource', choices: {} };
+        const controller = { machineId: 'controller', installationId: 'installation' };
         const machine: ManagedMachineV1 = { id: 'start-existing', homeId: 'srv_managed_start', custodianAccountId: 'owner', launch,
-            controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
+            controller, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: launch.provider, schemaVersion: 1, value: { resourceId: 'same-native' } },
             desired, desiredWhen: 'now', intentRevision: 4, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
             ...(desired === 'start' ? { submittedNativeEffect: { intentRevision: 4, requestId: 'submitted-start', intent: 'start' as const,
@@ -3539,7 +3545,7 @@ describe('managed Machine detail', () => {
                 retentionCapabilities: { supportedIntents: ['start', 'stop'] }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
-            id: machine.controller.machineId, installationId: machine.controller.installationId, updatedAt: Date.now(),
+            id: controller.machineId, installationId: controller.installationId, updatedAt: Date.now(),
         })]);
         const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
         const nativeRequests: unknown[] = [];
@@ -3970,13 +3976,13 @@ describe('managed Machine detail', () => {
         const seen: Array<ManagedMachineHeaderIdentity | null> = [];
         const { MachinePageHeader } = await import('@/components/machines/page/MachinePageHeader');
         const { PageHeader } = await import('@/components/ui/layout/PageHeader');
-        const enrolled = createMachineFixture({ id: 'enrolled', metadata: { host: 'lima-native-generated-id', platform: 'linux' } });
+        const enrolled = createMachineFixture({ id: 'enrolled', metadata: { ...createMachineFixture().metadata!, host: 'lima-native-generated-id', platform: 'linux' } });
         function Probe(props: Readonly<{ machine?: ManagedMachineV1 }>) {
             const identity = useManagedMachineHeaderIdentity(props.machine, target.id);
             seen.push(identity);
             return <MachinePageHeader target={{ machineId: enrolled.id, requestedServerId: target.id, serverId: target.id,
                 activeServerId: target.id, machine: enrolled, machineName: 'lima-native-generated-id', machineSentenceName: 'lima-native-generated-id',
-                online: false, isServerSwitching: false, isHydratingMachine: false, switchReady: true }}
+                isServerSwitching: false, isHydratingMachine: false, switchReady: true }}
                 managedIdentity={identity} renaming={false} onRename={() => {}} />;
         }
         const screen = await renderScreen(<Probe machine={machine} />);
