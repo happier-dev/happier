@@ -67,6 +67,7 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
     targetActionApprovalReplay?: ActionExecutorDeps['targetActionApprovalReplay'];
     executionRunHostActionApprovalReplay?: ActionExecutorDeps['executionRunHostActionApprovalReplay'];
     approvalRequestApprovedReplay?: ActionExecutorDeps['approvalRequestApprovedReplay'];
+    approvalRequestApproveRefusal?: ActionExecutorDeps['approvalRequestApproveRefusal'];
     /** Current authority/credential/target proof for durable core Action replay. */
     isApprovalExecutionOriginCurrent?: ActionExecutorDeps['isApprovalExecutionOriginCurrent'];
     prepareApprovalExecutionOriginContext?: ActionExecutorDeps['prepareApprovalExecutionOriginContext'];
@@ -208,6 +209,9 @@ export function createCliActionExecutor(
         : {}),
       ...(params.approvalRequestApprovedReplay
         ? { approvalRequestApprovedReplay: params.approvalRequestApprovedReplay }
+        : {}),
+      ...(params.approvalRequestApproveRefusal
+        ? { approvalRequestApproveRefusal: params.approvalRequestApproveRefusal }
         : {}),
       ...(params.isApprovalExecutionOriginCurrent
         ? { isApprovalExecutionOriginCurrent: params.isApprovalExecutionOriginCurrent }

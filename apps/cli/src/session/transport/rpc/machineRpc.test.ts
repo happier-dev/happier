@@ -533,7 +533,7 @@ describe('callMachineRpc', () => {
     }));
   });
 
-  it.each(['unsigned', 'signed', 'replaced', 'tampered'] as const)('continues paired-terminal consent by replaying the committed Artifact at its exact daemon (%s)', async mode => {
+  it.each(['unsigned', 'signed', 'replaced', 'tampered', 'foreign-custody'] as const)('continues paired-terminal consent by replaying the committed Artifact at its exact daemon (%s)', async mode => {
     const home = 'https://consent-home.example.test';
     const machineId = 'machine-consent';
     const artifactId = 'consent-artifact';
@@ -545,7 +545,9 @@ describe('callMachineRpc', () => {
       scope: 'machine', machineId, enabled: true };
     const target = { kind: 'machine' as const, machineId };
     const authorization = { v: 1 as const, token: 'peer-signed-authorization', binding: {
-      accountId: 'account-consent', custodianAccountId: 'account-consent',
+      // A foreign custodian's Machine needs that Account's reviewer admission,
+      // which this terminal credential can never mint (Protocol reviewer owner).
+      accountId: 'account-consent', custodianAccountId: mode === 'foreign-custody' ? 'account-custodian' : 'account-consent',
       authentication: { kind: 'terminal' as const, tokenEpoch: 4 }, serverIdentityId: 'srv_consent',
       machineId, installationId: 'consent-installation', actionId: 'providers.connections.enabled.set' as const,
       requestId: 'original-consent', requestEnvelopeDigest: 'a'.repeat(43), target, accountEncryptionMode: 'plain' as const } };
@@ -579,7 +581,8 @@ describe('callMachineRpc', () => {
       if (url === `${home}/v1/account/profile`) return { status: 200, data: { id: 'account-consent' } };
       if (url === `${home}/v1/machines`) return { status: 200, data: [{ id: machineId, active: true, activeAt: Date.now(),
         kind: 'persistent', revokedAt: null, replacedByMachineId: null,
-        access: { custodian: { accountId: 'account-consent', displayName: 'Owner' }, role: 'manage',
+        access: mode === 'foreign-custody' ? { custodian: { accountId: 'account-custodian', displayName: 'Custodian' }, role: 'use',
+          resourceMode: 'plain', accessState: 'ready' } : { custodian: { accountId: 'account-consent', displayName: 'Owner' }, role: 'manage',
           resourceMode: 'plain', accessState: 'ready' } }] };
       if (url === `${home}/v1/artifacts/${artifactId}`) return { status: 200, data: row };
       if (url === `${home}/v1/machines/${machineId}`) return { status: 200, data: { machine: { id: machineId,
@@ -614,6 +617,14 @@ describe('callMachineRpc', () => {
           getAccountSettings: () => null } });
       const decision = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' },
         { surface: 'cli', authority: 'present_user', actionRequestId: 'decide-consent' });
+      if (mode === 'foreign-custody') {
+        // Refused before consent is recorded: the Ask stays open for a reviewer.
+        expect(decision).toMatchObject({ ok: false, errorCode: 'present_user_required', effectAttempted: false });
+        expect(storedRequest()).toMatchObject({ status: 'open' });
+        expect(axiosPost).not.toHaveBeenCalled();
+        expect(socket.emit).not.toHaveBeenCalled();
+        return;
+      }
       if (mode === 'replaced' || mode === 'tampered') {
         expect(decision).toMatchObject({ ok: true, result: { status: 'failed', execution: {
           ok: false, errorCode: 'approval_stale' } } });

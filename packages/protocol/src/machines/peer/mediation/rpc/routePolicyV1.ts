@@ -16,7 +16,7 @@ import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS } from '../../../../local/serv
 import { ACTION_INVOKE_ACTION_ID_V1, isExecutionRunStartActionIdV1, isWorkspaceSyncRelationshipWriteActionId, WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS, type WorkflowActionIdV1 } from '../../../../actions/actionIds.js';
 import { AGENT_SIGN_IN_STATUS_RPC_METHOD } from '../../../../daemon/agentSignIn.js';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '../../../../rpc/methods.js';
-import { readExternalActionBindingAuthority } from '../../../../actions/externalActionBindingAuthority.js';
+import { isApprovalDecisionReviewerBindingV1 } from '../../../../actions/externalActionBindingAuthority.js';
 
 const WORKFLOW_RUN_START_METHOD = 'workflow.run.start' satisfies WorkflowActionIdV1;
 
@@ -1235,8 +1235,7 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
       || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId
       || binding.sessionActionOrigin || binding.sessionActionSource || binding.workflowActionOrigin
       || binding.managedContinuation || binding.handoffAdmission || binding.handoffContinuation) return null;
-    const reviewer = readExternalActionBindingAuthority(binding) === 'present_user'
-      || 'principalId' in binding && Boolean(binding.principalId && binding.credentialId && binding.grant);
+    const reviewer = isApprovalDecisionReviewerBindingV1(binding);
     // Withdrawal spends the exact signed decision without promoting automation
     // to reviewer authority or permitting the private approved-effect replay.
     const withdrawal = method === RPC_METHODS.APPROVAL_REQUEST_DECIDE

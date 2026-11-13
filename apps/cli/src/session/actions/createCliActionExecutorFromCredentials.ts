@@ -157,7 +157,8 @@ import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { createCliPersonalSavedSecretActionExecute } from '@/settings/secrets/personalSavedSecretActionHost';
-import { readApprovalRequesterDecisionV1, resolveApprovalExecutor } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { readApprovalRequesterDecisionV1, readLiveCliApprovalOriginScope, resolveApprovalExecutor, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { isApprovalDecisionReviewerBindingV1 } from '@happier-dev/protocol/actions/externalActionBindingAuthority';
 import { isMachineTerminalActionId } from '@happier-dev/protocol/actions/specs/machineTerminal';
 import { createHostApprovalOriginCurrentness } from './approvals/hostOriginCurrentness';
 import { runTracedExternalActionStage, runTracedExternalActionInnerStage } from '@/daemon/externalActions/externalActionPhase';
@@ -665,6 +666,22 @@ async function executePatPublicAction(params: Readonly<{
     ...(params.invocationSignal ? { invocationSignal: params.invocationSignal } : {}),
     serverApiUrl: params.serverApiUrl,
   });
+}
+
+/**
+ * Whether an approved replay re-enters requester admission with a fresh
+ * `approval.request.decide` root. The stored origin has no private
+ * credentials, so the deciding requester supplies them; Workflow roots need
+ * the same custody even on the requester's own controller. A retained plugin
+ * review is delivered to its daemon instead, like the UI replay adapter.
+ */
+function readApprovalReplayDecisionAdmission(request: ApprovalRequestV2): 'fresh' | 'foreign_target_only' | null {
+  if (request.actionId === 'plugins.install' && readPluginInstallApprovalPendingReview(request.preview) !== null) return null;
+  const binding = request.executionOriginV1.externalActionExecutionAuthorization?.binding;
+  if (!binding) return 'foreign_target_only';
+  return 'authentication' in binding && (binding.accountId !== binding.custodianAccountId
+    || binding.workflowActionOrigin && !binding.workflowActionOrigin.sessionLeaf
+      && !binding.workflowActionOrigin.sessionAuthority) ? 'fresh' : null;
 }
 
 function shouldUsePatPublicActionTransport(
@@ -1278,6 +1295,22 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
             && !invocationSignal?.aborted,
         }),
       } : {}),
+      // Refuse before consent is recorded when the replay below would mint a
+      // fresh decision root this stored terminal credential can never obtain.
+      ...(hasStoredSessionCredentialProvenance(credentials) ? {
+        approvalRequestApproveRefusal: ({ request }) => {
+          if (machineAdmissionTransport || params.machineActionDirectTargetTransport
+            || params.pluginActionExecutionOwner === 'current_process'
+            || readLiveCliApprovalOriginScope(request) !== null || readApprovalRequesterDecisionV1(request, 'approve')) return null;
+          const executor = resolveApprovalExecutor(request);
+          if (executor.kind !== 'daemon' && executor.kind !== 'live_invocation'
+            || readApprovalReplayDecisionAdmission(request) !== 'fresh') return null;
+          const provenance = readAuthTokenProvenance(decodeJwtPayload(credentials.token), { allowLegacyHome: true })?.provenance;
+          if (provenance?.kind !== 'terminal' || isApprovalDecisionReviewerBindingV1({ authentication: { kind: 'terminal' } })) return null;
+          return { ok: false, errorCode: 'present_user_required', error: 'present_user_required', effectAttempted: false,
+            details: { reason: 'approval_reviewer_required' } };
+        },
+      } satisfies Pick<ActionExecutorDeps, 'approvalRequestApproveRefusal'> : {}),
       approvalRequestApprovedReplay: async args => {
         const { artifactId, request, decision, context, requestId, signal, onReplayDispatched } = args;
         try {
@@ -1330,18 +1363,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         if (!request.executionOriginV1.serverIdentityId) return actionFailure('approval_origin_unavailable');
         if (signal?.aborted) return actionFailure('cancelled');
         onReplayDispatched?.();
-        const originalBinding = request.executionOriginV1.externalActionExecutionAuthorization?.binding;
-        // Like the UI replay adapter, deliver this already-reviewed candidate
-        // to its retaining daemon; a new decision admission cannot own it.
-        const retainedPluginInstall = request.actionId === 'plugins.install'
-          && readPluginInstallApprovalPendingReview(request.preview) !== null;
-        if (!retainedPluginInstall && (!originalBinding || 'authentication' in originalBinding
-          && (originalBinding.accountId !== originalBinding.custodianAccountId
-            || originalBinding.workflowActionOrigin && !originalBinding.workflowActionOrigin.sessionLeaf
-              && !originalBinding.workflowActionOrigin.sessionAuthority))) {
-          // The stored origin has no private credentials. Re-enter the existing
-          // requester admission so the deciding requester supplies them. Workflow
-          // roots need the same custody even on the requester's own controller.
+        const decisionAdmission = readApprovalReplayDecisionAdmission(request);
+        if (decisionAdmission) {
           const invocation = readExternalActionRequesterInvocation(context);
           if (!invocation) return actionFailure('admission_unavailable');
           const admittedDecision = await dispatchOriginalAccountAction({ actionId: 'approval.request.decide',
@@ -1351,7 +1374,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
             target: { kind: 'machine', machineId }, requestId: requestId ?? randomUUID(), credentials,
             serverHttpBaseUrl: approvalServerApiUrl, serverIdentityId: request.executionOriginV1.serverIdentityId,
             invocation, authority: invocation.authority,
-            ...(!originalBinding ? { foreignTargetOnly: true as const } : {}),
+            ...(decisionAdmission === 'foreign_target_only' ? { foreignTargetOnly: true as const } : {}),
             onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure,
             ...(signal ? { signal } : {}) });
           if (admittedDecision) return admittedDecision;

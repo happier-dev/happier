@@ -2053,6 +2053,12 @@ export type ActionExecutorDeps = Readonly<{
     onReplayDispatched?: (dispatched?: boolean) => void;
   }>) => Promise<ActionExecuteResult | null>;
   /**
+   * The replay host's refusal of an approve it could not spend: checked before
+   * consent is recorded, so the Ask stays open for a reviewer who can. Null
+   * leaves the decision to the incumbent path.
+   */
+  approvalRequestApproveRefusal?: (args: Readonly<{ request: ApprovalRequestV2 }>) => ActionExecuteFailure | null;
+  /**
    * Host-owned replay for a contributed Action's durable API approval. It
    * claims only artifacts whose strict target subject its adapter admits; null
    * leaves ordinary ApprovalRequest handling on the existing path.

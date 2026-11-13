@@ -6846,6 +6846,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             details: approveAdmission.details,
           };
         }
+        // The replay host refuses an approve it cannot spend before consent is
+        // recorded, so the Ask stays open for a reviewer instead of failing late.
+        const approveRefusal = decision === 'approve' && existing.v === 2 && existing.status === 'open'
+          && !existing.requesterConfirmation ? deps.approvalRequestApproveRefusal?.({ request: existing }) : null;
+        if (approveRefusal) return approveRefusal;
         if (delegatedHostDecision && data.narrowedInput === undefined && deps.targetActionApprovalReplay) {
           const replay = await deps.targetActionApprovalReplay({ artifactId, decision,
             context: ctx,
