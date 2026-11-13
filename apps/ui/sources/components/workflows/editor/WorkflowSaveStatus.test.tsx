@@ -13,6 +13,11 @@ vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key, params) => params ? `${key}:${JSON.stringify(params)}` : key });
 });
+// Radix owns the DOM boundary; Compare's modal custody and chrome stay real.
+vi.mock('@/utils/web/radixCjs', async () => {
+    const { createRadixCjsModuleMock } = await import('@/dev/testkit/mocks/radixCjs');
+    return createRadixCjsModuleMock();
+});
 
 // Module transform is paid once, outside any single case's time budget.
 beforeAll(async () => {
@@ -51,9 +56,11 @@ describe('WorkflowSaveStatus', () => {
             if (!edited.ok) throw new Error('role_edit_failed');
             const localDraft = change === 'local' || change === 'identical' ? edited.draft : base.draft;
             const currentDraft = { ...(change === 'local' ? base.draft : edited.draft), draftId: 'current' };
-            const screen = await renderScreen(<WorkflowSaveStatus
+            const { ModalProvider } = await import('@/modal/ModalProvider');
+            // Compare opens the two documents in the canonical card, which the modal host renders.
+            const screen = await renderScreen(<ModalProvider><WorkflowSaveStatus
                 state={{ kind: 'conflict', conflict: { currentDraft, currentRevision: { headerVersion: 2, bodyVersion: 2 } } }}
-                localDraft={localDraft} onSaveAsCopy={() => {}} testIDPrefix="roles" />);
+                localDraft={localDraft} onSaveAsCopy={() => {}} testIDPrefix="roles" /></ModalProvider>);
             const documents = () => screen.findAll(node => typeof node.type === 'string' && node.props.selectable === true)
                 .map(node => String(node.props.children));
             // Comparison content is only materialized while the person asks to inspect it.
@@ -74,8 +81,7 @@ describe('WorkflowSaveStatus', () => {
             if (change === 'non-role') {
                 expect(typeof current === 'object' && current !== null && 'name' in current && current.name === edited.draft.name).toBe(true);
             }
-            await screen.pressByTestIdAsync('roles-compare');
-            expect(documents()).toHaveLength(0);
+            // Closing the card is WorkflowSaveStatus.compare.test's toggle case.
         },
     );
 
@@ -184,13 +190,14 @@ describe('WorkflowSaveStatus', () => {
         const { WorkflowSaveStatus } = await import('./WorkflowSaveStatus');
         const saveAsCopy = vi.fn();
         const currentDraft = { ...draft, draftId: 'current-draft', blocks: [{ ...draft.blocks[0], document: { ...draft.blocks[0].document, text: 'Review remote changes' } }] };
-        const screen = await renderScreen(React.createElement(WorkflowSaveStatus, {
+        const { ModalProvider } = await import('@/modal/ModalProvider');
+        const screen = await renderScreen(<ModalProvider>{React.createElement(WorkflowSaveStatus, {
             state: { kind: 'conflict', conflict: { currentDraft, currentRevision: { headerVersion: 3, bodyVersion: 3 } } },
             localDraft: draft,
             onSave: vi.fn(),
             onSaveAsCopy: saveAsCopy,
             testIDPrefix: 'workflow-editor',
-        }));
+        })}</ModalProvider>);
 
         expect(screen.getTextContent()).toContain('workflows.save.conflictTitle');
         expect(screen.getTextContent()).toContain('workflows.save.conflictBody');

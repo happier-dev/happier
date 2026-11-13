@@ -210,14 +210,16 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
         // Held to its column wherever it hangs (a phone sheet's subtitle sizes it to its content otherwise).
         maxWidth: '100%',
     },
+    /**
+     * The one-line pager (‹ 1 of 2 ›) and the line it shares with the step's own actions: one control, so its
+     * parts sit at the tighter control gap and the line holds at large text in a phone sheet.
+     */
+    holdPager: {
+        gap: theme.space.s8,
+    },
     holdNavigationNext: {
         flexShrink: 1,
         minWidth: 0,
-    },
-    /** The review sheet's subtitle when it carries a trailing control: the modal header's own subtitle role. */
-    sheetSubtitle: {
-        ...Typography.variant('body'),
-        color: theme.colors.text.secondary,
     },
     /** A line that continues the outcome sentence starts under its words, not under its state mark (lab run-R1). */
     outcomeDetail: {

@@ -114,7 +114,7 @@ export function ActionInputFields(props: Readonly<{
             {...props.resolveFieldOptions.pickerContext}>
         <CoreCollectionScope>
         <HappierForm busy={props.busy} marksOptionalFields={happierFormMarksOptionalFields(props.fields)}>
-            {props.fields.map((field) => {
+            {props.fields.map((field, index) => {
                 const path = typeof field?.path === 'string' ? field.path : '';
                 const widget = typeof field?.widget === 'string' ? field.widget : '';
                 if (!path || !widget) return null;
@@ -167,7 +167,8 @@ export function ActionInputFields(props: Readonly<{
                         {...(toggleLabel === undefined ? {} : { toggleLabel })}
                         {...(widget === 'boolean' ? {} : { controlTestID: props.resolveFieldTestID?.(field) })}
                         {...(props.frame === undefined ? {} : { frame: props.frame })}
-                        style={FIELD_STYLE}
+                        // An unframed field stands on its host's line (a Workflow binding): its first field keeps that line's top edge.
+                        {...(props.frame === 'none' && index === 0 ? {} : { style: FIELD_STYLE })}
                         theme={presentationTheme}
                         onChange={(next) => props.onPatch(patchHappierActionInputPath(props.input, path, next))}
                     />

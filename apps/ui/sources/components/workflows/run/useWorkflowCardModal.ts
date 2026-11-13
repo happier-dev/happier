@@ -32,10 +32,12 @@ export function useWorkflowCardModal<C extends CustomModalComponentType<any>>(pa
     onRequestClose?: () => void;
     focusReturnRef?: FocusReturnRef;
     phonePresentation?: 'card' | 'sheet';
+    /** `bounded`: a long body scrolls inside the card under its header instead of the page scrolling the card. */
+    scrollHost?: 'overlay' | 'bounded';
     material?: 'glass' | 'solid';
     chrome?: CustomModalChromeCardConfig;
 }>): void {
-    const { open, component, props, identity, title, subtitle, testID, onRequestClose, focusReturnRef, phonePresentation, material } = params;
+    const { open, component, props, identity, title, subtitle, testID, onRequestClose, focusReturnRef, phonePresentation, scrollHost, material } = params;
     const modalRef = React.useRef<Readonly<{ id: string; identity: string | null | undefined }> | null>(null);
     // The closing intent belongs to the latest render, but the sheet is shown
     // once: reading it through a ref keeps a stale callback out of the modal
@@ -70,12 +72,13 @@ export function useWorkflowCardModal<C extends CustomModalComponentType<any>>(pa
                 ...(subtitle === undefined ? {} : { subtitle }),
                 testID,
                 bodyScroll: 'auto',
+                ...(scrollHost === undefined ? {} : { scrollHost }),
                 ...(phonePresentation === undefined ? {} : { phonePresentation }),
                 dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide, maxHeightRatio: 0.92, size: 'md' },
             },
         });
         modalRef.current = { id, identity };
-    }, [component, focusReturnRef, identity, material, open, phonePresentation, props, subtitle, testID, title]);
+    }, [component, focusReturnRef, identity, material, open, phonePresentation, props, scrollHost, subtitle, testID, title]);
 
     // A route change while the sheet is up must not leave it mounted.
     React.useEffect(() => () => {

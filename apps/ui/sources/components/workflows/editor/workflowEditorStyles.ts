@@ -742,6 +742,10 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         minWidth: 0,
         maxWidth: '100%',
     },
+    /** A binding's line: its value picker and the value's own field share a top edge, however tall the field grows. */
+    bindingLine: {
+        alignItems: 'flex-start',
+    },
     /** A consumer-drawn literal field on a binding's line: it takes the line's free width. */
     inlineLiteral: {
         flexGrow: 1,

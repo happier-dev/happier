@@ -144,7 +144,8 @@ export function WorkflowValuePicker(props: Readonly<{
                                     token ? { backgroundColor: theme.colors.state.active.background } : workflowEditorStyles.valuePickerUnset,
                                     focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
                                 ]}>
-                                    <Text numberOfLines={1} style={[workflowEditorStyles.valuePickerLabel,
+                                    {/* A narrow card wraps the value rather than cutting it short ("A fixed…"). */}
+                                    <Text style={[workflowEditorStyles.valuePickerLabel,
                                         { color: token ? theme.colors.state.active.foreground : theme.colors.text.secondary }]}>
                                         {token ? `↵ ${label}` : label}
                                     </Text>

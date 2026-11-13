@@ -14,6 +14,9 @@ import type { WorkflowArtifactRevisionV1 } from '@happier-dev/protocol/workflows
 
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { buildWorkflowDefinitionCandidate } from '@/sync/domains/workflows/workflowAuthoring';
+import type { CustomModalInjectedProps } from '@/modal';
+import { useWorkflowCardModal } from '../run/useWorkflowCardModal';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
 
 export type WorkflowSaveConflict = Readonly<{
@@ -93,15 +96,17 @@ const styles = StyleSheet.create((theme) => ({
     conflict: {
         gap: theme.space.s4,
         alignItems: 'flex-end',
-        // Held to the column it stands in: the comparison's two documents never push it past the page's edge.
         maxWidth: '100%',
         minWidth: 0,
     },
+    /** The Compare card's body: the card's own text inset, so the documents start on the title's edge. */
     comparison: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         gap: theme.space.s12,
         alignSelf: 'stretch',
+        paddingHorizontal: HAPPIER_PAGE_METRICS.cardPaddingPx,
+        paddingBottom: HAPPIER_PAGE_METRICS.cardPaddingPx,
     },
     comparisonPane: {
         // Side by side from 280 each; a narrower column stacks them, each at the column's width.
@@ -124,6 +129,35 @@ export function formatWorkflowArtifactRevision(revision: WorkflowArtifactRevisio
 
 function readableDraft(draft: WorkflowEditorDraft): string {
     return JSON.stringify(Object.assign({ name: draft.name }, buildWorkflowDefinitionCandidate(draft)), null, 2);
+}
+
+type WorkflowSaveComparisonProps = Readonly<{
+    localDraft: WorkflowEditorDraft;
+    currentDraft: WorkflowEditorDraft;
+    currentRevision: WorkflowArtifactRevisionV1 | null;
+    testID: string;
+}>;
+
+/** Your edits beside the newer saved version: side by side when there is room, stacked otherwise. */
+function WorkflowSaveComparisonSheet(props: CustomModalInjectedProps & WorkflowSaveComparisonProps): React.ReactElement {
+    return (
+        <View testID={props.testID} style={styles.comparison}>
+            <View style={styles.comparisonPane}>
+                <Text style={styles.status}>{t('workflows.page.saveStatus.yourEdits')}</Text>
+                <Text selectable style={styles.document}>{readableDraft(props.localDraft)}</Text>
+            </View>
+            <View style={styles.comparisonPane}>
+                <Text style={styles.status}>
+                    {props.currentRevision === null
+                        ? t('workflows.page.saveStatus.newerVersion')
+                        : t('workflows.page.saveStatus.newerVersionRevision', {
+                            revision: formatWorkflowArtifactRevision(props.currentRevision),
+                        })}
+                </Text>
+                <Text selectable style={styles.document}>{readableDraft(props.currentDraft)}</Text>
+            </View>
+        </View>
+    );
 }
 
 /** Re-renders once a minute while an age is on screen, so "Saved 2m ago" keeps its word true. */
@@ -235,9 +269,25 @@ export function WorkflowSaveStatus(props: Readonly<{
     const savedAtMs = state.kind === 'saved' ? state.savedAtMs : null;
     const presented = useLayoutPresentationActive();
     const nowMs = useMinuteClock(presented && savedAtMs !== null, props.nowMs);
+    // The status line hangs in the page header's action column, too narrow for two documents: Compare opens
+    // them in the canonical card, a centred dialog wide enough to set them side by side, a bottom sheet on a phone.
+    const conflict = state.kind === 'conflict' ? state.conflict : null;
+    const sheetComparison = React.useMemo(() => conflict === null || conflict.currentDraft === null ? null : {
+        localDraft: props.localDraft, currentDraft: conflict.currentDraft, currentRevision: conflict.currentRevision,
+        testID: `${testIDPrefix}-comparison-sheet`,
+    }, [conflict, props.localDraft, testIDPrefix]);
+    useWorkflowCardModal({
+        open: comparing,
+        component: WorkflowSaveComparisonSheet,
+        props: sheetComparison,
+        title: t('workflows.save.conflictTitle'),
+        testID: `${testIDPrefix}-comparison-modal`,
+        phonePresentation: 'sheet',
+        scrollHost: 'bounded',
+        onRequestClose: () => setComparing(false),
+    });
 
-    if (state.kind === 'conflict') {
-        const { conflict } = state;
+    if (conflict !== null) {
         return (
             <View testID={`${testIDPrefix}-save-status`} style={styles.conflict} accessibilityRole="alert">
                 <StatusLine>
@@ -256,24 +306,6 @@ export function WorkflowSaveStatus(props: Readonly<{
                         onPress={props.onSaveAsCopy}
                     />
                 </StatusLine>
-                {!comparing || conflict.currentDraft === null ? null : (
-                    <View testID={`${testIDPrefix}-comparison`} style={styles.comparison}>
-                        <View style={styles.comparisonPane}>
-                            <Text style={styles.status}>{t('workflows.page.saveStatus.yourEdits')}</Text>
-                            <Text selectable style={styles.document}>{readableDraft(props.localDraft)}</Text>
-                        </View>
-                        <View style={styles.comparisonPane}>
-                            <Text style={styles.status}>
-                                {conflict.currentRevision === null
-                                    ? t('workflows.page.saveStatus.newerVersion')
-                                    : t('workflows.page.saveStatus.newerVersionRevision', {
-                                        revision: formatWorkflowArtifactRevision(conflict.currentRevision),
-                                    })}
-                            </Text>
-                            <Text selectable style={styles.document}>{readableDraft(conflict.currentDraft)}</Text>
-                        </View>
-                    </View>
-                )}
             </View>
         );
     }

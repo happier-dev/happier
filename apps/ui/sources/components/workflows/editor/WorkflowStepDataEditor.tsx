@@ -401,7 +401,7 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
     const rowId = `${props.testIDPrefix}-input-${props.index}`;
     const reference = props.reference;
     return (
-        <View style={workflowEditorStyles.inlineControl}>
+        <View style={[workflowEditorStyles.inlineControl, workflowEditorStyles.bindingLine]}>
             {props.literalOnly === true && reference.kind === 'literal' ? null : <WorkflowValuePicker
                 draft={props.draft}
                 consumerBlockId={props.stepId}

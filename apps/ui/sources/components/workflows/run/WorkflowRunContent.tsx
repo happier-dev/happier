@@ -374,12 +374,12 @@ function WorkflowReviewCardModal(props: Readonly<{
         kind: 'card' as const,
         scrollHost: props.contentSized ? 'overlay' as const : 'body' as const,
         bodyScroll: props.contentSized ? 'auto' as const : 'none' as const,
-        // With hold navigation, the step's own actions join its line instead of taking a row of their own.
-        actions: props.headerTrailing ? null : props.headerActions ?? null,
-        subtitle: props.headerTrailing
-            ? <View>{props.subtitle ? <Text style={styles.sheetSubtitle}>{props.subtitle}</Text> : null}
-                <View style={styles.actions}>{props.headerTrailing}{props.headerActions}</View></View>
-            : props.subtitle,
+        // Hold navigation and the step's own actions are one line of the header's actions, which a phone
+        // card lays out at the card's full width beneath the title (the header owner's phone rule).
+        actions: props.headerTrailing
+            ? <View style={[styles.actions, styles.holdPager]}>{props.headerTrailing}{props.headerActions}</View>
+            : props.headerActions ?? null,
+        subtitle: props.subtitle,
     }), [props.contentSized, props.headerActions, props.headerTrailing, props.subtitle]));
     return <View style={[{ ...(props.contentSized ? {} : { flex: 1 }), minHeight: 0, minWidth: 0 }, styles.reviewSheet]}>{props.card}</View>;
 }
@@ -1756,7 +1756,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     // Hold navigation in a one-line band (a pane's header, a phone sheet or step header) is one pager,
     // ‹ 1 of 2 ›, whose › says where it goes; it never wraps over the result beneath it. A page's own
     // inline header has the room to name the next hold too, wrapping rather than cut off.
-    const holdNavigation = (named: boolean) => selectedAttentionIndex < 0 || attentionRows.length < 2 ? null : <View style={[styles.actions, styles.holdNavigation]}>
+    const holdNavigation = (named: boolean) => selectedAttentionIndex < 0 || attentionRows.length < 2 ? null : <View style={[styles.actions, styles.holdNavigation, named ? null : styles.holdPager]}>
         {named ? holdPosition : null}
         {nextHoldReading === null || !named ? null : <Text style={[styles.provenance, styles.holdNavigationNext]}>{nextHoldReading}</Text>}
         <RoundButton testID={`${testIDPrefix}-previous-hold`} size="mini" display="secondary" title="‹"
