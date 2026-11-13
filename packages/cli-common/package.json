@@ -622,6 +622,7 @@
   "files": [
     "dist",
     "native/windows",
+    "packageExportMatch.cjs",
     "sourceRuntimeDependencies.mjs", "workspaceBundleLockPriority.mjs"
   ],
   "scripts": {

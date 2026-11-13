@@ -7,6 +7,26 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { bundleWorkspacePackage, findRepoRoot } from '../dist/workspaces/index.js';
 
+test('bundled cli-common source runtime retains its private import closure', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'happier-cli-common-source-bundle-'));
+  try {
+    const destDir = join(tempRoot, 'cli-common');
+    bundleWorkspacePackage({
+      packageName: '@happier-dev/cli-common',
+      srcDir: fileURLToPath(new URL('..', import.meta.url)),
+      destDir,
+    });
+    const runtime = await import(pathToFileURL(join(destDir, 'sourceRuntimeEntries.mjs')).href);
+    assert.equal(runtime.resolveWorkspaceSource(new Map([
+      ['example', { root: destDir, manifest: { exports: {
+        './*': { 'happier-source': './src/*.ts' },
+      } } }],
+    ]), 'example/feature'), join(destDir, 'src', 'feature.ts'));
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('bundled cli-common supports the temporary-directory lifecycle', async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundle-'));
   try {
