@@ -161,7 +161,6 @@ type SocketDataCarrier = Readonly<{ data?: unknown }>;
 type DispatchPhase =
     | 'session_publishers'
     | 'publisher_currentness'
-    | 'principal_currentness'
     | 'target_currentness'
     | 'pending_reset_admission'
     | 'session_machine_resolution'
@@ -586,7 +585,6 @@ function createExactMachineDaemonGuard(params: Readonly<{
                 ...(params.handoffAdmission ? { handoffAdmission: params.handoffAdmission } : {}),
                 ...(params.executionBinding ? { executionBinding: params.executionBinding } : {}),
                 ...(params.workflowAdmission ? { workflowAdmission: params.workflowAdmission } : {}),
-                ...(params.managedCreationAdmission ? { managedCreationAdmission: params.managedCreationAdmission } : {}),
                 ...(params.capturedMachineAdmission ? { capturedMachineAdmission: params.capturedMachineAdmission } : {}),
                 expectedCustodianAccountId: params.custodianAccountId,
                 expectedInstallationId: params.installationId,
@@ -1029,8 +1027,9 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
         if (!daemonPrincipal) return createPlacementError({ code: 'credential_scope_denied',
             refusalBranch: 'execution_authorization_invalid', requestId: request.envelope.requestId, machineId });
 
-        // No provider/login HTTP await follows these original-source checks.
-        if (!admittedFiniteOperation && (request.executionAuthorization || currentAuthorization.binding.sessionActionOrigin)) {
+        // Mint already admitted a freshly issued root. A supplied root enters
+        // through this ingress, whose principal check above is also final.
+        if (!admittedFiniteOperation && request.executionAuthorization) {
             const sourceCurrent = await runDispatchPhase('target_currentness', machineId, () => (
                 hasCurrentExternalActionSessionSource(currentAuthorization.binding, resolveSessionMachine)
             ), request.envelope.requestId);
@@ -1040,16 +1039,6 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             });
             if (!sourceCurrent.value) return createPlacementError({ code: 'target_unavailable',
                 refusalBranch: 'session_source_stale', requestId: request.envelope.requestId, machineId });
-
-            const principalCurrent = await runDispatchPhase('principal_currentness', machineId, () => (
-                verifyCurrentExternalActionPrincipalInTx(db, currentAuthorization.binding)
-            ), request.envelope.requestId);
-            if (principalCurrent.kind === 'failed') return createPlacementError({
-                code: projectDispatchPhaseFailureCode(principalCurrent), refusalBranch: 'phase_exception',
-                requestId: request.envelope.requestId, machineId, phaseFailure: principalCurrent,
-            });
-            if (!principalCurrent.value) return createPlacementError({ code: 'target_unavailable',
-                refusalBranch: 'principal_not_current', requestId: request.envelope.requestId, machineId });
         }
 
         const placement: ExternalActionDaemonPlacementV1 = {

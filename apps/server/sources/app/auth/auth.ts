@@ -696,7 +696,7 @@ class AuthModule {
                     const control = ExternalActionManagedControlAdmissionV1Schema.parse(projection);
                     if (managedAdmission && !sameManagedInput(managedAdmission, control)) throw new ApiTokenOperationError('credential_scope_denied');
                     managedAdmission = control;
-                    if (control.input.when === 'after-idle') {
+                    if ('when' in control.input && control.input.when === 'after-idle') {
                         managedAccountExecutor = await qualifyExternalActionManagedAccountExecutorInTx(db, input, control);
                     }
                 }
@@ -721,7 +721,7 @@ class AuthModule {
             ...(managedAccountExecutor ? { managedAccountExecutor } : {}),
             ...(automationId ? { automationId } : {}),
             ...(environmentId ? { environmentId } : {}),
-            ...((ingressUpdateRoot || configureRoot || domainRoot && (isDeploymentDomainNativeAdmissionV1(nativeAdmission) || isDeploymentDomainDnsNativeAdmissionV1(nativeAdmission))
+            ...((nativeAdmission && 'kind' in nativeAdmission && nativeAdmission.kind === 'promote' || ingressUpdateRoot || configureRoot || domainRoot && (isDeploymentDomainNativeAdmissionV1(nativeAdmission) || isDeploymentDomainDnsNativeAdmissionV1(nativeAdmission))
                 || nativeMemberRoot && nativeAdmission && 'kind' in nativeAdmission
                     && (nativeAdmission.kind === 'restart' || nativeAdmission.kind === 'restore' || nativeAdmission.kind === 'backup'))
                 ? { deploymentNativeAdmission: nativeAdmission } : {}),
@@ -823,9 +823,6 @@ class AuthModule {
                         sourceSessionId: supplied.sessionActionOrigin.caller.sessionId,
                         resolveCurrentSessionMachine: context.resolveCurrentSessionMachine });
                 if (!current) throw new ApiTokenOperationError('target_unavailable');
-                if (!await this.isSignedCredentialCurrent(db, supplied.accountId, supplied.authentication.tokenEpoch)) {
-                    throw new ApiTokenOperationError('invalid_token');
-                }
             }
             if (supplied.workflowActionOrigin && !context.workflowAdmission) {
                 const { hasCurrentExternalActionWorkflowOriginInTx } = await import('./externalActionExecutionAuthorization');

@@ -3,6 +3,7 @@ import { Server } from 'socket.io';
 import { createServer } from 'node:http';
 import tweetnacl from 'tweetnacl';
 import { decodeBase64, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { createExternalActionDaemonDispatchResponseV1, prepareExternalActionResponseEnvelopeV1 } from '@happier-dev/protocol/actions';
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { auth, type ExternalActionExecutionAuthorizationMintInput } from './auth';
@@ -79,6 +80,76 @@ describe('external Action mint availability classification', () => {
         await expect(auth.mintExternalActionExecutionAuthorization(sourced, context)).rejects.toMatchObject({ code: 'target_unavailable' });
         await db.account.update({ where: { id: account.id }, data: { tokenEpoch: { increment: 1 } } });
         await expect(auth.mintExternalActionExecutionAuthorization(sourced, context)).rejects.toMatchObject({ code: 'invalid_token' });
+    });
+
+    it('retains credential admission across publisher discovery and refuses the next mint after withdrawal', async () => {
+        const { account, machine, input } = await fixture();
+        const session = await db.session.create({ data: { accountId: account.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        await db.accessKey.create({ data: { accountId: account.id, machineId: machine.id, sessionId: session.id, data: 'opaque-key' } });
+        const origin = SessionActionRpcOriginV1Schema.parse({ v: 1, caller: { kind: 'session', sessionId: session.id, starterDepth: 1, turnDepth: 2 },
+            sourceTurnId: 'admission-once-turn', callerPermissionMode: 'default', requestId: input.requestId,
+            causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } });
+        const sourced = { ...input, sessionActionOrigin: origin,
+            sessionActionSource: { machineId: machine.id, installationId: machine.installationId! } };
+        // Publisher discovery is the socket boundary. Withdraw the real credential
+        // after mint admitted it; auth and all database decisions remain real.
+        const admitted = await auth.mintExternalActionExecutionAuthorization(sourced, {
+            resolveCurrentSessionMachine: async () => {
+                await db.account.update({ where: { id: account.id }, data: { tokenEpoch: { increment: 1 } } });
+                return machine.id;
+            },
+        });
+        expect(admitted.binding).toMatchObject({ accountId: account.id, sessionActionOrigin: origin });
+        await expect(auth.mintExternalActionExecutionAuthorization(sourced, {
+            resolveCurrentSessionMachine: async () => machine.id,
+        })).rejects.toMatchObject({ code: 'invalid_token' });
+    });
+
+    it('delivers a freshly admitted Session-origin request after source and credential withdrawal at mint completion', async () => {
+        const { account, machine, envelope } = await fixture();
+        const session = await db.session.create({ data: { accountId: account.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        await db.accessKey.create({ data: { accountId: account.id, machineId: machine.id, sessionId: session.id, data: 'opaque-key' } });
+        const origin = SessionActionRpcOriginV1Schema.parse({ v: 1, caller: { kind: 'session', sessionId: session.id, starterDepth: 1, turnDepth: 2 },
+            sourceTurnId: 'delivery-admission-once-turn', callerPermissionMode: 'default', requestId: envelope.requestId,
+            causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } });
+        const io = new Server(createServer());
+        let publisher: string | null = machine.id;
+        const dispatch = createExternalActionDaemonDispatcher({ io,
+            resolveSessionMachine: async () => publisher,
+            mintExecutionAuthorization: async (input, context) => {
+                const admitted = await auth.mintExternalActionExecutionAuthorization(input, context);
+                publisher = null;
+                // Interleave real credential withdrawal after the canonical mint;
+                // the only substituted effect is the daemon network transport.
+                await db.account.update({ where: { id: account.id }, data: { tokenEpoch: { increment: 1 } } });
+                return admitted;
+            },
+            forwardRpc: async params => {
+                const response = createExternalActionDaemonDispatchResponseV1(prepareExternalActionResponseEnvelopeV1({
+                    v: 1, actionId: 'settings.list', requestId: envelope.requestId,
+                    execution: { ok: true, result: { delivered: true } },
+                }));
+                // An authenticated daemon socket is the network fixture. Keep
+                // the real placement guard and its database admission reader.
+                const socket = { id: 'admitted-delivery-daemon', data: { clientType: 'machine-scoped',
+                    userId: account.id, machineId: machine.id, verifiedMachineInstallationId: machine.installationId },
+                    timeout: () => ({ emitWithAck: async () => response }) };
+                const targets = await params.targetGuard?.filterTargets([socket]) ?? [];
+                if (targets.length !== 1 || !params.targetGuard) return { ok: false, error: 'target_unavailable' };
+                const delivery = await params.targetGuard.runOperation({ target: socket, readLatestTarget: async () => socket,
+                    operation: async () => response });
+                return delivery.status === 'current' ? { ok: true, result: delivery.value }
+                    : { ok: false, error: 'target_unavailable' };
+            },
+        });
+        const request = { actionId: 'settings.list', envelope,
+            principal: { accountId: account.id, authority: 'present_user' as const,
+                authentication: { kind: 'account' as const, tokenEpoch: account.tokenEpoch }, sessionActionOrigin: origin },
+            sessionActionSource: { machineId: machine.id, installationId: machine.installationId! } };
+        try {
+            expect(await dispatch(request)).toMatchObject({ kind: 'response' });
+            expect(await dispatch(request)).toMatchObject({ kind: 'placement_error', code: 'action_not_admitted' });
+        } finally { await new Promise<void>(resolve => { io.close(() => resolve()); }); }
     });
 
     it('preserves retryable daemon placement when an installation disappears between admission and mint', async () => {
