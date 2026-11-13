@@ -5,7 +5,7 @@ import { MachineProvisionerCheckResultV1Schema, MachineProvisionerOptionsResultV
 import { railwayVendor } from '../testkit/vendor.js';
 import * as entry from './index.js';
 
-it.each(['network', 'credential'] as const)('settles Check and Options as typed unavailable on %s failure', async failure => {
+it.each(['network', 'credential'] as const)('settles network loss and preserves typed credential refusals on %s failure', async failure => {
   // Captured credentials fail at the host HTTP boundary before vendor dispatch.
   const services = {
     http: { request: async () => {
@@ -15,8 +15,13 @@ it.each(['network', 'credential'] as const)('settles Check and Options as typed 
   } as unknown as PluginTestServicesFixture;
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry.PLUGIN, services });
   try {
+    if (failure === 'credential') {
+      await expect(kit.invokeAction('check', {}, { surface: 'plugin' })).rejects.toMatchObject({ code: 'credential_unavailable' });
+      await expect(kit.invokeAction('options', {}, { surface: 'plugin' })).rejects.toMatchObject({ code: 'credential_unavailable' });
+      return;
+    }
     expect(MachineProvisionerCheckResultV1Schema.parse(await kit.invokeAction('check', {}, { surface: 'plugin' })))
-      .toMatchObject({ available: false, code: failure === 'credential' ? 'credential_unavailable' : 'railway_unavailable' });
+      .toMatchObject({ available: false, code: 'railway_unavailable' });
     const options = MachineProvisionerOptionsResultV1Schema.parse(await kit.invokeAction('options', {}, { surface: 'plugin' }));
     expect(options).toEqual({ dimensions: { size: [], location: [], network: [], image: [], duration: [] }, code: 'provider_unavailable' });
     expect(JSON.stringify(options)).not.toContain('private-');

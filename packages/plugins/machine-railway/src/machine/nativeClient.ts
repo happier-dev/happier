@@ -45,7 +45,7 @@ export function createRailwayNativeClient(request: typeof fetch, signal?: AbortS
       return body.data as Record<string, unknown>;
     } catch (error) {
       const transportFailure = (): never => { throw error instanceof NativeError ? error : new NativeError(code(error)); };
-      return query.startsWith('query') ? projectMachineProvisionerActionFailure(error, transportFailure) : transportFailure();
+      return projectMachineProvisionerActionFailure(error, transportFailure);
     }
   }
   function identity(input: unknown, expected: { environmentId: string; sandboxId?: string }): Native {
@@ -78,22 +78,23 @@ export function createRailwayNativeClient(request: typeof fetch, signal?: AbortS
     try {
       const data = await graphql(createQuery, { input: { environmentId: launch.data.environmentId, idleTimeoutMinutes: 0 } });
       return acquired(identity(data.sandboxCreate, launch.data), managedId);
-    } catch (error) {
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
       if (error instanceof NativeError && error.status !== undefined && error.status >= 400 && error.status < 500) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
       // Railway has no create idempotency key or correlation lookup: never replay an uncertain paid create.
       return unknown(managedId);
-    }
+    }); }
   }
   function recoverCorrelation(managedId: string): Acquisition { return unknown(managedId); }
   async function recover(input: RailwayOperation): Promise<Acquisition> {
     const parsed = RailwayOperationSchema.safeParse(input);
     if (!parsed.success || parsed.data.kind !== 'acquire') return { kind: 'rejected', code: 'invalid_request' };
     const operation = parsed.data;
-    if (!operation.sandboxId) return recoverCorrelation(operation.managedId);
+    const sandboxId = operation.sandboxId;
+    if (!sandboxId) return recoverCorrelation(operation.managedId);
     try {
-      const native = await read({ environmentId: operation.environmentId, sandboxId: operation.sandboxId });
+      const native = await read({ environmentId: operation.environmentId, sandboxId });
       return native ? acquired(native, operation.managedId) : { kind: 'rejected', code: 'managed_not_found' };
-    } catch (error) { return projectMachineProvisionerActionFailure(error, () => unknown(operation.sandboxId)); }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => unknown(sandboxId)); }
   }
   async function inspect(input: RailwayResource): Promise<MachineProvisionerObservationV1> {
     const resource = RailwayResourceSchema.parse(input);
@@ -189,7 +190,7 @@ export function createRailwayNativeClient(request: typeof fetch, signal?: AbortS
   async function putFile(input: ReturnType<typeof ROLE_SCHEMAS.putFileInput.parse>): Promise<MachineProvisionerPowerResultV1> {
     const parsed = ROLE_SCHEMAS.putFileInput.parse(input);
     try { await put(parsed.resource, parsed.guestPath, decodeBase64(parsed.bytesBase64), parsed.mode); return { kind: 'confirmed' }; }
-    catch (error) { return { kind: 'unknown', code: code(error) }; }
+    catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) })); }
   }
   async function power(_resource: RailwayResource, _intent: string): Promise<MachineProvisionerPowerResultV1> {
     return { kind: 'refused', code: 'railway_intent_unsupported' };
@@ -212,7 +213,7 @@ export function createRailwayNativeClient(request: typeof fetch, signal?: AbortS
       const data = await graphql(destroyQuery, { environmentId: resource.environmentId, id: resource.sandboxId });
       if (data.sandboxDestroy !== null && identity(data.sandboxDestroy, resource).status === 'DESTROYED') return { kind: 'confirmed' };
       return { kind: 'accepted', nativeOperationRef: reference({ kind: 'delete', resource } as const) };
-    } catch (error) { return { kind: 'unknown', code: code(error) }; }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) })); }
   }
   return { check, acquire, recover, recoverCorrelation, inspect, bootstrap, exec, putFile, power, destroy, cleanup };
 }
