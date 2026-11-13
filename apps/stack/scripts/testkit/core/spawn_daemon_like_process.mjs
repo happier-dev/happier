@@ -47,6 +47,12 @@ export async function startDaemonLikeProcess({
 
   const server = createServer((req, res) => {
     const authenticated = req.headers['x-happier-daemon-token'] === controlToken;
+    // Optional real HTTP boundary for source-reload readiness fixtures.
+    if (req.method === 'POST' && req.url === '/plugins/catalog/read' && authenticated && process.env.HAPPIER_TEST_RELOAD_CATALOG) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(process.env.HAPPIER_TEST_RELOAD_CATALOG);
+      return;
+    }
     if (req.method === 'POST' && req.url === '/ping' && authenticated) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({

@@ -417,7 +417,8 @@ server.listen(0, '127.0.0.1', () => {
   }]);
 });
 
-test('source launch retires unpublished daemon generations before starting and replacing its successor', async (t) => {
+for (const readinessCase of ['ready', 'missing-registration', 'registration-unavailable', 'agent-drop']) {
+test(`source launch readiness ${readinessCase} retires unpublished generations and verifies its successor`, async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-source-daemon-supersede-'));
   const cliHomeDir = join(tmp, 'cli');
   const stackName = 'source-supersede';
@@ -446,8 +447,9 @@ test('source launch retires unpublished daemon generations before starting and r
   const runtimeStatePath = join(tmp, 'stack.runtime.json');
   for (const [launchPath, identity] of [[entrypoint, 'source-a'], [successorEntrypoint, 'source-b']]) {
   await writeFile(launchPath, `
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { spawnDaemonLikeProcess } from ${JSON.stringify(DAEMON_TEST_PROCESS_HELPER_PATH)};
+import { observePidLiveness } from ${JSON.stringify(join(scriptsDir, 'utils/proc/pids.mjs'))};
 const [command, action] = process.argv.slice(2);
 if (command === 'daemon' && action === 'stop') {
   const retained = JSON.parse(readFileSync(${JSON.stringify(runtimeStatePath)}, 'utf8'));
@@ -459,11 +461,18 @@ if (command === 'daemon' && action === 'start') {
     || retained.sourceRuntimeIdentities.daemon.selected !== ${JSON.stringify(identity)}
     || retained.sourceRuntimeIdentities.daemon.loaded !== null) process.exit(79);
   for (const pid of ${JSON.stringify(pids)}) {
-    try { process.kill(pid, 0); process.exit(77); } catch {}
+    if (observePidLiveness(pid).status === 'alive') process.exit(77);
   }
   const child = spawnDaemonLikeProcess({ cliHomeDir: process.env.HAPPIER_HOME_DIR,
     statePaths: [${JSON.stringify(join(cliHomeDir, 'servers', `stack_${stackName}__id_default`, 'daemon.state.json'))}],
-    internalServerUrl: process.env.HAPPIER_SERVER_URL });
+    internalServerUrl: process.env.HAPPIER_SERVER_URL,
+    env: { HAPPIER_TEST_RELOAD_CATALOG: ${JSON.stringify(JSON.stringify({ kind: 'available', plugins: [{ contributionIntrospection: { contributions: Array.from({ length: identity === 'source-b' && readinessCase === 'agent-drop' ? 1 : 2 }, (_, i) => ({ contribution: { family: 'agents', localId: String(i) }, registration: { state: 'bound' } })) } }] }))} } });
+  mkdirSync(${JSON.stringify(join(cliHomeDir, 'logs'))}, { recursive: true });
+  ${identity === 'source-b' && readinessCase === 'ready' ? `
+  writeFileSync(${JSON.stringify(join(cliHomeDir, 'logs'))} + '/' + child.pid + '-daemon.log', 'Starting');
+  await new Promise(resolve => setTimeout(resolve, 300));
+  ` : ''}
+  writeFileSync(${JSON.stringify(join(cliHomeDir, 'logs'))} + '/' + child.pid + '-daemon.log', ${JSON.stringify(identity === 'source-b' && readinessCase === 'missing-registration' ? 'Starting' : identity === 'source-b' && readinessCase === 'registration-unavailable' ? 'Machine registered\nMachine registration unavailable' : 'Machine registered')});
   writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));
 }
 process.exit(0);
@@ -471,11 +480,11 @@ process.exit(0);
   }
   await writeFile(runtimeStatePath, JSON.stringify({ stackName, processes: {} }));
   const options = { cliBin: entrypoint, cliEntrypoint: entrypoint, cliHomeDir, internalServerUrl,
-    publicServerUrl: internalServerUrl, stackName, forceRestart: true, isShuttingDown: () => false,
+    publicServerUrl: internalServerUrl, stackName, forceRestart: true, isTui: false, isShuttingDown: () => false,
     runtimeStatePath, sourceRuntimeLaunchUpdate: { launch: { entrypoint, cliDir: tmp }, identity: 'source-a' },
     env: { ...process.env, HAPPIER_STACK_REPO_DIR: '', HAPPIER_STACK_STACK: stackName,
       HAPPIER_STACK_AUTO_AUTH_SEED: '0', HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
-      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: PROCESS_BACKED_DAEMON_FIXTURE_TIMEOUT_MS,
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '1500',
       HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0' } };
   const reloadPath = join(tmp, 'source-runtime/reload.json');
   await recordSourceReloadRefusal({ stackBaseDir: tmp,
@@ -492,6 +501,14 @@ process.exit(0);
   await recordSourceReloadRefusal({ stackBaseDir: tmp,
     error: Object.assign(new Error('server source remains unavailable'), { component: 'server' }), env: options.env });
   const serverRefusal = JSON.parse(await readFile(reloadPath, 'utf8'));
+  if (readinessCase !== 'ready') {
+    await assert.rejects(startLocalDaemonWithAuth({ ...options,
+      sourceRuntimeLaunchUpdate: { launch: { entrypoint: successorEntrypoint, cliDir: tmp }, identity: 'source-b' },
+    }), /NOT_READY.*(?:Machine|Agent)/);
+    pids.push(Number(await readFile(pidPath, 'utf8')));
+    assert.equal((await readStackRuntimeStateFile(runtimeStatePath)).sourceRuntimeIdentities.daemon.loaded, null);
+    return;
+  }
   assert.equal((await startLocalDaemonWithAuth({ ...options,
     sourceRuntimeLaunchUpdate: { launch: { entrypoint: successorEntrypoint, cliDir: tmp }, identity: 'source-b' },
   })).started, true);
@@ -504,6 +521,8 @@ process.exit(0);
     { selected: 'source-b', loaded: 'source-b' });
   assert.deepEqual(JSON.parse(await readFile(reloadPath, 'utf8')), serverRefusal);
 });
+
+}
 
 function buildDelayedDaemonStartCliScript({
   cliHomeDir,
@@ -895,7 +914,8 @@ async function writeAccessKeyFile(path, token) {
     );
 }
 
-test('startLocalDaemonWithAuth treats daemon start exit=0 as failure when daemon never becomes running', async () => {
+for (const prepared of [false, true]) {
+test('startLocalDaemonWithAuth treats daemon start exit=0 as failure when daemon never becomes running' + (prepared ? ' after PREPARED in TUI mode' : ''), async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-start-verify-'));
   try {
     const cliDir = join(tmp, 'apps', 'cli');
@@ -908,6 +928,8 @@ test('startLocalDaemonWithAuth treats daemon start exit=0 as failure when daemon
     const env = {
       ...createFixtureStackEnv(tmp),
       HAPPIER_STACK_STACK: 'dev',
+      HAPPIER_STACK_TUI: prepared ? '1' : '0',
+      HAPPIER_STACK_PREPARED_SOURCE_RELOAD: prepared ? '1' : '0',
       HAPPIER_STACK_AUTO_AUTH_SEED: '0',
       HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
       HAPPIER_STACK_CLI_BUILD: '1',
@@ -929,12 +951,14 @@ test('startLocalDaemonWithAuth treats daemon start exit=0 as failure when daemon
         env,
         stackName: 'dev',
       }),
-      /Failed to auto re-seed daemon credentials|Failed to start daemon/
+      /Failed to auto re-seed daemon credentials|Failed to start daemon|NOT_READY/
     );
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
 });
+
+}
 
 test('startLocalDaemonWithAuth fails promptly after a non-zero start wrapper exits without daemon state', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-nonzero-no-state-'));

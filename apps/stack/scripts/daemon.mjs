@@ -59,6 +59,8 @@ import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/proc
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 import {
   pingDaemon,
+  readDaemonControlState,
+  daemonControlPost,
   restartDaemonViaControlServer,
   DEFAULT_RESTART_CONFIRM_TIMEOUT_MS as DEFAULT_STACK_DAEMON_START_VERIFY_TIMEOUT_MS,
 } from './utils/stack/daemonControlClient.mjs';
@@ -2391,29 +2393,51 @@ export async function startLocalDaemonWithAuth({
     }
   }
 
+  // Source replacement readiness belongs to the existing startup wait. Catalog
+  // introspection reports bound runtime contributions, not installed manifests.
+  const sourceReloadReadiness = sourceRuntimeLaunchUpdate !== null;
+  const readLoadedAgentCount = async () => {
+    const control = await readDaemonControlState({ cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv });
+    if (!control.ok) throw new Error('loaded Agent catalog unavailable');
+    const catalog = await daemonControlPost({ ...control, path: '/plugins/catalog/read', timeoutMs: startVerifyTimeoutMs });
+    if (catalog?.kind !== 'available' || !Array.isArray(catalog.plugins)) {
+      throw new Error('loaded Agent catalog unavailable');
+    }
+    return catalog.plugins.reduce((count, plugin) => count + (plugin.contributionIntrospection?.contributions ?? [])
+      .filter(row => row.contribution.family === 'agents' && row.registration.state === 'bound').length, 0);
+  };
+  let incumbentAgentCount = 0;
   const waitForRunningStable = async ({
     shouldStop = () => isShuttingDown?.() === true,
     shouldFail = null,
     isStartWrapperAlive = null,
     onFailure = null,
+    readReloadReadiness = null,
   } = {}) => {
     const stopIfCancelled = () => {
       if (typeof shouldStop !== 'function' || !shouldStop()) return false;
       onFailure?.('Failed to start daemon: startup was cancelled before readiness.');
       return true;
     };
+    let readinessReason = null;
     let checkpointDeadline = Date.now() + startVerifyTimeoutMs;
     while (true) {
       if (stopIfCancelled()) return false;
       const stateNow = await checkDaemonStatePingAware(cliHomeDir, { serverUrl: internalServerUrl, env: daemonEnv });
-      if (stateNow.status === 'running') {
+      readinessReason = stateNow.status === 'running' && readReloadReadiness ? await readReloadReadiness() : null;
+      if (stateNow.status === 'running' && !readinessReason) {
         if (startVerifyStableMs <= 0) return true;
         await delay(startVerifyStableMs);
         const stableState = await checkDaemonStatePingAware(cliHomeDir, { serverUrl: internalServerUrl, env: daemonEnv });
-        if (stableState.status === 'running') return true;
+        readinessReason = stableState.status === 'running' && readReloadReadiness ? await readReloadReadiness() : null;
+        if (stableState.status === 'running' && !readinessReason) return true;
       }
       if (typeof shouldFail === 'function' && shouldFail(stateNow)) return false;
       if (Date.now() >= checkpointDeadline) {
+        if (readinessReason) {
+          onFailure?.(`NOT_READY after cutover: ${readinessReason}. Re-adopt the previous green capture.`);
+          return false;
+        }
         if (!shouldContinueDaemonStartVerification({
           state: stateNow,
           startWrapperAlive: isStartWrapperAlive?.() === true,
@@ -2664,6 +2688,11 @@ export async function startLocalDaemonWithAuth({
     console.warn(`[local] daemon appears stuck starting for stack home (pid=${existing.pid}); restarting...`);
   }
 
+  if (sourceReloadReadiness && existing.status === 'running') {
+    try { incumbentAgentCount = await readLoadedAgentCount(); }
+    catch { throw new Error('NOT_READY before cutover: incumbent loaded Agent catalog unavailable'); }
+  }
+
   // The same retirement owner serves explicit stop and replacement admission.
   // Never clear retained PID custody or spawn new code before it confirms stop.
   await stopLocalDaemon({ cliBin, cliCommand: daemonCommand.command, cliCommandArgs: daemonCommand.argsPrefix,
@@ -2742,6 +2771,17 @@ export async function startLocalDaemonWithAuth({
     // healthy (for example synchronous start-sync mode). Success must be keyed off stable
     // daemon state, not only the wrapper process exiting.
     const runningStable = await waitForRunningStable({
+      readReloadReadiness: sourceReloadReadiness ? async () => {
+        const logPath = getLatestDaemonLogPath(cliHomeDir, daemonLogsBeforeStart);
+        let log = '';
+        try { if (logPath) log = readFileSync(logPath, 'utf8'); } catch {}
+        if (/registration unavailable/i.test(log)) return 'Machine registration unavailable';
+        if (!log.includes('Machine registered')) return 'Machine registered has not appeared in the replacement daemon log';
+        try {
+          const count = await readLoadedAgentCount();
+          return count < incumbentAgentCount ? `loaded Agent count dropped from ${incumbentAgentCount} to ${count}` : null;
+        } catch { return 'loaded Agent catalog unavailable'; }
+      } : null,
       shouldStop: () => isShuttingDown?.() === true || excerptIndicatesInstalledServiceConflict(startOutput),
       shouldFail: (state) => startWrapperFailed() && state.status === 'stopped',
       isStartWrapperAlive: () => resolvedExitCode === null && proc.exitCode === null && proc.signalCode === null,
@@ -2794,11 +2834,20 @@ export async function startLocalDaemonWithAuth({
 
   const first = await startOnce();
   if (!first.ok) {
+    if (first.reason?.startsWith('NOT_READY')) {
+      console.error(`[local] ${first.reason}`);
+      throw Object.assign(new Error(first.reason), { code: 'ESOURCERELOADNOTREADY' });
+    }
     if (first.reason) console.error(`[local] ${first.reason}`);
     if (first.excerpt) {
       console.error(`[local] daemon failed to start; last daemon log (${first.logPath}):\n${first.excerpt}`);
     } else {
       console.error('[local] daemon failed to start; no daemon log found');
+    }
+
+    if (baseEnv.HAPPIER_STACK_PREPARED_SOURCE_RELOAD === '1') {
+      throw Object.assign(new Error(`NOT_READY: Failed to start daemon after source reload (${first.reason ?? 'daemon_not_running'})`),
+        { code: 'ESOURCERELOADNOTREADY' });
     }
 
     if (isTui) {
