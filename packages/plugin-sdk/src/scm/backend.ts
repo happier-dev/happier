@@ -441,6 +441,12 @@ export type WorkspaceLocationInspection = Readonly<{
 }>;
 
 export type WorkspaceIntegrationHandlers = Readonly<{
+    /** Materialize a selected ref in this checkout through the SCM owner, including refs absent from the clone's default fetch. */
+    checkoutRef?: (input: Readonly<{
+        context: BackendRuntimeContext;
+        ref: string;
+        signal?: AbortSignal;
+    }>) => Promise<ScmBranchCheckoutResponse>;
     /** Fetch one ref through an existing configured repository remote and verify its approved immutable commit, without changing the checkout. */
     fetchCommitRef?: (input: Readonly<{
         context: BackendRuntimeContext;

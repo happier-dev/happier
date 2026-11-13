@@ -91,6 +91,30 @@ describe('materializeProjectCheckout', () => {
     expect(runGit(source, ['rev-parse', 'main'])).toBe(branchHead);
   });
 
+  it('materializes a PR-only Source defaultRef without moving main', async () => {
+    const parent = await temporaryRoot();
+    const remote = createBareRemoteRepository();
+    temporaryRoots.push(join(remote, '..'));
+    const source = join(remote, '..', 'source');
+    const main = runGit(source, ['rev-parse', 'HEAD']);
+    await writeFile(join(source, 'README.md'), 'PR-only content\n');
+    runGit(source, ['add', 'README.md']);
+    runGit(source, ['commit', '-m', 'PR-only commit']);
+    const head = runGit(source, ['rev-parse', 'HEAD']);
+    runGit(source, ['push', remote, `${head}:refs/pull/2/head`]);
+    const request = makeRequest(parent, remote, 'pull-request');
+    const result = await runWithRealGitScmRuntime(() => materializeProjectCheckout({
+      selector: { provider: request.provider, repository: request.repository, protocol: request.protocol },
+      ref: 'refs/pull/2/head', registry: cloneRegistry(makeProviderRegistry(makeCloneTargetDescription(remote))),
+      materialization: { kind: 'clone', destinationParentPath: parent, destinationDirectoryName: 'pull-request' },
+    }));
+    expect(runGit(result.rootPath, ['rev-parse', 'HEAD'])).toBe(head);
+    expect(await readFile(join(result.directory, 'README.md'), 'utf8')).toBe('PR-only content\n');
+    expect(runGit(result.rootPath, ['rev-parse', 'main'])).toBe(main);
+    expect(runGit(result.rootPath, ['rev-parse', 'origin/main'])).toBe(main);
+    expect(runGit(remote, ['rev-parse', 'main'])).toBe(main);
+  });
+
   it.each(['plain', 'symlinked ancestor'] as const)('creates a missing destination parent, like the offered ~/src on a fresh Machine (%s)', async shape => {
     const home = await temporaryRoot();
     const real = await realpath(home);

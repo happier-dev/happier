@@ -45,6 +45,7 @@ import { gitRemotePublish } from './operations/publishOperations.js';
 import { gitDiffCommit, gitDiffFile, gitBlameFile, gitLogList, gitHistoryEntries } from './operations/readOperations.js';
 import { gitFileAtRevision } from './operations/fileAtRevision.js';
 import { exportGitCommit, fetchGitCommitRef, resolveGitCommitRef } from './operations/exportCommit.js';
+import { checkoutGitRef } from './operations/checkoutRef.js';
 import { gitRemoteAdd, gitRemoteRemove, gitRemoteSetUrl } from './operations/remoteManagementOperations.js';
 import { gitRemoteFetch, gitRemotePull, gitRemotePush } from './operations/remoteOperations.js';
 import { gitRemoveIndexLock } from './operations/removeIndexLockOperation.js';
@@ -69,6 +70,7 @@ export function createGitBackend(): ScmBackend {
             preferenceAllowedModes: ['.git'],
         },
         workspaceIntegration: {
+            checkoutRef: checkoutGitRef,
             fetchCommitRef: fetchGitCommitRef,
             resolveCommitRef: resolveGitCommitRef,
             exportCommit: exportGitCommit,

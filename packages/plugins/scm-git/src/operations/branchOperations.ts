@@ -63,13 +63,16 @@ function branchMutationFailure(input: {
 async function runGitSwitch(input: {
     cwd: string;
     name: string;
+    detach?: boolean;
+    signal?: AbortSignal;
 }): Promise<ScmExecResult> {
     const switchResult = await runScmCommand({
         bin: 'git',
         cwd: input.cwd,
-        args: ['switch', input.name],
+        args: ['switch', ...(input.detach ? ['--detach'] : []), input.name],
         timeoutMs: GIT_BRANCH_SWITCH_TIMEOUT_MS,
         env: buildScmNonInteractiveEnv(),
+        signal: input.signal,
     });
 
     if (switchResult.success) {
@@ -81,9 +84,10 @@ async function runGitSwitch(input: {
         const checkoutResult = await runScmCommand({
             bin: 'git',
             cwd: input.cwd,
-            args: ['checkout', input.name],
+            args: ['checkout', ...(input.detach ? ['--detach'] : []), input.name],
             timeoutMs: GIT_BRANCH_SWITCH_TIMEOUT_MS,
             env: buildScmNonInteractiveEnv(),
+            signal: input.signal,
         });
         return checkoutResult;
     }
@@ -300,6 +304,21 @@ export async function gitBranchCreate(input: {
     const response: ScmBranchCreateResponse = result.success
         ? { success: true, stdout: result.stdout, stderr: result.stderr }
         : branchMutationFailure({ context: input.context, result, fallback: 'Branch creation failed' });
+    invalidateAfterBranchMutation({ response, context: input.context });
+    return response;
+}
+
+/** Materialize an exact fetched commit without moving a local branch. */
+export async function gitDetachedCheckout(input: Readonly<{
+    context: ScmBackendContext;
+    commit: string;
+    signal?: AbortSignal;
+}>): Promise<ScmBranchCheckoutResponse> {
+    const result = await runGitSwitch({ cwd: input.context.cwd, name: input.commit, detach: true,
+        ...(input.signal ? { signal: input.signal } : {}) });
+    const response: ScmBranchCheckoutResponse = result.success
+        ? { success: true, stdout: result.stdout, stderr: result.stderr }
+        : branchMutationFailure({ context: input.context, result, fallback: 'Ref checkout failed' });
     invalidateAfterBranchMutation({ response, context: input.context });
     return response;
 }

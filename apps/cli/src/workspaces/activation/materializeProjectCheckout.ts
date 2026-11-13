@@ -139,9 +139,12 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
         request: { cwd: rootPath, name: input.ref, strategy: 'bring_changes' as const },
         workingDirectory: rootPath, registry: input.registry, signal: input.signal,
         onNonRepository: () => notRepositoryResponse(),
-        runWithBackend: ({ context, selection }) => selection.backend.branchCheckout({
-          context, request: { cwd: rootPath, name: input.ref!, strategy: 'bring_changes' },
-        }),
+        runWithBackend: ({ context, selection }) => selection.backend.workspaceIntegration?.checkoutRef
+          ? selection.backend.workspaceIntegration.checkoutRef({ context, ref: input.ref!,
+            ...(input.signal ? { signal: input.signal } : {}) })
+          : selection.backend.branchCheckout({
+            context, request: { cwd: rootPath, name: input.ref!, strategy: 'bring_changes' },
+          }),
       });
       if (!checkout.success) {
         const code = checkout.errorCode ?? 'ref_unavailable';

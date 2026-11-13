@@ -169,6 +169,9 @@ function createWorkspaceIntegrationAdapter(
     if (!handlers) return undefined;
 
     return {
+        ...(handlers.checkoutRef ? { checkoutRef: async (input) => await runWithScmBackendRuntimeServices(
+            services, async () => await handlers.checkoutRef!(input),
+        ) } : {}),
         ...(handlers.fetchCommitRef ? { fetchCommitRef: async (input) => await runWithScmBackendRuntimeServices(
             services, async () => await handlers.fetchCommitRef!(input),
         ) } : {}),

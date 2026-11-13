@@ -20,6 +20,7 @@ import { getGitSnapshot } from '../repository.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 import { runScmCommand } from '../runtime.js';
 import { mapGitErrorCode } from '../remote.js';
+import { fetchGitRemoteCheckoutRef } from './fetchRemoteCheckoutRef.js';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
 import { classifyHostingProviderError } from '../hostingProviders/providerFailure.js';
 import { resolveDefaultPullRequestStatusProjectionRegistry } from './pullRequestStatusProjection.js';
@@ -88,44 +89,6 @@ function validateBranchName(branch: string): { ok: true } | { ok: false; error: 
         || /[\s\0-\x1f\x7f:~^?*\[]/.test(branch)
     ) {
         return { ok: false, error: 'Pull request branch contains unsupported syntax' };
-    }
-    return { ok: true };
-}
-
-function validateFetchRemoteName(remoteName: string): { ok: true } | { ok: false; error: string } {
-    if (!remoteName.trim()) return { ok: false, error: 'Pull request checkout requires a configured remote' };
-    if (
-        remoteName !== remoteName.trim()
-        || remoteName.startsWith('-')
-        || /[\s\0-\x1f\x7f:/\\]/.test(remoteName)
-        || remoteName.includes('..')
-        || remoteName.includes('@{')
-        || remoteName === '.'
-    ) {
-        return { ok: false, error: 'Pull request checkout remote name contains unsupported syntax' };
-    }
-    return { ok: true };
-}
-
-function validateProviderCheckoutRef(remoteRef: string): { ok: true } | { ok: false; error: string } {
-    if (
-        remoteRef !== remoteRef.trim()
-        || !remoteRef.startsWith('refs/')
-        || remoteRef.startsWith('-')
-        || remoteRef.endsWith('/')
-        || remoteRef.endsWith('.')
-        || /[\s\0-\x1f\x7f:~^?*[\\]/.test(remoteRef)
-        || remoteRef.includes('..')
-        || remoteRef.includes('@{')
-        || remoteRef.split('/').some((segment) => (
-            !segment
-            || segment === '.'
-            || segment === '..'
-            || segment.startsWith('.')
-            || segment.endsWith('.lock')
-        ))
-    ) {
-        return { ok: false, error: 'Pull request checkout ref contains unsupported syntax' };
     }
     return { ok: true };
 }
@@ -223,30 +186,11 @@ export function createGitPullRequestCheckoutOperations(
                 : null;
         }
 
-        const remoteRefValidation = validateProviderCheckoutRef(input.metadata.remoteRef);
-        if (!remoteRefValidation.ok) {
-            return errorResponse(remoteRefValidation.error, SCM_OPERATION_ERROR_CODES.INVALID_REQUEST);
-        }
-
-        const remoteName = input.provider.remoteName ?? input.snapshot.repo.remotes?.[0]?.name;
-        if (!remoteName) {
-            return errorResponse('Pull request checkout requires a configured remote', SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND);
-        }
-        const remoteNameValidation = validateFetchRemoteName(remoteName);
-        if (!remoteNameValidation.ok) {
-            return errorResponse(remoteNameValidation.error, SCM_OPERATION_ERROR_CODES.INVALID_REQUEST);
-        }
-
-        const fetched = await runScmCommand({
-            bin: 'git',
-            cwd: input.context.cwd,
-            args: ['fetch', remoteName, input.metadata.remoteRef],
-            timeoutMs: 30_000,
-            env: buildScmNonInteractiveEnv(),
-        });
-        if (!fetched.success) {
-            return errorResponse(fetched.stderr || 'Pull request fetch failed', mapGitErrorCode(fetched.stderr));
-        }
+        const fetched = await fetchGitRemoteCheckoutRef({ context: input.context, snapshot: input.snapshot,
+            ...(input.provider.remoteName !== undefined ? { remoteName: input.provider.remoteName } : {}),
+            remoteRef: input.metadata.remoteRef });
+        if (!fetched.success) return { ...fetched, ...errorResponse(
+            fetched.error ?? 'Remote ref fetch failed', fetched.errorCode ?? SCM_OPERATION_ERROR_CODES.COMMAND_FAILED) };
 
         const existingBranchSha = await readRef({ cwd: input.context.cwd, ref: `refs/heads/${input.branch}` });
         if (existingBranchSha) {

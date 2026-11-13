@@ -206,6 +206,7 @@ export type ScmWorkspaceIntegrationAdministrativePathInput = Readonly<{
 export type ScmWorkspaceIntegrationPortableWorkspacePathInput = ScmWorkspaceIntegrationPortableWorkspacePathRequest;
 
 export type ScmWorkspaceIntegration = Readonly<{
+    checkoutRef?: WorkspaceIntegrationHandlers['checkoutRef'];
     fetchCommitRef?: WorkspaceIntegrationHandlers['fetchCommitRef'];
     resolveCommitRef?: WorkspaceIntegrationHandlers['resolveCommitRef'];
     exportCommit?: WorkspaceIntegrationHandlers['exportCommit'];
