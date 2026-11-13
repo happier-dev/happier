@@ -30,11 +30,8 @@ export function buildBootstrapRootCommand(command: string): string {
 export function buildDedicatedDaemonAccountCommand(): string {
   return buildBootstrapRootCommand([
     'set -eu',
-    'test "$(uname -s)" = Linux',
-    'command -v systemctl >/dev/null',
-    'command -v loginctl >/dev/null',
-    'command -v runuser >/dev/null',
-    'test -d /run/systemd/system',
+    // Preserve the prerequisite cause before attempting any account effects.
+    'if ! { test "$(uname -s)" = Linux && command -v systemctl >/dev/null && command -v loginctl >/dev/null && command -v runuser >/dev/null && test -d /run/systemd/system; }; then printf "%s\\n" dedicated_identity_unsupported; exit 1; fi',
     'if ! id happier >/dev/null 2>&1; then useradd --create-home --user-group --shell /bin/bash happier; usermod --lock happier; fi',
     'happier_uid="$(id -u happier)"',
     'test "$happier_uid" -ne 0',

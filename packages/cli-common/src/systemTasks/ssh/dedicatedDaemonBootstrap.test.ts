@@ -1,4 +1,9 @@
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { mkdtemp, writeFile, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { ManagedMachineEnrollmentIdentityV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -9,6 +14,39 @@ import { DEDICATED_DAEMON_INSTALL_HOME } from './remoteBootstrapCommandBuilder.j
 import { installRemoteCli } from './installRemoteCli.js';
 
 describe('portable dedicated daemon bootstrap', () => {
+  it.skipIf(process.platform === 'win32').each(['systemctl', 'loginctl', 'runuser'])('reports an unsupported guest before account creation when %s is absent', async missing => {
+    const directory = await mkdtemp(join(tmpdir(), 'mach-devc-identity-'));
+    try {
+      await symlink('/bin/sh', join(directory, 'sh'));
+      // OS command boundary: no host account or service mutations are possible.
+      for (const name of ['id', 'uname', 'systemctl', 'loginctl', 'runuser']) {
+        if (name === missing) continue;
+        await writeFile(join(directory, name), `#!/bin/sh\necho ${name === 'uname' ? 'Linux' : '0'}\n`, { mode: 0o755 });
+      }
+      await expect(installRemoteCli({ channel: 'stable', bootstrap: {
+        parsed: { relay: { relayUrl: 'https://home.example' },
+          enrollmentIdentity: ManagedMachineEnrollmentIdentityV1Schema.parse({ kind: 'dedicatedDaemonUser',
+            username: 'happier', serviceMode: 'user', role: 'server', adminAccessAtCreation: 'preauthorized' }),
+          ssh: { target: 'root@guest', auth: 'agent' } },
+        context: { taskId: 'unsupported-guest', emit: () => {}, prompt: async () => { throw new Error('No prompt expected'); } },
+        createPromptId: () => 'unused',
+      }, transport: {
+        install: async () => { throw new Error('An unsupported guest must not install a payload'); },
+        exec: async ({ command }) => {
+          try {
+            const result = await promisify(execFile)('/bin/sh', ['-c', command], { env: { PATH: directory } });
+            return { status: 0, ...result };
+          } catch (error) {
+            const result = error as Error & { code: number; stdout: string; stderr: string };
+            return { status: result.code, stdout: result.stdout, stderr: result.stderr };
+          }
+        },
+      } })).rejects.toMatchObject({ code: 'dedicated_identity_unsupported' });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     { state: 'cold or partial bootstrap without completion', bootstrapInstalled: undefined, enrolledMachineId: undefined, prepare: true },
     { state: 'completed bootstrap awaiting enrollment', bootstrapInstalled: true as const, enrolledMachineId: undefined, prepare: false },
@@ -70,7 +108,7 @@ describe('portable dedicated daemon bootstrap', () => {
         const frame = bootstrap.MachineEffectInternalRequestSchema.parse(JSON.parse(lines[0]!));
         if (frame.mode === 'check' && 'steps' in frame) {
           expect(frame.steps.find(step => step.id === 'tools-root')).toMatchObject({
-            path: `${DEDICATED_DAEMON_INSTALL_HOME}/tools`, owner: 'happier', group: 'happier', mode: 0o755,
+            path: `${DEDICATED_DAEMON_INSTALL_HOME}/tools`, owner: 'happier', group: 'happier', mode: 0o711,
           });
           const administrator = frame.steps.find(step => step.id === 'bootstrap-administrator');
           expect(administrator).toEqual({ id: 'bootstrap-administrator', kind: 'user', username: 'operator' });

@@ -63,6 +63,9 @@ export async function installRemoteCli(input: Readonly<{
       throw new SystemTaskExecutionError('dedicated_identity_unsupported', 'The dedicated daemon identity requires a supported Linux user service.');
     }
     const account = await transport.exec({ command: buildDedicatedDaemonAccountCommand(), signal: input.signal });
+    if (account.status !== 0 && account.stdout.trim() === 'dedicated_identity_unsupported') {
+      throw new SystemTaskExecutionError('dedicated_identity_unsupported', 'The dedicated daemon identity requires systemd, loginctl and runuser in a running Linux user-service environment.');
+    }
     if (account.status !== 0) throw new SystemTaskExecutionError('dedicated_identity_unconfirmed', 'The dedicated daemon account could not be prepared.');
   }
   const installed = await transport.install(identity?.kind === 'dedicatedDaemonUser' ? {

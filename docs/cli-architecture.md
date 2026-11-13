@@ -40,6 +40,18 @@ requires the resulting fresh reviewed plan; it is not a repair for missing facts
 
 ## Managed bootstrap settlement (0.3 development)
 
+Dedicated daemon account preparation reports `dedicated_identity_unsupported`
+when the guest lacks systemd, loginctl, runuser or the running systemd environment.
+This local prerequisite refusal happens before payload installation and Home
+enrollment. Account preparation failures retain `dedicated_identity_unconfirmed`;
+only observed Home transport failures become `home_not_guest_reachable`.
+
+Agent37 native shell failures retain their exit status and output through the
+shared bootstrap transport. Truncated binary envelopes remain command failures;
+malformed responses retain `agent37_invalid_response`. Payload promotion reports
+`remote_command_failed` with the exit status and a redacted stderr tail using the
+existing command capture budget. Storage exhaustion keeps `remote_storage_full`.
+
 Controllerless Account provisioning checks, options and acquisition from a
 stored-session CLI use the matching Account/Home daemon's native runtime through
 signed-root ingress. They retain Account placement without inventing a controller
@@ -1211,7 +1223,14 @@ socket-readiness retries.
 
 CLI Action Machine discovery reads the authenticated Account inventory through
 `listCurrentAccountMachines`; saved local server profiles remain the inventory
-for `servers.list`. Fresh Session creation, directory preparation and spawn-nonce
+for `servers.list`. Both outputs publish the portable Home identity as the server
+id that callers copy into inputs such as `executionTarget.serverId`:
+`machines.list` items carry the executor's `serverIdentityId`, and a
+`servers.list` item's `value` is the exact descriptor's `homeServerIdentityId`
+(its `id` stays the local profile id). A profile id (`env_<hash>`,
+`stack_<name>__id_default`, a chosen name) is local to one CLI home, so another
+Machine of the same Home cannot resolve it. Inputs keep accepting the local
+profile id, so saved 0.2 values still work. Fresh Session creation, directory preparation and spawn-nonce
 observation address the selected Machine through `callExactMachineRpc`. A missing
 or unreachable target returns an error rather than spawning on its replacement
 or the caller's Machine. Historical Session control retains replacement-following
@@ -5711,29 +5730,40 @@ native isolation probe place their private socket directories under `/tmp`,
 independent of a custodian-private `TMPDIR`. The existing ACL admits only the
 selected shared Agent or member UID to that Session leaf and socket; the Session
 bearer and tool authority remain unchanged. No custodian ancestor permissions or
-daemon group membership are widened. Every host-owned local MCP listener admits
-only its per-endpoint bearer (`mcp/runtime/localMcpBearer.ts`, timing-safe): the
-Session MCP Unix socket; where no socket transport exists (Windows), the
-127.0.0.1 Session MCP endpoint, whose bearer reaches the launched relay through
-the same private context file; and plugin-hosted loopback MCP servers, whose
-bearer rides the private remote-bridge config written by the MCP materializer.
-No bearer is placed on argv, in MCP config env or in logs.
+daemon group membership are widened. Every host-owned local MCP listener has a
+per-endpoint bearer (`mcp/runtime/localMcpBearer.ts`, timing-safe). The Session
+MCP Unix socket admits a connection once, by that bearer (out-of-tree consumers
+such as plugin services, which receive it in memory) or by the kernel peer proof
+below for this Session's Agent tree. The context the Agent can read
+(`HAPPIER_SESSION_MCP_CONTEXT_FILE` and isolated launch material, both written
+through `agentVisibleSessionMcpContext`) names the socket only, so an Agent's
+shell never holds a Session MCP bearer. Where no socket transport exists
+(Windows), the 127.0.0.1 Session MCP endpoint stays bearer-only: its context file
+names the endpoint, and the bearer reaches the relay only in that Agent's MCP
+client config env (`HAPPIER_SESSION_MCP_BEARER`; Codex projects that env as a
+config override on its own command line). As a labeled Windows mitigation the
+Session message writer (`buildOutboundSessionMessagePayload`) redacts the live
+loopback bearer by exact value before storage; the follow-up is a Windows
+named-pipe transport with peer proof. Plugin-hosted loopback MCP servers' bearers
+ride the private remote-bridge config written by the MCP materializer. No bearer
+is logged.
 
 Agents launch the Session MCP as `happier-session-holder mcp-relay` (the shipped
-holder binary; no Node bridge process per Session). The relay reads only the
-context file named by `HAPPIER_SESSION_MCP_CONTEXT_FILE`, upgrades one HTTP/1.1
-connection on the Session endpoint (`Upgrade: happier-mcp-relay`, the bearer, the
-Agent's tool-name budget from `--tool-name-max-length`), then pipes MCP stdio
+holder binary; no Node bridge process per Session). The relay reads the
+context file named by `HAPPIER_SESSION_MCP_CONTEXT_FILE` (and, on Windows only,
+its bearer from `HAPPIER_SESSION_MCP_BEARER`), upgrades one HTTP/1.1
+connection on the Session endpoint (`Upgrade: happier-mcp-relay`, the bearer when
+present, the Agent's tool-name budget from `--tool-name-max-length`), then pipes MCP stdio
 framing both ways. The host serves that connection in-process as one MCP session
 (`mcp/runtime/sessionMcpRelayEndpoint.ts`): each request binds a fresh request
 server for the current admitted catalog, as Streamable HTTP requests do, and
 tool-name aliases resolve in the host (`mcp/bridges/forwardingMcpServer.ts`, also
-used by the public `happier-mcp --url` bridge). On Unix the endpoint also admits a
-relay only when its kernel-proven peer (SO_PEERCRED / LOCAL_PEERPID through the
+used by the public `happier-mcp --url` bridge). On Unix the endpoint admits a
+bearer-less relay or HTTP client (the `happier` CLI in the Agent's shell) only when its kernel-proven peer (SO_PEERCRED / LOCAL_PEERPID through the
 process-custody helper) runs as the Session's Agent uid and is in the process group
 of one of that Session's held Agents or descends from one of its holders
-(`mcp/runtime/sessionMcpAgentPeer.ts`), so another Session's Agent holding a copied
-bearer is refused. The Windows loopback endpoint stays bearer-only. Relay memory
+(`mcp/runtime/sessionMcpAgentPeer.ts`), once per connection, so another
+Session's Agent is refused. The Windows loopback endpoint stays bearer-only. Relay memory
 (Linux x64, static-pie): about 0.17 MiB USS / 0.33 MiB PSS per Session. Standard MCP source metadata is
 handled by the existing tool-handler decoration owner and delegates selected
 custom profiles to `resolveRunnerMcpServers` and its permission/currentness
@@ -6974,8 +7004,23 @@ channels and exits when the holder closes that connection.
     (`managed_target_access_unavailable`) until the Home admits the placement with
     the spawn (the Home owns share roles).
   - Lifetime: `prepareSessionTargetPlacement` (`daemon/spawn/`) registers the
-    authority on the spawn's launch resource scope, so a refused spawn ends it at
-    once and a launched Session's resources end it at exit.
+    placement on the spawn's launch resource scope: a refused spawn ends it at once;
+    a launched Session's placement ends when its runner process has exited, also when
+    a Stop retired the launch resources before signalling the runner (the runner
+    stops its target Agents through their holders over the relay). Its end runs the
+    placement's Session-end steps (`onSessionEnd`), then the authority and relay end.
+    Each call of the authority is its own provider operation (the Agents' held
+    channels stay open next to finite calls).
+  - Workspace path: the launch step fixes the workspace's two names once
+    (`SessionTargetLaunch.workspace {hostRoot, targetRoot}`; equal or disjoint, else
+    `workspace_root_unsafe`). The Agent is told only the target path: the native
+    Agent Session owner opens every Session and control context with
+    `resolveSessionAgentPath` (`sessionTargetRelay.ts`), so protocol `cwd` /
+    `workspaceRoot` name the target workspace for every provider. Exec admission on
+    this Machine resolves an Agent-facing target cwd to the Session path
+    (`resolveSessionHostCwd`) and the holder launch maps it back. The Session MCP relay
+    command is the holder placed in the target; its endpoint is still a socket on this
+    Machine, so Session MCP tools are not reachable from a target yet.
   - The runner holds no custody. The daemon serves a relay
     (`subprocess/supervision/sessionTargetRelay.ts`: one `exec` per connection, or a
     piped channel) on the owner-only local endpoint (`ownerOnlyLocalEndpoint`, pipe
@@ -6995,7 +7040,7 @@ channels and exits when the holder closes that connection.
     descriptor) are copied from the Session's connected-service Agent home to
     `~/.happier/sessions/<key>/agent-home`; config, hooks, MCP settings and plugins never
     cross. Only env entries pointing into that home are rewritten for the Agent. The
-    directory is removed by a cleanup on the launch resource scope (it runs before the
+    directory is removed by a Session-end step of the placement (it runs before the
     authority ends) unless an Agent of the Session still holds its `.live` lock (a
     crashed runner's spared Agent keeps its credentials for the adopting respawn);
     leftovers are swept when a later Session is placed, unless an Agent holds the
