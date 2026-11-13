@@ -12,6 +12,7 @@ import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-de
 import { MachineProvisionerOptionsResultV1Schema, prepareMachineProvisionerStoredSchemas, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { LIMA_PLUGIN, LIMA_RECONCILIATION_SCHEMAS } from './manifest.js';
 import { LimaLaunchSchema, LimaResourceSchema } from './machine/schemas.js';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 const testDirectory = mkdtempSync(join(tmpdir(), 'happier-lima-actions-test-'));
 afterAll(() => rmSync(testDirectory, { recursive: true, force: true }));
@@ -31,7 +32,7 @@ function processResult(stdout = new Uint8Array()): PluginProcessResult {
     stdout, stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
 }
 
-async function activatedAction(id: string, exec: Pick<ExecService, 'run'>, readyDependencies?: readonly string[]) {
+async function activatedAction(id: string, exec: Pick<ExecService, 'run'> & Partial<Pick<ExecService, 'spawn'>>, readyDependencies?: readonly string[], dependencyFailure?: Error) {
   const handlers = new Map<string, ActionHandler>();
   // This fixture replaces only the external host registration/services boundary;
   // the real public authoring, native decoder and lifecycle logic stay in use.
@@ -42,18 +43,39 @@ async function activatedAction(id: string, exec: Pick<ExecService, 'run'>, ready
   const handler = handlers.get(id);
   if (!handler) throw new Error(`declared action ${id} was not activated`);
   const context = { invokedAtMs: 123, signal: new AbortController().signal,
-    services: { exec, managedServices: { dependencies: { status: async (dependencyId: string): Promise<ManagedDependencyStatus> =>
-      readyDependencies !== undefined && !readyDependencies.includes(dependencyId)
+    services: { exec, managedServices: { dependencies: { status: async (dependencyId: string): Promise<ManagedDependencyStatus> => {
+      if (dependencyFailure) throw dependencyFailure;
+      return readyDependencies !== undefined && !readyDependencies.includes(dependencyId)
         ? { state: 'missing', id: dependencyId, supported: true } : { state: 'ready', id: dependencyId,
         version: dependencyId === 'lima-cli' ? '2.1.0' : '9.2.0', sourceId: 'system',
         executable: { kind: 'managedDependency', id: { pluginId: LIMA_PLUGIN.manifest.id, localId: dependencyId } },
-      } } } },
+      }; } } } },
   } as unknown as PluginInvocationContext;
   return { handler, context };
 }
 
 // The native filesystem store contract is POSIX; Lima supports Darwin and Linux hosts.
 describe.skipIf(process.platform === 'win32')('activated public Lima actions', () => {
+  it.each(['check', 'options', 'acquire', 'reconcile', 'inspect', 'resize', 'power', 'destroy', 'put-file'])(
+    'retains authored failures from dependency acquisition and native execution in %s', async action => {
+      const failure = new PluginError({ code: 'credential_unavailable', message: 'Repair the native service.',
+        remediation: { kind: 'retry' },
+        failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: 'EACCES', httpStatus: 403 } });
+      const { memoryBytes, diskBytes, instance: _instance, ...identity } = resource;
+      const inputs: Record<string, unknown> = {
+        check: {}, options: { image: 'template:ubuntu', arch: resource.arch },
+        acquire: { managedId: 'retained', launch: { ...identity, memoryGiB: memoryBytes / 1024 ** 3, diskGiB: diskBytes / 1024 ** 3 } },
+        reconcile: { nativeOperation: resource },
+        inspect: { resource }, resize: { resource, size: { cpuCores: 4 } }, power: { resource, intent: 'start' },
+        destroy: { resource }, 'put-file': { resource, guestPath: '/tmp/bootstrap', bytesBase64: 'YQ==' },
+      };
+      const exec = { run: async (): Promise<PluginProcessResult> => { throw failure; } };
+      for (const dependencyFailure of [failure, undefined]) {
+        const { handler, context } = await activatedAction(action, exec, undefined, dependencyFailure);
+        await expect(handler(inputs[action], context)).rejects.toBe(failure);
+      }
+    });
+
   it.each([
     { hostOS: 'darwin', arch: 'aarch64', vmType: 'vz' },
     { hostOS: 'linux', arch: 'x86_64', vmType: 'qemu' },
@@ -127,7 +149,7 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
       ...(image.startsWith('template:') ? { description: 'example.test' } : {}) });
   });
 
-  it('retains the exact failed-start cause through the registered acquisition Action without leaking credentials or paths', async () => {
+  it.each(['failed', 'unconfirmed'] as const)('retains native startup uncertainty through acquisition without leaking private output (%s)', async outcome => {
     let present = false;
     const instance = 'happier-424cfeskscqixzgevqcbc981tdeoxvmc20zpn0akjnbxa3dg35';
     const calls: string[][] = [];
@@ -137,7 +159,7 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
         hostOS: 'darwin', hostArch: 'aarch64', vmTypes: ['vz', 'qemu'],
       })));
       if (args[0] === 'create') present = true;
-      if (args[0] === 'restart') return { ...processResult(),
+      if (args[0] === 'restart' && outcome === 'failed') return { ...processResult(),
         termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } },
         stderr: new TextEncoder().encode('failed to open "/private/secret/image": no such file or directory; token=private-token'),
       };
@@ -148,10 +170,11 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
     const { memoryBytes, diskBytes, instance: _instance, ...identity } = resource;
     const result = await handler({ managedId: 'test-row', launch: { ...identity,
       memoryGiB: memoryBytes / 1024 ** 3, diskGiB: diskBytes / 1024 ** 3 } }, context);
-    expect(result).toMatchObject({ kind: 'unknown', recovery: { reason: 'lima_start_failed' }, nativeCause: {
+    expect(result).toMatchObject({ kind: 'unknown', recovery: { reason: outcome === 'failed' ? 'lima_start_failed' : 'lima_start_unconfirmed' },
+      ...(outcome === 'failed' ? { nativeCause: {
       localCause: 'native_command_failed', command: 'restart', exitCode: 1,
       stderr: expect.stringContaining('no such file or directory'),
-    } });
+    } } : {}) });
     expect(JSON.stringify(result)).not.toContain('private-token');
     expect(JSON.stringify(result)).not.toContain('/private/secret');
     expect(calls.filter(args => args[0] === 'restart')).toHaveLength(1);
@@ -428,6 +451,26 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
       const shell = requests.find(request => request.args?.[0] === 'shell');
       expect(shell?.stdin && Array.from(shell.stdin)).toEqual([0]);
       expect(requests.filter(request => request.stdin !== undefined)).toEqual([shell]);
+    } finally { await kit.dispose(); }
+  });
+  it('carries the stream role as one guest shell channel process of the invocation', async () => {
+    const spawned: unknown[] = [];
+    const termination = { observed: { kind: 'exit' as const, exitCode: 0 }, requestedBy: { kind: 'abort' as const } };
+    const exec: Pick<ExecService, 'run' | 'spawn'> = {
+      run: async () => processResult(new TextEncoder().encode(JSON.stringify(native))),
+      spawn: async (request, options) => {
+        spawned.push({ args: request.args, outputDelivery: options?.outputDelivery });
+        return { waitForExit: async () => termination, dispose: async () => undefined } as never;
+      },
+    };
+    const { context } = await activatedAction('stream', exec);
+    const kit = await createPluginTestkit({ manifest: LIMA_PLUGIN.manifest, module: LIMA_PLUGIN,
+      services: context.services as unknown as PluginTestServicesFixture });
+    try {
+      expect(await kit.invokeAction('stream', { resource, argv: ['hshim', 'attach', '--socket', '/s'] }, { surface: 'plugin' }))
+        .toEqual({ termination });
+      expect(spawned).toEqual([{ args: ['shell', '--workdir=/', resource.instance, '--', 'hshim', 'attach', '--socket', '/s'],
+        outputDelivery: 'invocation' }]);
     } finally { await kit.dispose(); }
   });
   it('keeps retained native roles usable after the owner changes CPU sizing', async () => {
