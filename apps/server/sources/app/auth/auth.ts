@@ -229,7 +229,7 @@ export type ApiTokenSummary = Readonly<{
 }>;
 
 export class ApiTokenOperationError extends Error {
-    constructor(readonly code: "account-disabled" | "invalid_token" | "api_token_id_conflict" | "api_token_encryption_not_ready" | "api_token_encryption_stale" | "api_token_encryption_unavailable" | "credential_authentication_evidence_limit" | "credential_authentication_evidence_unavailable" | "api_token_child_forbidden" | "api_token_child_invalid" | "credential_scope_denied" | "target_unavailable",
+    constructor(readonly code: "account-disabled" | "invalid_token" | "api_token_id_conflict" | "api_token_encryption_not_ready" | "api_token_encryption_stale" | "api_token_encryption_unavailable" | "credential_authentication_evidence_limit" | "credential_authentication_evidence_unavailable" | "api_token_child_forbidden" | "api_token_child_invalid" | "credential_scope_denied" | "source_changed" | "target_unavailable",
         readonly grantReason?: ApiTokenGrantDenialReasonV1,
         readonly details?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteFailure['details'],
         readonly failureCause?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteFailure['failureCause']) {
@@ -752,7 +752,7 @@ class AuthModule {
             linkAuthenticationEvidence: 'authentication' in supplied
                 ? supplied.authentication.evidence : mintApiTokenPrincipal?.authenticationEvidence,
         });
-        if (!bindingAdmission.ok) throw new ApiTokenOperationError('credential_scope_denied');
+        if (!bindingAdmission.ok) throw new ApiTokenOperationError(bindingAdmission.code ?? 'credential_scope_denied');
         if (bindingAdmission.deploymentLinkAdmission) {
             supplied = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...supplied,
                 deploymentLinkAdmission: bindingAdmission.deploymentLinkAdmission });

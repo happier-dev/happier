@@ -603,7 +603,7 @@ async function readDeploymentCandidatePublicationHttpPurposeInTx(tx: Tx,
     const preparation = binding.deploymentPreparationAdmission;
     const selectedSource = preparation && 'source' in preparation ? preparation.source : undefined;
     if (!row || !custody
-        || row.deletedAt
+        || row.deletedAt && deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission) !== 'teardown'
         || row.controllerMachineId !== binding.machineId
         || minted && row.projectSourceId !== minted.source.id
         || !minted && (preparation?.operation !== 'template' && !allocatedCreate
@@ -688,17 +688,21 @@ export function createDeploymentCandidateArtifactMutationGuard(input: Readonly<{
     };
 }
 
+export type DeploymentPreparationAuthorization = Readonly<{ ok: true }>
+    | Readonly<{ ok: false; code: 'credential_scope_denied' | 'source_changed' }>;
+
 async function readCreateSource(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
-    admission: CreateAdmission, authentication: DeploymentAuthentication) {
-    if (deploymentPreparationOperationForActionV1(binding.actionId) !== 'create') return null;
+    admission: CreateAdmission, authentication: DeploymentAuthentication): Promise<DeploymentPreparationAuthorization> {
+    if (deploymentPreparationOperationForActionV1(binding.actionId) !== 'create') return { ok: false, code: 'credential_scope_denied' };
     const source = admission.source ? await resolveProjectSourceAccessInTx(tx, binding.accountId, admission.source.id, authentication) : null;
     const owner = admission.newProject?.owner ?? (source?.ok ? source.owner : null);
     if (!owner || (admission.newProject ? !await canManageProjectSourceOwnerInTx(tx, binding.accountId, owner, authentication)
-        : !source?.ok || !source.canManageOwner)) return null;
+        : !source?.ok || !source.canManageOwner)) return { ok: false, code: 'credential_scope_denied' };
     if (admission.copyFrom) {
         const copied = await loadDeploymentEnvironmentInTx(tx, binding.accountId, binding.serverIdentityId,
             admission.copyFrom.environmentId, authentication);
-        if (!copied.ok || copied.row.deletedAt || copied.row.revision !== admission.copyFrom.expectedRevision) return null;
+        if (!copied.ok || copied.row.deletedAt) return { ok: false, code: 'credential_scope_denied' };
+        if (copied.row.revision !== admission.copyFrom.expectedRevision) return { ok: false, code: 'source_changed' };
     }
     if (admission.preview) {
         const template = await loadDeploymentEnvironmentInTx(tx, binding.accountId, binding.serverIdentityId,
@@ -706,13 +710,13 @@ async function readCreateSource(tx: Tx, binding: ExternalActionExecutionAuthoriz
         if (!template.ok || !template.admission.canManage || template.row.deletedAt || template.row.purpose !== 'standard'
             || template.row.projectSourceId !== admission.source?.id
             || template.row.revision !== admission.preview.expectedTemplateRevision
-            || template.row.runtimeTargetLinkId !== admission.preview.runtimeTargetLinkId) return null;
+            || template.row.runtimeTargetLinkId !== admission.preview.runtimeTargetLinkId) return { ok: false, code: 'credential_scope_denied' };
     }
     if (admission.previewCompanionOfEnvironmentId && (!admission.preview || !admission.source
         || admission.purpose !== 'standard' || admission.protection !== 'nonProduction'
         || !await readPreviewCompanionMainInTx(tx, { projectSourceId: admission.source.id, preview: admission.preview,
-            previewCompanionOfEnvironmentId: admission.previewCompanionOfEnvironmentId }))) return null;
-    return { owner };
+            previewCompanionOfEnvironmentId: admission.previewCompanionOfEnvironmentId }))) return { ok: false, code: 'credential_scope_denied' };
+    return { ok: true };
 }
 
 export interface DeploymentCreateHttpPurpose {
@@ -1513,7 +1517,20 @@ async function matchesTemplateEnvironmentScopeInTx(tx: Tx,
 export async function isDeploymentPreparationAuthorizedInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     admission: DeploymentPreparationAdmissionV1, authentication: DeploymentAuthentication = {},
 ): Promise<boolean> {
-    if (admission.operation === 'create') return await readCreateSource(tx, binding, admission, authentication) !== null;
+    return (await readDeploymentPreparationAuthorizationInTx(tx, binding, admission, authentication)).ok;
+}
+
+export async function readDeploymentPreparationAuthorizationInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
+    admission: DeploymentPreparationAdmissionV1, authentication: DeploymentAuthentication = {},
+): Promise<DeploymentPreparationAuthorization> {
+    if (admission.operation === 'create') return readCreateSource(tx, binding, admission, authentication);
+    return await isOtherDeploymentPreparationAuthorizedInTx(tx, binding, admission, authentication)
+        ? { ok: true } : { ok: false, code: 'credential_scope_denied' };
+}
+
+async function isOtherDeploymentPreparationAuthorizedInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
+    admission: Exclude<DeploymentPreparationAdmissionV1, { operation: 'create' }>, authentication: DeploymentAuthentication,
+): Promise<boolean> {
     if (admission.operation === 'setup') {
         if (deploymentPreparationOperationForActionV1(binding.actionId) !== 'setup') return false;
         const receiverMachineIds = [...new Set([...(admission.machineTargets ?? []),

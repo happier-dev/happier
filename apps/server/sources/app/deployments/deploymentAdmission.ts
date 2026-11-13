@@ -9,6 +9,8 @@ import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { TeamOperationAuthenticationContext } from '@/app/teams/actorContext';
 import type { Tx } from '@/storage/inTx';
 import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { withActionFailureDiagnostic, type ActionFailureDiagnosticInput } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { log } from '@/utils/logging/log';
 
 type DeploymentActionFailure = z.infer<typeof DeploymentActionFailureV1Schema>;
 // Shared resource admission never executes an unavailable native operation.
@@ -16,7 +18,14 @@ export type DeploymentFailure = DeploymentActionFailure & Readonly<{
     error: Exclude<DeploymentActionFailure['error'], 'unsupported_action'>;
 }>;
 export type DeploymentAuthentication = Partial<TeamOperationAuthenticationContext>;
-export const deploymentFailure = <TError extends Extract<DeploymentActionFailure['error'], 'deployment_invalid' | 'deployment_unavailable' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'machine_unavailable' | 'unsupported_action' | 'client_required'>>(error: TError): Readonly<{ ok: false; error: TError }> => ({ ok: false, error });
+/** Private diagnostics use one safe projector and sink without widening the public refusal. */
+export function deploymentFailure<TError extends Extract<DeploymentActionFailure['error'], 'deployment_invalid' | 'deployment_unavailable' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'machine_unavailable' | 'unsupported_action' | 'client_required'>>(
+    error: TError, diagnostic?: ActionFailureDiagnosticInput,
+): Readonly<{ ok: false; error: TError }> {
+    const failure = { ok: false as const, error };
+    return diagnostic ? withActionFailureDiagnostic(failure, diagnostic, safeDiagnostic =>
+        log({ module: 'deployments', errorCode: error, diagnostic: safeDiagnostic })) : failure;
+}
 
 /** The admission owner supplies the recorded placement; callers never select a replacement controller. */
 export function projectDeploymentControllerPlacementFailure(controllerMachineId: string): ActionExecuteFailure {
@@ -53,16 +62,23 @@ export function canDeployDeploymentEnvironment(admission: DeploymentSourceAdmiss
                 && principal.principalId === selected.principalId)) === true));
 }
 
+/** Removed Environments retain resources that only their current Source manager may tear down. */
+export function canTeardownDeploymentEnvironment(admission: DeploymentSourceAdmission,
+    environment: Parameters<typeof canDeployDeploymentEnvironment>[1],
+): boolean {
+    return environment.deletedAt ? admission.canManage : canDeployDeploymentEnvironment(admission, environment);
+}
+
 /** The Source is the only workload authority, independent of creator and audience ordering. */
 export async function resolveDeploymentEnvironmentAdmissionInTx(tx: Tx, actorAccountId: string,
     input: Readonly<{ serverId: string; projectSourceId: string; includeDeletedSource?: boolean }>, authentication: DeploymentAuthentication = {},
 ): Promise<Readonly<{ ok: true; admission: DeploymentSourceAdmission }> | DeploymentFailure> {
-    if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return deploymentFailure('deployment_unavailable');
+    if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return deploymentFailure('deployment_unavailable', { phase: 'deployment.source.admission.server', causeKind: 'server_mismatch' });
     // Existing Environments retain Source authority and identity after deletion.
     // New-Environment admission opts into the owner's active-only read instead.
     const read = await resolveProjectSourceAccessInTx(tx, actorAccountId, input.projectSourceId, authentication,
         { includeDeleted: input.includeDeletedSource !== false });
-    if (!read.ok) return deploymentFailure('deployment_unavailable');
+    if (!read.ok) return deploymentFailure('deployment_unavailable', { phase: 'deployment.source.admission.read', causeKind: read.failure.error === 'source_invalid' ? 'incomplete' : 'not_found' });
     return { ok: true, admission: projectDeploymentSourceAdmission(read) };
 }
 
@@ -78,7 +94,7 @@ const sourceMachineAccessMissing = { reason: 'source_machine_access_missing', re
     remedy: 'share_machine_with_source_owner' } as const satisfies DeploymentMachinePlacementDiagnosticV1;
 
 /** The first failed placement role owns the recovery diagnostic. */
-export function deploymentMachineUnavailable(machineId: string, role: 'controller' | 'build' | 'target'): DeploymentFailure {
+export function deploymentMachineUnavailable(machineId: string, role: 'controller' | 'build' | 'target'): Extract<DeploymentFailure, { error: 'machine_unavailable' }> {
     return { ok: false, error: 'machine_unavailable', role, machineIds: [machineId],
         nextActions: role === 'target' ? ['start', 'removeFromEnvironment'] : ['start', 'chooseAnother'] };
 }

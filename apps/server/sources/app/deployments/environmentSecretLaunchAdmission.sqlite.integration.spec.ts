@@ -253,6 +253,48 @@ describe('private installed Environment secret launch transport', () => {
         }
     });
 
+    it('admits a restore source by its own active receipt rather than the destination receipt', async () => {
+        const f = await admittedTeamDelivery();
+        const destination = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
+        const destinationReceipt = await db.deployment.findUniqueOrThrow({ where: { id: f.receipt.deploymentId } });
+        const destinationLink = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.payload.targetLinkId }, include: { machines: true } });
+        const source = await db.deploymentEnvironment.create({ data: { ...destination, id: crypto.randomUUID(),
+            revision: destination.revision + 3, runtimeTargetLinkId: null,
+            ...await f.artifact('deployment-environment.v1') } });
+        const { machines, ...link } = destinationLink;
+        const sourceLink = await db.deploymentTargetLink.create({ data: { ...link, id: crypto.randomUUID(),
+            environmentId: source.id, activeDeploymentId: null,
+            machines: { create: machines.map(({ id: _id, targetLinkId: _targetLinkId, ...member }) => member) },
+            ...await f.artifact('deployment-target-link.v1') } });
+        const sourceReceipt = await db.deployment.create({ data: { ...destinationReceipt, id: crypto.randomUUID(),
+            environmentId: source.id, targetLinkId: sourceLink.id, requestKey: crypto.randomUUID(),
+            actionOperationId: crypto.randomUUID(), ...await f.artifact('deployment-receipt.v1') } });
+        await db.deploymentEnvironment.update({ where: { id: source.id }, data: { runtimeTargetLinkId: sourceLink.id } });
+        await db.deploymentTargetLink.update({ where: { id: sourceLink.id }, data: { activeDeploymentId: sourceReceipt.id } });
+        await db.deploymentTargetLink.update({ where: { id: destinationLink.id }, data: { activeDeploymentId: destinationReceipt.id } });
+        const input = { serverId, environmentId: destination.id, targetLinkId: destinationLink.id,
+            deploymentId: destinationReceipt.id, expectedRevision: destination.revision,
+            machineId: f.payload.machineId, installationId: f.payload.installationId, mode: 'prepare' as const,
+            source: { kind: 'repository' as const, snapshotId: 'a'.repeat(64),
+                origin: { environmentId: source.id, targetLinkId: sourceLink.id } } };
+        const mint = (value: typeof input) => {
+            const requestId = crypto.randomUUID(), target = { kind: 'machine' as const, machineId: f.payload.machineId };
+            return auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+                accountId: f.requester.id, authentication: { kind: 'account', tokenEpoch: f.requester.tokenEpoch },
+                actionId: 'deployments.backups.restore', machineId: f.payload.machineId, target, requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId, target, input: value }) },
+            { input: value });
+        };
+        await expect(mint(input)).resolves.toMatchObject({ binding: { environmentId: destination.id } });
+        await expect(mint({ ...input, expectedRevision: destination.revision + 1 }))
+            .rejects.toMatchObject({ code: 'credential_scope_denied' });
+        await expect(mint({ ...input, source: { ...input.source,
+            origin: { environmentId: source.id, targetLinkId: destinationLink.id } } }))
+            .rejects.toMatchObject({ code: 'credential_scope_denied' });
+        await db.deploymentTargetLink.update({ where: { id: sourceLink.id }, data: { activeDeploymentId: null } });
+        await expect(mint(input)).rejects.toMatchObject({ code: 'credential_scope_denied' });
+    });
+
     it('keeps backup receipt selection on the destination and copy-source targets at the scope owner', async () => {
         const f = await admittedTeamDelivery();
         const { isDeploymentReadOperandInAdmittedScopeInTx: inScope } = await import('./deploymentPreparationAuthorization');

@@ -4,7 +4,7 @@ import type { TargetActionApprovalRequestV1 } from './targetActionApprovalReques
 import { ConfidentialActionInputReviewV1Schema } from './privateSecretContinuationV1.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import { isNativeSecretFillAction } from '../actions/executor/confidentialInputs.js';
-import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
+import { isDeploymentChildRootActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
 import { HostReviewedChildrenPlanV1Schema } from '../actions/executor/hostReviewedChildrenV1.js';
 import { isManagedRetainedControlInvocation } from '../machines/managed/actionsV1.js';
 import { isDeploymentEnvironmentUpdateNativeAdmissionV1, projectDeploymentNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
@@ -75,7 +75,7 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
   if (isLocalServiceStopActionIdV1(actionId) && origin.caller.kind === 'host'
     && !origin.machineId && !origin.externalActionExecutionAuthorization && !origin.principalId && !origin.credentialId
     && (origin.surface === 'cli' || origin.surface === 'mcp' || origin.surface === 'ui')) {
-    return { kind: 'app', placement: resolveActionExecutionPlacementForInput(spec, input.data) };
+    return { kind: 'app', placement: resolveActionExecutionPlacementForInput(spec, input.data, origin.caller) };
   }
   // Workflow model invitations reserve a slot; the Workflow owns Session start.
   // Keep that caller on its daemon, just as Session publications keep theirs.
@@ -84,15 +84,14 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
     ? 'session'
     : actionId === 'discussion.invite' && origin.caller.kind === 'workflowRun'
       && origin.caller.discussionModelReservation
-      ? 'machine' : resolveActionExecutionPlacementForInput(spec, input.data);
+      ? 'machine' : resolveActionExecutionPlacementForInput(spec, input.data, origin.caller);
   // Native deployment roots and retained managed controls return to their controller, including
   // public read projections that omit private replay authorization. The daemon
   // reads that custody from the original Artifact; location grants no authority.
   // Ordinary Account proposals keep their app executor.
-  if ((deploymentOperationForRootActionV1(actionId) !== undefined
+  if ((isDeploymentChildRootActionIdV1(actionId)
       || actionId === 'deployments.environments.update'
         && isDeploymentEnvironmentUpdateNativeAdmissionV1(projectDeploymentNativeAdmissionV1(actionId, input.data))
-      || isDeploymentDomainChildActionIdV1(actionId)
       || actionId === 'deployments.targets.link' && !('contentArtifactId' in readRecord(input.data))
       || isManagedRetainedControlInvocation(actionId, input.data))
     && origin.target?.kind === 'machine') return { kind: 'daemon', machineId: origin.target.machineId };
@@ -108,7 +107,7 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
     // The Account root's reviewed native effects retain their original host.
     // App replay would discard the Machine custody needed by those children.
     if (reviewed.success && reviewed.data.children.some(child => typeof child.action === 'string'
-      && resolveActionExecutionPlacementForInput(getActionSpec(child.action), child.input ?? child.scopeInput) === 'machine')) {
+      && resolveActionExecutionPlacementForInput(getActionSpec(child.action), child.input ?? child.scopeInput, origin.caller) === 'machine')) {
       return { kind: 'daemon', machineId: origin.target.machineId };
     }
   }

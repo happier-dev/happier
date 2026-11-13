@@ -312,8 +312,9 @@ async function readAdmittedRootRelay(app: Fastify, request: FastifyRequest, acti
     let nativeAdmission: ReturnType<typeof projectExternalActionDeploymentNativeEnvelopeAdmissionV1>;
     try { nativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope: body.envelope }); }
     catch { return null; }
-    const { hasCurrentDeploymentRootEnvironmentAdmissionInTx } = await import('@/app/deployments/deploymentRootEnvironmentAdmission');
-    if (!await hasCurrentDeploymentRootEnvironmentAdmissionInTx(db, root, nativeAdmission, current.authenticationEvidence)) return null;
+    const { readCurrentDeploymentRootEnvironmentAdmissionInTx } = await import('@/app/deployments/deploymentRootEnvironmentAdmission');
+    const deployment = await readCurrentDeploymentRootEnvironmentAdmissionInTx(db, root, nativeAdmission, current.authenticationEvidence);
+    if (!deployment.ok) return deployment.code === 'source_changed' ? { refusalCode: 'source_changed' as const } : null;
     const principal = projectExternalActionBoundPrincipal(root, current, request.authAuthority);
     // A signed Account root proves credential provenance, not a higher
     // invocation authority than this authenticated request's lowering ceiling.
@@ -876,7 +877,7 @@ export function registerExternalActionRoutes(
                     ? { ...authorization, managedFiniteWake } : authorization);
             } catch (error) {
                 if (error instanceof ApiTokenOperationError && (error.code === "credential_scope_denied" || error.code === "invalid_token"
-                    || error.code === "target_unavailable")) {
+                    || error.code === "target_unavailable" || error.code === "source_changed")) {
                     if (error.code === 'credential_scope_denied' && error.details !== undefined) {
                         const projected = projectExternalActionHttpError(error.code);
                         return sendExternalActionJson(reply, projected.statusCode, { ...projected.payload,
@@ -994,6 +995,9 @@ export function registerExternalActionRoutes(
                 workflowAdmission = installedWorkflow?.workflowAdmission;
             } else if (wrapped.success && wrapped.data.executionAuthorization) {
                 admittedRoot = await readAdmittedRootRelay(app, request, actionId.data, wrapped.data);
+                if (admittedRoot && 'refusalCode' in admittedRoot) {
+                    return sendExternalActionHttpError(reply, admittedRoot.refusalCode, wrapped.data.envelope.requestId);
+                }
                 principal = admittedRoot?.principal ?? null;
             } else if (wrapped.success && wrapped.data.managedContinuation) {
                 try { continuation = await readManagedGuestContinuation(request, actionId.data, wrapped.data, principal); }

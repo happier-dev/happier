@@ -22,6 +22,7 @@ import { resolveMachineAdmissionsInTx } from '@/app/machines/machineAccess';
 import { loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import {
   canDeployDeploymentEnvironment,
+  canTeardownDeploymentEnvironment,
   admitDeploymentMachineInTx,
   projectDeploymentControllerPlacementFailure,
 } from './deploymentAdmission';
@@ -30,7 +31,7 @@ import {
   readDeploymentTargetAuthorizationInTx,
   readRegistryAppUpdateAuthorizationInTx,
 } from './deploymentReadAuthorization';
-import { isDeploymentPreparationAuthorizedInTx, readDeploymentLinkAdmissionInTx } from './deploymentPreparationAuthorization';
+import { readDeploymentPreparationAuthorizationInTx, readDeploymentLinkAdmissionInTx, type DeploymentPreparationAuthorization } from './deploymentPreparationAuthorization';
 
 export type DeploymentRootEnvironmentAdmission =
   | Readonly<{ ok: true; source?: Readonly<{ id: string; revision: number }> }>
@@ -112,7 +113,6 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
         source.row,
         {
           ...sourceAdmission,
-          source: { ...nativeAdmission.source, origin: undefined },
           environmentId: source.row.id,
           targetLinkId: nativeAdmission.source.origin.targetLinkId,
         },
@@ -128,6 +128,8 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
     if (
       !(ingressUpdateRoot || configureRoot
         ? environment.admission.canManage && !environment.row.deletedAt
+        : root.actionId === 'deployments.teardown'
+        ? canTeardownDeploymentEnvironment(environment.admission, environment.row)
         : canDeployDeploymentEnvironment(
             environment.admission,
             environment.row,
@@ -198,7 +200,7 @@ export type DeploymentRootBindingAdmission =
       ok: true;
       deploymentLinkAdmission?: NonNullable<ExternalActionExecutionAuthorizationBindingV1['deploymentLinkAdmission']>;
     }>
-  | Readonly<{ ok: false }>;
+  | Readonly<{ ok: false; code?: Extract<DeploymentPreparationAuthorization, { ok: false }>['code'] }>;
 
 /**
  * The one admission of a parsed root binding's deployment facts: Link,
@@ -233,10 +235,10 @@ export async function admitDeploymentRootBindingInTx(
     deploymentLinkAdmission = admitted;
   }
   if (!input.workflowAdmitted
-    && (isDeploymentPreparationActionIdV1(binding.actionId) || binding.deploymentPreparationAdmission !== undefined)
-    && (!binding.deploymentPreparationAdmission
-      || !await isDeploymentPreparationAuthorizedInTx(tx, binding, binding.deploymentPreparationAdmission, authentication))) {
-    return { ok: false };
+    && (isDeploymentPreparationActionIdV1(binding.actionId) || binding.deploymentPreparationAdmission !== undefined)) {
+    if (!binding.deploymentPreparationAdmission) return { ok: false };
+    const preparation = await readDeploymentPreparationAuthorizationInTx(tx, binding, binding.deploymentPreparationAdmission, authentication);
+    if (!preparation.ok) return preparation;
   }
   if (binding.registryAppUpdateAdmission && !await readRegistryAppUpdateAuthorizationInTx(tx, binding, authentication)) {
     return { ok: false };
@@ -256,14 +258,14 @@ export async function admitDeploymentRootBindingInTx(
  * its mint ran: the native Environment owner, then the binding admission owner.
  * Signed child calls within admitted work retain that job's admission.
  */
-export async function hasCurrentDeploymentRootEnvironmentAdmissionInTx(
+export async function readCurrentDeploymentRootEnvironmentAdmissionInTx(
   tx: Tx,
   root: ExternalActionExecutionAuthorizationBindingV1,
   nativeAdmission: DeploymentNativeAdmissionV1 | undefined,
   authenticationEvidence: readonly AuthTokenAuthenticationEvidenceV1[] | undefined,
-): Promise<boolean> {
+): Promise<DeploymentRootBindingAdmission> {
   if (nativeAdmission
-    && !(await admitDeploymentNativeRootEnvironmentInTx(tx, root, nativeAdmission, authenticationEvidence)).ok) return false;
+    && !(await admitDeploymentNativeRootEnvironmentInTx(tx, root, nativeAdmission, authenticationEvidence)).ok) return { ok: false };
   const recordedLink = root.deploymentLinkAdmission;
   const admitted = await admitDeploymentRootBindingInTx(tx, root, {
     ...(recordedLink ? { linkEnvironmentId: recordedLink.environmentId } : {}),
@@ -271,5 +273,6 @@ export async function hasCurrentDeploymentRootEnvironmentAdmissionInTx(
     authenticationEvidence,
     linkAuthenticationEvidence: authenticationEvidence,
   });
-  return admitted.ok && admitted.deploymentLinkAdmission?.environmentId === recordedLink?.environmentId;
+  if (!admitted.ok) return admitted;
+  return admitted.deploymentLinkAdmission?.environmentId === recordedLink?.environmentId ? admitted : { ok: false };
 }

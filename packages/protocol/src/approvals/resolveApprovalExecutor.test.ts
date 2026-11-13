@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { projectApprovalRequestForPublicRead } from '../actions/actionApprovalPresentation.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
-import { ApprovalRequestV1Schema, ApprovalRequestV2Schema } from './approvalRequestV1.js';
+import { ApprovalRequestV1Schema, ApprovalRequestV2Schema, resolveApprovalRequestAppExecutionPlacement } from './approvalRequestV1.js';
 import { TargetActionApprovalRequestV1Schema } from './targetActionApprovalRequestV1.js';
 import { resolveApprovalExecutor } from './resolveApprovalExecutor.js';
 import { buildApprovalExecutionOriginV1 } from '../actions/executor/approvalOrigins.js';
@@ -29,6 +29,21 @@ function requestFor(actionId: Parameters<typeof getActionSpec>[0], input: unknow
 }
 
 describe('resolveApprovalExecutor', () => {
+  it.each([
+    { caller: { kind: 'host' }, placement: 'account' },
+    { caller: { kind: 'session', sessionId: 'source', starterDepth: 0, turnDepth: 0 }, placement: 'client' },
+    { caller: { kind: 'workflowRun', runId: 'run', authorization: {
+      principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } }, placement: 'client' },
+  ] as const)('keeps public-link approval placement with its $caller.kind caller', ({ caller, placement }) => {
+    const request = requestFor('artifact.public_link.create', { artifactId: 'artifact', audience: 'anonymous' });
+    const approval = ApprovalRequestV2Schema.parse({ ...request,
+      executionOriginV1: { ...request.executionOriginV1, caller } });
+    expect(resolveApprovalExecutor(approval)).toEqual({ kind: 'app', placement });
+    expect(resolveApprovalRequestAppExecutionPlacement(approval)).toBe(placement);
+    expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse(projectApprovalRequestForPublicRead(approval))))
+      .toEqual({ kind: 'app', placement });
+  });
+
   it.each(['cli', 'mcp', 'ui'] as const)('keeps the original Account Stop Ask distinct from signed Machine custody after %s public projection', surface => {
     const actionId = 'localServices.actions.stopManaged';
     const input = { requestId: 'stop-service', action: 'stop_managed',
@@ -367,6 +382,35 @@ describe('resolveApprovalExecutor', () => {
             sessionActionSource: { machineId: 'machine', installationId: 'installation' } } },
       } });
     expect(resolveApprovalExecutor(proposal)).toEqual({ kind: 'daemon', machineId: 'machine' });
+  });
+
+  it('keeps targeted Saved Secret binding preparation on its controller across public approval reads', () => {
+    const actionId = 'deployments.bindings.set';
+    const input = getActionSpec(actionId).inputSchema.parse({ serverId: 'stable-home', environmentId: 'environment',
+      expectedRevision: 9, set: [{ purpose: 'dataRole', role: 'readOnlyPassword', service: 'database',
+        source: { kind: 'secret', ref: 'happier:shared-secret:v1:secret', resourceRevision: 1 } }], remove: [] });
+    const request = requestFor(actionId, input);
+    expect(resolveApprovalExecutor(request)).toEqual({ kind: 'app', placement: 'account' });
+    const target = { kind: 'machine' as const, machineId: 'controller' };
+    const origin = buildApprovalExecutionOriginV1({ actionId, input, targetSessionId: null,
+      context: { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' },
+        serverId: 'home', serverIdentityId: 'stable-home', runtimeAccountId: 'account',
+        actionRequestId: 'read-role-request', externalActionTarget: target,
+        signExternalActionApprovalInput: () => 'a'.repeat(86),
+        externalActionExecutionAuthorization: { v: 1, token: 'home-signed', binding: {
+          accountId: 'account', authentication: { kind: 'account', tokenEpoch: 1 },
+          serverIdentityId: 'stable-home', machineId: 'controller', custodianAccountId: 'account',
+          installationId: 'installation', actionId, requestId: 'read-role-request',
+          requestEnvelopeDigest: 'a'.repeat(43), target,
+        } } } });
+    const targeted = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: origin });
+    expect(resolveApprovalExecutor(targeted)).toEqual({ kind: 'daemon', machineId: 'controller' });
+    const publicRead = ApprovalRequestV2Schema.parse(projectApprovalRequestForPublicRead(targeted));
+    expect(publicRead.executionOriginV1.externalActionExecutionAuthorization).toBeUndefined();
+    expect(publicRead.executionOriginV1.externalActionInputSignature).toBeUndefined();
+    expect(resolveApprovalExecutor(publicRead)).toEqual({ kind: 'daemon', machineId: 'controller' });
+    expect(resolveApprovalExecutor({ ...publicRead, actionArgs: { serverId: 'stable-home' } }))
+      .toEqual({ kind: 'unavailable', reason: 'invalid_input' });
   });
 
   it('returns a Machine-targeted native deployment approval to its controller without an external caller carrier', () => {

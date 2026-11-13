@@ -814,7 +814,8 @@ export function resolveApprovalRequestAppExecutionPlacement(approval: ApprovalRe
     && resolveActionApprovalFlow(approval.approval ?? spec.approval) === 'blocking';
   if (!spec || !input?.success || spec.workspaceWrite === true
     || spec.approvalInputCustody === 'live_only' || retainedLiveResult) return null;
-  const placement = resolveActionExecutionPlacementForInput(spec, input.data);
+  const placement = resolveActionExecutionPlacementForInput(spec, input.data,
+    approval.v === 2 ? approval.executionOriginV1.caller : undefined);
   return placement === 'account' || placement === 'client' ? placement : null;
 }
 
