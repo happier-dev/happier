@@ -80,7 +80,7 @@ export async function openCursorAcpSession(
   context: AgentSessionRuntimeContext,
 ): Promise<AgentSessionRuntime> {
   const { options } = await resolveCursorAcpOptions(request, context);
-  const mediaSourceRoot = resolveCursorGeneratedMediaRoot({ directory: request.cwd });
+  const mediaSourceRoot = resolveCursorGeneratedMediaRoot({ directory: request.cwd, env: request.launchEnvironment?.values ?? {} });
   const runtime = await context.protocols.acp.open(request, {
     ...options,
     extensions: createCursorAcpRuntimeExtensions({

@@ -6,6 +6,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { createSessionHooksService } from '@/plugins/runtime/hooks/session/service';
+
 import { resolveJavaScriptRuntimeExecutable } from './resolveJavaScriptRuntimeExecutable';
 
 const envKeys = [
@@ -27,6 +30,30 @@ describe('resolveJavaScriptRuntimeExecutable', () => {
       removeTempDirSync(dir);
     }
     tempDirs.clear();
+  });
+
+  it('resolves hook forwarders from each interleaved Session runtime environment', async () => {
+    const roots = ['a', 'b'].map(id => {
+      const root = createTempDirSync(`happier-js-session-${id}-`);
+      tempDirs.add(root);
+      const executable = join(root, process.platform === 'win32' ? 'node.cmd' : 'node');
+      writeFileSync(executable, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n');
+      if (process.platform !== 'win32') chmodSync(executable, 0o755);
+      return { root, executable };
+    });
+    const values = await Promise.all(roots.map(({ root, executable }) => runAddedHostedSession({
+      environment: { HAPPIER_MANAGED_NODE_BIN: executable }, workingDirectory: root, end() {},
+    }, async () => {
+      await Promise.resolve();
+      const hooks = createSessionHooksService({ happyHomeDir: root, hasCapability: () => true,
+        addDisposable: disposable => disposable });
+      const assets = await hooks.resolveForwarderAssets();
+      expect(resolveJavaScriptRuntimeExecutable({ isBunRuntime: false, processEnv: {
+        HAPPIER_MANAGED_NODE_BIN: process.execPath,
+      } })).toBe(process.execPath);
+      return assets.nodeExecutable;
+    })));
+    expect(values).toEqual(roots.map(({ executable }) => executable));
   });
 
   it('prefers an explicit managed node override', () => {

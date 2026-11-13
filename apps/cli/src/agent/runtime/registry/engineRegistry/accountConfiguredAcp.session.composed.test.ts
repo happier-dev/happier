@@ -1,3 +1,4 @@
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import axios from 'axios';
@@ -330,6 +331,34 @@ describe('Account-configured ACP composed Session journey', () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
+  });
+
+  it('uses each hosted Session baseline for configured references and the native process', async () => {
+    await withTempDir('happier-configured-acp-scope-', async dir => {
+      setConfiguredAcpAccountSettings(writeConfiguredAcpAgentScript(dir));
+      const active = getActiveAccountSettingsSnapshot()!;
+      if (active.acpCatalog?.status !== 'ready') throw new Error('Missing test catalog');
+      commitActiveAcpCatalog({ scopeKey: active.scopeKey!, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
+        catalog: { ...active.acpCatalog, revision: 5, record: { ...active.acpCatalog.record,
+          definitions: active.acpCatalog.record.definitions.map(definition => ({ ...definition, env: {
+            ...definition.env, CONFIGURED_ACP_EXPANDED: { t: 'literal' as const, v: '${ACP_SESSION_BASE}' },
+          } })),
+        } } });
+      vi.stubEnv('ACP_SESSION_BASE', 'physical-host');
+      for (const id of ['first-session', 'second-session']) {
+        await runAddedHostedSession({ environment: { ...process.env, ACP_SESSION_BASE: id }, workingDirectory: dir, end() {} }, async () => {
+          const runtime = createComposedRuntime(await resolveContributedConfiguredRuntime(), dir);
+          try {
+            await runtime.provisionRuntime();
+            expect(readObserved(dir).env).toMatchObject({
+              ACP_SESSION_BASE: id, CONFIGURED_ACP_EXPANDED: id,
+              CONFIGURED_ACP_LITERAL: 'from-account-declaration', CONFIGURED_ACP_SECRET: 'plain-runtime-secret',
+            });
+          } finally { await runtime.dispose(); }
+          await expectAcpChildExited(readObserved(dir).pid);
+        });
+      }
+    });
   });
 
   it.each(['none', 'both', 'mode'] as const)('applies saved native defaults through the configured Agent Session composition (explicit override: %s)', async explicit => {

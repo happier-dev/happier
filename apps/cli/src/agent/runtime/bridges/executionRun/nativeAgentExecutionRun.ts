@@ -1,6 +1,7 @@
 import { AgentExecutionRunEventSchema } from '@happier-dev/protocol/runtime/agentExecutionRunV1';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { resolveNativeAgentLaunchEnvironment } from '@/agent/runtime/launchEnvironment';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { HappierStructuredInputV1Schema } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
@@ -101,6 +102,7 @@ import { listSelectedMcpSharedSecretReferences, materializeMcpServerConfigRecord
 import { acquireSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { projectResolvedMcpServers } from '@/mcp/runtime/projectResolvedMcpServers';
+import { applyAttachedPluginMcpTransport } from '@/mcp/runtime/applyAttachedPluginMcpTransport';
 import type { ResolvedSessionMcpServer } from '@/mcp/runtimeTypes';
 import type { McpToolPolicyContext } from '@/mcp/runtime/resolveMcpToolIdentity';
 import { projectMcpToolLaunchPolicies } from '@/mcp/runtime/projectMcpToolLaunchPolicy';
@@ -506,11 +508,8 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
                             transport: server.config.remote ? { kind: 'http' as const, url: server.config.remote.url } : { kind: 'stdio' as const },
                             scope: { executionRunId: runId, directory: params.directory } })),
                         addDisposable: attachment => pluginAttachments.push(attachment) });
-                    selected = { ...selected, selectedServersByName: Object.fromEntries(attached.map(server => {
-                        const original = selected.selectedServersByName[server.name]!;
-                        return [server.name, server.transport.kind === 'http' || server.transport.kind === 'sse'
-                            ? { ...original, config: { ...original.config, remote: { ...original.config.remote!, url: server.transport.url } } } : original];
-                    })) };
+                    selected = { ...selected, selectedServersByName: Object.fromEntries(attached.map(server => [server.name,
+                        applyAttachedPluginMcpTransport(selected.selectedServersByName[server.name]!, server.transport)])) };
                 }
                 mcpMaterial = await materializeMcpServerConfigRecord({
                     resolved: { directory: params.directory, strictMode: selected.strictMode, serversByName: selected.selectedServersByName },
@@ -518,7 +517,7 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
                         references: listSelectedMcpSharedSecretReferences(selected.selectedServersByName),
                         operationContext: params.resolveAccountSettingsSnapshot?.readOperationContext?.() ?? undefined,
                         secretSources: params.runtimeRegistry?.secretSources, signal }),
-                    processEnv: { ...process.env, ...params.sourceEnvironment }, tmpDir: null,
+                    processEnv: { ...sessionProcessEnvironment(), ...params.sourceEnvironment }, tmpDir: null,
                 });
                 const settings = readMcpServersSettingsFromAccountSettings(snapshot);
                 const identities = { mcpServerIdentities: Object.fromEntries(Object.entries(selected.mcpServerIdentities)
@@ -820,7 +819,7 @@ function buildLaunchEnvironment(
     options: CreateCliExecutionRunBackendParams,
 ): AgentLaunchEnvironment {
     return resolveNativeAgentLaunchEnvironment({
-        processEnv: process.env,
+        processEnv: sessionProcessEnvironment(),
         environmentVariables: options.isolation?.env,
         unsetEnvironmentVariables: options.isolation?.unsetEnvKeys,
     });

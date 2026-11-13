@@ -20,6 +20,7 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 
 import { AgentRuntimeJsonValueV1Schema, AgentSessionConfigurationSnapshotV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { resolveNativeAgentLaunchEnvironment } from '@/agent/runtime/launchEnvironment';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { resolveModelSelectionSource } from '@/providers/sessions/resolveModelSelectionSource';
 import { issueAgentNativeLaunchQualifierForHost, captureAgentNativeLaunchAuthorityForHost } from '@/plugins/runtime/invocation/services/exec';
 import type { ScmCommandRunner } from '@/scm/runtime';
@@ -1164,7 +1165,7 @@ function buildNativeAgentSessionOpenInputs(
         }
     }
     const launchEnvironment = resolveNativeAgentLaunchEnvironment({
-        processEnv: process.env,
+        processEnv: sessionProcessEnvironment(),
         environmentVariables: environmentValues,
         unsetEnvironmentVariables: (input.bootstrap.unsetEnvironmentVariables ?? []).filter(
             (key) => key !== HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY

@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createAcpProviderJournalFollower } from '@/plugins/runtime/context/transcripts/acpProviderJournal';
 import { createPublicProviderTurns } from './providerTurns';
 import { isPluginError } from '@happier-dev/plugin-sdk';
@@ -635,15 +636,16 @@ async function createPublicAcpConversationFromAwaitableAdapter(
   try {
     const nativeSessionConfig = options.definition?.mcp.nativeSessionConfig;
     const skillsDeclaration = request.skills ? options.definition?.skills?.sessionDelivery : undefined;
+    const processEnv = sessionProcessEnvironment();
     const effectiveEnv = resolvedLaunch.kind === 'stdio' ? buildScopedProcessEnv({
-      baseEnv: process.env, explicitEnv: resolvedLaunch.env, unsetEnvKeys: resolvedLaunch.unsetEnv,
+      baseEnv: processEnv, explicitEnv: resolvedLaunch.env, unsetEnvKeys: resolvedLaunch.unsetEnv,
     }) : {};
     if (nativeSessionConfig && resolvedLaunch.kind === 'stdio') {
       const params = {
         declaration: nativeSessionConfig,
         cwd: request.cwd,
         // The Agent resolves its config root from the environment it will
-        // actually run with: the host process environment, the resolved launch
+        // actually run with: this Session's process environment, the resolved launch
         // overrides, then this Session's unset keys.
         env: effectiveEnv,
         mcpServers: request.mcpServers,
@@ -684,7 +686,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         command: launch.command, args: launch.args, cwd: request.cwd,
         requiredFiles: options.requiredFiles,
         env: stripUnsetEnvironmentVariables(buildScopedProcessEnv({
-          baseEnv: process.env, explicitEnv: launch.env, unsetEnvKeys: launch.unsetEnv,
+          baseEnv: processEnv, explicitEnv: launch.env, unsetEnvKeys: launch.unsetEnv,
         }), []),
         release: releaseResolvedTransport,
       }, dependencies.signal, dependencies.nativeLaunch, 'acp');

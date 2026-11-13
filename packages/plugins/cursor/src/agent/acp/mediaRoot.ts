@@ -34,13 +34,13 @@ function createCursorProjectDirectoryName(directory: string, platform: NodeJS.Pl
  */
 export function resolveCursorGeneratedMediaRoot(params: Readonly<{
   directory: string;
-  env?: NodeJS.ProcessEnv;
+  env: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   homedir?: () => string;
 }>): string | null {
   const platform = params.platform ?? process.platform;
   const home = readEffectiveHomeDirectory({
-    env: params.env ?? process.env,
+    env: params.env,
     platform,
     homedir: params.homedir ?? defaultHomedir,
   });

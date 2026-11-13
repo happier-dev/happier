@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type {
   ExecRuntimeServiceV1,
   SystemToolLaunchGrantV1,
@@ -53,7 +54,7 @@ function requireStdioLaunch(
   definition: AcpRuntimeDefinition,
   cwd: string,
   exec: Pick<ExecRuntimeServiceV1, 'systemTools'> | undefined,
-  processEnv: NodeJS.ProcessEnv = process.env,
+  processEnv: NodeJS.ProcessEnv = sessionProcessEnvironment(),
 ): MaybePromise<AcpExecutableLaunch> {
   const transport: HostAcpTransportSpec = definition.transport;
   if (transport.kind !== 'stdio') {
@@ -90,7 +91,7 @@ function requireStdioLaunch(
     }));
   }
 
-  const launch = requireAgentCliLaunchSpec(transport.launch.agentId as CatalogAgentLookupId, { processEnv });
+  const launch = requireAgentCliLaunchSpec(transport.launch.agentId as CatalogAgentLookupId, { processEnv, cwd });
   const runtimeArgsPrefix = [...launch.args];
   return {
     command: launch.command,
@@ -177,7 +178,7 @@ export function resolveAcpRuntimeLaunch(params: Readonly<{
     params.cwd,
     params.exec,
     params.processEnv ?? buildScopedProcessEnv({
-      baseEnv: process.env,
+      baseEnv: sessionProcessEnvironment(),
       explicitEnv: params.env,
       unsetEnvKeys: params.unsetEnvKeys,
     }),

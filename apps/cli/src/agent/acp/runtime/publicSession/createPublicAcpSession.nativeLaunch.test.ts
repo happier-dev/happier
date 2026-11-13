@@ -1,3 +1,4 @@
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import { Readable } from 'node:stream';
@@ -18,12 +19,17 @@ import { createPublicAcpSession, type PublicAcpComposerDependencies } from './cr
 const runAsBoundary = vi.hoisted(() => ({ script: '' }));
 // The OS substitute receives the real launch frame and ACP stream, without
 // simulating sudo's UID switch or filesystem permission enforcement.
-vi.mock('cross-spawn', async importOriginal => {
-  const actual = await importOriginal<typeof import('cross-spawn')>();
-  return { ...actual, default: Object.assign((...args: Parameters<typeof actual.default>) => {
-    if (args[0] !== 'sudo' || !args[1]?.includes('/fixture/happier-private-cwd')) return actual.default(...args);
-    return actual.default(process.execPath, [runAsBoundary.script], args[2]);
-  }, actual.default) };
+// The Agent starts inside the real Session holder; only the holder's final
+// `sudo …` argv (the OS RunAs boundary) is substituted on its command line.
+vi.mock('node:child_process', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, spawn: (...args: Parameters<typeof actual.spawn>) => {
+    const [command, argv, options] = args as unknown as [string, readonly string[] | undefined, Parameters<typeof actual.spawn>[2]];
+    const separator = argv?.indexOf('--') ?? -1;
+    if (!argv || separator < 0 || argv[0] !== 'serve' || argv[separator + 1] !== 'sudo'
+      || !argv.includes('/fixture/happier-private-cwd')) return Reflect.apply(actual.spawn, undefined, args);
+    return actual.spawn(command, [...argv.slice(0, separator + 1), process.execPath, runAsBoundary.script], options);
+  } };
 });
 
 it.skipIf(process.platform !== 'linux')('retains the logical ACP cwd while spawning RunAs from the authorized outer cwd', async () => {
@@ -95,11 +101,17 @@ it.skipIf(process.platform !== 'linux')('retains the logical ACP cwd while spawn
 it.each(['declared', 'account'] as const)('finalizes the complete cold %s ACP launch before the process starts', async source => {
   await withTempDir('happier-acp-native-launch-', async dir => {
     await writeFile(join(dir, 'mise.toml'), '[env]\nNATIVE_VALUE="ready"\n');
+    const configRoot = join(dir, 'session-config');
+    await mkdir(join(configRoot, 'fixture'), { recursive: true });
+    await writeFile(join(configRoot, 'fixture', 'mcp.json'), JSON.stringify({ scope: source, mcpServers: {} }));
     const capture = join(dir, 'launch.json');
     const script = writeAcpTestAgentScript({ dir, fileName: 'agent.mjs', source: `
       import { createInterface } from 'node:readline';
-      import { writeFileSync } from 'node:fs';
+      import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+      import { join } from 'node:path';
+      const configPath = join(process.env.XDG_CONFIG_HOME ?? process.env.APPDATA ?? '', 'fixture', 'mcp.json');
       writeFileSync(process.env.CAPTURE, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(),
+        baseline: process.env.ACP_NATIVE_BASE, configScope: existsSync(configPath) ? JSON.parse(readFileSync(configPath, 'utf8')).scope : null,
         native: process.env.NATIVE_VALUE, removed: process.env.ACP_NATIVE_REMOVE, lowerCase: process.env.acp_native_remove,
         shellFunction: process.env['BASH_FUNC_acpFixture%%'], explicit: process.env.EXPLICIT,
         resolver: process.env.RESOLVER_VALUE, authored: process.env.AUTHORED_VALUE }));
@@ -147,7 +159,12 @@ it.each(['declared', 'account'] as const)('finalizes the complete cold %s ACP la
         unsetEnv: [], timeouts: {}, release }) } : {}),
     };
     const options: AgentAcpRuntimeOptions = { transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'fixture' },
-      args: ['authored arg'], env: { AUTHORED_VALUE: 'authored' } } };
+      args: ['authored arg'], env: { AUTHORED_VALUE: 'authored' } },
+      definition: { mcp: { policy: 'pass_through', nativeSessionConfig: {
+        configRootEnvKey: { posix: 'XDG_CONFIG_HOME', win32: 'APPDATA' },
+        homeRelativeConfigRoot: { posix: ['.config'], win32: ['AppData', 'Roaming'] },
+        directory: 'fixture', fileName: 'mcp.json', serversKey: 'mcpServers',
+      } } } };
     vi.stubEnv('ACP_NATIVE_REMOVE', 'ambient');
     if (process.platform !== 'win32') {
       vi.stubEnv('acp_native_remove', 'distinct-posix-value');
@@ -158,11 +175,15 @@ it.each(['declared', 'account'] as const)('finalizes the complete cold %s ACP la
       await resolveAcpTransportLaunch({ transport: options.transport, pluginId: 'fixture', purpose: 'session/list',
         systemTools, signal });
       expect(nativeRuns).toBe(0);
-      const runtime = await createPublicAcpSession({ kind: 'create', sessionId: 'session', cwd: dir,
-        launchEnvironment: { values: { EXPLICIT: 'launch' }, unset: [] } }, options, dependencies);
+      const runtime = await runAddedHostedSession({
+        environment: { ...process.env, ACP_NATIVE_BASE: source, XDG_CONFIG_HOME: configRoot, APPDATA: configRoot },
+        workingDirectory: dir, end() {},
+      }, () => createPublicAcpSession({ kind: 'create', sessionId: 'session', cwd: dir,
+        launchEnvironment: { values: { EXPLICIT: 'launch' }, unset: [] },
+        mcpServers: { fixture: { command: '/fixture/mcp' } } }, options, dependencies));
       try {
         expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual({ args: ['resolver arg', 'authored arg'], cwd: dir,
-          native: 'ready', explicit: 'launch', resolver: 'resolved', authored: 'authored',
+          baseline: source, configScope: source, native: 'ready', explicit: 'launch', resolver: 'resolved', authored: 'authored',
           ...(process.platform === 'win32' ? {} : { lowerCase: 'distinct-posix-value' }) });
         expect(await runtime.send({ inputIds: ['input'], input: { text: 'Continue this warm session' },
           delivery: { kind: 'newTurn', turnId: 'turn' } })).toEqual({ status: 'admitted' });

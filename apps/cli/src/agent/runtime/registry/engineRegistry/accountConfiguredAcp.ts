@@ -1,4 +1,5 @@
 import { buildConfiguredAcpAgentSelectionV1, isCustomAcpAgentContributionIdentityV1, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { agentRoutingIdAddressesContributionIdentityV1, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 import { listValueRefSecretIdsV1 } from '@happier-dev/protocol/valueRefs/valueRefV1';
@@ -13,6 +14,7 @@ import { acquireSavedSecretMaterializerForOperation, SavedSecretOperationAdmissi
 import { type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { SavedSecretResolutionError } from '@/settings/secrets/savedSecretCatalog';
 import { refreshActiveAcpCatalog } from '@/agent/acp/catalog/hydrateAcpCatalog';
+import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import { materializeConfiguredAcpEnvironment } from '@/agent/acp/catalog/configured/materializeEnvironment';
 import { AcpCatalogUnavailableError, requireReadyAcpCatalog, resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveBackend';
 import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/sessionMetadata';
@@ -84,7 +86,7 @@ export async function resolveAccountConfiguredAcpLaunch(
       const admission = savedSecretOperationContext?.machineAdmission;
       if (savedSecretOperationContext
         ? !admission?.actorAccountId
-        : credentials.requesterSessionCredentialScope || process.env.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined) {
+        : credentials.requesterSessionCredentialScope || sessionProcessEnvironment().HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined) {
         throw new AcpCatalogUnavailableError('managed-install-account-unavailable');
       }
     }
@@ -112,7 +114,13 @@ export async function resolveAccountConfiguredAcpLaunch(
     await assertAccountCurrent();
     const launchSnapshot = readSnapshot();
     if (launchSnapshot?.acpCatalog !== catalog) throw new AcpCatalogUnavailableError('catalog-stale');
+    const processEnv = buildScopedProcessEnv({
+      baseEnv: sessionProcessEnvironment(),
+      explicitEnv: request.launchEnvironment?.values,
+      unsetEnvKeys: request.launchEnvironment?.unset,
+    });
     const launchEnv = materializeConfiguredAcpEnvironment({
+        processEnv,
         backend: configuredBackend, accountSettings: launchSnapshot.settings, credentials,
         savedSecretResources: launchSnapshot.savedSecretResources,
         savedSecretMaterializer: await acquireSavedSecretMaterializerForOperation({ snapshot: launchSnapshot, references,
@@ -121,7 +129,7 @@ export async function resolveAccountConfiguredAcpLaunch(
     const resolved = await ensureAcpLaunchForSession({
       accountId: savedSecretOperationContext?.machineAdmission?.actorAccountId ?? readAccountIdFromToken(credentials.token) ?? undefined,
       definition: { id: configuredBackend.backendId, title: configuredBackend.title, launch: configuredBackend.launch },
-      platform: process.platform, arch: process.arch, env: process.env,
+      platform: process.platform, arch: process.arch, env: processEnv,
       launchEnv,
       settings: launchSnapshot.settings, machineId: (await readSettings()).machineId ?? '',
     });
@@ -130,7 +138,7 @@ export async function resolveAccountConfiguredAcpLaunch(
     const launchDefinition = normalizeConfiguredAcpDefinition({
       backend: configuredBackend, launch: resolved, launchEnv,
     });
-    const launch = await resolveAcpRuntimeLaunch({ definition: launchDefinition, cwd: request.cwd });
+    const launch = await resolveAcpRuntimeLaunch({ definition: launchDefinition, cwd: request.cwd, processEnv });
     await assertAccountCurrent();
     if (readSnapshot()?.acpCatalog !== catalog) throw new AcpCatalogUnavailableError('catalog-stale');
     return Object.freeze({

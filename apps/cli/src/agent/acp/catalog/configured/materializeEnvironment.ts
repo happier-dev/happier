@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { StoredCredentials } from '@/persistence';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { listValueRefSecretIdsV1 } from '@happier-dev/protocol/valueRefs/valueRefV1';
@@ -20,7 +21,7 @@ export function materializeConfiguredAcpEnvironment(params: Readonly<{
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
   savedSecretMaterializer: SavedSecretMaterializerV1;
 }>): Record<string, string> {
-  const processEnv = params.processEnv ?? process.env;
+  const processEnv = params.processEnv ?? sessionProcessEnvironment();
   const savedSecretMaterializer = params.savedSecretMaterializer;
 
   const env: Record<string, string> = {};
