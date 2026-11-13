@@ -470,8 +470,10 @@ export function classifyClaudeNativeTranscriptRow(
       rawObject,
       rawType,
       row,
-      visibility: 'sanitized',
-      messageRole: 'agent',
+      // This native user row supplies context to the next model turn. Keep its
+      // compaction meaning for lifecycle observers, never assistant output.
+      visibility: 'hidden',
+      messageRole: 'event',
       content: { kind: 'compact_summary', text: compactSummary },
     });
   }

@@ -67,46 +67,36 @@ function buildStableId(sessionFileQualifier: string, entryId: string, suffix?: s
     : `omp:${sessionFileQualifier}:${entryId}`;
 }
 
-function projectSummaryMessage(params: Readonly<{
+function projectCompactionMessage(params: Readonly<{
   sessionFileQualifier: string;
   entryId: string;
   createdAtMs: number;
   summary: string;
-  compact: boolean;
 }>): OhMyPiRawTranscriptItem {
   const stableId = buildStableId(
     params.sessionFileQualifier,
     params.entryId,
-    params.compact ? 'compaction' : 'branch_summary',
+    'compaction',
   );
   return {
     id: stableId,
     localId: stableId,
     createdAtMs: params.createdAtMs,
-    raw: params.compact
-      ? {
-        role: 'agent',
-        content: {
-          type: 'acp',
-          agentId: 'ohMyPi',
-          data: {
-            type: 'context-compaction',
-            phase: 'completed',
-            lifecycleId: stableId,
-            trigger: 'unknown',
-            source: 'runtime',
-            summary: params.summary,
-          },
-        },
-      }
-      : {
-        role: 'agent',
-        content: {
-          type: 'acp',
-          agentId: 'ohMyPi',
-          data: { type: 'message', message: params.summary },
+    raw: {
+      role: 'agent',
+      content: {
+        type: 'acp',
+        agentId: 'ohMyPi',
+        data: {
+          type: 'context-compaction',
+          phase: 'completed',
+          lifecycleId: stableId,
+          trigger: 'unknown',
+          source: 'runtime',
+          summary: params.summary,
         },
       },
+    },
   };
 }
 
@@ -390,25 +380,15 @@ export function projectOhMyPiSessionSnapshotToDirectMessages(params: Readonly<{
     }
 
     if (entry.type === 'compaction' && typeof entry.summary === 'string') {
-      items.push(projectSummaryMessage({
+      items.push(projectCompactionMessage({
         sessionFileQualifier,
         entryId,
         createdAtMs: entryCreatedAtMs,
         summary: entry.summary,
-        compact: true,
       }));
       continue;
     }
 
-    if (entry.type === 'branch_summary' && typeof entry.summary === 'string') {
-      items.push(projectSummaryMessage({
-        sessionFileQualifier,
-        entryId,
-        createdAtMs: entryCreatedAtMs,
-        summary: entry.summary,
-        compact: false,
-      }));
-    }
   }
 
   return {

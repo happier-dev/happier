@@ -115,6 +115,11 @@ describe('xAI WebSocket driver', () => {
       createWebSocket, onAudioDelta, maxBufferedAmountBytes: 16,
     });
     await driver.open({ signal: new AbortController().signal, onControl, onTransport, onRemoteClose });
+    // Synthetic internal/control vectors must never become PCM playback.
+    for (const type of ['response.reasoning.delta', 'response.function_call_arguments.delta', 'conversation.item.created']) {
+      socket.emit('message', { data: JSON.stringify({ type, delta: 'private internal text' }) });
+    }
+    expect(onAudioDelta).not.toHaveBeenCalled();
     socket.emit('message', { data: JSON.stringify({ type: 'conversation.created', conversation: { id: 'conv1' } }) });
     socket.emit('message', { data: JSON.stringify({ type: 'response.output_audio.delta', delta: 'AA==' }) });
     socket.emit('message', { data: JSON.stringify({ type: 'response.audio.delta', delta: 'AQ==' }) });

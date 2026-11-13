@@ -20,7 +20,7 @@ import {
 } from '@happier-dev/plugin-sdk/sessions/file-stores';
 
 import { createCodexRolloutSemanticTracker, type CodexRolloutSemanticState } from '../../../rollout/semanticTracker.js';
-import { projectCodexRolloutRecord } from '../../../rollout/projection/actions.js';
+import { createCodexRolloutCompactionFilter, projectCodexRolloutRecord } from '../../../rollout/projection/actions.js';
 import { mapCodexRolloutLineToExternalMessages, readCodexRolloutLineTimestampMs } from '../../../rollout/projection/transcript.js';
 import {
   describeCodexRolloutFileSetResourceIdentity,
@@ -141,6 +141,28 @@ type BestCodexHomeWithFiles = Readonly<{
   files: readonly CodexRolloutFile[];
 }>;
 
+async function readCodexCompactionFilterAtBoundary(params: Readonly<{
+  filePath: string;
+  offsetBytes: number;
+  sourceSizeBytes: number;
+}> & CodexExternalSessionInvocationBounds) {
+  const filter = createCodexRolloutCompactionFilter();
+  if (params.offsetBytes >= params.sourceSizeBytes) return filter;
+  const foundBoundary = {};
+  try {
+    await readJsonlFileForwardLines({ filePath: params.filePath, offsetBytes: params.offsetBytes,
+      maxBytes: params.sourceSizeBytes - params.offsetBytes, maxItems: params.sourceSizeBytes,
+      signal: params.signal, fileSystem: createCodexExternalSessionJsonlScannerFileSystem(params),
+      onLine(line) {
+        throwIfCodexExternalSessionInvocationStopped(params);
+        if (filter.observeFollowingRecord(line.value)) throw foundBoundary;
+      } });
+  } catch (error) {
+    if (error !== foundBoundary) throw error;
+  }
+  return filter;
+}
+
 async function readCodexExternalTranscriptProjection(params: Readonly<{
   stream: CodexExternalTranscriptRolloutStream;
   requestedOffsets: ReadonlySet<number>;
@@ -154,6 +176,7 @@ async function readCodexExternalTranscriptProjection(params: Readonly<{
   const retainedOffsets = new Set<number>();
   let endOffsetBytes = sourceSizeBytes;
   let pendingTurns = 0;
+  const compactionFilter = createCodexRolloutCompactionFilter();
   // Older pages and direct search own the same native reverse rollback rule.
   // Apply it to the unread suffix, retaining only this page's visible offsets.
   while (endOffsetBytes > params.pageStartOffsetBytes) {
@@ -173,7 +196,8 @@ async function readCodexExternalTranscriptProjection(params: Readonly<{
           hasUser: projected.records.some(record => record.item.raw.role === 'user'),
           rollbackCount: readCodexExternalRollbackCount(line.value) }], pendingTurns);
         pendingTurns = selected.pendingTurns;
-        for (const offset of selected.records) retainedOffsets.add(offset);
+        const internal = compactionFilter.isInternalInReverse(line.value);
+        if (!internal) for (const offset of selected.records) retainedOffsets.add(offset);
       } });
     if (page.reachedStart || page.nextEndOffsetBytes <= params.pageStartOffsetBytes) break;
     if (page.nextEndOffsetBytes >= endOffsetBytes) throw new Error('Codex transcript rollback selection cannot advance past an oversized native record.');
@@ -311,6 +335,8 @@ async function readCodexExternalContentSearchProjection(params: Readonly<{
     for (let streamIndex = 0; streamIndex < params.streams.length; streamIndex += 1) {
       const stream = params.streams[streamIndex]!;
       const state = progress.streams[streamIndex]!;
+      const compactionFilter = await readCodexCompactionFilterAtBoundary({ ...nativeBounds,
+        filePath: stream.filePath, offsetBytes: state.selectionEndOffsetBytes, sourceSizeBytes: state.sizeBytes });
       while (state.selectionEndOffsetBytes > 0) {
         const initialEnd = state.selectionEndOffsetBytes;
         const page = await readJsonlFileBackwardPage({ filePath: stream.filePath, endOffsetBytes: initialEnd,
@@ -326,7 +352,8 @@ async function readCodexExternalContentSearchProjection(params: Readonly<{
             const count = readCodexExternalRollbackCount(line.value);
             const selected = selectCodexExternalTranscriptRows([{ startOffsetBytes: line.startOffsetBytes, records: [line],
               hasUser: projected.records.some((record) => record.item.raw.role === 'user'), rollbackCount: count }], state.pendingTurns);
-            const excluded = typeof count !== 'number' && selected.records.length === 0;
+            const internal = compactionFilter.isInternalInReverse(line.value);
+            const excluded = internal || (typeof count !== 'number' && selected.records.length === 0);
             if (excluded) {
               const previous = state.excluded.at(-1);
               if (previous && state.previousExcluded) previous.startOffsetBytes = line.startOffsetBytes;
@@ -1352,6 +1379,13 @@ export async function pageCodexExternalSessionTranscript(params: Readonly<{
     if (page.reachedStart) scannedToStreamStart.add(stream.fileRelPath);
 
     const semanticTracker = createCodexRolloutSemanticTracker();
+    const compactionFilter = await readCodexCompactionFilterAtBoundary({ ...params,
+      filePath: stream.filePath, offsetBytes: endOffsetBytes, sourceSizeBytes: fileSize });
+    const internalOffsets = new Set<number>();
+    for (let index = page.items.length - 1; index >= 0; index -= 1) {
+      const line = page.items[index]!;
+      if (compactionFilter.isInternalInReverse(line.value)) internalOffsets.add(line.startOffsetBytes);
+    }
     const rows: CodexProjectionRow<CodexProjectedTranscriptRecord>[] = [];
     let precedingTimestampMs = page.items[0] && readCodexRolloutLineTimestampMs(page.items[0].value) === null && !page.reachedStart
       ? await readPrecedingCodexRolloutTimestamp({ ...params, stream, beforeOffsetBytes: page.items[0].startOffsetBytes, maxBytes })
@@ -1359,6 +1393,7 @@ export async function pageCodexExternalSessionTranscript(params: Readonly<{
     for (const line of page.items) {
       throwIfCodexExternalSessionInvocationStopped(params);
       precedingTimestampMs = readCodexRolloutLineTimestampMs(line.value) ?? precedingTimestampMs;
+      if (internalOffsets.has(line.startOffsetBytes)) continue;
       const projected = projectLine({
         stream,
         lineStartOffsetBytes: line.startOffsetBytes,

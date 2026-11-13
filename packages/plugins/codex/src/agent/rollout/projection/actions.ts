@@ -134,6 +134,53 @@ export type CodexRolloutRecordProjection = Readonly<{
     actions: CodexRolloutAction[];
 }>;
 
+/**
+ * Native 0.162.1 compaction records wrap the raw assistant summary in
+ * `compacted.payload.message`. That raw message has no internal role or phase.
+ * Associate only its nearest preceding content row, across content-free events.
+ */
+export function createCodexRolloutCompactionFilter() {
+    let compactionMessage: string | null = null;
+    const classify = (event: unknown) => {
+        const envelope = asRecord(event);
+        const payload = asRecord(envelope?.payload);
+        if (envelope?.type === 'compacted') {
+            return { kind: 'compacted' as const, text: readNonEmptyString(payload?.message) };
+        }
+        if (envelope?.type === 'response_item' && payload?.type === 'message') {
+            return payload.role === 'assistant'
+                ? { kind: 'assistant' as const, text: readCodexMessageContentText(payload.content) }
+                : { kind: 'boundary' as const, text: null };
+        }
+        const projected = projectCodexRolloutRecord(event, { debug: false });
+        return projected.disposition === 'unsupported' || projected.actions.length > 0
+            ? { kind: 'boundary' as const, text: null }
+            : null;
+    };
+    return {
+        /** Stop forward lookahead at the first content boundary or marker. */
+        observeFollowingRecord(event: unknown): boolean {
+            const classified = classify(event);
+            if (!classified) return false;
+            compactionMessage = classified.kind === 'compacted' ? classified.text : null;
+            return true;
+        },
+        /** Consume native records in reverse chronological order. */
+        isInternalInReverse(event: unknown): boolean {
+            const classified = classify(event);
+            if (!classified) return false;
+            if (classified.kind === 'compacted') {
+                compactionMessage = classified.text;
+                return false;
+            }
+            const internal = classified.kind === 'assistant' && classified.text !== null
+                && compactionMessage !== null && compactionMessage.endsWith(classified.text);
+            compactionMessage = null;
+            return internal;
+        },
+    };
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     return value as Record<string, unknown>;
@@ -395,10 +442,10 @@ export function projectCodexRolloutRecord(
         const content = readCodexMessageContentText(payload.content);
         if (!content) return { disposition: 'unsupported', actions: [] };
 
-        if (role === 'developer') {
+        if (role === 'developer' || role === 'system') {
             return {
                 disposition: 'known',
-                actions: opts.debug ? [{ type: 'debug', message: 'developer message', value: payload }] : [],
+                actions: opts.debug ? [{ type: 'debug', message: `${role} message`, value: payload }] : [],
             };
         }
 
@@ -409,7 +456,7 @@ export function projectCodexRolloutRecord(
             return { disposition: 'known', actions: [{ type: 'user-text', text: content }] };
         }
 
-        // Default: assistant/agent output.
+        if (role !== 'assistant') return { disposition: 'unsupported', actions: [] };
         return { disposition: 'known', actions: [{ type: 'assistant-text', text: content }] };
     }
 

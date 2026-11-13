@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapCodexRolloutEventToActions } from './actions.js';
+import { mapCodexRolloutEventToActions, projectCodexRolloutRecord } from './actions.js';
 
 describe('mapCodexRolloutEventToActions', () => {
     it('extracts codex session id from session_meta', () => {
@@ -68,6 +68,22 @@ describe('mapCodexRolloutEventToActions', () => {
             { debug: false },
         );
         expect(actions).toEqual([{ type: 'assistant-text', text: 'hi' }]);
+    });
+
+    // Schema-shaped controls: these are not captured native incident records.
+    it.each(['system', 'developer'])('keeps %s instructions out of assistant output', (role) => {
+        const projected = projectCodexRolloutRecord({ type: 'response_item', payload: {
+            type: 'message', role, content: [{ type: 'input_text', text: 'Internal instructions' }],
+        } }, { debug: true });
+        expect(projected.disposition).toBe('known');
+        expect(projected.actions.filter(action => action.type === 'assistant-text')).toEqual([]);
+    });
+
+    it('does not reinterpret an unknown message role as assistant output', () => {
+        const projected = projectCodexRolloutRecord({ type: 'response_item', payload: {
+            type: 'message', role: 'future-role', content: [{ type: 'output_text', text: 'Internal data' }],
+        } }, { debug: false });
+        expect(projected).toEqual({ disposition: 'unsupported', actions: [] });
     });
 
     it('maps collaboration events into synthetic subagent actions', () => {

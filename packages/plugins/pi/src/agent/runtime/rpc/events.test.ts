@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 import { createPiRuntimeEventProjector } from './events.js';
 
@@ -42,6 +43,18 @@ function reasoningTexts(events: ProjectedEvents): string[] {
 function assistantTexts(events: ProjectedEvents): string[] {
   return channelTexts(events, 'assistant');
 }
+
+it('keeps recorded Pi 0.82.1 native tool scaffolding out of assistant text', () => {
+  // Recorded native Pi RPC frames with an isolated synthetic model and MCP;
+  // provenance and sanitization are carried in the fixture's producer metadata.
+  const fixture = JSON.parse(readFileSync(new URL('../../transcripts/__fixtures__/pi-rpc-mcp-0.82.1.json', import.meta.url), 'utf8')) as { frames: unknown[] };
+  const projector = createPiRuntimeEventProjector();
+  const events = fixture.frames.flatMap(frame => projector.project(frame, context));
+  expect(assistantTexts(events)).toEqual(['Finished']);
+  expect(events.filter(event => event.kind === 'transcript-message-committed').map(event => event.text)).toEqual(['Finished']);
+  expect(events).toContainEqual(expect.objectContaining({ kind: 'tool-call', toolName: 'mcp__a__echo' }));
+  expect(events).toContainEqual(expect.objectContaining({ kind: 'tool-result' }));
+});
 
 describe('createPiRuntimeEventProjector assistant snapshots', () => {
   it('commits an empty final snapshot to remove a streamed draft', () => {

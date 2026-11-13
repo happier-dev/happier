@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { isRecord } from '@happier-dev/plugin-sdk';
 
 import { createPiExternalSessionsContribution } from './contribution.js';
 
@@ -63,6 +64,37 @@ async function page(records: readonly unknown[]) {
 }
 
 describe('pinned Pi 0.82.1 transcript grammar', () => {
+  it('withholds native branch and compaction summary prose while retaining the assistant reply', async () => {
+    // Synthetic native records based on pinned 0.82.1 SessionEntry declarations;
+    // these are not a recorded provider conversation.
+    const result = await page([
+      { type: 'branch_summary', id: 'branch', parentId: null,
+        timestamp: '2026-01-01T00:00:01.000Z', fromId: 'previous-leaf', summary: 'Internal branch handoff' },
+      { type: 'compaction', id: 'compact', parentId: 'branch',
+        timestamp: '2026-01-01T00:00:02.000Z', firstKeptEntryId: 'branch', tokensBefore: 100,
+        summary: 'Internal compaction checkpoint' },
+      { type: 'message', id: 'reply', parentId: 'compact', timestamp: '2026-01-01T00:00:03.000Z',
+        message: { role: 'assistant', content: [
+          { type: 'thinking', thinking: 'Internal reasoning' },
+          { type: 'toolCall', id: 'call', name: 'read', arguments: { path: 'Internal tool scaffolding' } },
+          { type: 'text', text: 'The answer is ready.' },
+        ] } },
+    ]);
+    expect(result.ok).toBe(true);
+    expect(result.value.diagnostics ?? []).toEqual([]);
+    const assistantMessages = result.value.items.flatMap(item => {
+      const content = item.raw.content;
+      if (!isRecord(content) || content.type !== 'acp' || !isRecord(content.data)) return [];
+      return content.data.type === 'message' ? [content.data.message] : [];
+    });
+    expect(assistantMessages).toEqual(['The answer is ready.']);
+    expect(result.value.items).toContainEqual(expect.objectContaining({ raw: expect.objectContaining({
+      content: expect.objectContaining({ type: 'acp', data: expect.objectContaining({ type: 'context-compaction' }) }),
+    }) }));
+    expect(JSON.stringify(result.value.items)).not.toContain('Internal branch handoff');
+    expect(JSON.stringify(result.value.items)).not.toContain('Internal compaction checkpoint');
+  });
+
   it('publishes a durable bashExecution turn instead of failing the page', async () => {
     const result = await page([
       {

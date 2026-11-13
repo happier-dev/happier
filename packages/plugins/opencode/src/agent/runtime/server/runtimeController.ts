@@ -1658,6 +1658,8 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
   const flushChildText = (childSessionId: string, messageId?: string): void => {
     for (const [key, part] of childTextParts) {
       if (part.sessionId !== childSessionId || (messageId && part.messageId !== messageId) || !part.text) continue;
+      childTextParts.delete(key);
+      if (liveMessageProjectionById.get(part.messageId) === 'suppressed' || livePartTypes.get(part.partId) === 'suppressed') continue;
       publishRuntimeEvent({
         kind: 'transcript-agent-message-committed', ...projectOpenCodeRuntimeScope(params.scope),
         emittedAtMs: Date.now(), agentId: 'opencode',
@@ -1665,7 +1667,6 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         body: { type: part.partType === 'reasoning' ? 'thinking' : 'message', message: part.text, sidechainId: childSessionId },
         meta: { importedFrom: 'acp-sidechain', remoteSessionId: childSessionId, sidechainId: childSessionId },
       });
-      childTextParts.delete(key);
     }
   };
 
@@ -1695,6 +1696,10 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     if (type === 'message.updated') {
       const info = asRecord(properties.info);
       publishPaidUsage(info);
+      const projection = classifyOpenCodeMessageForProjection({ info });
+      if (projection.messageId) {
+        liveMessageProjectionById.set(projection.messageId, projection.kind === 'assistant_transcript' ? 'assistant' : 'suppressed');
+      }
       const status = readOpenCodeNativeChildOutcome([{ info }]);
       if (status) { flushChildText(childSessionId); await observeProviderNativeChildSession(child.info, status); }
       return;
@@ -1721,21 +1726,25 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       const projection = classifyOpenCodePartForProjection(part, { context: 'live_transcript' });
       const partId = readNonBlankOpaqueIdentifier(part?.id);
       const messageId = readNonBlankOpaqueIdentifier(part?.messageID);
+      if (partId) livePartTypes.set(partId, projection.kind === 'ignored_internal' ? 'suppressed' : projection.partType);
       if (!partId || !messageId || (projection.kind !== 'transcript_text' && projection.kind !== 'reasoning_text')) return;
       childTextParts.set(JSON.stringify([childSessionId, partId]), { sessionId: childSessionId, messageId, partId, partType: projection.partType, text: projection.text });
       return;
     }
     if (type === 'message.part.delta' || type.startsWith('session.next.text.') || type.startsWith('session.next.reasoning.')) {
-      const partType = normalizeString(properties.partType) || (type.includes('.reasoning.') ? 'reasoning' : 'text');
       const partId = readNonBlankOpaqueIdentifier(properties.partID) ?? readNonBlankOpaqueIdentifier(properties.textID) ?? readNonBlankOpaqueIdentifier(properties.reasoningID);
       const messageId = readNonBlankOpaqueIdentifier(properties.messageID) ?? readNonBlankOpaqueIdentifier(properties.assistantMessageID);
-      if (!partId || !messageId) return;
+      if (!partId || !messageId || livePartTypes.get(partId) === 'suppressed') return;
+      const partType = normalizeString(properties.partType) || livePartTypes.get(partId)
+        || (type.startsWith('session.next.reasoning.') ? 'reasoning' : type.startsWith('session.next.text.') ? 'text' : '');
       const key = JSON.stringify([childSessionId, partId]);
       const previous = childTextParts.get(key)?.text ?? '';
       const delta = typeof properties.delta === 'string' ? properties.delta : '';
       const snapshot = typeof properties.text === 'string' ? properties.text : null;
+      const projection = classifyOpenCodePartForProjection({ ...properties, type: partType, text: snapshot ?? previous + delta }, { context: 'live_transcript' });
+      if (projection.kind !== 'transcript_text' && projection.kind !== 'reasoning_text') return;
       childTextParts.set(key, { sessionId: childSessionId, messageId, partId, partType,
-        text: snapshot ?? previous + delta });
+        text: projection.text });
       if (type.endsWith('.ended')) flushChildText(childSessionId, messageId);
     }
   };

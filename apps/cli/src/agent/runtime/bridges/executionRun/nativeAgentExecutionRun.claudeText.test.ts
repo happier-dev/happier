@@ -305,6 +305,9 @@ it.each([
                 message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'Other child' }] } }],
             ['thinking', { type: 'assistant', uuid: 'thinking', sessionId: providerSessionId,
                 message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: 'Working', signature: 'fixture' }] } }],
+            ['compact-summary', { type: 'user', uuid: 'compact-summary', sessionId: providerSessionId,
+                isCompactSummary: true, isVisibleInTranscriptOnly: true,
+                message: { role: 'user', content: 'Internal context handoff; never assistant speech.' } }],
         ] as const) {
             await native.observeSourceTranscript({ providerSessionId, sourceId, row, ...(phase ? { phase } : {}) });
         }

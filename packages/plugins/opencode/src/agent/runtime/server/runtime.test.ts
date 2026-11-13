@@ -1067,6 +1067,48 @@ describe('createOpenCodeServerRuntime', () => {
     ]);
   });
 
+  it.each(['metadata-first', 'part-first'] as const)('keeps child native internals out of assistant output with %s delivery', async (order) => {
+    const { ctx, harness } = createContextFixture({ onSubagentObservation: async value => value });
+    const runtime = await createStartedRuntime({ ctx, harness });
+    const nativeRuntime = createNativeSessionRuntimeForTest(runtime);
+    const events: AgentSessionRuntimeEvent[] = [];
+    nativeRuntime.watch(event => events.push(AgentSessionRuntimeEventSchema.parse(event)));
+    await runtime.handleProviderEvent({ type: 'session.created', properties: {
+      sessionID: 'internal-child', info: { id: 'internal-child', parentID: 'ses-1' },
+    } });
+    // Synthetic native-schema variants: the ordinary HTTP capture does not contain
+    // child compaction, system, or hidden records. Keep the provider classifier real.
+    const messages = [
+      { id: 'summary', role: 'assistant', summary: true },
+      { id: 'system', role: 'system' },
+      { id: 'hidden', role: 'assistant', hidden: true },
+      { id: 'visible', role: 'assistant' },
+    ];
+    for (const info of messages) {
+      const metadata = { type: 'message.updated', properties: { info: { ...info, sessionID: 'internal-child' } } };
+      const part = { type: 'message.part.updated', properties: { part: {
+        id: `part-${info.id}`, messageID: info.id, sessionID: 'internal-child', type: 'text', text: info.id,
+      } } };
+      for (const event of order === 'metadata-first' ? [metadata, part] : [part, metadata]) {
+        await runtime.handleProviderEvent(event);
+      }
+    }
+    await runtime.handleProviderEvent({ type: 'message.part.updated', properties: { part: {
+      id: 'reasoning-part', messageID: 'visible', sessionID: 'internal-child', type: 'reasoning', text: 'private reasoning',
+    } } });
+    await runtime.handleProviderEvent({ type: 'message.part.updated', properties: { part: {
+      id: 'hidden-part', messageID: 'visible', sessionID: 'internal-child', type: 'text', text: 'hidden part', synthetic: true,
+    } } });
+    await runtime.handleProviderEvent({ type: 'message.part.delta', properties: {
+      partID: 'hidden-part', messageID: 'visible', sessionID: 'internal-child', partType: 'text', delta: 'hidden delta',
+    } });
+    await runtime.handleProviderEvent({ type: 'session.idle', properties: { sessionID: 'internal-child', executionOutcome: 'succeeded' } });
+    expect(events.filter(event => event.kind === 'transcript-message-committed')).toEqual([
+      expect.objectContaining({ role: 'assistant', text: 'visible', sidechainId: 'internal-child' }),
+      expect.objectContaining({ role: 'reasoning', text: 'private reasoning', sidechainId: 'internal-child' }),
+    ]);
+  });
+
   it.each(['succeeded', 'failed', 'interrupted'] as const)('routes late child output and attention and terminal %s without opening the parent turn', async (outcome) => {
     const observations: unknown[] = [];
     const { ctx, runtimeEvents, harness } = createContextFixture({ onSubagentObservation: async (value) => { observations.push(value); return value; } });

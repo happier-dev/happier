@@ -25,6 +25,28 @@ async function setup() {
 }
 
 describe('registered Grok native history', () => {
+  it('withholds unsupported internal records and tool arguments from native transcript prose', async () => {
+    const f = await setup();
+    // Exploratory schema-shaped cases extending the characterized upstream
+    // fixture. They are not recorded native Grok events.
+    await f.writeRecords([
+      { type: 'system', content: 'private system instructions' },
+      { type: 'reasoning', content: 'private reasoning' },
+      { type: 'assistant', content: [{ type: 'thinking', thinking: 'private thought' }] },
+      { type: 'assistant', content: [{ type: 'tool_use', id: 'call', name: 'shell', input: { command: 'private tool arguments' } }, { type: 'text', text: 'The task is complete.' }] },
+    ]);
+    const page = await f.reader.pageTranscript({ ...f.request, remoteSessionId: f.id, direction: 'older' });
+    expect(page).toMatchObject({ ok: true, value: { truncated: true } });
+    expect(JSON.stringify(page)).not.toMatch(/private system|private reasoning|private thought|private tool/);
+    expect(page).toMatchObject({ ok: true, value: { items: expect.arrayContaining([
+      expect.objectContaining({ raw: { role: 'agent', content: { type: 'acp', agentId: 'grok', data: { type: 'message', message: 'The task is complete.' } } } }),
+    ]) } });
+    for (const searchTerm of ['private system', 'private reasoning', 'private thought', 'private tool']) {
+      expect(await f.reader.listCandidates({ ...f.request, searchTarget: 'content', searchTerm }))
+        .toMatchObject({ ok: true, value: { candidates: [], contentCoverage: 'partial' } });
+    }
+  });
+
   it('searches complete decoded prose, preserves literal tags, excludes tool input and lands on stable transcript locators', async () => {
     const f = await setup();
     const page = await f.reader.pageTranscript({ ...f.request, remoteSessionId: f.id, direction: 'older' });

@@ -352,20 +352,6 @@ describe('Oh My Pi public External Sessions contribution', () => {
         items: [
           expect.objectContaining({ id: expect.stringContaining(':user-root') }),
           expect.objectContaining({
-            id: expect.stringContaining(':branch-summary:branch_summary'),
-            raw: {
-              role: 'agent',
-              content: {
-                type: 'acp',
-                agentId: 'ohMyPi',
-                data: {
-                  type: 'message',
-                  message: 'selected branch',
-                },
-              },
-            },
-          }),
-          expect.objectContaining({
             id: expect.stringContaining(':compact-1:compaction'),
             raw: {
               role: 'agent',

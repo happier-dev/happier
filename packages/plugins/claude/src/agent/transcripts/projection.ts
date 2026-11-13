@@ -309,22 +309,6 @@ function projectClaudeJsonlLine(params: Readonly<{
 
     if (classification.content.kind === 'opaque') return classification.knownNonTranscriptRecord ? noItems : unsupportedRecord();
 
-    if (classification.content.kind === 'compact_summary') {
-        const raw = createClaudeAgentMessageRaw(classification.content.text);
-        if (!raw) return noItems;
-        return {
-            items: [
-                {
-                    id: stableId,
-                    localId,
-                    createdAtMs,
-                    messageRole: 'agent',
-                    raw,
-                },
-            ],
-            withheldEveryPart: false,
-        };
-    }
     if (classification.content.kind === 'slash_command') {
         const raw = createClaudeUserTextRaw(classification.content.text);
         if (!raw) return noItems;

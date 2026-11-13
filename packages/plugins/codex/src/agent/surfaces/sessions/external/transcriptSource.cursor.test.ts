@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 import { AgentExternalSessionTranscriptRawRecordSchema } from '@happier-dev/plugin-sdk/sessions/external';
+import { createExternalSessionContentSearchControl } from '@happier-dev/plugin-sdk/sessions/file-stores';
 import { projectCodexExternalSessionTranscriptPageToAgent } from './models.js';
 
 import {
@@ -12,6 +13,8 @@ import {
   readAfterCodexExternalSessionTranscript,
   searchCodexExternalTranscript,
   CodexExternalTranscriptSourceUnavailableError,
+  CodexContentSearchYield,
+  type CodexContentSearchProgress,
 } from './transcriptSource.js';
 
 function jsonl(value: unknown): string {
@@ -135,6 +138,72 @@ function decodeSingleStreamCursor(cursor: string): Record<string, unknown> {
 }
 
 describe('Codex external transcript cursor generations', () => {
+  it('excludes native compaction output from pages, append reads and content search', async () => {
+    const fixture = await createFixture();
+    try {
+      const filePath = join(fixture.dayDir, `rollout-2026-07-23T08-00-00-${fixture.remoteSessionId}.jsonl`);
+      await writeFile(filePath, rollout({ remoteSessionId: fixture.remoteSessionId,
+        timestamp: '2026-07-23T08:00:00.000Z', messages: ['Earlier answer'] }));
+      const params = { ...sourceParams(fixture), direction: 'older' as const, maxBytes: 64 * 1024, maxItems: 100 };
+      const tail = await readAfterCodexExternalSessionTranscript({ ...params, cursor: 'tail' });
+      // Reconstructed from recorded Codex 0.162.1 incident rows 19–23.
+      // Text is replaced and optional fields omitted; record families and the
+      // observed exact native compaction suffix association are preserved.
+      await appendFile(filePath, [
+        { type: 'response_item', payload: { type: 'reasoning', summary: [] } },
+        { type: 'response_item', payload: { type: 'message', role: 'assistant',
+          content: [{ type: 'output_text', text: 'Internal compaction context' }] } },
+        { type: 'event_msg', payload: { type: 'token_count', info: {} } },
+        { type: 'compacted', payload: { message: 'Native wrapper\nInternal compaction context', replacement_history: [] } },
+        { type: 'response_item', payload: { type: 'message', role: 'assistant',
+          content: [{ type: 'output_text', text: 'Your answer' }] } },
+        // Constructed neighbouring control: a native marker alone cannot
+        // classify a genuine answer as its summary without matching content.
+        { type: 'compacted', payload: { message: 'A separate remote summary', replacement_history: [] } },
+      ].map((record, index) => jsonl({ timestamp: new Date(Date.parse('2026-07-23T08:00:02Z') + index * 1000).toISOString(), ...record })).join(''));
+      const page = await pageCodexExternalSessionTranscript(params);
+      expect(page.items.map(transcriptItemText)).toEqual(['Earlier answer', 'Your answer']);
+      const pagedText: string[] = [];
+      let cursor: string | undefined;
+      while (true) {
+        const smallerPage = await pageCodexExternalSessionTranscript({ ...params, maxItems: 1, cursor });
+        pagedText.unshift(...smallerPage.items.map(transcriptItemText));
+        if (!smallerPage.hasMore) break;
+        expect(smallerPage.nextCursor).not.toBe(cursor);
+        cursor = smallerPage.nextCursor ?? undefined;
+      }
+      expect(pagedText).toEqual(['Earlier answer', 'Your answer']);
+      const after = await readAfterCodexExternalSessionTranscript({ ...params, cursor: tail.nextCursor! });
+      expect(after.items.map(transcriptItemText)).toEqual(['Your answer']);
+      const search = await searchCodexExternalTranscript({ ...params, query: 'Internal compaction context',
+        ripgrep: { run: async () => ({ exitCode: 0, stdout: `${filePath}\0`, stderr: '' }) } });
+      expect(search.match).toBeUndefined();
+      // An already-expired cooperative clock yields after each committed native
+      // row. This crosses the compaction marker without mocking the decoder.
+      let progress: CodexContentSearchProgress | undefined;
+      const recordedText = await readFile(filePath, 'utf8');
+      const markerOffset = Buffer.byteLength(recordedText.slice(0,
+        recordedText.lastIndexOf('\n', recordedText.indexOf('"type":"compacted"')) + 1));
+      let yieldedAtMarker = false;
+      while (true) {
+        try {
+          const resumed = await searchCodexExternalTranscript({ ...params, query: 'Internal compaction context',
+            progress, contentSearchControl: createExternalSessionContentSearchControl({ deadlineAtMs: 0 }),
+            ripgrep: { run: async () => ({ exitCode: 0, stdout: `${filePath}\0`, stderr: '' }) } });
+          expect(resumed.match).toBeUndefined();
+          break;
+        } catch (error) {
+          if (!(error instanceof CodexContentSearchYield)) throw error;
+          progress = error.progress;
+          yieldedAtMarker ||= progress.streams[0]?.selectionEndOffsetBytes === markerOffset;
+        }
+      }
+      expect(yieldedAtMarker).toBe(true);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it('resumes inside one native row with semantic state from before that row', async () => {
     const fixture = await createFixture();
     try {

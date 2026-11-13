@@ -10,6 +10,7 @@ vi.mock('@elevenlabs/client', () => ({
 
 import { createElevenLabsConversationHandle } from './conversationHandle.js';
 import { createElevenLabsSdkConnection } from './sdkConnection.js';
+import { createElevenLabsEventMapper } from './eventMapper.js';
 import { VoiceRealtimeToolCallV1Schema, type VoiceRealtimeConnection } from '@happier-dev/plugin-sdk/voice/client';
 
 const createHandle = () => createElevenLabsConversationHandle({
@@ -28,6 +29,50 @@ type TestConversation = Readonly<{
 
 describe('createElevenLabsConversationHandle event surface', () => {
   beforeEach(() => startSession.mockReset());
+
+  it('keeps native tentative, reasoning and tool events out of transcript and output controls through the real SDK', async () => {
+    const { TextConversation } = await vi.importActual<typeof import('@elevenlabs/client')>('@elevenlabs/client');
+    let incoming!: (event: unknown) => Promise<void>;
+    const network = {
+      conversationId: 'internal-event-hunt',
+      onMessage(callback: typeof incoming) { incoming = callback; },
+      onDisconnect() {}, onModeChange() {}, onOutgoingMessage() {},
+      sendMessage() {}, close() {},
+    };
+    // Only network startup is replaced. SDK 1.18.0 dispatches these synthetic
+    // native-schema vectors; no live capture or media playback is claimed.
+    startSession.mockImplementation(async (options) => Reflect.construct(TextConversation, [options, network]));
+    const handle = createHandle();
+    const controls: unknown[] = [];
+    let driver!: Parameters<Parameters<typeof createElevenLabsSdkConnection>[0]['createSdkHandleConnection']>[0]['driver'];
+    createElevenLabsSdkConnection({
+      handle, startConfig: { textOnly: true }, duckGain: 0.18,
+      createSdkHandleConnection(input) { driver = input.driver; return {} as VoiceRealtimeConnection; },
+    });
+    await driver.open({ signal: new AbortController().signal,
+      onControl(event) { controls.push(event); }, onTransport() {}, onRemoteClose() {},
+    });
+    try {
+      for (const event of [
+        { type: 'internal_tentative_agent_response', tentative_agent_response_internal_event: { tentative_agent_response: 'private tentative text' } },
+        { type: 'agent_reasoning_response_part', reasoning_response_part: { type: 'delta', text: 'private reasoning', event_id: 'reasoning' } },
+        { type: 'agent_tool_request', agent_tool_request: { tool_name: 'readSession', parameters: { text: 'private tool arguments' } } },
+        { type: 'agent_tool_response', agent_tool_response: { tool_name: 'readSession', result: 'private tool result' } },
+      ]) await incoming(event);
+      // Internal events create neither transcript messages nor speech/output
+      // controls at the host connection boundary.
+      expect(controls).toEqual([]);
+      await incoming({ type: 'agent_response', agent_response_event: { event_id: 1, agent_response: 'The task is complete.' } });
+      const mapper = createElevenLabsEventMapper();
+      mapper.beginConversation();
+      expect(controls.map(event => mapper.map(event))).toEqual([
+        expect.objectContaining({ type: 'voice.transcript.final', role: 'assistant', text: 'The task is complete.' }),
+      ]);
+    } finally {
+      await driver.close();
+      handle.dispose();
+    }
+  });
 
   it('publishes typed provider events to current subscribers and unsubscribe is terminal', async () => {
     const conversation = {

@@ -411,13 +411,6 @@ export function projectClaudeTranscriptRowToProviderPayload(params: Readonly<{
   if (classification.sidechain) return null;
   if (readClaudeTaskLifecycleEnvelope(params.row)?.subtype === 'task_notification') return null;
 
-  if (classification.content.kind === 'compact_summary') {
-    return withOptionalTurnId(normalizedRow, {
-      ...visibleBase,
-      kind: 'compact_summary',
-      text: classification.content.text,
-    });
-  }
   if (classification.content.kind === 'slash_command') {
     return withOptionalTurnId(normalizedRow, {
       ...visibleBase,

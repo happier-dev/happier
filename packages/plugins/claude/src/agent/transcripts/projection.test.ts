@@ -461,27 +461,22 @@ describe('Claude JSONL projection', () => {
                 message: { content: '<local-command-stdout>local command visible</local-command-stdout>' },
             },
         });
-        const projected = [assistant, compact, localCommand];
+        expect(compact).toBeUndefined();
+        const projected = [assistant, localCommand];
 
         expect(projected).not.toContain(undefined);
         expect(projected.map((item) => item?.id)).toEqual([
             'claude:000000000011',
-            'claude:000000000012',
             'claude:000000000013',
         ]);
         expect(projected.map((item) => item?.localId)).toEqual([
             'claude-jsonl:main:assistant:assistant-1',
-            'claude-jsonl:main:user:compact-1',
             'claude-jsonl:main:user:local-command-1',
         ]);
         expect(projected.map((item) => item?.raw)).toEqual([
             {
                 role: 'agent',
                 content: { type: 'acp', agentId: 'claude', data: { type: 'message', message: 'assistant visible' } },
-            },
-            {
-                role: 'agent',
-                content: { type: 'acp', agentId: 'claude', data: { type: 'message', message: 'compact visible' } },
             },
             {
                 role: 'agent',
@@ -493,7 +488,7 @@ describe('Claude JSONL projection', () => {
         expect(JSON.stringify(projected)).not.toContain('nativeEnvelope');
     });
 
-    it('projects command and compact artifacts as sanitized visible direct transcript rows', () => {
+    it('withholds compact summaries while projecting command artifacts as sanitized visible rows', () => {
         const compactSummary = projectClaudeJsonlLineToDirectMessages({
             fileRelPath: 'session.jsonl',
             lineStartOffsetBytes: 1,
@@ -528,14 +523,7 @@ describe('Claude JSONL projection', () => {
             },
         });
 
-        expect(compactSummary[0]?.raw).toEqual({
-            role: 'agent',
-            content: {
-                type: 'acp',
-                agentId: 'claude',
-                data: { type: 'message', message: 'This session is being continued from a previous conversation.' },
-            },
-        });
+        expect(compactSummary).toEqual([]);
         expect(slashCommand[0]?.raw).toEqual({
             role: 'user',
             content: { type: 'text', text: '/compact' },

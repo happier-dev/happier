@@ -176,7 +176,7 @@ export async function readKimiTranscript(session: KimiSession, signal: AbortSign
   for (const entry of entries) {
     signal.throwIfAborted();
     control?.checkWork();
-    if (entry.origin === 'injection') continue;
+    if (entry.origin === 'injection' || entry.origin === 'compaction_summary') continue;
     if (entry.unsupported) {
       items.push(createExternalSessionUnsupportedTranscriptItem({ agentId: 'kimi', id: entry.id, createdAtMs: entry.time }));
       continue;

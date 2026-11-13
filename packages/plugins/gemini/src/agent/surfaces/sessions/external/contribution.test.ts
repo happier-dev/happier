@@ -37,6 +37,30 @@ async function fixture() {
 }
 
 describe('Gemini v0.64 native conversation reader', () => {
+  it('projects only assistant prose from native thought and tool-call content', async () => {
+    const { reader, request, path, kit } = await fixture();
+    try {
+      // Synthetic v0.64 / GenAI Part schema fixture; no recorded native thought
+      // capture is available in gemini064.ts.
+      await writeFile(path, jsonl([{ ...header, summary: 'internal session summary', memoryScratchpad: 'internal memory' }, {
+        ...gemini('mixed', ''), thoughts: [{ subject: 'internal thoughts', description: 'internal reasoning' }],
+        content: [
+          { text: 'internal thought part', thought: true },
+          { functionCall: { id: 'call', name: 'read_file', args: { path: 'internal tool input' } } },
+          { text: 'Visible assistant answer', thoughtSignature: 'opaque signature' },
+        ],
+      }]));
+      const page = await reader.pageTranscript({ ...request, remoteSessionId: sessionId, direction: 'older' });
+      expect(page).toMatchObject({ ok: true, value: { items: [{ id: 'mixed', raw: {
+        content: { data: { type: 'message', message: 'Visible assistant answer' } },
+      } }] } });
+      if (!page.ok) throw new Error(page.code);
+      expect(page.value.items).toHaveLength(1);
+      expect(await reader.listCandidates({ ...request, searchTarget: 'content', searchTerm: 'internal' }))
+        .toMatchObject({ ok: true, value: { candidates: [] } });
+    } finally { await kit.dispose(); }
+  });
+
   it('yields within a patch replay before publishing a subsequently rewound hit', async () => {
     const { reader, request, path, kit } = await fixture();
     try {

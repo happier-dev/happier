@@ -11,6 +11,31 @@ import { listVoicePromptHotPathSpecs } from '@happier-dev/protocol/actions/actio
 import { createXaiRealtimeProtocolAdapter, createXaiSessionUpdate, encodeXaiToolResult } from './protocol.js';
 
 describe('xAI Realtime protocol adapter', () => {
+  it('keeps internal items and tool scaffolding out of assistant transcript and playback events', () => {
+    const adapter = createXaiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
+    // Synthetic OpenAI-compatible item vectors, not an xAI native capture.
+    // These also exercise the leaf's handling of unrecognized internal items.
+    const internalItems = [
+      { id: 'reasoning', type: 'reasoning', summary: [{ type: 'summary_text', text: 'private reasoning' }] },
+      { id: 'system', type: 'message', role: 'system', content: [{ type: 'input_text', text: 'private instructions' }] },
+      { id: 'tool', type: 'function_call', call_id: 'call', name: 'readSession', arguments: '{"private":"tool arguments"}' },
+    ] as const;
+    for (const item of internalItems) {
+      expect(adapter.decodeControl({ type: 'response.output_item.added', event_id: `added-${item.id}`, response_id: 'r1', output_index: 0, item })).toEqual([]);
+      expect(adapter.decodeControl({ type: 'response.output_item.done', event_id: `done-${item.id}`, response_id: 'r1', output_index: 0, item })).toEqual([]);
+    }
+    expect(adapter.decodeControl({ type: 'response.function_call_arguments.delta', event_id: 'arguments-delta', item_id: 'tool', delta: 'private tool arguments' })).toEqual([]);
+    expect(adapter.decodeControl({ type: 'response.function_call_arguments.done', event_id: 'arguments-done', response_id: 'r1', call_id: 'call', name: 'readSession', arguments: '{"private":"tool arguments"}' })).toEqual([]);
+    expect(adapter.decodeControl({ type: 'response.done', event_id: 'response-done', response: { id: 'r1', output: internalItems } })).toEqual([
+      { type: 'tool_calls', responseId: 'r1', calls: [{ v: 1, responseId: 'r1', callId: 'call', toolName: 'readSession', order: 0, arguments: { private: 'tool arguments' } }] },
+      { type: 'response_finished', responseId: 'r1' },
+    ]);
+    expect(adapter.decodeControl({ type: 'response.output_audio_transcript.done', event_id: 'answer', item_id: 'assistant', transcript: 'The task is complete.' }))
+      .toContainEqual({ type: 'transcript', event: expect.objectContaining({ role: 'assistant', text: 'The task is complete.' }) });
+    expect(adapter.decodeControl({ type: 'response.output_audio.delta', event_id: 'audio', item_id: 'assistant', delta: 'AA==' }))
+      .toEqual([{ type: 'assistant_output_started', itemId: 'assistant' }]);
+  });
+
   it('preserves microphone and response identity when transcription finishes after response creation', () => {
     const adapter = createXaiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
     expect(adapter.decodeControl({ type: 'input_audio_buffer.committed', event_id: 'audio-committed',

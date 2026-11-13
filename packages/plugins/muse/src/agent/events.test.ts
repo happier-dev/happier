@@ -16,6 +16,30 @@ const recording = JSON.parse(readFileSync(new URL('./testkit/fixtures/login-smok
 const nativeTurnId = '01a1bf87-e037-7cc3-ad73-d6ffffa47b13';
 
 describe('Muse event projection', () => {
+  it.each(['live', 'snapshot', 'history'] as const)('keeps recorded compaction out of assistant output on %s', async source => {
+    const capture = readMuseRecord(JSON.parse(readFileSync(new URL('./testkit/fixtures/resume-compact.json', import.meta.url), 'utf8')));
+    const frames = (Array.isArray(capture.rows) ? capture.rows : []).map(row => readMuseRecord(readMuseRecord(row).message))
+      .filter(message => typeof message.method === 'string' && readMuseRecord(readMuseRecord(message.params).item).kind === 'compaction');
+    expect(frames).toHaveLength(2);
+    const projection = createMuseEventProjection({ sessionId: 'host-compact' });
+    const observed: AgentSessionRuntimeEvent[] = [];
+    projection.watch(event => observed.push(event));
+    projection.observeSession({ sessionId: readMuseRecord(frames[0]?.params).sessionId ?? null });
+    try {
+      for (const frame of frames) {
+        if (source === 'snapshot') await projection.replayItems([readMuseRecord(frame.params).item ?? null]);
+        else if (source === 'history') await projection.replayHistoryEvent({ method: String(frame.method), params: frame.params });
+        else await projection.observe({ method: String(frame.method), params: frame.params });
+      }
+      expect(observed.filter(event => event.kind === 'message-delta' || event.kind === 'transcript-message-committed')).toEqual([]);
+      const answer = recording.rows.find(row => row.direction === 'recv' && row.message.method === 'item/completed'
+        && readMuseRecord(readMuseRecord(row.message.params).item).kind === 'agentMessage')?.message;
+      if (!answer?.method) throw new Error('Expected the recorded native assistant answer');
+      await projection.observe({ method: answer.method, params: answer.params });
+      expect(observed.filter(event => event.kind === 'transcript-message-committed')).toMatchObject([{ role: 'assistant', text: 'PEBBLE' }]);
+    } finally { projection.dispose(); }
+  });
+
   it.each(['live', 'snapshot', 'history'] as const)('projects native questions through the canonical answer controls on %s', async source => {
     const capture = readMuseRecord(JSON.parse(readFileSync(new URL('./testkit/fixtures/advanced.json', import.meta.url), 'utf8')));
     if (!Array.isArray(capture.rows)) throw new Error('Missing recorded native question');

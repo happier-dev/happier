@@ -1377,7 +1377,7 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
     expect(JSON.stringify(published)).not.toContain('<local-command-stdout>');
   });
 
-  it('publishes compact summaries and command artifacts without duplicating the canonical compact boundary', async () => {
+  it('withholds internal compact summaries while publishing command artifacts without duplicating the canonical compact boundary', async () => {
     const { ctx, publisher } = await createBoundPublisher();
     const compactBoundary = {
       type: 'system',
@@ -1422,11 +1422,6 @@ describe('createClaudeUnifiedProviderTranscriptPublisher', () => {
 
     const published = ctx.agentRuntime.sessionHooks.publishProviderTranscript.mock.calls.map((call) => call[0]);
     expect(published).toEqual([
-      expect.objectContaining({
-        kind: 'compact_summary',
-        turnId: 'compact-summary-1',
-        text: 'This session is being continued from a previous conversation.',
-      }),
       expect.objectContaining({ kind: 'slash_command', turnId: 'compact-command-1', text: '/compact' }),
       expect.objectContaining({
         kind: 'local_command_output',

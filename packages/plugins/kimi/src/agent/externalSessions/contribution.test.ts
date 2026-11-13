@@ -113,9 +113,15 @@ describe('registered Kimi Code protocol 1.4 history reader', () => {
         { type: 'context.clear' }, kimiUser('clear boundary turn'), { type: 'context.undo', count: 2 }]));
       expect(await reader.listCandidates({ ...request, searchTarget: 'content', searchTerm: 'ancient visible history' }))
         .toMatchObject({ ok: true, value: { candidates: [expect.anything()], contentCoverage: 'complete' } });
-      for (const searchTerm of ['abandoned turn', 'abandoned answer', 'clear boundary turn']) {
+      for (const searchTerm of ['abandoned turn', 'abandoned answer', 'clear boundary turn', 'compact summary']) {
         expect(await reader.listCandidates({ ...request, searchTarget: 'content', searchTerm })).toMatchObject({ ok: true, value: { candidates: [] } });
       }
+      const page = await reader.pageTranscript({ ...request, remoteSessionId: 'session_fixture', direction: 'older' });
+      expect(page).toMatchObject({ ok: true, value: { items: [
+        expect.objectContaining({ raw: { role: 'user', content: { type: 'text', text: 'ancient visible history' } } }),
+        expect.objectContaining({ raw: { role: 'agent', content: { type: 'acp', agentId: 'kimi',
+          data: { type: 'message', message: 'prefix answer' } } } }),
+      ] } });
       await appendFile(files.wirePath, kimiWire([{ type: 'context.future_splice', start: 0 }]));
       expect(await reader.listCandidates({ ...request, searchTarget: 'content', searchTerm: 'ancient visible history' }))
         .toMatchObject({ ok: true, value: { contentCoverage: 'partial' } });

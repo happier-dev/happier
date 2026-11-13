@@ -822,10 +822,6 @@ function agentAcpRaw(data: AgentExternalSessionLinkData): AgentExternalSessionTr
   });
 }
 
-function agentMessageRaw(message: string): AgentExternalSessionTranscriptRawRecord | null {
-  return agentAcpRaw({ type: 'message', message });
-}
-
 function readPiBlockText(block: Record<string, unknown>, key: string): string | null {
   const value = block[key];
   return typeof value === 'string' && value.length > 0 ? value : null;
@@ -1104,9 +1100,10 @@ function projectEntry(
   if (entry.type === 'branch_summary') {
     const summary = readPiBlockText(record, 'summary');
     const fromId = readOptionalString(record.fromId);
-    const raw = summary && fromId ? agentMessageRaw(summary) : null;
-    return raw
-      ? { kind: 'item', items: [buildItem(baseId, raw)] }
+    // Pi uses this checkpoint to rebuild model context after switching branches;
+    // its prose is not an assistant reply.
+    return summary && fromId
+      ? { kind: 'known_non_transcript' }
       : { kind: 'unsupported' };
   }
   if (entry.type === 'compaction') {

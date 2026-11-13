@@ -276,7 +276,8 @@ describe('Claude native transcript semantic projection', () => {
     });
   });
 
-  it('preserves sanitized visibility and stop-hook/no-response/compaction lifecycle meanings', () => {
+  it('hides synthetic compact summaries while preserving command and lifecycle meanings', () => {
+    // Synthetic native envelopes; no recorded Claude compaction capture is used.
     const compactSummary = {
       type: 'user',
       uuid: 'compact-summary-row',
@@ -318,8 +319,8 @@ describe('Claude native transcript semantic projection', () => {
     } as const;
 
     expect(classifyClaudeNativeTranscriptRow(compactSummary)).toMatchObject({
-      visibility: 'sanitized',
-      messageRole: 'agent',
+      visibility: 'hidden',
+      messageRole: 'event',
       content: { kind: 'compact_summary', text: 'A compact summary' },
       lifecycle: { kind: 'none' },
     });
@@ -328,23 +329,12 @@ describe('Claude native transcript semantic projection', () => {
       fileRelPath: 'projects/session.jsonl',
       lineStartOffsetBytes: 5,
       lineValue: compactSummary,
-    })[0]).toMatchObject({
-      raw: {
-        content: {
-          type: 'acp',
-          agentId: 'claude',
-          data: { type: 'message', message: 'A compact summary' },
-        },
-      },
-    });
+    })).toEqual([]);
     expect(projectClaudeTranscriptRowToProviderPayload({
       providerSessionId: 'claude-session',
       row: compactSummary,
       suppressPriorEraTurnClosure: false,
-    })).toMatchObject({
-      kind: 'compact_summary',
-      text: 'A compact summary',
-    });
+    })).toBeNull();
     expect(classifyClaudeNativeTranscriptRow(slashCommand)).toMatchObject({
       visibility: 'sanitized',
       messageRole: 'user',
@@ -458,7 +448,7 @@ describe('Claude native transcript semantic projection', () => {
     } as const;
 
     expect(classifyClaudeNativeTranscriptRow(sidechainCompactSummary)).toMatchObject({
-      visibility: 'sanitized',
+      visibility: 'hidden',
       sidechain: true,
       content: { kind: 'compact_summary', text: 'Sidechain compact summary' },
     });
@@ -466,15 +456,7 @@ describe('Claude native transcript semantic projection', () => {
       fileRelPath: 'projects/session.jsonl',
       lineStartOffsetBytes: 71,
       lineValue: sidechainCompactSummary,
-    })[0]).toMatchObject({
-      raw: {
-        content: {
-          type: 'acp',
-          agentId: 'claude',
-          data: { type: 'message', message: 'Sidechain compact summary' },
-        },
-      },
-    });
+    })).toEqual([]);
     expect(projectClaudeTranscriptRowToProviderPayload({
       providerSessionId: 'claude-session',
       row: sidechainCompactSummary,

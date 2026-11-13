@@ -294,24 +294,38 @@ describe('pageOhMyPiSessionTranscript', () => {
       expect.stringContaining(':leaf:text:0'),
       expect.stringContaining(':compact:compaction'),
       expect.stringContaining(':offset:'),
-      expect.stringContaining(':summary:branch_summary'),
       expect.stringContaining(':root'),
     ]);
     expect(JSON.stringify(pages)).not.toContain('abandoned');
     expect(tailCursor).toEqual(expect.any(String));
     if (!tailCursor) return;
     await appendFile(transcriptPath, jsonlLine({
+      type: 'branch_summary',
+      id: 'continued-summary',
+      parentId: 'leaf',
+      timestamp: '2026-04-10T10:01:02.500Z',
+      summary: 'internal continuation context',
+    }) + jsonlLine({
       type: 'message',
       id: 'continued',
-      parentId: 'leaf',
+      parentId: 'continued-summary',
       timestamp: '2026-04-10T10:01:03.000Z',
       message: { role: 'assistant', content: 'continued answer' },
     }), 'utf8');
-    await expect(readAfterOhMyPiSessionTranscript({
+    const summaryPage = await readAfterOhMyPiSessionTranscript({
       source: { kind: 'ohMyPiAgentDir', agentDir },
       env: {},
       providerSessionId: 'tree-session',
       cursor: tailCursor,
+      maxBytes: 1024,
+      maxItems: 1,
+    });
+    expect(summaryPage).toMatchObject({ items: [], truncated: true });
+    await expect(readAfterOhMyPiSessionTranscript({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      env: {},
+      providerSessionId: 'tree-session',
+      cursor: summaryPage.nextCursor,
       maxBytes: 1024,
       maxItems: 1,
     })).resolves.toMatchObject({
