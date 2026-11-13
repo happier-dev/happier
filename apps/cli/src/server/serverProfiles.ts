@@ -834,7 +834,7 @@ export async function setServerProfileEndpointsById(opts: Readonly<{
       (opts.localServerUrl !== undefined ? localServerUrl : previous?.localServerUrl) || serverUrl,
     );
     const credentials = await readStoredCredentialsForServerId(id);
-    if (!credentials?.token) throw new Error('Home endpoint refresh requires the profile credential');
+    if (!credentials?.token) throw Object.assign(new Error('Home endpoint refresh requires the profile credential'), { code: 'not_authenticated' });
     const [{ observeServerFeaturesSnapshot }, { resolveAuthenticatedExactHomeConnectionDescriptorObservation }] = await Promise.all([
       import('@/features/serverFeaturesClient'),
       import('@/auth/terminalAuthEnrollmentClient'),
@@ -844,7 +844,13 @@ export async function setServerProfileEndpointsById(opts: Readonly<{
       snapshot, expectedHomeServerIdentityId: previousDescriptor.homeServerIdentityId,
     });
     if (observation.kind !== 'available') {
-      throw new Error('Home endpoint refresh requires a matching authenticated descriptor');
+      const signedOut = snapshot.status === 'error' && snapshot.reason === 'response_status'
+        && (snapshot.httpStatus === 401 || snapshot.httpStatus === 403);
+      throw Object.assign(new Error(signedOut
+        ? 'Home endpoint refresh requires sign-in to the established Home'
+        : 'Home endpoint refresh requires a matching authenticated descriptor'), {
+        code: signedOut ? 'not_authenticated' : 'server_identity_unavailable',
+      });
     }
     const adopted = await adoptServerProfileHomeConnectionDescriptor({
       descriptor: observation.descriptor, expectedProfileId: id, observation: 'exact',

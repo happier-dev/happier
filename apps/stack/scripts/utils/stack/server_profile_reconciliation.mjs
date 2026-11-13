@@ -150,3 +150,22 @@ export function buildStackServerProfileSetArgs({ serverId, internalServerUrl, pu
     '--json',
   ];
 }
+
+// The CLI owns refusal classification: exit 1 is an expected typed refusal,
+// exit 2 is an unexpected error. Do not reproduce its code catalogue here.
+export function classifyStackServerProfileFailure(error) {
+  if (error?.exitCode !== 1) return null;
+  for (const line of String(error?.message ?? '').split('\n')) {
+    const start = line.indexOf('{');
+    if (start < 0) continue;
+    let envelope;
+    try { envelope = JSON.parse(line.slice(start)); } catch { continue; }
+    if (envelope?.v !== 1 || envelope.ok !== false || envelope.kind !== 'server_set') continue;
+    const code = envelope.error?.code;
+    if (typeof code !== 'string' || !code) continue;
+    return Object.assign(new Error(`Stack Home profile refresh refused (${code}); verify the selected Home and sign in before restarting.`), {
+      code, phase: 'home-profile', component: 'daemon', entryGraph: 'cli', retryable: false,
+    });
+  }
+  return null;
+}

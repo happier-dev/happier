@@ -159,7 +159,7 @@ describe('server profiles', () => {
       });
     });
 
-  it.each(['refresh', 'alias', 'other-home', 'stale', 'conflict', 'public', 'unsafe-http'] as const)('reconciles a changed descriptor endpoint through authenticated Home publication: %s', async (scenario) => {
+  it.each(['refresh', 'alias', 'other-home', 'stale', 'conflict', 'public', 'signed-out', 'unsafe-http'] as const)('reconciles a changed descriptor endpoint through authenticated Home publication: %s', async (scenario) => {
     await withTempDir('happier-cli-profile-port-', async (homeDir) => {
       envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: undefined,
         HAPPIER_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined });
@@ -189,6 +189,7 @@ describe('server profiles', () => {
       // Only the network boundary is mocked; schema parsing, credential lookup,
       // identity verification, revision admission and profile persistence are real.
       vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (url, init) => {
+        if (scenario === 'signed-out') return new Response(null, { status: 401 });
         if (scenario === 'unsafe-http') throw new Error('Unsafe carrier must not receive a credential');
         if (scenario === 'public' && String(url).endsWith('/authenticated')) return new Response(null, { status: 404 });
         if (scenario === 'public') return Response.json({ features: {}, capabilities: { serverIdentity: { serverIdentityId: published.homeServerIdentityId } }, homeConnectionDescriptor: published });
@@ -206,6 +207,8 @@ describe('server profiles', () => {
       } else {
         if (scenario === 'stale') await expect(update).rejects.toMatchObject({ code: 'stale_home_descriptor' });
         else if (scenario === 'conflict') await expect(update).rejects.toMatchObject({ code: 'home_descriptor_conflict' });
+        else if (scenario === 'signed-out') await expect(update).rejects.toMatchObject({ code: 'not_authenticated' });
+        else if (scenario === 'public') await expect(update).rejects.toMatchObject({ code: 'server_identity_unavailable' });
         else if (scenario === 'other-home') await expect(update).rejects.toMatchObject({ code: 'HOME_AUTHORITY_MISMATCH' });
         else await expect(update).rejects.toThrow();
         expect(await getServerProfile(id)).toMatchObject({ serverUrl: oldOrigin, homeConnectionDescriptor: oldDescriptor });

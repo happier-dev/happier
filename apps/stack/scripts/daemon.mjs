@@ -37,6 +37,7 @@ import { withStackDaemonLifecycleLock } from './utils/stack/daemon_lifecycle_loc
 import {
   assertStackServerProfileReconciled,
   buildStackServerProfileSetArgs,
+  classifyStackServerProfileFailure,
 } from './utils/stack/server_profile_reconciliation.mjs';
 import {
   resolveCliDistBuildLockPath,
@@ -2297,6 +2298,8 @@ export async function startLocalDaemonWithAuth({
             captureFailureDiagnostic: { env: daemonEnv },
           });
         } catch (error) {
+          const refusal = classifyStackServerProfileFailure(error);
+          if (refusal) throw refusal;
           if (error?.code === 'ETIMEDOUT') {
             const timeoutError = new Error(
               `[local] daemon startup preflight timed out during server profile reconciliation ` +

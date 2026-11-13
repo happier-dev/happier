@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import {
   assertStackServerProfileReconciled,
+  classifyStackServerProfileFailure,
   buildStackServerProfileSetArgs,
 } from './server_profile_reconciliation.mjs';
 
@@ -121,4 +122,18 @@ test('reconciliation refuses to write a profile without both URLs', () => {
     () => buildStackServerProfileSetArgs({ serverId: 'stack_x', internalServerUrl: '', publicServerUrl: 'http://localhost:1' }),
     /requires an id and both server URLs/,
   );
+});
+
+test('profile refusal preserves auth reason and stops worker retries without copying child payload', () => {
+  const error = new Error('child failed\n[stdout] '+JSON.stringify({v:1,ok:false,kind:'server_set',error:{code:'not_authenticated',message:'private child payload'}}));
+  error.exitCode = 1;
+  const refusal = classifyStackServerProfileFailure(error);
+  assert.equal(refusal.code, 'not_authenticated');
+  assert.equal(refusal.retryable, false);
+  assert.equal(refusal.phase, 'home-profile');
+  assert.equal(refusal.entryGraph, 'cli');
+  assert.ok(!refusal.message.includes('private child payload'));
+  assert.equal(classifyStackServerProfileFailure(new Error('transport failed')), null);
+  error.exitCode = 2;
+  assert.equal(classifyStackServerProfileFailure(error), null);
 });

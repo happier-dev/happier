@@ -4352,7 +4352,8 @@ test(`remote stack environment refusal for ${variable} settles with its producer
 });
 }
 
-test('remote shared-database refusal preserves producer facts and settles without lifecycle retries', { timeout: 10_000 }, async t => {
+for (const scenario of ['shared-database', 'home-profile']) {
+test(`remote ${scenario} refusal preserves producer facts and settles without lifecycle retries`, { timeout: 10_000 }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-migration-refusal-' });
   const target = { name: 'fixture', platform: 'posix', ssh: 'fixture-ssh',
     repoDir: fixture.path('remote-repo'), cliHomeDir: fixture.path('remote-cli') };
@@ -4364,9 +4365,13 @@ test('remote shared-database refusal preserves producer facts and settles withou
   const settled = new Promise(resolve => { observed = resolve; });
   let releaseRetry;
   const retryGate = new Promise(resolve => { releaseRetry = resolve; });
-  const refusal = { code: 'ESHAREDDBMIGRATIONSMISSING', phase: 'server_start', retryable: false,
+  const refusal = scenario === 'home-profile'
+    ? { code: 'not_authenticated', phase: 'home-profile', retryable: false }
+    : { code: 'ESHAREDDBMIGRATIONSMISSING', phase: 'server_start', retryable: false,
     sourceStack: 'repo-dev-a1cc5e0671', missingMigrations: ['20261029120000_missing'] };
   const emitter = new URL('../../runtime/shared/source_reload_refusal.mjs', import.meta.url).href;
+  const profileOwner = new URL('../stack/server_profile_reconciliation.mjs', import.meta.url).href;
+  const processOwner = new URL('../proc/proc.mjs', import.meta.url).href;
   const controller = await startStackDevTargets({ stackName: 'migration-refusal',
     stackBaseDir: fixture.path('stack'), sourceDir: repoDir, localServerPort: await allocateAvailableLocalhostPort(),
     targetPlans: [{ target, services: { daemon: true } }],
@@ -4379,7 +4384,15 @@ test('remote shared-database refusal preserves producer facts and settles withou
       if (input.label !== 'remote:fixture' || input.args.includes('-N')) return { ...input, exitCode: null };
       return spawnProc(input.label, process.execPath, ['--input-type=module', '-e',
         `import {emitSourceReloadRefusal} from ${JSON.stringify(emitter)};
-         emitSourceReloadRefusal(Object.assign(new Error('migration refused'), ${JSON.stringify(refusal)})); process.exitCode = 1;`], input.env,
+         import {classifyStackServerProfileFailure} from ${JSON.stringify(profileOwner)};
+         import {run} from ${JSON.stringify(processOwner)};
+         let failure = Object.assign(new Error('migration refused'), ${JSON.stringify(refusal)});
+         if (${JSON.stringify(scenario)} === 'home-profile') {
+           try { await run(process.execPath, ['-e', 'console.log(JSON.stringify({v:1,ok:false,kind:"server_set",error:{code:"not_authenticated"}}));process.exitCode=1'],
+             { stdio: 'ignore', captureFailureDiagnostic: true }); }
+           catch (error) { failure = classifyStackServerProfileFailure(error); }
+         }
+         emitSourceReloadRefusal(failure); process.exitCode = 1;`], input.env,
       { onLine: input.onLine, silent: true, persistOutput: false });
     },
     stopProcess: async child => { if (child && !child.pid) child.exitCode = 0; },
@@ -4403,6 +4416,7 @@ test('remote shared-database refusal preserves producer facts and settles withou
     assert.deepEqual(recorded.missingMigrations, refusal.missingMigrations);
   } finally { releaseRetry(); await controller.close(); }
 });
+}
 
 test('remote worker exit restarts its configured target lifecycle without restarting the local Stack', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-dev-target-reconnect-'));
