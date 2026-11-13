@@ -7,7 +7,8 @@ import { resolveDeploymentCreationDefaultsV1, type DeploymentCreationDefaultsInp
 import type { DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
-import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createHttpStatusError } from '@/api/client/httpStatusError';
 import type { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 const refuse = (failure: string | ActionExecuteFailure): never => {
@@ -106,7 +107,10 @@ export async function readDeploymentCreationDefaultInputsForHost(
             signal: request.context.signal, validateStatus: () => true });
         const parsed = ProjectDeploymentDefaultsOutputV1Schema.safeParse(response.data);
         if (!parsed.success) return refuse('project_defaults_unavailable');
-        if (!parsed.data.ok) return refuse(parsed.data.error);
+        if (!parsed.data.ok) return refuse({ ok: false, errorCode: parsed.data.error, error: parsed.data.error,
+            failureCause: projectActionFailureCauseV1(
+                createHttpStatusError(response.status, parsed.data.error, parsed.data.error), 'deployment.project_defaults.read'),
+        });
         const metadata = parsed.data;
         if (metadata.projectSourceId !== request.projectSourceId || metadata.sourceRevision !== request.sourceRevision) return refuse('project_defaults_conflict');
         if (metadata.content) {

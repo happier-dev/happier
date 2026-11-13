@@ -13,6 +13,7 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { readDeploymentCreationDefaultInputsForHost } from './readCreationDefaultsForHost';
 import * as creationPreparation from './readCreationDefaultsForHost';
+import { projectDeploymentFailure } from './deploymentFailure';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -75,6 +76,23 @@ async function fixture(mode: 'plain' | 'e2ee') {
 }
 
 describe('deployment creation defaults at the captured Account and exact Project Artifact owners', () => {
+    it.each(['plain', 'e2ee'] as const)('prepares first-configure backup and preview defaults from the same %s Project owner', async mode => {
+        const { host, request, changePayload } = await fixture(mode);
+        changePayload({ projectSourceId: 'source', deploymentDefaults: {
+            previewMachineId: 'preview-host', previewDatabase: 'branch',
+            backupDestination: { pluginId: 'backup.storage', localId: 's3' },
+            backupRetention: { kind: 'keep', daily: 14 },
+        } });
+        const prepared = await creationPreparation.prepareDeploymentCreationDefaultsForHost({
+            projectSourceId: request.projectSourceId, actionId: 'deployments.environments.update', context: request.context,
+            target: { kind: 'ownServer', machines: ['runtime'] },
+        }, host);
+        expect(prepared.values).toMatchObject({ previewMachineId: 'preview-host', previewDatabase: 'branch',
+            backupDestination: { pluginId: 'backup.storage', localId: 's3' }, backupRetention: { kind: 'keep', daily: 14 } });
+        expect(prepared.sources).toMatchObject({ previewMachineId: 'project', previewDatabase: 'project',
+            backupDestination: 'project', backupRetention: 'project' });
+    });
+
     it.each(['plain', 'e2ee'] as const)('prepares an unsaved %s Project from its intended owner without Source reads or writes', async mode => {
         const { host, request } = await fixture(mode);
         const transport = vi.mocked(axios.request);
@@ -179,7 +197,12 @@ describe('deployment creation defaults at the captured Account and exact Project
         changePayload({ ...payload, projectSourceId: 'foreign' });
         await expect(readDeploymentCreationDefaultInputsForHost(request, host)).rejects.toMatchObject({ code: 'project_defaults_content_unavailable' });
         setDefaults({ ok: false, error: 'project_defaults_access_denied' });
-        await expect(readDeploymentCreationDefaultInputsForHost(request, host)).rejects.toMatchObject({ code: 'project_defaults_access_denied' });
+        const failure = await readDeploymentCreationDefaultInputsForHost(request, host).catch(error => error);
+        expect(failure).toMatchObject({ code: 'project_defaults_access_denied' });
+        expect(projectDeploymentFailure('deployment_unavailable', failure, 'deployment.backup.configure')).toMatchObject({
+            errorCode: 'deployment_unavailable',
+            failureCause: { phase: 'deployment.project_defaults.read', httpStatus: 403 },
+        });
     });
 
     it('fails retired or wrong-scope Account custody closed without falling back to ambient settings', async () => {
