@@ -1,3 +1,4 @@
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createDeploymentFleetWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/deploymentFleetV1';
 import type { WorkflowRunStartRequestV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { DeploymentEnvironmentDetailV1, DeploymentOwnServerContentV1,
@@ -28,7 +29,7 @@ export function buildDeploymentFleetWorkflowDefinition(input: DeploymentFleetWor
     return {
         definition: createDeploymentFleetWorkflowV1(change.kind, { deployCurrentRelease,
             configureIngress: change.kind === 'add' && change.ingress !== undefined }),
-        inputs: { fleet: {
+        inputs: { fleet: projectNativeJsonValueForTransport({
             serverId: input.serverId, environmentId: environment.environment.id,
             expectedRevision: environment.environment.revision, targetId: runtimeLink.source.id,
             sourceLinkId: runtimeLink.id, sourceLinkRevision: runtimeLink.revision,
@@ -42,6 +43,6 @@ export function buildDeploymentFleetWorkflowDefinition(input: DeploymentFleetWor
                 : { removedMachineId: change.machineId }),
             linkRequestKey: `${requestId}:link`, deployRequestKey: `${requestId}:deploy`,
             teardownRequestKey: `${requestId}:teardown`,
-        } } satisfies NonNullable<WorkflowRunStartRequestV1['inputs']>,
+        }) } satisfies NonNullable<WorkflowRunStartRequestV1['inputs']>,
     };
 }

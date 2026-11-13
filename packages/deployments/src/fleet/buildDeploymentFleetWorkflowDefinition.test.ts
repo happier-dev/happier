@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { validateWorkflowDefinition } from '@happier-dev/protocol/workflows/workflowValidationV1';
 import { buildDeploymentFleetWorkflowDefinition } from './buildDeploymentFleetWorkflowDefinition.js';
 
@@ -26,9 +27,13 @@ describe('Fleet Workflow authoring', () => {
         ] });
         const runtimeLink = { ...header, source: { kind: 'host' as const, id: 'own-server' } };
         const receipt = createDeploymentReceiptDetailV1();
+        const sourceIntent = receipt.content.sourceIntent.kind === 'repository'
+            ? { ...receipt.content.sourceIntent, pullRequestHead: undefined }
+            : { ...receipt.content.sourceIntent, publicFiles: undefined };
         const authored = buildDeploymentFleetWorkflowDefinition({ serverId: 'home', environment, runtimeLink,
             requestId: 'add-d', change: { kind: 'add', member: { machineId: 'joining', installationId: 'joining-install' },
-                sourceIntent: receipt.content.sourceIntent } });
+                sourceIntent } });
+        expect(() => normalizeStrictJsonValue(authored.inputs)).not.toThrow();
         expect(validateWorkflowDefinition(authored.definition)).toMatchObject({ valid: true, issues: [] });
         expect(authored.inputs.fleet).toMatchObject({ expectedRevision: environment.environment.revision,
             sourceLinkId: runtimeLink.id, sourceLinkRevision: runtimeLink.revision,

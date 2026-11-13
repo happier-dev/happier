@@ -29,11 +29,11 @@ export type PreparedDeploymentTemplateInstantiationV1 = Readonly<{
     template: Omit<NonNullable<DeploymentEnvironmentContentV1['template']>, 'definition'>;
 }> & Pick<DeploymentTemplateV1['compose'], 'publicFiles'>;
 export class DeploymentTemplatePreparationErrorV1 extends Error {
-    constructor(readonly code: string, readonly details?: Readonly<{ key: string }>) {
+    constructor(readonly code: string, readonly details?: Readonly<{ key: string; dependency?: string }>) {
         super(details ? `${code}: ${JSON.stringify(details.key)}` : code);
     }
 }
-function refuse(code: string, details?: Readonly<{ key: string }>): never {
+function refuse(code: string, details?: DeploymentTemplatePreparationErrorV1['details']): never {
     throw new DeploymentTemplatePreparationErrorV1(code, details);
 }
 function record(value: unknown): Record<string, unknown> {
