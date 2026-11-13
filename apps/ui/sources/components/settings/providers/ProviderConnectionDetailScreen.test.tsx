@@ -1207,6 +1207,28 @@ describe('ProviderConnectionDetailScreen', () => {
         });
     });
 
+    it.each(['available', 'unavailable'] as const)('opens the contributing plugin owner for a %s Provider source without starting an update', async sourceStatus => {
+        state.connection = connection({ sourceStatus });
+        const initialConnection = state.connection;
+        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
+        const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+
+        expect(findMenuAction(screen, 'plugin')).toBeDefined();
+        await pressAndFlush(findMenuAction(screen, 'plugin'));
+
+        expect(router.push).toHaveBeenCalledWith({ pathname: '/(app)/plugins/[pluginId]', params: { pluginId: 'acme.plugin' } });
+        expect(run).not.toHaveBeenCalled();
+        expect(state.connection).toBe(initialConnection);
+    });
+
+    it.each([null, 'opaque-provider-key'])('does not invent a contributing plugin for %s', async contributionKey => {
+        state.connection = connection({ contributionKey, ...(contributionKey === null ? { provenance: 'custom' } : {}) });
+        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
+        const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+
+        expect(findMenuAction(screen, 'plugin')).toBeUndefined();
+    });
+
     it('opens a website-only projected Provider destination without mutating connection state', async () => {
         state.connection = connection({
             websiteUrl: 'https://provider.example.test',

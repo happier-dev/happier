@@ -116,6 +116,7 @@ import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useProviderConnectionModelsSection } from './models/useProviderConnectionModelsSection';
 import { joinList } from '@/utils/text/joinList';
+import { buildPluginDetailRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 
 type ManagedDeployment = Extract<
     DaemonProviderConnectionViewV1['deployment'],
@@ -370,9 +371,8 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     // Opaque forward-compatible keys intentionally miss the plugin registry and
     // therefore resolve their descriptor fallback instead of borrowing another
     // plugin's translations.
-    const contributionAuthorPluginId = connectionContributionKey
-        ? parseProviderContributionIdentityV1(connectionContributionKey)?.identity.pluginId ?? connectionContributionKey
-        : '';
+    const contributionIdentity = parseProviderContributionIdentityV1(connectionContributionKey);
+    const contributionAuthorPluginId = contributionIdentity?.identity.pluginId ?? connectionContributionKey ?? '';
     const localInstallation = connectionContributionKey
         ? query.data?.localInstallations.find((installation) =>
             installation.machineId === machineId
@@ -1046,6 +1046,12 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const menuActions: PageHeaderMenuAction[] = [
         ...(headerActionsFold && shareCredential ? [{ id: 'share', testID: 'provider-connection-menu-share', title: t('secretsSettings.share'),
             onSelect: (intent?: { anchor?: PopoverAnchor }) => shareCredential(intent?.anchor) }] : []),
+        ...(providerMenu && contributionIdentity ? [{
+            id: 'plugin',
+            testID: 'provider-connection-menu-plugin',
+            title: t('settingsPlugins.managePlugin'),
+            onSelect: () => { void runGuardedNavigation(() => router.push(buildPluginDetailRoute('app', contributionIdentity.identity.pluginId) as never)); },
+        }] : []),
         ...(providerMenu && websiteUrl ? [{
             id: 'website',
             testID: 'provider-connection-menu-website',
