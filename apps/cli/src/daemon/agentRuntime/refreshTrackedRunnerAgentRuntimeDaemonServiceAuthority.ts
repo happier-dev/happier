@@ -20,6 +20,7 @@ import {
   resolveSessionRunnerEntrypointIdentityFromProcessCommand,
 } from '@/daemon/sessionRunnerRuntime/resolveRunnerEntrypointIdentity';
 import type { TrackedSession } from '@/daemon/types';
+import { logger } from '@/ui/logger';
 import { resolveTrackedSessionRunnerIdentity } from '@/daemon/sessions/sessionReportCorrelation';
 import {
   readSessionMarker,
@@ -263,6 +264,11 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
   document: AgentRuntimeDaemonServiceAuthorityDocumentV2;
 }>> {
   const sessionId = input.sessionId.trim();
+  const reportAuthorityPhase = (phase: string): void => {
+    logger.debug('[DAEMON RUN] Canonical Session authority phase', {
+      sessionId, pid: input.tracked.sessionRunnerPid ?? input.tracked.pid, phase,
+    });
+  };
   const authorityPath =
     input.tracked.agentRuntimeDaemonServiceAuthorityFilePath;
   if (!sessionId || !authorityPath) {
@@ -278,6 +284,7 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
       'Runner Agent daemon-service authority session identity changed',
     );
   }
+  reportAuthorityPhase('runner_identity.begin');
   const runner = await resolveTrackedRunnerIdentity({
     tracked: input.tracked,
     ...(input.readProcessIdentityByPidFn
@@ -287,6 +294,7 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
         }
       : {}),
   });
+  reportAuthorityPhase('runner_identity.end');
   const paths = resolvePluginStorePaths({
     happyHomeDir: input.happyHomeDir,
   });
@@ -316,7 +324,9 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
   const trackedManagedProviderCleanupAuthority =
     input.tracked.runnerManagedDependencyRetentionV1
       ?.adoptedManagedProviderAuthority;
+  reportAuthorityPhase('marker_read.begin');
   const persistedMarker = await readSessionMarker(input.tracked.trackingKey);
+  reportAuthorityPhase('marker_read.end');
   const persistedMarkerIsExact = Boolean(
     persistedMarker
     && persistedMarker.happySessionId === sessionId
@@ -366,6 +376,7 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
       );
     }
   }
+  reportAuthorityPhase('existing_authority.begin');
   const reusableAuthority = await readReusableExistingAuthority({
     happyHomeDir: input.happyHomeDir,
     publicReleaseRing: input.publicReleaseRing,
@@ -375,6 +386,7 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
     readPluginHardRevocationRevision,
     readPluginImmutableGenerationIntegrityCurrentness,
   });
+  reportAuthorityPhase('existing_authority.end');
   if (reusableAuthority?.status === 'hardRevoked') {
     throw new Error(
       'Reattached Runner Agent daemon-service authority is hard-revoked',
@@ -403,6 +415,7 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
       'Reattached Runner Agent daemon-service authority is unavailable',
     );
   }
+  reportAuthorityPhase('retained_agent.begin');
   const selectedRetainedAgent = reusable?.retainedAgent ?? await (async () => {
     const agentId = resolveTrackedRunnerAgentId({
       tracked: input.tracked,
@@ -416,6 +429,8 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
       agentId,
     });
   })();
+  reportAuthorityPhase('retained_agent.end');
+  reportAuthorityPhase('attestation.begin');
   const retainedAgent = await attestFreshRunnerAgentBinding({
     binding: selectedRetainedAgent,
     paths,
@@ -424,6 +439,7 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
       ? { moduleUrl: input.bundledAttestationModuleUrl }
       : {}),
   });
+  reportAuthorityPhase('attestation.end');
   const retainedAgentCurrentnessProof =
     resolveRetainedAgentCurrentnessProof(retainedAgent);
   if (
@@ -445,10 +461,12 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
     ?? await readPluginHardRevocationRevision(
       retainedAgent.pluginId,
     );
+  reportAuthorityPhase('retention_reservation.begin');
   const managedDependencyReservation =
     reusable
       ? null
       : await input.reserveManagedDependencyRetention?.(retainedAgent);
+  reportAuthorityPhase('retention_reservation.end');
   const runnerManagedDependencyRetentionV1 =
     withRunnerManagedProviderAuthorityRetention(
       reusable
@@ -461,6 +479,7 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
       adoptedManagedProviderAuthority ?? null,
   );
   try {
+    reportAuthorityPhase('custody_attachment.begin');
     const custodyPersisted = await (
       input.attachRunnerRetainedPluginGenerations
       ?? attachExactRunnerRetainedPluginGenerations
@@ -524,9 +543,11 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
         'Runner Agent generation custody attachment is unavailable',
       );
     }
+    reportAuthorityPhase('custody_attachment.end');
   } finally {
     managedDependencyReservation?.release();
   }
+  reportAuthorityPhase('authority_publication.begin');
   const published =
     await publishAgentRuntimeDaemonServiceAuthority({
       happyHomeDir: input.happyHomeDir,
@@ -539,6 +560,7 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
       readPluginHardRevocationRevision,
       httpPort: input.httpPort,
     });
+  reportAuthorityPhase('authority_publication.end');
   input.tracked.agentRuntimeDaemonServiceCapabilityHash =
     published.capabilityDigest;
   input.tracked.runnerAgentSourceCustodyV1 = retainedAgent.sourceCustody;
@@ -549,6 +571,7 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
         ?? trackedManagedProviderCleanupAuthority
         ?? null,
     );
+  reportAuthorityPhase('published_currentness.begin');
   const retainedAgentCurrent =
     (
       retainedAgent.sourceCustody.kind !== 'managed'
@@ -613,5 +636,6 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
     );
   }
   delete input.tracked.runnerAgentBootstrapIdentity;
+  reportAuthorityPhase('published_currentness.end');
   return published;
 }

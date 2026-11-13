@@ -1019,6 +1019,11 @@ export function createOnHappySessionWebhook(params: Readonly<{
     }
     const reconcileTrackedDaemonCanonicalWebhook =
       async (): Promise<void> => {
+    const reportStartupPhase = (phase: string): void => {
+      logger.debug('[DAEMON RUN] Canonical Session startup phase', {
+        sessionId, pid, phase,
+      });
+    };
     const completeSpawnAwaiter = async (): Promise<void> => {
       const awaiterKey = trackedDaemonCanonicalSession.trackingKey;
       const awaiter = spawnAwaiterByKey.get(awaiterKey);
@@ -1065,9 +1070,11 @@ export function createOnHappySessionWebhook(params: Readonly<{
       }
     }
     const acceptedSpawnMarkerGate = trackedDaemonCanonicalSession.acceptedSpawnMarkerGate;
+    reportStartupPhase('accepted_marker.begin');
     if (acceptedSpawnMarkerGate && !await acceptedSpawnMarkerGate) {
       throw new Error('Daemon spawn custody was not accepted');
     }
+    reportStartupPhase('accepted_marker.end');
     if (windowsTerminalHostPid !== null) {
       const promoted =
         await promoteTrackedSessionPidCustody({
@@ -1094,7 +1101,9 @@ export function createOnHappySessionWebhook(params: Readonly<{
     }
     await awaitTrackedMarkerPromotion();
     try {
+      reportStartupPhase('marker_promotion.begin');
       await awaitTrackedMarkerPromotion();
+      reportStartupPhase('marker_promotion.end');
       const priorReadinessFailure =
         trackedDaemonCanonicalSession.spawnStartupReadinessFailure;
       if (priorReadinessFailure) {
@@ -1104,6 +1113,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
         trackedDaemonCanonicalSession
           .activateConnectedAccountSessionBindingOnCanonicalSession;
       if (activateConnectedAccountSessionBinding) {
+        reportStartupPhase('connected_account_activation.begin');
         let failure;
         try {
           failure = await activateConnectedAccountSessionBinding(sessionId);
@@ -1115,6 +1125,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
           trackedDaemonCanonicalSession.spawnStartupReadinessFailure = failure;
           throw new Error(failure.errorMessage);
         }
+        reportStartupPhase('connected_account_activation.end');
       }
       await awaitTrackedMarkerPromotion();
       const concurrentReadinessFailure =
@@ -1132,6 +1143,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
       } catch (error) {
         reportObserverFailure(error);
       }
+      reportStartupPhase('marker_persistence.begin');
       if (requiresCanonicalMarkerAdoption) {
         // Authority installation updates this exact marker with retained
         // generation custody. Adopt the canonical Session id first so the
@@ -1146,8 +1158,11 @@ export function createOnHappySessionWebhook(params: Readonly<{
           'Runner Agent canonical session marker is unavailable',
         );
       }
+      reportStartupPhase('marker_persistence.end');
       if (onTrackedSessionReady) {
+        reportStartupPhase('tracked_ready.begin');
         await onTrackedSessionReady(trackedDaemonCanonicalSession);
+        reportStartupPhase('tracked_ready.end');
       }
       invalidateProcessLaunchDiscovery();
       await awaitTrackedMarkerPromotion();
@@ -1157,9 +1172,11 @@ export function createOnHappySessionWebhook(params: Readonly<{
         && trackedDaemonCanonicalSession.reattachedFromDiskMarker !== true
         && hasActiveSpawnAwaiter
       ) {
+        reportStartupPhase('authority_reconciliation.begin');
         await reconcileCanonicalReadiness(
           trackedDaemonCanonicalSession,
         );
+        reportStartupPhase('authority_reconciliation.end');
       }
     } catch (error) {
       logger.debug(
@@ -1177,7 +1194,9 @@ export function createOnHappySessionWebhook(params: Readonly<{
       throw error;
     }
     startupReadinessGate.resolve(true);
+    reportStartupPhase('spawn_awaiter.begin');
     await completeSpawnAwaiter();
+    reportStartupPhase('spawn_awaiter.end');
     registerAcceptedCanonicalWorkspace();
     if (
       !requiresCanonicalMarkerAdoption
