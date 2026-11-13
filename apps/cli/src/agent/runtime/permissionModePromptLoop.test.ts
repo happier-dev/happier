@@ -3000,7 +3000,7 @@ describe('runPermissionModePromptLoop', () => {
     expect(refreshSessionSnapshotSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('does not refresh the session snapshot twice when a metadata wake is followed by a queued prompt', async () => {
+  it('does not re-read the session snapshot for a metadata wake followed by a queued prompt', async () => {
     const session = createPromptLoopSession();
     session.__setMetadata(createPromptLoopMetadata({
       permissionMode: 'default',
@@ -3010,13 +3010,16 @@ describe('runPermissionModePromptLoop', () => {
     const queue = createModeQueue();
     let auditActive = false;
     let didQueuePrompt = false;
-    const refreshSessionSnapshotSpy = vi.fn(async () => {
-      if (!auditActive || didQueuePrompt) return;
+    const refreshSessionSnapshotSpy = vi.fn(async () => {});
+    session.refreshSessionSnapshotFromServerBestEffort = refreshSessionSnapshotSpy;
+    // Like the real session client: the wake resolves once per applied change, here a pushed
+    // update followed by queued input; later waits stay parked.
+    session.waitForMetadataUpdate = vi.fn(async () => {
+      if (!auditActive || didQueuePrompt) return await new Promise<boolean>(() => {});
       didQueuePrompt = true;
       queue.push({ text: 'after metadata', localId: 'local-1' }, { permissionMode: 'default' });
+      return true;
     });
-    session.refreshSessionSnapshotFromServerBestEffort = refreshSessionSnapshotSpy;
-    session.waitForMetadataUpdate = vi.fn(async () => auditActive);
 
     const runtime = createRuntime();
     const messageBuffer = new MessageBuffer();
@@ -3068,65 +3071,43 @@ describe('runPermissionModePromptLoop', () => {
     });
 
     expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(1);
-    expect(refreshSessionSnapshotSpy).toHaveBeenCalledTimes(1);
+    expect(refreshSessionSnapshotSpy).toHaveBeenCalledTimes(0);
   });
 
-  it('refreshes the session snapshot and applies metadata overrides while idle even without a new queued prompt', async () => {
+  it('applies a pushed metadata override while idle without re-reading the session snapshot it already holds', async () => {
+    // The real session client emits `metadata-updated` only after the pushed (or tuple-refreshed)
+    // state is applied to its snapshot, so the wake itself carries the data.
     const session = createPromptLoopSession();
-    const initialMetadata = createPromptLoopMetadata({
-      permissionMode: 'default',
-      permissionModeUpdatedAt: 0,
-    });
-    let serverMetadata: PromptLoopMetadata = initialMetadata;
-    session.__setMetadata(initialMetadata);
-    session.refreshSessionSnapshotFromServerBestEffort = vi.fn(async () => {
-      session.__setMetadata(serverMetadata);
-    });
-
-    session.waitForMetadataUpdate = vi.fn(async () => serverMetadata !== initialMetadata);
-
-    const queue = createModeQueue();
-    const runtime = createRuntime() as any;
-
-    const messageBuffer = new MessageBuffer();
-    const permissionHandler = {
-      setPermissionMode: vi.fn(),
-      reset: vi.fn(),
-    } as any;
-
-    queue.push({ text: 'first', localId: 'local-1' }, { permissionMode: 'default' });
-
-    const abortController = new AbortController();
-    let shouldExit = false;
-    let appliedModeId: string | null = null;
-    let appliedModelId: string | null = null;
-    let readyCount = 0;
-    const readySpy = vi.fn(() => {
-      readyCount += 1;
-      if (readyCount !== 1) return;
-      serverMetadata = createPromptLoopMetadata({
+    session.__setMetadata(createPromptLoopMetadata({ permissionMode: 'default', permissionModeUpdatedAt: 0 }));
+    const refreshes = vi.fn(async () => {});
+    session.refreshSessionSnapshotFromServerBestEffort = refreshes;
+    const waiters = new Set<(ok: boolean) => void>();
+    session.waitForMetadataUpdate = vi.fn(async (signal?: AbortSignal) => await new Promise<boolean>((resolve) => {
+      waiters.add(resolve);
+      signal?.addEventListener('abort', () => { waiters.delete(resolve); resolve(false); }, { once: true });
+    }));
+    const pushMetadataOverride = () => {
+      session.__setMetadata(createPromptLoopMetadata({
         permissionMode: 'default',
         permissionModeUpdatedAt: 0,
         acpSessionModeOverrideV1: { v: 1, updatedAt: 10, modeId: 'plan' },
-        modelOverrideV1: { v: 1, updatedAt: 11, modelId: 'openai/gpt-5.2' },
-      });
-    });
+      }));
+      for (const resolve of [...waiters]) { waiters.delete(resolve); resolve(true); }
+    };
 
-    const appliedPromise = new Promise<void>((resolve) => {
-      const maybeResolve = () => {
-        if (appliedModeId !== 'plan' || appliedModelId !== 'openai/gpt-5.2') return;
+    const queue = createModeQueue();
+    const runtime = createRuntime() as any;
+    queue.push({ text: 'first', localId: 'local-1' }, { permissionMode: 'default' });
+    const abortController = new AbortController();
+    let shouldExit = false;
+    let refreshesAfterFirstTurn = -1;
+    const applied = new Promise<void>((resolve) => {
+      runtime.__setAppliedMode = (modeId: string) => {
+        if (modeId !== 'plan') return;
+        refreshesAfterFirstTurn = refreshes.mock.calls.length;
         shouldExit = true;
         abortController.abort();
         resolve();
-      };
-
-      runtime.__setAppliedMode = (modeId: string) => {
-        appliedModeId = modeId;
-        maybeResolve();
-      };
-      runtime.__setAppliedModel = (modelId: string) => {
-        appliedModelId = modelId;
-        maybeResolve();
       };
     });
 
@@ -3137,46 +3118,39 @@ describe('runPermissionModePromptLoop', () => {
         explicitPermissionMode: undefined,
         session,
         messageQueue: queue,
-        permissionHandler,
+        permissionHandler: { setPermissionMode: vi.fn(), reset: vi.fn() } as any,
         runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
         createOverrideSynchronizer: (isStarted) =>
           createRuntimeOverrideSynchronizers({
             agentTargetKey: 'agent:happier.agent.codex/codex',
             session,
             runtime: {
-              setSessionMode: async (modeId: string) => {
-                await new Promise((resolve) => setTimeout(resolve, 0));
-                runtime.__setAppliedMode(modeId);
-              },
-              setSessionModelSelection: async (selection) => {
-                await new Promise((resolve) => setTimeout(resolve, 0));
-                runtime.__setAppliedModel(selection.modelId);
-              },
+              setSessionMode: async (modeId: string) => { runtime.__setAppliedMode(modeId); },
+              setSessionModelSelection: async () => {},
               setSessionConfigOption: async () => {},
             },
             isStarted,
           }),
-        messageBuffer,
+        messageBuffer: new MessageBuffer(),
         shouldExit: () => shouldExit,
         getAbortSignal: () => abortController.signal,
         keepAlive: () => {},
         setThinking: () => {},
-        sendReady: readySpy,
+        sendReady: () => {
+          refreshes.mockClear();
+          setTimeout(pushMetadataOverride, 0);
+        },
         currentPermissionModeUpdatedAt: 0,
         setCurrentPermissionMode: () => {},
         setCurrentPermissionModeUpdatedAt: () => {},
         formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
         registerProviderAcceptedEffect: () => undefined,
       }),
-      appliedPromise,
+      applied,
     ]);
 
     expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(1);
-    expect(appliedModeId).toBe('plan');
-    expect(appliedModelId).toBe('openai/gpt-5.2');
-    expect(session.refreshSessionSnapshotFromServerBestEffort).toHaveBeenCalledWith({
-      reason: 'primaryTurnRuntimeState',
-    });
+    expect(refreshesAfterFirstTurn).toBe(0);
   });
 
   it('applies a metadata override projected after turn finalization but before the next metadata wait is armed', async () => {
@@ -3260,7 +3234,7 @@ describe('runPermissionModePromptLoop', () => {
     expect(setSessionConfigOption).toHaveBeenCalledWith('reasoning_effort', 'medium');
   });
 
-  it('refreshes the session snapshot and applies metadata overrides that arrived during the turn before waiting again', async () => {
+  it('applies metadata overrides pushed during the turn before waiting again', async () => {
     const session = createPromptLoopSession();
     const initialMetadata = createPromptLoopMetadata({
       permissionMode: 'default',
@@ -3268,9 +3242,7 @@ describe('runPermissionModePromptLoop', () => {
     });
     let serverMetadata: PromptLoopMetadata = initialMetadata;
     session.__setMetadata(initialMetadata);
-    session.refreshSessionSnapshotFromServerBestEffort = vi.fn(async () => {
-      session.__setMetadata(serverMetadata);
-    });
+    session.refreshSessionSnapshotFromServerBestEffort = vi.fn(async () => {});
     session.waitForMetadataUpdate = vi.fn(async () => serverMetadata !== initialMetadata);
 
     const queue = createModeQueue();
@@ -3363,6 +3335,7 @@ describe('runPermissionModePromptLoop', () => {
       acpSessionModeOverrideV1: { v: 1, updatedAt: 10, modeId: 'plan' },
       modelOverrideV1: { v: 1, updatedAt: 11, modelId: 'openai/gpt-5.2' },
     });
+    session.__setMetadata(serverMetadata);
     const releasePromptSend = resolvePromptSend;
     if (!releasePromptSend) {
       throw new Error('Expected prompt send to be waiting');
@@ -3375,7 +3348,6 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(1);
     expect(appliedModeId).toBe('plan');
     expect(appliedModelId).toBe('openai/gpt-5.2');
-    expect(session.refreshSessionSnapshotFromServerBestEffort).toHaveBeenCalled();
   });
 
   it('prepends appendSystemPrompt on the first fresh-session prompt only', async () => {

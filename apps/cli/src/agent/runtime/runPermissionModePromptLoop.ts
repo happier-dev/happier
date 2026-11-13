@@ -8,7 +8,8 @@ import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/r
 import { validatePluginHookPayloadV1 } from '@happier-dev/protocol/plugins/hooks';
 import { ProviderErrorCodeV1Schema, type ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
 import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import type { SessionPendingQueueDeliveryTiming, ProviderBoundModelRef, SessionModelTransitionResultV1, AgentSessionStartupInstructionsMarkerV1, AgentRuntimeDiagnosticDataV1 } from '@happier-dev/protocol';
+import type { SessionPendingQueueDeliveryTiming, ProviderBoundModelRef, SessionModelTransitionResultV1, AgentSessionStartupInstructionsMarkerV1 } from '@happier-dev/protocol';
+import type { AgentRuntimeDiagnosticDataV1 } from '@happier-dev/protocol/runtime/agentRuntimeDiagnosticV1';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
@@ -964,7 +965,9 @@ export async function runPermissionModePromptLoop(opts: {
         },
         beforePendingMaterialize: opts.beforePendingMaterialize,
         onMetadataUpdate: async () => {
-          await refreshSessionSnapshotBeforeTurnBestEffort();
+          // The session client raises this wake only after the pushed (or tuple-refreshed)
+          // state is applied to its snapshot; re-reading the snapshot here fetched what it
+          // already held. Turn boundaries keep their own freshness read.
           syncPermissionModeFromMetadata();
           overrideSync.syncFromMetadata();
           if (!turnInFlight) {
