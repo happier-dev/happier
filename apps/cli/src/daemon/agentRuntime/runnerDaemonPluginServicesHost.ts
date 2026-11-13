@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { randomUUID } from 'node:crypto';
 import { closeSync, openSync, writeSync } from 'node:fs';
 import { createHostScmCommandRunner } from '@/scm/runtime';
@@ -106,16 +107,17 @@ export function projectRunnerDaemonPluginServicesFailure(
         isPluginError(error) && isRecord(error.details) ? error.details.cause : undefined,
     );
     const admissionReasonCode = readAccountConnectionProviderBrokerFailureDiagnostic(error)?.admissionReasonCode;
-    const causeCode = RunnerDaemonPluginServicesPreparationCauseV1Schema.shape.code.safeParse(admissionReasonCode ?? candidateCode);
-    const exceptionName = !preparationStage
-        ? error instanceof TypeError ? 'TypeError'
-            : error instanceof RangeError ? 'RangeError'
-                : error instanceof SyntaxError ? 'SyntaxError'
-                    : undefined
-        : undefined;
+    // Provider materialization already projects its original exception at the
+    // adapter boundary. Consume that sanitized owner result through wrappers.
+    const actionCause = projectActionFailureCauseV1(error);
+    const causeCode = RunnerDaemonPluginServicesPreparationCauseV1Schema.shape.code.safeParse(
+        admissionReasonCode ?? candidateCode ?? actionCause.errorCode
+        ?? (actionCause.errorClass === 'TypeError' || actionCause.errorClass === 'RangeError'
+            || actionCause.errorClass === 'SyntaxError' ? actionCause.errorClass : undefined),
+    );
     const cause: RunnerDaemonPluginServicesPreparationCauseV1 = retainedCause.success
         ? retainedCause.data
-        : { code: causeCode.success ? causeCode.data : exceptionName ?? code,
+        : { code: causeCode.success ? causeCode.data : code,
             stage: preparationStage ?? 'dispatch' };
     return {
         code,
@@ -1397,7 +1399,9 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                 return result(
                     operation,
                     await invocation
-                        .managedProviderMaterialization.promise,
+                        .managedProviderMaterialization.promise.catch(error => {
+                            throw createRunnerDaemonPluginServicesPreparationError(error, 'managed_provider');
+                        }),
                 );
             }
             case 'plugin_services.managed_provider.read_shared_gateway_access_v1': {

@@ -95,6 +95,7 @@ import {
 import { createRunnerManagedProviderConsumerAccess } from './runnerManagedProviderConsumerAccess';
 import {
     composeProviderBindingMaterialization,
+    type ProviderBindingNativeHomeContext,
 } from '@/providers/spawn/compose';
 import {
     projectAgentRuntimeDaemonServiceTurnWitnessV1,
@@ -1504,6 +1505,9 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
             sessionLaunchEnvironment = params.environment;
             if (!preparedManagedProviderBindingPromise) {
                 preparedManagedProviderBindingPromise = (async () => {
+                // Correlation identifies the Session; invocation custody belongs
+                // to this preparation, including its eventual signal-driven close.
+                const invocationId = randomUUID();
                 const seed = Object.freeze({
                     plugin: Object.freeze({
                         id: binding.pluginId,
@@ -1554,7 +1558,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                 const pluginServices =
                     await prepareRunnerDaemonPluginServices({
                     processOwner: { kind: 'session', sessionId: params.sessionId },
-                    invocationId: params.sessionId,
+                    invocationId,
                     bindHostScmCommandRunner: runner => { sessionScmCommandRunner = runner; },
                     readLaunchEnvironment: () => sessionLaunchEnvironment,
                     signal: params.signal,
@@ -1630,6 +1634,21 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                                 invocationServiceOwners
                                     .registerRawForRedaction(seed, value);
                             }
+                            let nativeHome: ProviderBindingNativeHomeContext | undefined;
+                            if (
+                                hostMaterialization.materialization.kind === 'configFile'
+                                && hostMaterialization.materialization.nativeHome
+                            ) {
+                                await prepareRuntimeLeaf();
+                                const descriptor = await retainedCatalogEntry
+                                    ?.getConnectedServiceStateSharingDescriptor?.();
+                                if (descriptor) {
+                                    nativeHome = {
+                                        descriptor,
+                                        sourceEnvironment: params.environment,
+                                    };
+                                }
+                            }
                             const composed =
                                 await composeProviderBindingMaterialization({
                                     materialization:
@@ -1640,6 +1659,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                                         'materialized',
                                     ),
                                     sessionId: params.sessionId,
+                                    nativeHome,
                                 });
                             prepared = Object.freeze({
                                 handoff: Object.freeze({
@@ -1679,7 +1699,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                         operation: {
                             kind: 'plugin_services.close_v1',
                             requestId: randomUUID(),
-                            invocationId: params.sessionId,
+                            invocationId,
                         },
                     });
                 }
@@ -1787,7 +1807,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
             });
             return await prepareRunnerDaemonPluginServices({
                 ...(params.processOwner ? { processOwner: params.processOwner } : {}),
-                invocationId: params.correlationId,
+                invocationId: params.processOwner?.kind === 'run' ? params.correlationId : randomUUID(),
                 ...(params.processOwner?.kind === 'run' ? {} : {
                     bindHostScmCommandRunner: (runner: ScmCommandRunner) => { sessionScmCommandRunner = runner; },
                 }),

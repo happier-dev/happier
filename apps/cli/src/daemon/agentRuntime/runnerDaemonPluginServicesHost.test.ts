@@ -1,3 +1,4 @@
+import { materializeCapturedAgentProviderBinding } from '@/plugins/runtime/providerBindings/adapter';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -748,6 +749,64 @@ describe('runner daemon PluginServices host', () => {
         expect(JSON.stringify(response)).not.toContain('PRIVATE_SOURCE_CONTENT');
     });
 
+    it.each([Object.assign(new Error('PRIVATE_BODY'), { code: 'ECONNREFUSED' }), new TypeError('PRIVATE_BODY')])(
+        'retains the materialization producer cause through daemon dispatch (%s)', async source => {
+            const services = createUnavailablePluginServices();
+            const bootstrap = managedProviderBootstrap();
+            const host = createRunnerDaemonPluginServicesHost({ async createInvocation() {
+                return { services, resourceDescriptors: {},
+                    subscriptionCapabilities: { settingsWatch: false, eventSubscriptions: [], resourceWatches: [], notificationPreferencesWatch: false },
+                    dispose() {}, authorizeOperation: () => true, authorizeManagedProviderMaterialization: () => true,
+                    executeCurrentGlobalAction: services.actions.execute, currentGlobalMcp: services.mcp,
+                    currentGlobalExternalSessions: services.sessions.external,
+                    managedProvider: { bootstrap, connectedAccounts: services.connectedAccounts,
+                        isCurrent: () => true, start: async () => {}, readSupervisionLaunchAuthority: () => null,
+                        async materializeAgentBinding() {
+                            // The plugin adapter is the external boundary; keep the real
+                            // materialization producer and its sanitized cause projection.
+                            return await materializeCapturedAgentProviderBinding({
+                                resolved: {
+                                    pluginId: 'fixture.plugin', isCurrent: () => true,
+                                    adapter: { v: 1, adapterVersion: 1,
+                                        prepare: () => ({ v: 1, materialization: 'engineConfig' }),
+                                        materialize: async () => { throw source; } },
+                                    support: { acceptsProtocols: ['openai-responses'],
+                                        required: { streaming: true, toolRoundTrips: true },
+                                        credentialSupport: { supportsNoAuth: true, apiKeyTransports: [] },
+                                        authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: [] },
+                                        materialization: 'engineConfig', applyPolicy: 'restart_session',
+                                        supportsFreeformModelIds: true },
+                                },
+                                binding: { v: 1, agentTargetKey: 'fixture.agent',
+                                    selection: { connectionId: ProviderConnectionIdSchema.parse('pc_gateway'), model: { id: 'model-1', name: 'Model 1' } },
+                                    contributionKey: 'fixture.gateway/main',
+                                    endpoint: { endpointTemplateId: 'responses', normalizedUrl: 'https://gateway.example/v1', protocol: 'openai-responses', publicHeaders: {} },
+                                    runtimeCredentialTransport: null,
+                                    compatibilityFingerprint: 'provider-fingerprint:v1:compatibility:abc' },
+                                prepared: { v: 1, materialization: 'engineConfig' },
+                                credential: { kind: 'none' },
+                            });
+                        } },
+                };
+            } });
+            const retained = { v: 1 as const, scope: bootstrap.scope,
+                providerPluginHardRevocationRevisionAtAdmission: bootstrap.providerPluginHardRevocationRevisionAtAdmission };
+            try {
+                await host.dispatch({ ...direct, operation: { kind: 'plugin_services.prepare_v1', ...requestBase() } });
+                await host.dispatch({ ...direct, operation: { kind: 'plugin_services.managed_provider.start_v1', ...requestBase(), retained } });
+                const error = await host.dispatch({ ...direct, operation: {
+                    kind: 'plugin_services.managed_provider.materialize_agent_binding_v1', ...requestBase(), retained,
+                    endpointUrl: 'http://127.0.0.1:4312', credentialPlaceholder: null,
+                } }).catch((error: unknown) => error);
+                const response = AgentRuntimeDaemonServiceResponseV1Schema.parse({ ok: false,
+                    error: projectRunnerDaemonPluginServicesFailure(error) });
+                expect(response).toMatchObject({ ok: false, error: { cause: {
+                    stage: 'managed_provider', code: source instanceof TypeError ? 'TypeError' : 'ECONNREFUSED',
+                } } });
+                expect(JSON.stringify(response)).not.toContain('PRIVATE_BODY');
+            } finally { await host.dispose(); }
+        });
+
     it('retains redacted native materialization details in file diagnostics while keeping RPC failures private', () => {
         const error = new Error('Provider binding refused token=synthetic-private-token\nPRIVATE_STDERR');
         const diagnostic = projectRunnerDaemonPluginServicesFailureDiagnostic(error);
@@ -962,7 +1021,7 @@ describe('runner daemon PluginServices host', () => {
             local: { availability: unavailable.availability, logger: unavailable.logger, sessions: unavailable.sessions,
                 managedServices: unavailable.managedServices, machineProvisioners: unavailable.machineProvisioners,
                 exec: unavailable.exec, interactions: unavailable.interactions,
-                targetedContributions: unavailable.targetedContributions, composerContent: unavailable.composerContent, backgroundServices: unavailable.backgroundServices },
+                targetedContributions: unavailable.targetedContributions, composerContent: unavailable.composerContent, backgroundServices: unavailable.backgroundServices, deploymentSource: unavailable.deploymentSource },
         });
         try {
             const first = await services.sessions.external.list({ limit: 1 });
@@ -3556,6 +3615,7 @@ describe('runner daemon PluginServices host', () => {
                 targetedContributions: unavailable.targetedContributions,
                 composerContent: unavailable.composerContent,
                 backgroundServices: unavailable.backgroundServices,
+                deploymentSource: unavailable.deploymentSource,
             },
         });
 

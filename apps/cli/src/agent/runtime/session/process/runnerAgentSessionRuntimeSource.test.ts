@@ -418,6 +418,61 @@ describe('runner Agent session runtime source', () => {
         });
     });
 
+    it.each([false, true])('isolates restarted Session invocations and delayed close (early preparation=%s)', async early => {
+        const { createRunnerDaemonPluginServicesHost } = await import('@/daemon/agentRuntime/runnerDaemonPluginServicesHost');
+        const { createUnavailablePluginServices } = await import('@/plugins/runtime/invocation/services/unavailable');
+        const { decodeRunnerDaemonPluginServiceWireValueV1 } = await import('./agentRuntimeDaemonPluginServicesProtocol');
+        const { prepareRunnerDaemonPluginServices } = await vi.importActual<typeof import('./runnerDaemonPluginServices')>('./runnerDaemonPluginServices');
+        const services = createUnavailablePluginServices();
+        const disposed: string[] = [];
+        const host = createRunnerDaemonPluginServicesHost({ async createInvocation({ invocationId }) {
+            return { services, resourceDescriptors: {},
+                subscriptionCapabilities: { settingsWatch: false, eventSubscriptions: [], resourceWatches: [], notificationPreferencesWatch: false },
+                dispose() { disposed.push(invocationId); }, authorizeOperation: () => true,
+                executeCurrentGlobalAction: services.actions.execute,
+                currentGlobalMcp: services.mcp, currentGlobalExternalSessions: services.sessions.external };
+        } });
+        // The existing source fixture supplies retained loader/OS custody. Keep
+        // preparation, service protocol and daemon invocation lifecycle real.
+        mocks.createOperationServices.mockReturnValue(services);
+        mocks.bindManagedServices.mockReturnValue(services.managedServices);
+        mocks.prepareRunnerDaemonPluginServices.mockImplementation(prepareRunnerDaemonPluginServices);
+        mocks.dispatch.mockImplementation(async ({ operation }) => decodeRunnerDaemonPluginServiceWireValueV1(
+            (await host.dispatch({ sessionId: authority().sessionId, runner: authority().runner,
+                retainedAgent: authority().retainedAgent, operation })).value));
+        const source = await createRunnerAgentSessionRuntimeSource({
+            happyHomeDir: '/tmp/happier-runner-source', publicReleaseRing: 'stable',
+            authorityFilePath: '/tmp/happier-runner-source/authority.json',
+        });
+        const old = new AbortController();
+        const current = new AbortController();
+        const session = { id: 'session-1', current: {} as never };
+        const open = (signal: AbortSignal) => source!.createInvocationServices({
+            pluginId: 'happier.agent.codex', pluginVersion: '1.0.0', agentId: 'codex',
+            occurrenceId: 'immutable-generation-1', correlationId: session.id, cwd: '/repo', environment: {},
+            providerBindingActive: false, signal, session, isOccurrenceCurrent: () => true,
+        });
+        try {
+            if (early) {
+                await expect(source!.prepareManagedProviderBinding!({ sessionId: session.id, cwd: '/repo',
+                    environment: {}, signal: old.signal, session, readActiveTurnAdmissionWitness: () => witness })).resolves.toBeNull();
+            } else {
+                await open(old.signal);
+            }
+            const currentServices = await open(current.signal);
+            old.abort();
+            await vi.waitFor(() => expect(disposed).toHaveLength(1));
+            // Query through the newer service bag after the old close: it must
+            // still belong to its own lifetime, without resurrection/reprepare.
+            await expect(currentServices.sessions.external.capabilities()).resolves.toBeDefined();
+            expect(disposed).toHaveLength(1);
+            expect(mocks.prepareRunnerDaemonPluginServices).toHaveBeenCalledTimes(2);
+        } finally {
+            old.abort(); current.abort();
+            await source!.retire?.(); await host.dispose();
+        }
+    });
+
     it('forwards connected-account observations through the admitted daemon service and surfaces refusal', async () => {
         const source = await createRunnerAgentSessionRuntimeSource({
             happyHomeDir: '/tmp/happier-runner-source', publicReleaseRing: 'stable',
@@ -586,7 +641,7 @@ describe('runner Agent session runtime source', () => {
             mocks.prepareRunnerDaemonPluginServices,
         ).toHaveBeenCalledWith(
             expect.objectContaining({
-                invocationId: 'session-1',
+                invocationId: expect.any(String),
                 signal,
                 readActiveTurnAdmissionWitness:
                     expect.any(Function),
@@ -2335,24 +2390,17 @@ describe('runner Agent session runtime source', () => {
             },
         );
 
-        const services = new Map<string, Readonly<{
-            generation: string;
-            availability(): Readonly<{ status: 'unavailable' }>;
-        }>>();
         mocks.prepareRunnerDaemonPluginServices.mockImplementation(
             async (input) => {
                 const invocation = input as Readonly<{
                     invocationId: string;
                 }>;
-                const generation = invocation.invocationId
-                    .replace(/^invocation-/u, '');
                 const service = Object.freeze({
-                    generation,
+                    invocationId: invocation.invocationId,
                     availability: () => ({
                         status: 'unavailable' as const,
                     }),
                 });
-                services.set(generation, service);
                 return service;
             },
         );
@@ -2450,17 +2498,13 @@ describe('runner Agent session runtime source', () => {
             .toBe(3);
         expect(new Set([g1Services, g2Services, hServices]).size)
             .toBe(3);
-        expect([
+        expect(new Set([
             g1Services,
             g2Services,
             hServices,
         ].map((service) => (
-            service as unknown as Readonly<{ generation: string }>
-        ).generation)).toEqual([
-            'immutable-generation-g1',
-            'immutable-generation-g2',
-            'immutable-generation-h',
-        ]);
+            service as unknown as Readonly<{ invocationId: string }>
+        ).invocationId)).size).toBe(3);
 
         const g1Private = privateFacets.get(
             'immutable-generation-g1',
