@@ -18,10 +18,11 @@ describe('useVoiceSurfaceStoreState', () => {
             first: createSessionFixture({ id: 'first' }), second: createSessionFixture({ id: 'second' }),
         } });
         const delivery = observeStorageSubscriptionDeliveries();
+        const initialProps: { sessionId: string | null } = { sessionId: 'first' };
         const hook = await renderHook(({ sessionId }: { sessionId: string | null }) => useVoiceSurfaceStoreState({
             activeControlSessionId: sessionId, providerId: 'local_conversation', surfaceSessionId: sessionId,
             transcriptEnabled: false, voiceSettings: {}, voicePrivacy: { shareFilePaths: true, shareSessionSummary: true },
-        }), { initialProps: { sessionId: 'first' } });
+        }), { initialProps });
         const write = async (sessionId: string, seq: number) => act(async () => {
             storage.setState(state => ({ sessions: { ...state.sessions, [sessionId]: { ...state.sessions[sessionId]!, seq } } }));
         });

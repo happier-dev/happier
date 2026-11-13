@@ -16,10 +16,10 @@ import type {
 import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { SpokenActionTurnOrigin } from '@/voice/tools/executeSpokenAction';
+import type { createDefaultRealtimeToolBarrier } from '@/voice/tools/defaultRealtimeToolBarrier';
 
 import type {
   CreateVoiceConversationController,
-  VoiceConversationToolBarrier,
 } from '@/voice/runtime/controller/VoiceConversationController';
 import type {
   VoiceConnectionDriver,
@@ -352,7 +352,7 @@ export type BundledRealtimeProviderRuntimeHost = Readonly<{
       signal: AbortSignal,
     ): Promise<void>;
     continueResponse(responseId: string, signal: AbortSignal, turnOrigin: SpokenActionTurnOrigin): Promise<void>;
-  }>): VoiceConversationToolBarrier;
+  }>): ReturnType<typeof createDefaultRealtimeToolBarrier>;
   voiceHooks: Readonly<{
     /**
      * Host-authored startup context for this attempt. `current_ui_only`

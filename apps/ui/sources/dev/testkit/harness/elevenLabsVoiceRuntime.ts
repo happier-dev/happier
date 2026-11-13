@@ -32,7 +32,7 @@ export async function withGeneratedElevenLabsVoiceRuntime(
     const { PendingRequestedActionV1Schema } = await import('@happier-dev/protocol/sessions/pending/pendingRequestedActionV1');
     const { SessionStoredMessageContentSchema } = await import('@happier-dev/protocol/sessions/messages/sessionStoredMessageContent');
     const { SessionMessageRoleSchema } = await import('@happier-dev/protocol/sessions/messages/sessionMessageRole');
-    const { serveAccountHomes } = await import('./actionHomesHttpHarness');
+    const { serveAccountHomes: serveHomes } = await import('./actionHomesHttpHarness');
     const { createSessionMetadataHttpBoundary } = await import('./sessionMetadataHttpBoundary');
     const { createSessionReadBatchHttpBoundary } = await import('./sessionReadBatchHttpBoundary');
     const { answerVoiceRealtimePreparationHttpRequest } = await import('./voiceRealtimePreparationHttpBoundary');
@@ -55,7 +55,7 @@ export async function withGeneratedElevenLabsVoiceRuntime(
     const transcriptAcknowledgements = new Map<string, { id: string; seq: number; localId: string; createdAt: number }>();
     const features = createRootLayoutFeaturesResponse();
     features.capabilities.session.pendingInput = { protocolVersion: 1 };
-    const home = await serveAccountHomes({
+    const home = await serveHomes({
         homes: [{ key: 'qa', serverUrl: 'https://voice-qa-realtime.example.test', accountId: 'qa-account',
             currentAccount: true,
             settings: { ...(options.actionsSettings ? { actionsSettingsV1: options.actionsSettings } : {}),

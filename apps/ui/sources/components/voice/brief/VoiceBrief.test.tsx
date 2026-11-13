@@ -391,7 +391,7 @@ describe('mounted Voice Brief request', () => {
         const now = Date.now();
         const sessions = Array.from({ length: 13 }, (_, index) => {
             const session = createSessionFixture({ id: `sidebar-request-${index}`, serverId,
-                metadata: { path: '/project', summary: { text: `Review deployment ${index}`, updatedAt: now } },
+                metadata: { path: '/project', host: 'test', summary: { text: `Review deployment ${index}`, updatedAt: now } },
                 active: true, activeAt: now, pendingBlockedCount: 1, latestTurnStatus: 'completed',
             });
             return { ...session, viewer: createSessionOwnerViewerFixture(session) };
@@ -750,7 +750,7 @@ describe('mounted Voice Brief request', () => {
         screen = await renderScreen(<AuthProvider initialCredentials={account!.credentials}><InboxModelBoundary><Probe /></InboxModelBoundary></AuthProvider>);
         const before = projections.at(-1)!;
         await act(async () => storage.getState().applySettingsLocal({
-            terminalFontSize: storage.getState().settings.terminalFontSize + 1,
+            compactSessionView: !storage.getState().settings.compactSessionView,
         }));
         expect(projections.at(-1)).toBe(before);
         const approvalBefore = storage.getState().settings.voice.canApproveRequests;

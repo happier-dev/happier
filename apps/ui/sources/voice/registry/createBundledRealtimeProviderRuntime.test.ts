@@ -583,7 +583,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       presentHostedLeaseNotice: vi.fn(),
       presentAttemptDiagnostic: vi.fn(),
       clearAttemptStatus: vi.fn(),
-      createToolBarrier: vi.fn(() => ({ run: vi.fn(async () => ({ status: 'submitted' as const })), detach: vi.fn(), cancel: vi.fn(), dispose: vi.fn() })),
+      createToolBarrier: vi.fn(() => ({ run: vi.fn(async () => ({ status: 'submitted' as const, results: [] })), cancel: vi.fn(() => false), dispose: vi.fn() })),
       voiceHooks: { onStarted: vi.fn(() => ''), onStopped: vi.fn() },
       createMachineError: vi.fn((input) => ({
         ...input, phase: 'runtime' as const, retryPolicy: 'user_action' as const,
@@ -1507,7 +1507,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       clearAttemptStatus: vi.fn(),
       createToolBarrier: vi.fn((input: Parameters<BundledRealtimeProviderRuntimeHost['createToolBarrier']>[0]) => {
         barrierInput = input;
-        return { run: vi.fn(async () => ({ status: 'submitted' as const })), detach: vi.fn(), cancel: vi.fn(), dispose: vi.fn() };
+        return { run: vi.fn(async () => ({ status: 'submitted' as const, results: [] })), cancel: vi.fn(() => false), dispose: vi.fn() };
       }),
       voiceHooks: currentUiVoiceHooks,
       createMachineError: vi.fn((input) => ({
@@ -2664,7 +2664,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       presentAttemptDiagnostic: vi.fn(),
       clearAttemptStatus: vi.fn(),
       createToolBarrier: vi.fn(() => ({
-        run: vi.fn(async () => ({ status: 'submitted' as const })), detach: vi.fn(), cancel: vi.fn(), dispose: vi.fn(),
+        run: vi.fn(async () => ({ status: 'submitted' as const, results: [] })), cancel: vi.fn(() => false), dispose: vi.fn(),
       })),
       voiceHooks: { onStarted: vi.fn(() => ''), onStopped },
       createMachineError: vi.fn((input) => ({

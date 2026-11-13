@@ -215,7 +215,7 @@ describe('phone Island shell clearance', () => {
         function Scene() {
             const controller = useSessionCompanionController({ sessionId: session.id, serverId: 'server-a', openFullSurface });
             return <><VoiceTopBarPresenceMount /><SessionCompanionContent session={session} controller={controller}
-                boardBinding={null} resolvePrimaryHost={() => null} testID="companion-scroll" /></>;
+                boardBinding={null} testID="companion-scroll" /></>;
         }
         // Render the actual pill independently of phone placement for this scroll-contract slice.
         function Pill() { return <VoiceTopBarPresence voice={useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_GLOBAL)} />; }

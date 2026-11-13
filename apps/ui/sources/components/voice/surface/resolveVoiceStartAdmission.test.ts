@@ -94,10 +94,11 @@ describe('resolveVoiceStartAdmission', () => {
             value: 'test-credential', generateId: () => ref, now: 1,
         }).settings;
         const linked = { ...configured, secrets: [] };
+        const providerSettings = entry.providerSettings;
         const scope = { serverId: 'cold-admission-home', accountId: 'cold-admission-account' };
         const project = (connectedPurposes: null | { v: 1; bindings: [] }) => resolveVoiceStartAdmission({
             bindingScope: 'global', daemonLocalVoiceUnavailable: false, globalStartAuthorized: true,
-            providerId, platform: 'web', providerSettings: entry.providerSettings, registry,
+            providerId, platform: 'web', providerSettings, registry,
             startSessionId: null, voiceSettings: linked.voice,
             credentialContext: { settings: linked, connectedPurposes,
                 resolveSavedSecret: selected => resolveSavedSecretReference(scope, [], selected, { includeMaterial: false }) },

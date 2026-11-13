@@ -612,7 +612,7 @@ describe('realtime tool barrier', () => {
 
   it('retains 129 failed deliveries and redelivers without repeating effects', async () => {
     const executeCall = vi.fn(async () => ({ ok: true }));
-    const submitResults = vi.fn(async () => { throw new Error('delivery failed'); });
+    const submitResults = vi.fn(async (): Promise<void> => { throw new Error('delivery failed'); });
     const barrier = createRealtimeToolBarrier({
       classifyCall: () => 'mutation',
 
