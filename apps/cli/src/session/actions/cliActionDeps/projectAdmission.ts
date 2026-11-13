@@ -7,6 +7,7 @@ import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 export type CliProjectAdmissionFailure = Readonly<{ ok: false; errorCode: string; error: string; details?: unknown }>;
 export type CliProjectAdmission = Readonly<{
   resolveProjectHomeIdentity: () => Promise<string>;
@@ -19,7 +20,7 @@ export type CliProjectAdmission = Readonly<{
   readProjectRequesterArtifact: (ref: Parameters<NonNullable<ExternalActionExecutionAuthorizationV1['requesterAccountProjection']>['readArtifact']>[0], options: Readonly<{ signal?: AbortSignal }> | undefined, context: ActionExecutorContext) => ReturnType<NonNullable<ExternalActionExecutionAuthorizationV1['requesterAccountProjection']>['readArtifact']>;
 }>;
 export function createCliProjectAdmission(
-  params: Pick<CliActionDepsParams, 'serverId' | 'credentials' | 'serverHttpBaseUrl'>,
+  params: Pick<CliActionDepsParams, 'serverId' | 'serverIdentityId' | 'credentials' | 'serverHttpBaseUrl'>,
   { projectHomeId, actionHomeId, executionRunActionFailure }: Readonly<{
     projectHomeId: string;
     actionHomeId: string;
@@ -28,12 +29,16 @@ export function createCliProjectAdmission(
 ): CliProjectAdmission {
   const resolveProjectHomeIdentity = async () => {
     const { resolveServerProfileHomeIdentityId } = await import("@/server/serverProfiles");
-    return await resolveServerProfileHomeIdentityId(projectHomeId) ?? actionHomeId;
+    return params.serverIdentityId ?? await resolveServerProfileHomeIdentityId(projectHomeId) ?? actionHomeId;
   };
   const projectHomeAdmission = async (serverId?: string, context?: ActionExecutorContext) => {
     const { isServerProfileHomeIdentity } = await import("@/server/serverProfiles");
-    if ((serverId !== undefined && !await isServerProfileHomeIdentity(projectHomeId, serverId.trim()))
-      || (context?.serverId && !await isServerProfileHomeIdentity(projectHomeId, context.serverId))
+    const isActionHome = (candidate: string) => params.serverIdentityId
+      ? areServerProfileIdentifiersEquivalent(projectHomeId, candidate, identifier =>
+        identifier === projectHomeId || identifier === params.serverIdentityId ? params.serverIdentityId : undefined)
+      : isServerProfileHomeIdentity(projectHomeId, candidate);
+    if ((serverId !== undefined && !await isActionHome(serverId.trim()))
+      || (context?.serverId && !await isActionHome(context.serverId))
       || (params.serverId === undefined && configuration.activeServerId !== projectHomeId)) {
       return executionRunActionFailure('server_scope_mismatch');
     }

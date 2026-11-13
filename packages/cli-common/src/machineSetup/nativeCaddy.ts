@@ -1,8 +1,10 @@
 import type { MachineRecipeStepV1, MachineSetupApplyResultV1 } from './index.js';
 import { createCaddyContainerSetupDeclarations, nativeCaddyProfile } from './caddyDeclarations.js';
+import { dockerEnginePresenceCheck } from './dockerEngine.js';
 export { nativeCaddyProfile } from './caddyDeclarations.js';
 import { runMachineSetupNativeCommand, type MachineSetupNativeCommand, type MachineSetupNativeCommandResult } from './nativeBackend.js';
 import { isIP } from 'node:net';
+import { homedir } from 'node:os';
 import { dirname, join, posix } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { watch } from 'node:fs';
@@ -236,7 +238,7 @@ export async function checkNativeCaddyPortAvailability(input: Pick<NativeCaddySe
 type OwnedContainer = Readonly<{ status: 'observed'; containerId: string; containerName: string; config: Record<string, unknown>; host: Record<string, unknown>;
     running: boolean; created: boolean; networks: Record<string, unknown>; ports: unknown }>;
 async function inspectOwnedContainer(input: ContainerInput, run: ReturnType<typeof nativeDocker>): Promise<OwnedContainer
-    | Readonly<{ status: 'needs_setup' }> | Readonly<{ status: 'unavailable'; reason: 'required_fact_unavailable' | 'foreign_effect_conflict' }>> {
+    | Readonly<{ status: 'needs_setup' }> | Readonly<{ status: 'unavailable'; reason: 'required_fact_unavailable' | 'foreign_effect_conflict'; details?: NativeCaddyFailureDetails }>> {
     const unavailable = caddyFactUnavailable('caddyContainer');
     const filter = input.containerName === undefined ? `label=${ownerLabel}=${ownerValue}`
         : `name=^/${input.containerName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
@@ -335,6 +337,10 @@ export async function observeNativeCaddyFirewallBindings(input: ContainerInput &
     try {
         const container = await inspectOwnedContainer(input, nativeDocker(input, options));
         if (container.status === 'needs_setup') return { status: 'ready', bindings: { publicBindings: [] } };
+        if (container.status === 'unavailable' && container.details?.failure?.kind === 'native_observation_unavailable'
+            && container.details.failure.errorCode === 'ENOENT' && await localDockerEngineAbsent(input, options)) {
+            return { status: 'ready', bindings: { publicBindings: [] } };
+        }
         if (container.status !== 'observed') return container;
         const requirements = [nativeCaddyProfile.portRequirement, ...nativeCaddyProfile.publicPortRequirements];
         const configured = container.host.PortBindings;
@@ -370,6 +376,22 @@ export async function observeNativeCaddyFirewallBindings(input: ContainerInput &
         options.signal?.throwIfAborted();
         return caddyFactUnavailable('caddyContainer', error);
     }
+}
+
+/** Missing Docker CLI alone cannot prove that the selected engine has no
+ * publications. Only an absent local server with no selected context can. */
+async function localDockerEngineAbsent(input: ContainerInput, options: NativeOptions): Promise<boolean> {
+    if (input.dockerHost !== undefined || process.env.DOCKER_HOST || process.env.DOCKER_CONTEXT) return false;
+    try {
+        const config = object(JSON.parse(await readFile(join(process.env.DOCKER_CONFIG || join(homedir(), '.docker'), 'config.json'), 'utf8')));
+        if (!config || config.currentContext !== undefined && config.currentContext !== '' && config.currentContext !== 'default') return false;
+    } catch (error) {
+        if (object(error)?.code !== 'ENOENT') return false;
+    }
+    const check = dockerEnginePresenceCheck.check;
+    const presence = await (options.run ?? runMachineSetupNativeCommand)({ executable: check.executable, args: check.args,
+        ...(options.signal ? { signal: options.signal } : {}) });
+    return presence.code !== null && !presence.errorCode && check.unsatisfiedExitCodes.includes(presence.code);
 }
 
 function listenerPort(listener: string, networks: Record<string, unknown>, endpointAddress?: string): number | undefined {

@@ -21,6 +21,7 @@ import { createCurrentSessionProjectionRecordFixture } from '@/testkit/backends/
 import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { V2SessionByIdResponseSchema, projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
+import { MachineAdminAccessInspectResultV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 
 const portableHomeId = 'srv_action_home';
 const foreignHomeId = 'srv_other_home';
@@ -83,6 +84,23 @@ function sessionDeps() {
 }
 
 describe('Account Action Home identity admission', () => {
+  it('admits administrator inspection using the captured daemon Home identity without a local client profile', async () => {
+    const captured = params();
+    const deps = createCliActionDeps({ ...captured, serverId: 'daemon-profile', serverIdentityId: portableHomeId,
+      token: credentials.token, sessionId: '', mode: 'plain', ctx: null });
+    vi.spyOn(machineRpc, 'callExactMachineRpc').mockResolvedValue(MachineAdminAccessInspectResultV1Schema.parse({
+      observation: { version: 1, observedAt: 20, daemonUid: 1001, daemonUsername: 'happier',
+        daemonIdentity: 'nonRoot', rootEquivalentGroups: [], passwordlessSudoToRoot: 'allowed', managedDropIn: 'valid',
+        tailscaledOperator: { authorization: 'denied' } }, checkedAt: 20,
+      adminAccess: { version: 1, mode: 'none' }, metadataVersion: 1,
+    }));
+    const invoke = (serverId: string) => deps.machineAdminAccessAction!({
+      actionId: 'machines.setup.adminAccess.inspect', input: { machineId: 'worker', serverId }, context: context(serverId),
+    });
+    expect(await invoke(portableHomeId)).toMatchObject({ checkedAt: 20 });
+    expect(await invoke(foreignHomeId)).toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
+  });
+
   it('admits Profile editor handling for its portable Home and rejects another Home', async () => {
     const execute = createCliProfileActionExecuteV1(params());
     const request = { actionId: 'launch_profiles.edit' as const, input: { id: 'profile-a', expectedRevision: 1 } };

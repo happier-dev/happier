@@ -22,6 +22,8 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { registerDaemonProcessesRpcHandlers } from '@/rpc/handlers/daemonProcesses';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import type { SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const scope = '123456789abc';
 const principal = { kind: 'uid', value: '501' } as const;
@@ -83,6 +85,21 @@ function fixture(ports: Partial<Pick<ProcessActionExecutorInput, 'stopOwner' | '
 }
 
 describe('process Actions through the canonical ownership and tree owners', () => {
+    it('settles Kill tree from native absence while terminal PIDs await reaping', async () => {
+        const f = fixture({ closeTerminal: async () => {
+            for (const pid of [30, 20, 21]) f.rows.set(pid, { ...f.rows.get(pid)!, state: 'zombie', ownerTag: undefined });
+            f.roots.splice(1, 1);
+            return { ok: true };
+        } });
+        const owner = { kind: 'terminal', terminalId: 'terminal' } as const;
+        f.roots[1] = { ...f.roots[1]!, owner };
+        for (const pid of [30, 20, 21]) f.rows.set(pid, { ...f.rows.get(pid)!, ownerTag: `v1.${scope}.terminal.terminal` });
+        expect(await f.executor.executeKill({ machineId: 'machine', tree: true,
+            targets: [{ ref: f.target(30).ref, expect: { level: 'proven', owner } }] }, custodian))
+            .toMatchObject({ status: 'ended', outcomes: [{ outcome: 'ended', freedBytes: 7100 }] });
+        expect(f.signals).toEqual([]);
+    });
+
     it('refuses an ordinary process tree containing an admitted native service before any signal', async () => {
         const containerId = 'a'.repeat(64);
         const killed = new Set<number>();
@@ -141,26 +158,26 @@ describe('process Actions through the canonical ownership and tree owners', () =
     it('keeps Resume behind native kill verification and gives concurrent Stop callers their real coalesced acknowledgement', async () => {
         const signalled = createDeferred();
         const releaseNative = createDeferred();
-        const sessions = new Map<number, TrackedSession>();
+        const sessions = new Map<SessionTrackingKey, TrackedSession>();
         const barrier = createDisconnectedTerminalHostResumeLifecycle({ unresolvedTerminalHostSessionIds: new Set(),
             clearUnresolvedTerminalHostSession() {}, findDisconnectedCandidate: () => null,
             resolveResumeGateForCandidate: async () => { throw new Error('No disconnected host in this fixture'); }, retireCandidate() {} });
         const respawn = createSessionRunnerRespawnManager({ enabled: true, maxRestarts: 2, baseDelayMs: 0, maxDelayMs: 0,
             jitterMs: 0, random: () => 0, isSessionAlreadyRunning: () => false,
             spawnSession: async () => { throw new Error('Intentional kill must not respawn'); }, logDebug() {}, logWarn() {} });
-        const stopCore = createStopSession({ pidToTrackedSession: sessions,
+        const stopCore = createStopSession({ trackedSessionsByKey: sessions,
             readHostAttachmentState: async () => ({ status: 'absent' }), readTerminalAttachmentInfo: async () => null });
         let writes = 0;
-        const lifecycle = createSessionProcessActionLifecycle({ pidToTrackedSession: sessions,
+        const lifecycle = createSessionProcessActionLifecycle({ trackedSessionsByKey: sessions,
             markStopRequested: respawn.markStopRequested,
             // Metadata transport is outside the process owner; exact binding and lifecycle stay real.
             prepareStopIntent: async () => { writes++; }, stopSession: stopCore,
             registerPhysicalStopEffect: (sessionId, completion) => barrier.registerPhysicalStopEffect(sessionId, completion),
         });
         const f = fixture({ prepareKill: input => lifecycle.prepareKill(input) }, { beforeVerification: async () => {
-            signalled.resolve(); await releaseNative.promise; sessions.delete(30);
+            signalled.resolve(); await releaseNative.promise; sessions.delete(legacyPidSessionTrackingKey(30));
         } });
-        sessions.set(30, { pid: 30, processStartTimeMs: 300, startedBy: 'daemon', happySessionId: 'guest-session',
+        sessions.set(legacyPidSessionTrackingKey(30), { trackingKey: legacyPidSessionTrackingKey(30), pid: 30, processStartTimeMs: 300, startedBy: 'daemon', happySessionId: 'guest-session',
             vendorResumeId: 'guest-vendor', spawnOptions: { directory: '/repo' } });
         const killing = f.executor.executeKill({ machineId: 'machine', targets: [f.target(30)], tree: false }, guest,
             { actionContext: { surface: 'cli', authority: 'present_user', actionRequestId: 'intentional-kill' } });

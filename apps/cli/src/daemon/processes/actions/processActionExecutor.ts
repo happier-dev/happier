@@ -76,7 +76,7 @@ export function createProcessActionExecutor(input: ProcessActionExecutorInput) {
         status: outcomes.every(row => row.outcome === 'ended' || row.outcome === 'gone_before') ? 'ended'
             : outcomes.every(row => row.outcome === 'refused') ? 'refused' : 'partial', outcomes,
     });
-    const nativeRow = (view: CurrentOwnership, pid: number) => view.snapshot.rows.find(row => row.pid === pid);
+    const nativeRow = (view: CurrentOwnership, pid: number) => view.snapshot.rows.find(row => row.pid === pid && row.state !== 'zombie');
     const resolvedRow = (view: CurrentOwnership, pid: number) => view.rows.find(row => row.pid === pid);
     const endedMemberMemory = (members: readonly ProcessCensusRow[], after: CurrentOwnership) => {
         const current = new Map(after.snapshot.rows.map(row => [row.pid, row]));
@@ -84,7 +84,7 @@ export function createProcessActionExecutor(input: ProcessActionExecutorInput) {
         const ended = new Map<number, number>();
         for (const member of members) {
             const now = current.get(member.pid);
-            if (now ? !equalProcessStart(now.start, member.start) : !unreadable.has(member.pid)) {
+            if (now ? now.state === 'zombie' || !equalProcessStart(now.start, member.start) : !unreadable.has(member.pid)) {
                 ended.set(member.pid, member.memory?.bytes ?? 0);
             }
         }

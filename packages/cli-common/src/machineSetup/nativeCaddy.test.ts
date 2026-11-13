@@ -14,6 +14,7 @@ const roots: string[] = [];
 const servers: Server[] = [];
 afterEach(async () => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     await Promise.all(servers.splice(0).map(server => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))));
     await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
@@ -523,6 +524,41 @@ it.each([false, true])('reviews every configured Caddy permit without requiring 
     // process or admin read and no start/retry operation.
     expect(f.commands).toHaveLength(2);
 });
+
+it('reviews a host without Docker as having no Caddy publications', async () => {
+    const config = await mkdtemp(join(tmpdir(), 'caddy-no-docker-')); roots.push(config);
+    vi.stubEnv('DOCKER_CONFIG', config);
+    vi.stubEnv('DOCKER_HOST', '');
+    vi.stubEnv('DOCKER_CONTEXT', '');
+    expect(await observeNativeCaddyFirewallBindings({ privateNetworks: [] }, { run: async command => {
+        if (command.executable === 'which') return { code: 1, stdout: '', stderr: '' };
+        return { code: null, stdout: '', stderr: '', errorCode: 'ENOENT' };
+    } })).toEqual({ status: 'ready', bindings: { publicBindings: [] } });
+});
+
+it.each([
+    { dockerHost: 'ssh://selected-engine', serverPresent: false },
+    { dockerHost: undefined, serverPresent: true },
+])('does not infer Docker absence for a selected engine or an installed server: %j', async ({ dockerHost, serverPresent }) => {
+    expect(await observeNativeCaddyFirewallBindings({ dockerHost, privateNetworks: [] }, { run: async command => {
+        if (command.executable === 'which') return serverPresent ? ok('/usr/bin/dockerd') : { code: 1, stdout: '', stderr: '' };
+        return { code: null, stdout: '', stderr: '', errorCode: 'ENOENT' };
+    } })).toMatchObject({ status: 'unavailable', reason: 'required_fact_unavailable' });
+});
+
+it.each(['host', 'context', 'saved-context', 'invalid-config', 'presence-unavailable'] as const)(
+    'preserves unavailable Caddy facts when local Docker absence is not established: %s', async selection => {
+        const config = await mkdtemp(join(tmpdir(), 'caddy-docker-selection-')); roots.push(config);
+        vi.stubEnv('DOCKER_CONFIG', config);
+        vi.stubEnv('DOCKER_HOST', selection === 'host' ? 'ssh://selected-engine' : '');
+        vi.stubEnv('DOCKER_CONTEXT', selection === 'context' ? 'selected-engine' : '');
+        if (selection === 'saved-context') await writeFile(join(config, 'config.json'), JSON.stringify({ currentContext: 'selected-engine' }));
+        if (selection === 'invalid-config') await writeFile(join(config, 'config.json'), '{');
+        expect(await observeNativeCaddyFirewallBindings({ privateNetworks: [] }, { run: async command => {
+            if (command.executable === 'which') return { code: selection === 'presence-unavailable' ? 2 : 1, stdout: '', stderr: '' };
+            return { code: null, stdout: '', stderr: '', errorCode: 'ENOENT' };
+        } })).toMatchObject({ status: 'unavailable', reason: 'required_fact_unavailable' });
+    });
 
 it('returns empty Caddy permits only after a successful empty owned-container inventory', async () => {
     expect(await observeNativeCaddyFirewallBindings({ privateNetworks: [] }, { run: async command => {
