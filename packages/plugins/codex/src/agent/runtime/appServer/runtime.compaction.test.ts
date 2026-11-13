@@ -250,8 +250,21 @@ describe('Codex native compaction control', () => {
       await f.runtime.send({ inputIds: ['input'], input: { text: 'Continue' }, delivery: { kind: 'newTurn', turnId: 'host-turn' } });
       const item = { threadId: 'main', turnId: 'next-turn', item: { id: 'automatic', type: 'contextCompaction' } };
       await f.notify('item/started', item);
+      // Redacted response_item from Codex 0.162.1 rollout
+      // 01a1d33d-a6a5-75f1-8c91-8d722c76e891, rows 19–23 (R141-B).
+      // compact.rs emits these raw items between contextCompaction start/end;
+      // they have no normalized assistant item and must never become fallback text.
+      await f.notify('rawResponseItem/completed', { threadId: 'main', turnId: 'next-turn', item: {
+        type: 'message', id: 'summary', role: 'assistant',
+        content: [{ type: 'output_text', text: 'Internal handoff summary' }],
+        internal_chat_message_metadata_passthrough: null,
+      } });
       await f.notify('item/completed', item);
+      await f.notify('item/agentMessage/delta', { threadId: 'main', turnId: 'next-turn', itemId: 'answer', delta: 'Your Brief.' });
+      await f.notify('item/completed', { threadId: 'main', turnId: 'next-turn', item: { type: 'agentMessage', id: 'answer', text: 'Your Brief.' } });
       await f.notify('turn/completed', { threadId: 'main', turn: { id: 'next-turn', status: 'completed' } });
+      expect(f.events.flatMap(event => event.kind === 'message-delta' && event.channel === 'assistant'
+        ? [event.text] : []).join('')).toBe('Your Brief.');
       expect(f.events.filter(event => event.kind === 'context-compaction')).toMatchObject([
         { compactionId: 'automatic', turnId: 'host-turn', trigger: 'unknown', phase: 'started' },
         { compactionId: 'automatic', turnId: 'host-turn', trigger: 'unknown', phase: 'completed' },

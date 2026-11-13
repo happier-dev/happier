@@ -31,6 +31,20 @@ function createRecordingBridge() {
 }
 
 describe('createCodexAppServerAssistantReasoningProjector', () => {
+    it('drops compaction text and restores raw assistant fallback after cancellation', async () => {
+        const recording = createRecordingBridge();
+        const projector = createCodexAppServerAssistantReasoningProjector({ bridge: recording.bridge });
+        const context = { sidechainId: null, streamScopeId: 'cancelled-turn' };
+        projector.observeStreamUpdate({ type: 'context-compaction-started' }, context);
+        projector.observeStreamUpdate({ type: 'assistant-raw-final', itemId: 'summary', text: 'Internal context' }, context);
+        await projector.flush('abort');
+        expect(recording.assistantDeltas).toEqual([]);
+        projector.observeStreamUpdate({ type: 'assistant-raw-final', itemId: 'reply', text: 'New answer' },
+            { sidechainId: null, streamScopeId: 'new-turn' });
+        await projector.flush('turn-end');
+        expect(recording.assistantDeltas.map(event => event.deltaText)).toEqual(['New answer']);
+    });
+
     it('keeps separate Codex assistant items on item-scoped transcript streams', () => {
         const recording = createRecordingBridge();
         const projector = createCodexAppServerAssistantReasoningProjector({ bridge: recording.bridge });

@@ -1696,6 +1696,12 @@ export function createCodexAppServerRuntime(
     const context = childContext ?? (activeTurn ? { sidechainId: null, streamScopeId: activeTurn.sessionTurnId } : null);
     if (!context) return false;
     const projector = childContext?.projector ?? assistantReasoningProjector;
+    if ((method === 'item/started' || method === 'item/completed')
+      && readNormalizedProviderEventItemType(notificationParams) === 'contextcompaction') {
+      return projector.observeStreamUpdate({
+        type: method === 'item/started' ? 'context-compaction-started' : 'context-compaction-completed',
+      }, context);
+    }
     const itemId = readProviderEventItemId(notificationParams)
       ?? `${method}:${context.streamScopeId}`;
     if (method === 'item/agentMessage/delta') {

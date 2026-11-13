@@ -52,6 +52,7 @@ export function createCodexAppServerAssistantReasoningProjector(params: Readonly
     const latestAssistantItemIdByStreamScope = new Map<string, string>();
     const normalizedAssistantFinalItemKeys = new Set<string>();
     const rawAssistantFinalByItemKey = new Map<string, PendingRawAssistantFinal>();
+    let compacting = false;
 
     const buildItemStateKey = (scopeId: string, itemId: string): string => `${scopeId}:${itemId}`;
     const buildRawFallbackStateKey = (scopeId: string): string => `${scopeId}:raw-response-item`;
@@ -151,6 +152,7 @@ export function createCodexAppServerAssistantReasoningProjector(params: Readonly
     };
 
     const clearState = (): void => {
+        compacting = false;
         assistantTextByItemId.clear();
         reasoningTextByItemId.clear();
         latestAssistantItemIdByStreamScope.clear();
@@ -163,6 +165,13 @@ export function createCodexAppServerAssistantReasoningProjector(params: Readonly
             update: CodexAppServerAssistantReasoningStreamUpdate,
             context: CodexAppServerAssistantReasoningProjectionContext,
         ): boolean {
+            // Codex emits compaction output as raw assistant messages, without
+            // normalized agentMessage items. They are internal context, not answers.
+            if (update.type === 'context-compaction-started' || update.type === 'context-compaction-completed') {
+                compacting = update.type === 'context-compaction-started';
+                return true;
+            }
+            if (compacting) return true;
             if (update.type === 'assistant-text-delta') {
                 const itemId = readString(update.itemId);
                 const text = readString(update.text);
