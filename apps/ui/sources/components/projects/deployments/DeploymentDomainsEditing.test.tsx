@@ -9,6 +9,7 @@ import {
   createDeploymentReceiptDetailV1,
   createDeploymentTargetLinkHeaderV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
+import { OwnServerDeploymentInputBasisV1Schema } from '@happier-dev/deployment-protocol/v1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import {
   act,
@@ -119,8 +120,8 @@ async function renderDomains(
   items: readonly unknown[],
   domainActions: Record<string, unknown>,
   healthSetup = false,
+  receipt = createDeploymentReceiptDetailV1(),
 ) {
-  const receipt = createDeploymentReceiptDetailV1();
   const transport: Partial<DeploymentReadTransportV1> = {
     listEnvironments: async () => ({
       ok: true,
@@ -203,6 +204,29 @@ function platformDetail(targetKind = 'vercel', content: Record<string, unknown> 
 }
 
 describe('Environment → Domains: add form (P6)', () => {
+  it('shows every recorded routed replica without inventing a live inventory', async () => {
+    const detail = createDeploymentEnvironmentDetailV1();
+    const known = domain('recorded', 'shop.example.com');
+    const item = { ...known, domain: { ...known.domain, routedReplicas: {
+      source: 'recordedTopology' as const, count: 2, replicas: [
+        { machineId: 'machine-a', installationId: 'installation-a', containerName: 'shop-web-1' },
+        { machineId: 'machine-b', installationId: 'installation-b', containerName: 'shop-web-2' },
+      ],
+    } } };
+    const { screen, controller, settle } = await renderDomains(detail, [item, domain('unknown', 'old.example.com')], domainActions(detail));
+    try {
+      await settle('project-deployments.environment.domains.recorded');
+      const { Text } = await import('@/components/ui/text/Text');
+      const texts = screen.findAllByType(Text).map(node => node.props.children);
+      expect(texts).toContain('machine-a · shop-web-1');
+      expect(texts).toContain('machine-b · shop-web-2');
+      expect(screen.findByTestId('project-deployments.environment.domains.unknown.routedReplicas')).toBeNull();
+    } finally {
+      await screen.unmount();
+      controller.retire();
+    }
+  });
+
   it('opens the exact saved Domain check setup before enrolling a cadence', async () => {
     const detail = createDeploymentEnvironmentDetailV1();
     const actions = domainActions(detail);
@@ -358,6 +382,31 @@ describe('Environment → Domains: add form (P6)', () => {
       expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
         content: expect.objectContaining({ healthCheck: { path: '/ready', expectStatus: 204 } }),
       }));
+    } finally {
+      await screen.unmount();
+      controller.retire();
+    }
+  });
+
+  it('shows Docker Desktop Domain unavailability from the serving generation before Add', async () => {
+    const detail = createDeploymentEnvironmentDetailV1();
+    const receipt = createDeploymentReceiptDetailV1();
+    detail.targetLinks[0]!.targetLink.activeDeploymentId = receipt.deployment.id;
+    const projection = { machineId: 'machine-a', installationId: 'installation-a', platform: 'linux/amd64',
+      manifestFingerprint: 'manifest-a', configInputDigests: [], physicalProjectName: 'shop',
+      toolVersion: '2.0', services: ['app'], profiles: [], engineKind: 'dockerDesktop' as const };
+    receipt.content.ownServer = { approvedInputBasis: OwnServerDeploymentInputBasisV1Schema.parse({
+      v: 1, environmentId: detail.environment.id, environmentRevision: detail.environment.revision,
+      targetLinkId: detail.targetLinks[0]!.targetLink.id, targetLinkRevision: detail.targetLinks[0]!.targetLink.revision,
+      sourceIntent: receipt.content.sourceIntent, manifestFingerprint: projection.manifestFingerprint,
+      configInputDigests: projection.configInputDigests, physicalProjectName: projection.physicalProjectName,
+      toolVersion: projection.toolVersion, services: projection.services, profiles: projection.profiles, members: [{ machineId: 'machine-a', installationId: 'installation-a' }],
+      bindings: [], images: receipt.content.images, runtimeProjections: [projection],
+    }) };
+    const { screen, controller, settle } = await renderDomains(detail, [], domainActions(detail), false, receipt);
+    try {
+      expect(await settle('project-deployments.environment.domains.unavailableDockerDesktop')).not.toBeNull();
+      expect(screen.findByTestId(id)).toBeNull();
     } finally {
       await screen.unmount();
       controller.retire();
@@ -754,6 +803,53 @@ describe('Environment → Domains: Find zones says what it needs (JOURNEY-OPUS-8
       await act(async () => screen.changeTextByTestId(`${id}.host`, 'docs.happier.dev'));
       expect(screen.findByTestId(`${id}.ingress.zones.needs`)).toBeNull();
       expect(inspectPlatformTarget).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+});
+
+describe('Environment → Domains: Add domain never looks dead (UI-DOMAIN-VIEWER-1113)', () => {
+  it('shows a refused add at the form the person pressed, not above it out of view', async () => {
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, content: { ...base.content, ingress: undefined } };
+    const actions = { ...domainActions(detail), addDomain: vi.fn(async () => ({ ok: false as const, error: 'deployment_target_not_running' })) };
+    const { screen, controller, settle } = await renderDomains(detail, [], actions);
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      await act(async () => {
+        screen.changeTextByTestId(`${id}.host`, 'app.example.test');
+        screen.changeTextByTestId(`${id}.service`, 'web');
+        screen.changeTextByTestId(`${id}.port`, '3000');
+        screen.changeTextByTestId(`${id}.check`, '/');
+        screen.changeTextByTestId(`${id}.checkStatus`, '200');
+      });
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(actions.addDomain).toHaveBeenCalledOnce();
+      const atForm = await settle(`${id}.outcome`);
+      expect(atForm, 'the refusal renders inside the open form, beside Add domain').not.toBeNull();
+      expect(screen.findByTestId(`${id}.host`), 'the form stays open with what was typed').not.toBeNull();
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('names the field a disabled Add domain still needs', async () => {
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, content: { ...base.content, ingress: undefined } };
+    const { screen, controller, settle } = await renderDomains(detail, [], domainActions(detail));
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      await act(async () => {
+        screen.changeTextByTestId(`${id}.host`, 'app.example.test');
+        screen.changeTextByTestId(`${id}.service`, 'web');
+        screen.changeTextByTestId(`${id}.port`, '3000');
+      });
+      expect(screen.findByTestId(`${id}.needs`)?.props.children)
+        .toBe(t('projects.deployments.editors.addNeeds', { field: t('projects.deployments.domainFieldCheck') }));
+      await act(async () => screen.changeTextByTestId(`${id}.check`, '/'));
+      expect(screen.findByTestId(`${id}.needs`)?.props.children)
+        .toBe(t('projects.deployments.editors.addNeeds', { field: t('projects.deployments.domainFieldCheckStatus') }));
+      await act(async () => screen.changeTextByTestId(`${id}.checkStatus`, '200'));
+      expect(screen.findByTestId(`${id}.needs`), 'nothing left to name once Add domain can work').toBeNull();
     } finally { await screen.unmount(); controller.retire(); }
   });
 });

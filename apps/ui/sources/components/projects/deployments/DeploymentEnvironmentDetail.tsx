@@ -1225,6 +1225,7 @@ export const DeploymentEnvironmentDetail = React.memo(
             </>
           ) : tab === 'domains' ? (
             <DeploymentDomainsPanel
+              runtimeProjections={active.snapshot.value?.content.ownServer?.approvedInputBasis.runtimeProjections}
               controller={props.controller}
               environmentId={props.environmentId}
               healthSetup={props.lifetime && controllerMachineId

@@ -71,3 +71,41 @@ it('runs an app that already exists from the Store catalog, stepping aside first
     await fixture.dispose();
   }
 });
+
+it('as its own page, a way out goes straight to its destination and Back leaves the page (UI-DOMAIN-VIEWER-1113)', async () => {
+  // Projects → New app opens this screen as a route, with no modal host to dismiss. Live #141 threw
+  // "Cannot read properties of undefined (reading 'canGoBack')" on every way out, raising the dev error viewer.
+  const fixture = await createPlainPromptLibraryCatalogHomeFixture(
+    'https://new-app-ways-route.test',
+    {
+      key: 'registry-sources',
+      value: { v: 2, disabledSourceIds: [], sources: [] },
+    },
+    'updated',
+    { handleRequest: async () => null },
+  );
+  try {
+    routerMock.spies.push.mockClear();
+    routerMock.spies.back.mockClear();
+    routerMock.spies.replace.mockClear();
+    const screen = await renderScreen(<NewAppScreen />);
+    await waitForHomeGovernance(() =>
+      expect(screen.findByTestId('newApp.fromCatalog')).toBeTruthy(),
+    );
+    await screen.pressByTestIdAsync('newApp.fromCatalog');
+    expect(routerMock.spies.push).toHaveBeenCalledWith(
+      expect.stringMatching(/view=kind.*kind=app/),
+    );
+    // Going back first would race the push and land on the previous page instead.
+    expect(routerMock.spies.back).not.toHaveBeenCalled();
+    await screen.pressByTestIdAsync('newApp.back');
+    expect(
+      routerMock.spies.back.mock.calls.length + routerMock.spies.replace.mock.calls.length,
+      'Back leaves the New app page',
+    ).toBe(1);
+    await screen.unmount();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});

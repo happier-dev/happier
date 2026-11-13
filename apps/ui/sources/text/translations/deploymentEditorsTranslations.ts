@@ -81,6 +81,7 @@ type DeploymentEditorsTranslations = Readonly<{
   cfUnknown: string;
   zonesNeedDomain: string;
   zonesNeedAccount: string;
+  addNeeds: (params: { field: string }) => string;
   addReference: string;
   addReferenceHint: string;
   addReferenceTitle: string;
@@ -190,6 +191,7 @@ export const deploymentEditorsTranslations = {
     cfUnknown: 'Couldn\'t read from Cloudflare. Retry, or open Details.',
     zonesNeedDomain: 'Enter the domain above to find its zone.',
     zonesNeedAccount: 'Choose a Cloudflare account to find zones.',
+    addNeeds: ({ field }) => `Fill in “${field}” to add this domain.`,
   },
   ru: {
     definitionServices: "Сервисы",
@@ -286,6 +288,7 @@ export const deploymentEditorsTranslations = {
     cfUnknown: 'Не удалось прочитать данные Cloudflare. Повторите или откройте подробности.',
     zonesNeedDomain: 'Введите домен выше, чтобы найти его зону.',
     zonesNeedAccount: 'Выберите аккаунт Cloudflare, чтобы найти зоны.',
+    addNeeds: ({ field }) => `Заполните «${field}», чтобы добавить этот домен.`,
   },
   pl: {
     definitionServices: "Usługi",
@@ -381,6 +384,7 @@ export const deploymentEditorsTranslations = {
     cfUnknown: 'Nie udało się odczytać danych z Cloudflare. Spróbuj ponownie lub otwórz szczegóły.',
     zonesNeedDomain: 'Wpisz domenę powyżej, aby znaleźć jej strefę.',
     zonesNeedAccount: 'Wybierz konto Cloudflare, aby znaleźć strefy.',
+    addNeeds: ({ field }) => `Wypełnij „${field}”, aby dodać tę domenę.`,
   },
   es: {
     definitionServices: "Servicios",
@@ -477,6 +481,7 @@ export const deploymentEditorsTranslations = {
     cfUnknown: 'No se pudo leer de Cloudflare. Reintenta o abre los detalles.',
     zonesNeedDomain: 'Escribe el dominio arriba para encontrar su zona.',
     zonesNeedAccount: 'Elige una cuenta de Cloudflare para buscar zonas.',
+    addNeeds: ({ field }) => `Completa «${field}» para añadir este dominio.`,
   },
   fr: {
     definitionServices: "Services",
@@ -573,6 +578,7 @@ export const deploymentEditorsTranslations = {
     cfUnknown: 'Lecture impossible depuis Cloudflare. Réessayez ou ouvrez les détails.',
     zonesNeedDomain: 'Saisissez le domaine ci-dessus pour trouver sa zone.',
     zonesNeedAccount: 'Choisissez un compte Cloudflare pour trouver les zones.',
+    addNeeds: ({ field }) => `Renseignez « ${field} » pour ajouter ce domaine.`,
   },
   it: {
     definitionServices: "Servizi",
@@ -669,6 +675,7 @@ export const deploymentEditorsTranslations = {
     cfUnknown: 'Impossibile leggere da Cloudflare. Riprova o apri i dettagli.',
     zonesNeedDomain: 'Inserisci il dominio qui sopra per trovarne la zona.',
     zonesNeedAccount: 'Scegli un account Cloudflare per trovare le zone.',
+    addNeeds: ({ field }) => `Compila «${field}» per aggiungere questo dominio.`,
   },
   pt: {
     definitionServices: "Serviços",
@@ -764,6 +771,7 @@ export const deploymentEditorsTranslations = {
     cfUnknown: 'Não foi possível ler do Cloudflare. Tente de novo ou abra os detalhes.',
     zonesNeedDomain: 'Escreva o domínio acima para encontrar a sua zona.',
     zonesNeedAccount: 'Escolha uma conta Cloudflare para procurar zonas.',
+    addNeeds: ({ field }) => `Preencha «${field}» para adicionar este domínio.`,
   },
   ca: {
     definitionServices: "Serveis",
@@ -860,6 +868,7 @@ export const deploymentEditorsTranslations = {
     cfUnknown: 'No s’ha pogut llegir de Cloudflare. Reintenta o obre els detalls.',
     zonesNeedDomain: 'Escriu el domini a dalt per trobar-ne la zona.',
     zonesNeedAccount: 'Tria un compte de Cloudflare per cercar zones.',
+    addNeeds: ({ field }) => `Omple «${field}» per afegir aquest domini.`,
   },
   de: {
     definitionServices: "Dienste",
@@ -955,6 +964,7 @@ export const deploymentEditorsTranslations = {
     cfUnknown: 'Lesen von Cloudflare fehlgeschlagen. Versuche es erneut oder öffne die Details.',
     zonesNeedDomain: 'Gib oben die Domain ein, um ihre Zone zu finden.',
     zonesNeedAccount: 'Wähle ein Cloudflare-Konto, um Zonen zu finden.',
+    addNeeds: ({ field }) => `Fülle „${field}“ aus, um diese Domain hinzuzufügen.`,
   },
   'zh-Hans': {
     definitionServices: "服务",
@@ -1050,6 +1060,7 @@ export const deploymentEditorsTranslations = {
     cfUnknown: '无法从 Cloudflare 读取。请重试或查看详情。',
     zonesNeedDomain: '在上方输入域名以查找其区域。',
     zonesNeedAccount: '选择一个 Cloudflare 账号以查找区域。',
+    addNeeds: ({ field }) => `填写“${field}”后即可添加此域名。`,
   },
   'zh-Hant': {
     definitionServices: "服務",
@@ -1145,6 +1156,7 @@ export const deploymentEditorsTranslations = {
     cfUnknown: '無法從 Cloudflare 讀取。請重試或查看詳細資料。',
     zonesNeedDomain: '在上方輸入網域以尋找其區域。',
     zonesNeedAccount: '選擇一個 Cloudflare 帳號以尋找區域。',
+    addNeeds: ({ field }) => `填寫「${field}」後即可新增此網域。`,
   },
   ja: {
     definitionServices: "サービス",
@@ -1240,5 +1252,6 @@ export const deploymentEditorsTranslations = {
     cfUnknown: 'Cloudflare から読み取れませんでした。再試行するか詳細を開いてください。',
     zonesNeedDomain: '上でドメインを入力するとゾーンを検索できます。',
     zonesNeedAccount: 'ゾーンを検索するには Cloudflare アカウントを選んでください。',
+    addNeeds: ({ field }) => `このドメインを追加するには「${field}」を入力してください。`,
   },
 } satisfies Record<SupportedLanguage, DeploymentEditorsTranslations>;

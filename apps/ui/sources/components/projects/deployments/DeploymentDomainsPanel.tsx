@@ -1,4 +1,7 @@
 import * as React from 'react';
+import { presentMachineAuthorityV1 } from '@happier-dev/protocol/machines/machineAuthorityV1';
+import type { OwnServerDeploymentRuntimeProjectionV1 } from '@happier-dev/deployment-protocol/v1';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { DeploymentDomainHealthCheckV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainHealthCheckV1';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -17,6 +20,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { NewAccountTriggerPopover } from '@/components/workflows/triggers/AccountTriggersSection';
 import { guidedStarterEventSeed } from '@/components/workflows/triggers/guidedAutomation';
@@ -43,6 +47,8 @@ type RouteExport = Readonly<{ service: string; containerPort: number }>;
 const NO_SERVICES: readonly string[] = Object.freeze([]);
 const NO_EXPORTS: readonly RouteExport[] = Object.freeze([]);
 const NO_BOUND: ReadonlySet<string> = new Set();
+/** The press position of the add form, so its outcome renders there. */
+const ADD_AT = 'add';
 const credentialKey = (domainId: string, role: DomainCredentialRole) => JSON.stringify([domainId, role]);
 
 /** What the page can change here: the Action owner's Domain Actions and the revisions they are admitted against. */
@@ -72,6 +78,7 @@ export function DeploymentDomainsPanel(
     environmentId: string;
     demand: DeploymentReadDemandV1;
     phone?: boolean;
+    runtimeProjections?: readonly OwnServerDeploymentRuntimeProjectionV1[];
     /** Absent where the page cannot write: the addresses stay read-only. */
     editing?: DeploymentDomainEditing | null;
     healthSetup?: Readonly<{ controllerMachineId: string; lifetime: ServerAccountScopeLifetime }> | null;
@@ -83,7 +90,9 @@ export function DeploymentDomainsPanel(
     props.demand,
   );
   const { items } = domains.result;
-  const { editing } = props;
+  const unavailableDockerDesktop = props.runtimeProjections?.some(projection =>
+    presentMachineAuthorityV1({ engine: projection.engineKind }).deployment.domains === 'unavailableDockerDesktop') ?? false;
+  const editing = unavailableDockerDesktop ? null : props.editing;
   const [adding, setAdding] = React.useState(false);
   const [checkSetup, setCheckSetup] = React.useState<Readonly<{
     item: DomainItem; anchorRef: React.RefObject<View | null>;
@@ -123,6 +132,8 @@ export function DeploymentDomainsPanel(
     } finally { account.dispose(); }
   }, [environment, press, serverId, setBindings]);
   const canAdd = editing !== null && editing !== undefined && editing.targetLink !== null;
+  // An add's outcome shows inside the open form, beside the Add domain the person pressed.
+  const addOutcome = adding && change.outcomeAt === ADD_AT;
   const addAction = canAdd && !adding ? (
     <SectionActionButton
       testID="project-deployments.environment.domains.add"
@@ -143,7 +154,11 @@ export function DeploymentDomainsPanel(
       description={t('projects.deployments.domainsDescription')}
       action={addAction}
     >
-      {outcome && editing ? (
+      {unavailableDockerDesktop ? (
+        <SurfaceStateCard testID="project-deployments.environment.domains.unavailableDockerDesktop"
+          size="line" kind="empty" title={t('projects.deployments.review.domainsUnavailable')} />
+      ) : null}
+      {outcome && editing && !addOutcome ? (
         <DeployOutcomeBanner
           controller={change.banner}
           machine={editing.machine}
@@ -163,6 +178,9 @@ export function DeploymentDomainsPanel(
           machine={editing.machine}
           routeExports={routeExports}
           credentials={setBindings !== undefined}
+          notice={addOutcome && outcome ? (
+            <DeployOutcomeBanner controller={change.banner} machine={editing.machine} copy="domain" />
+          ) : null}
           onCancel={() => setAdding(false)}
           onAdd={async (content) => {
             const link = editing.targetLink!;
@@ -172,7 +190,7 @@ export function DeploymentDomainsPanel(
               targetLinkId: link.id,
               expectedTargetLinkRevision: link.revision,
               content,
-            }));
+            }), ADD_AT);
             if (added) setAdding(false);
           }}
         />
@@ -202,7 +220,7 @@ export function DeploymentDomainsPanel(
           domain: { domainId: checkSetup.item.domain.id, targetLinkId: checkSetup.item.domain.targetLinkId },
         })}
       /> : null}
-      {adding && items.length === 0 ? null : <DeploymentTabState
+      {unavailableDockerDesktop && domains.result.status === 'empty' || adding && items.length === 0 ? null : <DeploymentTabState
         result={domains.result}
         testID="project-deployments.environment.domains"
         errorTitle={t('projects.deployments.domainsErrorTitle')}
@@ -294,6 +312,8 @@ function DomainAddForm(
     routeExports: readonly RouteExport[];
     /** Basic auth and your own certificate need a credential chosen on the address afterwards. */
     credentials: boolean;
+    /** The last add's outcome, drawn above the form's actions. */
+    notice: React.ReactNode;
     onCancel: () => void;
     onAdd: (content: DeploymentDomainContentV1) => void | Promise<void>;
   }>,
@@ -335,6 +355,16 @@ function DomainAddForm(
   const user = basicAuthUser.trim();
   const ready = host.length > 0 && !duplicate && !props.busy && (provider ? !needsZone || !!zone
     : service.trim().length > 0 && portValid && pathValid && healthCheck.success && (!needsSelection || !!ingress));
+  // A disabled Add domain names the first field it still needs (zone and tunnel choices say so in their own rows).
+  const missingField = props.busy || duplicate ? null : host.length === 0 ? t('projects.deployments.domainFieldHost')
+    : provider ? null
+    : service.trim().length === 0 ? t('projects.deployments.domainFieldService')
+    : !portValid ? t('projects.deployments.domainFieldPort')
+    : !pathValid ? t('projects.deployments.domainFieldPath')
+    : !checkPath.trim() ? t('projects.deployments.domainFieldCheck')
+    : !/^\d+$/.test(checkStatus.trim()) ? t('projects.deployments.domainFieldCheckStatus')
+    : !healthCheck.success ? t('projects.deployments.domainFieldCheck')
+    : null;
   return (
     <InlineAddExpander
       isOpen
@@ -526,6 +556,12 @@ function DomainAddForm(
           />
         </FieldItem>
         </> : null}
+        {missingField ? (
+          <Text testID="project-deployments.environment.domains.add.needs" variant="meta" style={styles.needs}>
+            {t('projects.deployments.editors.addNeeds', { field: missingField })}
+          </Text>
+        ) : null}
+        {props.notice ? <View testID="project-deployments.environment.domains.add.outcome">{props.notice}</View> : null}
       </View>
     </InlineAddExpander>
   );
@@ -533,6 +569,7 @@ function DomainAddForm(
 
 const styles = StyleSheet.create((theme) => ({
   form: { gap: theme.space.s12 },
+  needs: { color: theme.colors.text.secondary },
   stack: { gap: theme.space.s12 },
   // Service, port and path share one line on wide screens (lab 1.2 : .8 : 1); phones stack them.
   route: { flexDirection: 'row', gap: theme.space.s12, alignItems: 'flex-start' },

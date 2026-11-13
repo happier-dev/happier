@@ -226,10 +226,15 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       )
     : null;
 
+  // Leaving without going anywhere: the modal host closes; as its own page, New app goes back.
   const close = React.useCallback(() => {
     if (props.onClose) props.onClose();
-    else safeRouterBack(router, '/projects');
+    else safeRouterBack({ router, fallbackHref: '/projects' });
   }, [props.onClose, router]);
+  // Before a way out navigates forward, only a modal host steps aside. Going back as a page would race that navigation.
+  const stepAside = React.useCallback(() => {
+    props.onClose?.();
+  }, [props.onClose]);
 
   const connectGithub = React.useCallback(() => {
     void (async () => {
@@ -334,10 +339,10 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       return;
     }
     if (outcome.kind === 'created') {
-      if (await startSession(outcome)) close();
+      if (await startSession(outcome)) stepAside();
       else setCreate({ kind: 'projectReady', created: outcome });
     }
-  }, [close, create, input, scope, startSession]);
+  }, [create, input, scope, startSession, stepAside]);
 
   const back = React.useCallback(() => {
     if (addingMachine) setAddingMachine(false);
@@ -376,7 +381,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
               disabled: false,
               onPress: () => {
                 void startSession(create.created).then((ok) => {
-                  if (ok) close();
+                  if (ok) stepAside();
                 });
               },
               testID: 'newApp.startBuilding',
@@ -570,11 +575,11 @@ export const NewAppScreen = React.memo(function NewAppScreen(
                 display="secondary"
                 title={t('newApp.fromCatalog')}
                 onPress={() => {
-                  close();
+                  stepAside();
                   router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app' }) as never);
                 }}
               />
-              <StoreAppDefinitionEntriesFor scope={scope} onNavigate={close} />
+              <StoreAppDefinitionEntriesFor scope={scope} onNavigate={stepAside} />
             </View>
           </View>
         ) : null}
@@ -588,7 +593,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
               size="meta"
               label={t('newApp.clone')}
               onPress={() => {
-                close();
+                stepAside();
                 props.onClone?.();
               }}
             />

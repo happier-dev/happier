@@ -103,6 +103,17 @@ function DomainRowContent(props: DomainRowProps & Readonly<{ observation: Action
         onConfigureChecks={props.onConfigureChecks}
         missingCredentials={missing} onChooseCredential={props.onChooseCredential} /> : undefined}
     />
+    {item.domain.routedReplicas ? (
+      <View testID={'project-deployments.environment.domains.' + item.domain.id + '.routedReplicas'}>
+        <FieldItem label={t('projects.deployments.domainRecordedRoutedReplicas') + ' · ' + item.domain.routedReplicas.count}>
+          {item.domain.routedReplicas.replicas.map(replica => (
+            <Text key={JSON.stringify([replica.machineId, replica.installationId, replica.containerName])} selectable>
+              {replica.machineId + ' · ' + replica.containerName}
+            </Text>
+          ))}
+        </FieldItem>
+      </View>
+    ) : null}
     {item.content.providerObservation?.dns.map((record, index) => (
       <FieldItem key={JSON.stringify([record.type, record.name, index])} label={`${record.type} · ${record.name}`}>
         <Text selectable>{record.value}</Text>
