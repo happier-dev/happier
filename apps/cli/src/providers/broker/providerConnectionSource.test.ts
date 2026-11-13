@@ -1,5 +1,14 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createRuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
+import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
+import { createProviderProbeHttpClient } from '@/providers/probe/client';
+import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveTeamCredentialResourceSourceCatalogs } from './resourceTestCandidate';
 import { readProviderBrokerResponseBody } from '@/providers/broker/providerBroker.testkit';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ManagedServiceRequest, ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
 import {
   AccountSettingsSchema,
@@ -33,6 +42,7 @@ import {
   type ProviderConnectionCpxBridge,
   type ProviderConnectionRegistryReader,
 } from './providerConnectionSource';
+import { providerBrokerApplicationFailureBody } from './providerBrokerApplicationFailure';
 import { createTeamCredentialBrokerSourceOwner } from './teamCredentialBrokerSourceOwner';
 import { createPrivateProviderBrokerStreamLifetime } from './daemonProviderBrokerRuntime';
 import { createProviderConnectionCpxBridge } from './providerConnectionCpxBridge';
@@ -186,6 +196,85 @@ function resourceSource(settings = accountSettings(), activeRegistry = registry)
 }
 
 describe('Provider Connection Team broker source', () => {
+  it.each([
+    ['ready', null],
+    ['selection', 'source_selection_unavailable'],
+    ['resource', 'resource_not_current'],
+    ['account', 'account_snapshot_unavailable'],
+    ['activation', 'activation_occurrence_unavailable'],
+    ['bridge', 'managed_custody_unavailable'],
+    ['projection', 'projection_not_current'],
+  ] as const)('composes a Team API-key OpenRouter-style source with OpenCode chat: %s', async (scenario, reason) => {
+    const chatDefinition = ProviderContributionV1Schema.parse({ ...definition, requestCost: undefined,
+      catalog: { source: 'static', manualModelPolicy: 'allowed', staticModels: [{ id: 'openai/gpt-4.1-mini', name: 'GPT' }] },
+      endpointTemplates: [{ ...definition.endpointTemplates[0], id: 'openrouter-openai-chat',
+        protocol: 'openai-chat', baseUrl: 'https://openrouter.ai/api/v1' }],
+      credential: { kind: 'apiKey', required: true, transports: [{ id: 'bearer', uses: ['runtime'],
+        protocols: ['openai-chat'], destination: { kind: 'httpHeader', name: 'Authorization', format: 'bearer' } }] },
+    });
+    const chatRegistry = { ...registry, providersByContributionKey: new Map(registry.providersByContributionKey)
+      .set(contributionKey, { ...contribution, definition: chatDefinition }),
+      providerActivationOccurrenceIdsByPluginId: scenario === 'activation' ? new Map<string, string>()
+        : registry.providerActivationOccurrenceIdsByPluginId };
+    const settings = accountSettings(chatRegistry);
+    const source = resourceSource(settings, chatRegistry);
+    const application = { agentTargetKey: 'agent:happier.agent.opencode/opencode',
+      implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+      endpointTemplateId: 'cliproxyapi-openai-chat', protocol: 'openai-chat' } as const;
+    const directory = await mkdtemp(join(tmpdir(), 'provider-openrouter-open-'));
+    onTestFinished(async () => { await rm(directory, { recursive: true, force: true }); });
+    // The loaded-plugin registry is the external boundary; catalog and exact selection stay real.
+    const lease: PluginRuntimeRegistryLease = { source: 'active', durableRevision: 1, release: async () => {},
+      registry: { generation: 9, contributes: { providersByContributionKey: chatRegistry.providersByContributionKey },
+        readPluginOccurrenceId: (id: string) => registry.providerActivationOccurrenceIdsByPluginId.get(id) ?? null,
+      } as unknown as ResolvedExecutablePluginRuntimeRegistry };
+    const models = createRuntimeProviderModelManagementServices({ machineId: 'machine-a', registry: chatRegistry,
+      runtimeStore: createProviderRuntimeStateStore({ happyHomeDir: directory, machineId: 'machine-a' }),
+      client: createProviderProbeHttpClient({ transport: async () => { throw new Error('Static catalog cannot contact a vendor'); } }),
+      getAccountSettingsSnapshot: () => settings, featureGate: { isEnabled: () => true },
+      resolveAddresses: async () => ['1.1.1.1'], acquireRuntimeLease: async () => lease,
+      modelSettingsMutation: async () => { throw new Error('Read cannot mutate settings'); },
+    });
+    const catalog = (await resolveTeamCredentialResourceSourceCatalogs({ machineId: 'machine-a', teamId: 'team-a',
+      resourceId: 'team-resource', expectedResourceRevision: 4, source, application,
+      readSourceModelCatalogs: models.readSourceModelCatalogs }))[0];
+    if (!catalog) throw new Error('Expected Team source catalog');
+    const custody: ManagedProviderExplicitStartCustody = {
+      acquire: async () => scenario === 'bridge' ? null : ({
+        access: { endpointUrl: () => 'http://127.0.0.1:43123/v1',
+          request: async () => ({ ok: true, status: 200, statusText: 'OK', headers: {}, body: null }) },
+        isCurrent: () => scenario !== 'projection', cleanup: async () => {},
+      }),
+      retire: async () => true, retireExternalApiKey: async () => true,
+      revalidateRetainedClaims: async () => 0, retireAll: async () => 0,
+    };
+    const bridge = createProviderConnectionCpxBridge({ custody });
+    const sourceOwner = createTeamCredentialBrokerSourceOwner({ machineId: 'machine-a', custody,
+      selectConnectedServicesSourceMember: async () => null, openConnectedServicesSource: async () => null,
+      openProviderConnectionSource: createProviderConnectionBrokerSourceOpen({ machineId: 'machine-a',
+        readResource: async () => ({ teamId: 'team-a', source, revision: 4, enabled: scenario !== 'resource',
+          brokerPlacement: { kind: 'machine', machineId: 'machine-a' } }),
+        withRegistry: async read => read(chatRegistry),
+        getAccountSettingsSnapshot: () => scenario === 'account' ? null : settings,
+        collectDnsEvidence: async () => new Map([['https://openrouter.ai/api/v1', ['1.1.1.1']]]),
+        resolveExactSelection: models.resolveTeamCredentialBrokerSourceSelection,
+        openCpxProviderConnection: bridge.open,
+      }),
+    });
+    const operation = { kind: 'session', sessionId: 'member-opencode' } as const;
+    const lifetime = createPrivateProviderBrokerStreamLifetime({ sourceOwner, application, operation });
+    try {
+      const result = await lifetime.acquireSource({ source, resourceId: 'team-resource', brokerMachineId: 'machine-a',
+        expectedResourceRevision: 4, application, operation, modelId: 'openai/gpt-4.1-mini', sourceRevision: scenario === 'selection' ? 'catalog-r162-stale' : catalog.sourceRevision });
+      if (reason) {
+        expect(result).toMatchObject({ ok: false, reasonCode: 'resource_unavailable', sourceOpenFailureReason: reason });
+        if (!result || !('reasonCode' in result)) throw new Error('Expected source refusal');
+        expect(providerBrokerApplicationFailureBody(result, 'team-resource').error.message).toContain(reason);
+      }
+      else expect(result).toMatchObject({ access: { endpointUrl: expect.any(Function) } });
+    } finally { await lifetime.retire(); }
+  });
+
   it('preserves the source secret refusal instead of returning an absent broker source', async () => {
     const settings = accountSettings();
     const source = resourceSource(settings);
@@ -571,7 +660,7 @@ describe('Provider Connection Team broker source', () => {
         protocol: 'openai-responses',
       },
       signal: new AbortController().signal,
-    })).resolves.toBeNull();
+    })).resolves.toEqual({ unavailable: 'application_unavailable' });
     expect(readResource).not.toHaveBeenCalled();
     expect(openCpxProviderConnection).not.toHaveBeenCalled();
   });
@@ -649,9 +738,10 @@ describe('Provider Connection Team broker source', () => {
       expect(opened).not.toBeNull();
       expect(retire).not.toHaveBeenCalled();
       expect(cleanup).not.toHaveBeenCalled();
-      await opened?.projection.cleanup();
+      if (!opened || 'unavailable' in opened) throw new Error('Expected opened source');
+      await opened.projection.cleanup();
     } else {
-      expect(opened).toBeNull();
+      expect(opened).toEqual({ unavailable: 'projection_not_current' });
       expect(retire).toHaveBeenCalledOnce();
     }
     expect(cleanup).toHaveBeenCalledOnce();

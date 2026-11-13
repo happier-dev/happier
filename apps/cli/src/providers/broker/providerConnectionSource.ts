@@ -26,7 +26,7 @@ import {
   type ProviderProbeHostCredentialReference,
 } from '@/providers/spawn/credentials';
 import { resolveRuntimeProviderCredential } from '@/providers/spawn/runtimeCredential';
-import type { TeamCredentialBrokerSourceOpenInput, TeamCredentialBrokerOpenedSource } from './teamCredentialBrokerSourceOwner';
+import type { TeamCredentialBrokerSourceOpenInput, TeamCredentialBrokerOpenedSource, TeamCredentialBrokerSourceOpenFailureReason } from './teamCredentialBrokerSourceOwner';
 import { preserveBrokerSourceHealthFailure } from './sourceFailure';
 import {
   isCpxBrokerApplication,
@@ -580,15 +580,20 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
     protocol: ProviderWireProtocol;
     credentialTransport: ProviderCredentialTransportV1;
   }> | null>;
-}>): (request: ProviderConnectionOpenInput) => Promise<TeamCredentialBrokerOpenedSource | null> {
+}>): (request: ProviderConnectionOpenInput) => Promise<TeamCredentialBrokerOpenedSource
+  | Readonly<{ unavailable: TeamCredentialBrokerSourceOpenFailureReason }>> {
+  const unavailable = (reason: TeamCredentialBrokerSourceOpenFailureReason): Readonly<{
+    unavailable: TeamCredentialBrokerSourceOpenFailureReason;
+  }> => ({ unavailable: reason });
   return async (request) => {
-    if (request.brokerMachineId !== input.machineId || request.signal.aborted) return null;
+    if (request.brokerMachineId !== input.machineId) return unavailable('broker_machine_mismatch');
+    if (request.signal.aborted) return unavailable('request_cancelled');
 
     const capture = await input.withRegistry(async (registry) => {
-      if (!isCpxBrokerApplication(registry, request.application)) return null;
+      if (!isCpxBrokerApplication(registry, request.application)) return unavailable('application_unavailable');
       const resource = await input.readResource(request.resourceId, request.signal);
       if (!teamCredentialBrokerResourceAcceptsMachine(resource, request.brokerMachineId)
-        || !sameTeamCredentialBrokerSource(resource.source, request.source)) return null;
+        || !sameTeamCredentialBrokerSource(resource.source, request.source)) return unavailable('resource_not_current');
       const exactSelection = request.operation.kind === 'session' || request.operation.kind === 'execution_run'
         ? await (async () => {
           if (
@@ -611,17 +616,18 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
         })()
       : null;
       if ((request.operation.kind === 'session' || request.operation.kind === 'execution_run')
-        && !exactSelection) return null;
+        && !exactSelection) return unavailable('source_selection_unavailable');
       if (exactSelection?.protocol !== undefined
-        && exactSelection.protocol !== request.application.protocol) return null;
+        && exactSelection.protocol !== request.application.protocol) return unavailable('source_protocol_mismatch');
 
       const captured = input.getAccountSettingsSnapshot();
-      if (!captured?.scopeKey) return null;
+      if (!captured?.scopeKey) return unavailable('account_snapshot_unavailable');
       const catalog = captured.providerConnectionsCatalog?.status === 'ready'
         ? captured.providerConnectionsCatalog
         : await prepareProviderConnectionsCatalogForCli({ expectedScopeKey: captured.scopeKey, signal: request.signal });
       const accountSnapshot = input.getAccountSettingsSnapshot();
-      if (catalog.status !== 'ready' || accountSnapshot?.scopeKey !== captured.scopeKey) return null;
+      if (catalog.status !== 'ready') return unavailable('provider_catalog_unavailable');
+      if (accountSnapshot?.scopeKey !== captured.scopeKey) return unavailable('account_snapshot_unavailable');
       const dnsEvidenceByEndpointUrl = await input.collectDnsEvidence({
         source: request.source,
         registry,
@@ -638,7 +644,7 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
           : {}),
       });
       if (resolution.status !== 'resolved' || resolution.record.deployment.kind !== 'external') {
-        return null;
+        return unavailable('endpoint_resolution_unavailable');
       }
       const endpoints = resolution.record.endpoints.filter((candidate) => (
         candidate.protocol === request.application.protocol
@@ -649,7 +655,7 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
       // above. One-shot external/resource-test admission currently carries
       // only the protocol, so refuse ambiguity rather than guessing among
       // same-protocol Provider destinations.
-      if (endpoints.length !== 1) return null;
+      if (endpoints.length !== 1) return unavailable('endpoint_selection_unavailable');
       const resolved = resolveProviderConnectionBrokerSource({
         source: request.source,
         machineId: input.machineId,
@@ -669,12 +675,18 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
           ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
           : {}),
       });
-      if (!resolved.ok) return preserveBrokerSourceHealthFailure(resolved.error);
+      if (!resolved.ok) {
+        preserveBrokerSourceHealthFailure(resolved.error);
+        return unavailable('source_selection_unavailable');
+      }
       return resolved.snapshot.activationOccurrenceId !== null
         ? { snapshot: resolved.snapshot, registry, dnsEvidenceByEndpointUrl, scopeKey: captured.scopeKey }
-        : null;
-    }).catch(preserveBrokerSourceHealthFailure);
-    if (!capture) return null;
+        : unavailable('activation_occurrence_unavailable');
+    }).catch(error => {
+      preserveBrokerSourceHealthFailure(error);
+      return unavailable('source_currentness_unknown');
+    });
+    if ('unavailable' in capture) return capture;
     const expected = capture.snapshot;
     const requestCost = request.operation.kind === 'external_api_key' && expected.requestCostDeclared === true
       ? await input.acquireRequestCostParser?.(expected.provider.identity).catch(() => null)
@@ -683,7 +695,8 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
       && requestCost.endpointTemplateIds.includes(expected.endpoint.endpointTemplateId)
       ? (usage: unknown) => requestCost.isCurrent() ? requestCost.parse(usage) : null
       : undefined;
-    const reopen = async (rejoinSignal: AbortSignal): Promise<TeamCredentialBrokerOpenedSource | null> => {
+    const reopen = async (rejoinSignal: AbortSignal): Promise<TeamCredentialBrokerOpenedSource
+      | Readonly<{ unavailable: TeamCredentialBrokerSourceOpenFailureReason }>> => {
       const isCurrent = async (
         signal: AbortSignal = rejoinSignal,
       ): Promise<boolean> => {
@@ -720,13 +733,13 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
         isCurrent,
         acquireRequestCredential,
       }).catch(preserveBrokerSourceHealthFailure);
-      if (!projection) return null;
+      if (!projection) return unavailable('managed_custody_unavailable');
       if (rejoinSignal.aborted || !projection.isCurrent()) {
         if (!rejoinSignal.aborted && !projection.isCurrent()) {
           await projection.retire().catch(() => undefined);
         }
         await Promise.resolve(projection.cleanup()).catch(() => undefined);
-        return null;
+        return unavailable(rejoinSignal.aborted ? 'request_cancelled' : 'projection_not_current');
       }
       return Object.freeze({
         projection: requestCostParser ? Object.freeze({ ...projection, requestCostParser }) : projection,

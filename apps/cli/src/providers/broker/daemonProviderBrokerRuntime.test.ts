@@ -1452,7 +1452,7 @@ describe('Provider-broker release after grant expiry (machine/1 admission + brok
     expect(diagnostics).toHaveBeenCalledWith('[provider-broker-application]', expect.objectContaining({
       stage: 'application_response', code, sourceOpenFailureReason: 'resource_not_current',
     }));
-    expect(response).not.toContain('resource_not_current');
+    expect(response).toContain('resource_not_current');
   });
 
   it.each(['unavailable', 'cancelled'] as const)('admits the personal carrier before private source acquisition (%s Home read)', async outcome => {

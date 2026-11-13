@@ -133,8 +133,18 @@ export type TeamCredentialBrokerSourceOpenInput = ExactSourceOpenInput<
   TeamCredentialSourceBindingV1
 >;
 
-/** Host-private prerequisite facts, never part of a broker HTTP response. */
+/** Closed prerequisite codes safe for broker diagnostics and requester refusals.
+ * Source identifiers, credentials and raw exception text remain private. */
 export type TeamCredentialBrokerSourceOpenFailureReason =
+  | 'broker_machine_mismatch'
+  | 'request_cancelled'
+  | 'application_unavailable'
+  | 'source_protocol_mismatch'
+  | 'account_snapshot_unavailable'
+  | 'provider_catalog_unavailable'
+  | 'endpoint_resolution_unavailable'
+  | 'endpoint_selection_unavailable'
+  | 'activation_occurrence_unavailable'
   | 'source_selection_unavailable'
   | 'resource_not_current'
   | 'purpose_binding_unavailable'
