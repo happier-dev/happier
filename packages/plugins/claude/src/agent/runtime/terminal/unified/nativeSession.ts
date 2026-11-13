@@ -163,7 +163,7 @@ export async function openClaudeNativeUnifiedTerminalSession(
     settings: input.context.services.settings.forScope({ kind: 'account' }),
     launchEnv: isolateClaudeRuntimeAuthEnv(resolveClaudeNativeBaseLaunchEnvironment({
       launchEnvironment: input.request.launchEnvironment,
-      processEnv: process.env,
+      exec: input.context.services.exec,
     })),
     includeAdvancedOptions: false,
     idleCompaction: input.request.idleCompaction,

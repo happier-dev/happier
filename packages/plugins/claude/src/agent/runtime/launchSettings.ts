@@ -20,6 +20,8 @@ import {
 import { buildClaudeHookSettingsOverlay } from '../hooks/settings.js';
 import { CLAUDE_PROVIDER_HELPER_ENV_KEYS } from '../providerBinding/adapter.js';
 import { readClaudePoolNativeWaitingPreferenceFromEnv } from '../auth/services/runtime/env.js';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 export type ClaudeHelperModelEnv = Readonly<Partial<Record<typeof CLAUDE_PROVIDER_HELPER_ENV_KEYS[number], string>>>;
 
@@ -30,6 +32,7 @@ const CLAUDE_AGENT_TEAMS_ENV_KEY = 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS';
 const CLAUDE_PROMPT_SUGGESTION_ENV_KEY = 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION';
 const CLAUDE_LOCAL_AUTH_USER_ENV_KEY = 'USER';
 const CLAUDE_EXTERNAL_SANDBOX_ENV_KEY = 'IS_SANDBOX';
+const CLAUDE_NATIVE_INHERITED_ENV_KEYS = [CLAUDE_LOCAL_AUTH_USER_ENV_KEY, CLAUDE_EXTERNAL_SANDBOX_ENV_KEY] as const;
 
 type ClaudeSettingsReader = Readonly<{
   get(key: string): unknown | Promise<unknown>;
@@ -293,21 +296,27 @@ async function readSetting(settings: ClaudeSettingsReader, key: string): Promise
 
 export function resolveClaudeNativeBaseLaunchEnvironment(input: Readonly<{
   launchEnvironment?: AgentLaunchEnvironment;
-  processEnv: Readonly<Record<string, string | undefined>>;
+  processEnv?: Readonly<Record<string, string | undefined>>;
+  exec?: Pick<ExecService, 'readEnvironment'>;
 }>): Readonly<Record<string, string>> {
+  const readEnvironment = input.exec?.readEnvironment;
+  if (input.processEnv === undefined && input.exec && !readEnvironment) {
+    throw new PluginError({ code: 'plugin_service_unavailable', message: 'Inherited Session environment is unavailable.' });
+  }
+  const processEnv = input.processEnv ?? readEnvironment?.(CLAUDE_NATIVE_INHERITED_ENV_KEYS) ?? process.env;
   const values = { ...(input.launchEnvironment?.values ?? {}) };
   if (
     values[CLAUDE_LOCAL_AUTH_USER_ENV_KEY] === undefined
     && !input.launchEnvironment?.unset.includes(CLAUDE_LOCAL_AUTH_USER_ENV_KEY)
   ) {
-    const user = input.processEnv[CLAUDE_LOCAL_AUTH_USER_ENV_KEY]?.trim();
+    const user = processEnv[CLAUDE_LOCAL_AUTH_USER_ENV_KEY]?.trim();
     if (user) values[CLAUDE_LOCAL_AUTH_USER_ENV_KEY] = user;
   }
   if (
     values[CLAUDE_EXTERNAL_SANDBOX_ENV_KEY] === undefined
     && !input.launchEnvironment?.unset.includes(CLAUDE_EXTERNAL_SANDBOX_ENV_KEY)
   ) {
-    Object.assign(values, resolveClaudeExternalSandboxEnv(input.processEnv));
+    Object.assign(values, resolveClaudeExternalSandboxEnv(processEnv));
   }
   return values;
 }

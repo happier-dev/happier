@@ -1,5 +1,17 @@
 # Compatibility and version skew
 
+## Triage source caller diagnostics (unreleased 0.3)
+
+The source-administration `invalidCaller` result accepts optional `admission`
+operands: caller kind and plugin/contribution identifiers, invocation surface,
+and candidate count. The resolver produces these from its existing admission
+snapshot; authorization and stored source-instance formats are unchanged.
+Matching Triage protocol, plugin and UI source reload together under the
+unpublished 0.3 direct cut; older strict development readers reject the added
+field. The inspected scoped-clean `../0.2` frontier
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no `packages/triage-protocol`
+package or corresponding caller-source implementation. No adapter is required.
+
 ## Domain-filtered Session selection (unreleased 0.3)
 
 The V1 Host API `selectActionInput` Session-address request accepts optional
@@ -8371,6 +8383,16 @@ The scoped-clean `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf`
 has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
+
+Unreleased 0.3 in-process `ExecService` adds optional `readEnvironment(keys)`.
+The invocation factory captures the existing Session environment reference;
+the method returns only requested inherited values, independently of the narrow
+child-launch projection. Claude and Gemini native adapters require this method
+when invoked by a host, preserve explicit launch values and unsets, and report
+the existing `plugin_service_unavailable` error when it is absent. Standalone
+helpers with no host service retain their process baseline. Matching host and
+plugin source reload together under the unpublished 0.3 direct cut. This adds
+no wire field, epoch, persistence format, capability or old-host adapter.
 
 Unreleased 0.3 Machine Shell and Workspace Sync requester availability may carry
 optional `preparation: member_not_prepared` on their existing available result.

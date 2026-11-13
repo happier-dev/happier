@@ -7,6 +7,20 @@ import {
 } from './launchSettings.js';
 
 describe('Claude launch environment', () => {
+  it('uses the host inherited environment without falling back when a Session selector is absent', () => {
+    expect(resolveClaudeNativeBaseLaunchEnvironment({ launchEnvironment: { values: {}, unset: [] },
+      exec: { readEnvironment: () => ({}) },
+    })).toEqual({});
+    expect(resolveClaudeNativeBaseLaunchEnvironment({ launchEnvironment: { values: {}, unset: [] },
+      processEnv: { USER: 'explicit-baseline' }, exec: { readEnvironment: () => ({ USER: 'session-user' }) },
+    })).toEqual({ USER: 'explicit-baseline' });
+  });
+
+  it('reports an unavailable host environment instead of consulting the physical process', () => {
+    expect(() => resolveClaudeNativeBaseLaunchEnvironment({ exec: {} }))
+      .toThrow(expect.objectContaining({ code: 'plugin_service_unavailable' }));
+  });
+
   it('recognizes only Claude\'s exact external sandbox assertion', () => {
     expect(resolveClaudeExternalSandboxEnv({ IS_SANDBOX: '1' })).toEqual({
       IS_SANDBOX: '1',

@@ -541,6 +541,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
             return Object.freeze({
                 agentCli: Object.freeze({ checkReadiness: fail }),
                 systemTools: Object.freeze({ resolve: fail }),
+                readEnvironment: fail,
                 withSpawnAdmission: fail,
                 prepareNativeSocketDirectory: fail,
                 run: fail,

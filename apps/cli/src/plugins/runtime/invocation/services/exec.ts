@@ -6,6 +6,7 @@ import { isAbsolute, join } from 'node:path';
 import { createSessionNativeDirectory } from '@/utils/fs/unixPathAccess';
 import type { AgentLaunchNativeSocketDirectory } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { configuration } from '@/configuration';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import type { AgentCliReadinessService as PluginAgentCliReadinessService, ExecService, PluginProcessHandle, SystemToolsService as PluginSystemToolsService } from '@happier-dev/plugin-sdk/exec';
 import type { PluginFramedBytesClient, PluginJsonRpcClient, PluginJsonRpcConnection, PluginJsonRpcConnectionSpec, PluginJsonStreamClient, PluginLoopbackWebSocketJsonClient, PluginProtocolClientHandle, PluginProtocolClientSpec, PluginProtocolClientSpecByKind, ProtocolClientsService } from '@happier-dev/plugin-sdk/exec/protocol-clients';
@@ -596,6 +597,7 @@ export async function authorizePluginExecLaunchForHost(
 export function createStableRunnerPluginExecService(
     params: Readonly<{
         processOwner?: ProcessOwnerRef;
+        inheritedEnvironment?: Readonly<NodeJS.ProcessEnv>;
         signal: AbortSignal;
         isOccurrenceCurrent(): boolean;
         agentCli: PluginAgentCliReadinessService;
@@ -635,8 +637,10 @@ export function createStableRunnerPluginExecService(
         readSpawnFailureLimits?: SpawnFailureLimitsReader;
     }>,
 ): ExecService {
+    const inheritedEnvironment = params.inheritedEnvironment ?? sessionProcessEnvironment();
     const systemToolResolutionIds = new WeakMap<object, string>();
     const base = createStablePluginExecService({
+        inheritedEnvironment,
         ...(params.processOwner ? { processOwner: params.processOwner } : {}),
         signal: params.signal,
         readSpawnFailureLimits: params.readSpawnFailureLimits,
@@ -697,6 +701,7 @@ export function createStableRunnerPluginExecService(
     });
     INTERNAL_EXECUTABLE_RESOLVERS.set(service, params.resolveExecutable);
     INTERNAL_OWNER_REBINDERS.set(service, (owner, signal) => createStableRunnerPluginExecService({ ...params,
+        inheritedEnvironment,
         processOwner: owner, signal: signal ? AbortSignal.any([params.signal, signal]) : params.signal }));
     INTERNAL_NATIVE_LAUNCH_QUALIFIERS.set(service, INTERNAL_NATIVE_LAUNCH_QUALIFIERS.get(base)!);
     INTERNAL_RESOLVED_AGENT_LAUNCH_AUTHORIZERS.set(service, { signal: params.signal, async admit(kind, signal) {
@@ -1382,6 +1387,8 @@ export function createStablePluginExecService(params: Readonly<{
     posixProcessGroup?: 'inherit';
     processTreeSystemBoundary?: Parameters<typeof spawnSupervisedPluginProcess>[0]['processTreeSystemBoundary'];
     environment?: Readonly<Record<string, string>>;
+    /** Separate from the deliberately narrow child-launch environment. */
+    inheritedEnvironment?: Readonly<NodeJS.ProcessEnv>;
     signal: AbortSignal;
     retirementSignal?: AbortSignal;
     isOccurrenceCurrent(): boolean;
@@ -1421,6 +1428,7 @@ export function createStablePluginExecService(params: Readonly<{
     recordRuntimeLimitMeasurement?: HostRuntimeLimitMeasurementRecorder;
     readSpawnFailureLimits?: SpawnFailureLimitsReader;
 }>): ExecService {
+    const inheritedEnvironment = params.inheritedEnvironment ?? sessionProcessEnvironment();
     const processOwnerTag = params.processOwner
         ? formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir, owner: params.processOwner })
         : readHostProcessOwnerTag();
@@ -2387,6 +2395,24 @@ export function createStablePluginExecService(params: Readonly<{
     const service: ExecService = Object.freeze({
         agentCli,
         systemTools,
+        readEnvironment(keys: readonly string[]): Readonly<Record<string, string>> {
+            guard();
+            const isWindows = process.platform === 'win32';
+            let environment = inheritedEnvironment;
+            if (isWindows) {
+                const normalized: NodeJS.ProcessEnv = {};
+                for (const [key, value] of Object.entries(inheritedEnvironment)) {
+                    normalized[key.toUpperCase()] = value;
+                }
+                environment = normalized;
+            }
+            const selected: Record<string, string> = {};
+            for (const key of keys) {
+                const value = environment[isWindows ? key.toUpperCase() : key];
+                if (typeof value === 'string') selected[key] = value;
+            }
+            return Object.freeze(selected);
+        },
         async prepareNativeSocketDirectory(options?: Parameters<ExecService['prepareNativeSocketDirectory']>[0]) {
             guard();
             const nativeLaunch = options?.nativeLaunch;
@@ -2450,6 +2476,7 @@ export function createStablePluginExecService(params: Readonly<{
         });
     } });
     INTERNAL_OWNER_REBINDERS.set(service, (owner, signal) => createStablePluginExecService({ ...params,
+        inheritedEnvironment,
         processOwner: owner, signal: signal ? AbortSignal.any([params.signal, signal]) : params.signal }));
     INTERNAL_LAUNCH_AUTHORIZERS.set(service, (request, options, project, nativeOwner, prepare, isolation, projection) =>
         authorizeLaunch(request, options, project, nativeOwner, prepare, isolation, undefined, projection));

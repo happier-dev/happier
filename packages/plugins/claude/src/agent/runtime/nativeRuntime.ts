@@ -152,6 +152,8 @@ export type ClaudeNativeSessionOperations = ClaudeRuntimeTurnOperations & Readon
     handler: (event: AgentSessionRuntimeEvent) => void,
   ) => () => void;
   isTurnInFlight?: () => boolean;
+  /** Adopts a held Agent once someone watches this runtime (its adopted turn is published then). */
+  startHeldAgentAdoption?: () => void;
   canSteerPrompt?: () => boolean;
   canInterruptForPendingInput?: () => boolean;
   notifyPromptQueuedDuringTurn?: () => void;
@@ -240,7 +242,7 @@ export async function resolveClaudeInstalledEffortSupport(input: Parameters<Clau
     timeoutMs: 5_000,
     env: resolveClaudeNativeBaseLaunchEnvironment({
       launchEnvironment: input.request.launchEnvironment,
-      processEnv: process.env,
+      exec: input.context.services.exec,
     }),
   });
 }
@@ -252,7 +254,7 @@ export async function resolveClaudeInstalledSystemPromptSnapshotOffSupport(input
     timeoutMs: 5_000,
     env: resolveClaudeNativeBaseLaunchEnvironment({
       launchEnvironment: input.request.launchEnvironment,
-      processEnv: process.env,
+      exec: input.context.services.exec,
     }),
   });
 }
@@ -1129,6 +1131,7 @@ export function createClaudeNativeSessionRuntimeFromOperations(
     },
     watch(listener) {
       listeners.add(listener);
+      if (!disposed) operations.startHeldAgentAdoption?.();
       if (initialProviderSessionId && !disposed) {
         listener(Object.freeze({
           kind: 'provider-session-id',
@@ -1315,7 +1318,7 @@ export function createClaudeNativeRuntime(
       && !await probeClaudeSupportsStartupInstructionsRaw({
         exec: context.services.exec, cwd: request.cwd, timeoutMs: 5_000,
         env: resolveClaudeNativeBaseLaunchEnvironment({
-          launchEnvironment: request.launchEnvironment, processEnv: process.env,
+          launchEnvironment: request.launchEnvironment, exec: context.services.exec,
         }),
       })) {
       throw new PluginError({
@@ -1440,7 +1443,7 @@ async function openClaudeNativeAgentSdkSession(input: Readonly<{
     settings: input.context.services.settings.forScope({ kind: 'account' }),
     launchEnv: resolveClaudeNativeBaseLaunchEnvironment({
       launchEnvironment: input.request.launchEnvironment,
-      processEnv: process.env,
+      exec: input.context.services.exec,
     }),
     includeAdvancedOptions: true,
     providerBinding: input.request.providerBinding,
@@ -1505,7 +1508,7 @@ async function openClaudeNativeAgentSdkExecutionRunConversation(input: Readonly<
     settings: input.context.services.settings.forScope({ kind: 'account' }),
     launchEnv: resolveClaudeNativeBaseLaunchEnvironment({
       launchEnvironment: input.request.launchEnvironment,
-      processEnv: process.env,
+      exec: input.context.services.exec,
     }),
     includeAdvancedOptions: true,
     providerBinding: input.request.providerBinding,

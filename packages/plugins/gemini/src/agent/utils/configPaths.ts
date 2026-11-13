@@ -3,8 +3,10 @@ import { join, posix, win32 } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
 type EnvLike = Readonly<Record<string, string | undefined>>;
+export const GEMINI_NATIVE_PATH_ENV_KEYS = ['HOME', 'GEMINI_CLI_HOME', 'XDG_CONFIG_HOME',
+  'GEMINI_CLI_SYSTEM_SETTINGS_PATH', 'GEMINI_CLI_SYSTEM_DEFAULTS_PATH'] as const;
 
-/** Read only native path selectors from the inherited process environment. */
+/** Read native path selectors; callers without a host use the standalone process baseline. */
 export function readGeminiNativePathEnvironment(
   values: EnvLike,
   unset: readonly string[],
@@ -18,8 +20,7 @@ export function readGeminiNativePathEnvironment(
     const name = Object.keys(env).filter(name => name.toUpperCase() === key).at(-1);
     return name === undefined ? undefined : env[name];
   };
-  for (const key of ['HOME', 'GEMINI_CLI_HOME', 'XDG_CONFIG_HOME',
-    'GEMINI_CLI_SYSTEM_SETTINGS_PATH', 'GEMINI_CLI_SYSTEM_DEFAULTS_PATH']) {
+  for (const key of GEMINI_NATIVE_PATH_ENV_KEYS) {
     if (unset.some(name => name.toUpperCase() === key)) continue;
     const value = readSelector(values, key) ?? readSelector(inherited, key);
     if (value !== undefined) result[key] = value;

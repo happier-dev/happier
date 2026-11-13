@@ -64,6 +64,11 @@ export interface SystemToolsService {
 export interface ExecService {
     readonly agentCli: AgentCliReadinessService;
     readonly systemTools: SystemToolsService;
+    /** Read selected inherited values from this invocation's captured Session
+     * environment. Launch values and explicit unsets remain Agent-owned overlays;
+     * this does not widen the environment automatically inherited by children.
+     */
+    readEnvironment?(keys: readonly string[]): Readonly<Record<string, string>>;
     /** Prepare one transient Unix transport leaf for this held native identity.
      * The returned qualifier prepares its native-owned alias parent on server
      * launch; clients retain their original qualifier and use nativeProxy.
@@ -107,6 +112,11 @@ export interface ExecService {
             nativeLaunch?: AgentNativeLaunchQualifier;
             /** Same successful native descendant handoff as run; no managed-service custody transfer. */
             descendantDisposition?: 'terminate' | 'preserve-on-success';
+            /** Select the process carrying an admitted invocation's live channel (a
+             * provisioner `stream` role): the host feeds its stdin and observes its output.
+             * Without a host-private channel this is an ordinary spawn.
+             */
+            outputDelivery?: 'captured' | 'invocation';
         },
     ): Promise<PluginProcessHandle>;
     readonly clients: ProtocolClientsService;

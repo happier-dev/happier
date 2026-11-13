@@ -4,6 +4,15 @@ The host owns the executable Session and turn lifecycle. An Agent plugin supplie
 
 This page describes **0.3 development source**, not a shipped release or a completed live-validation gate. It is the standing architecture reference; approved plans remain the execution contract for their assigned work.
 
+Native Agent adapters read their inherited configuration selectors through
+`context.services.exec.readEnvironment(keys)`. The Exec invocation captures
+the Session's existing environment reference and retains it when process
+ownership is rebound. Agent-owned selectors remain separate from the narrow
+child launch environment; the Agent applies explicit launch values and unsets
+over the inherited values. A host lacking this operation reports the existing
+`plugin_service_unavailable` error rather than reading another Session's
+physical process baseline.
+
 Native skill changes use the strict `catalog-changed` Session runtime event with
 `catalog: 'skills'`. The host publishes a content-free observation token in
 `agentState.nativeCatalogChangesV1.skills`. The existing Session catalog reader
@@ -2288,6 +2297,13 @@ adds no idle timer: work settlement decides when a demand child ends. The
 owns declaration defaults, caller cancellation and process-service availability.
 
 ## Managed service custody (0.3 development)
+
+The daemon's existing heartbeat recovery also discovers Linux service scopes
+from the native process census when their endpoint projections are gone. Scope
+names must identify the current Happier home, and every surviving member must
+have the existing ownership resolver's ended-service proof before the process-tree
+terminator acts. Live and unknown owners remain untouched. This adds no recovery
+timer or store; Windows and macOS retain their existing projection-based recovery.
 
 Non-Session ACP readiness probes use the host's existing process-tree terminator
 on every platform. Cleanup retains launcher ancestry until that owner captures

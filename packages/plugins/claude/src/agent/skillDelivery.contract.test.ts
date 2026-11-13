@@ -34,6 +34,7 @@ async function open(request: AgentSessionOpenRequest, terminal: boolean) {
     };
     // Fake only the host process/JSON-stream port; nativeExec, query, launch and Session owners run unchanged.
     const exec = {
+        readEnvironment: () => ({}),
         systemTools: { resolve: async () => ({ executable: { kind: 'systemTool' as const, id: 'claude-cli' }, executablePath: '/fixture/claude' }) },
         run: async () => exited,
         clients: {

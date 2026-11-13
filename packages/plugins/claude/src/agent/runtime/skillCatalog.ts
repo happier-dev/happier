@@ -78,7 +78,7 @@ export function createClaudeSessionSkillCatalog() {
       const signal = options?.signal ?? context.signal;
       try {
         signal?.throwIfAborted();
-        const env = resolveClaudeNativeBaseLaunchEnvironment({ launchEnvironment: launch.launchEnvironment, processEnv: process.env });
+        const env = resolveClaudeNativeBaseLaunchEnvironment({ launchEnvironment: launch.launchEnvironment, exec: context.services.exec });
         const values = (await context.services.settings.forScope({ kind: 'account' }).snapshot()).values;
         const command = CLAUDE_NATIVE_CATALOG_COMMAND;
         const resolved = await context.services.exec.systemTools.resolve({ toolId: command.toolId, purpose: 'Read Claude Session skill catalog', cwd: launch.cwd, signal });

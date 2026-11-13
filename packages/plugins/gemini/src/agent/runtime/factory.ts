@@ -10,7 +10,7 @@ import {
   type AgentSessionRuntimeEvent,
   AgentRuntimeJsonValueSchema,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { isPluginError, isRecord } from '@happier-dev/plugin-sdk';
+import { isPluginError, isRecord, PluginError } from '@happier-dev/plugin-sdk';
 
 export { geminiExternalSessionsContribution } from '../surfaces/sessions/external/contribution.js';
 
@@ -25,7 +25,7 @@ import {
 } from '../auth/resolution.js';
 import { prepareGeminiNativeMcpShaping } from '../mcp/shaping.js';
 import { createGeminiConnectedServiceRuntimeAuthAdapter } from '../connectedServices/runtimeAuthAdapter.js';
-import { readGeminiNativePathEnvironment } from '../utils/configPaths.js';
+import { GEMINI_NATIVE_PATH_ENV_KEYS, readGeminiNativePathEnvironment } from '../utils/configPaths.js';
 
 const geminiRuntimeAuthAdapter = createGeminiConnectedServiceRuntimeAuthAdapter();
 
@@ -43,8 +43,9 @@ function projectGeminiRuntimeAuthFailure<Event extends AgentSessionRuntimeEvent 
 function buildGeminiLaunchEnvironment(
   values: Readonly<Record<string, string>>,
   unset: readonly string[],
+  inherited: Readonly<Record<string, string | undefined>>,
 ): Readonly<Record<string, string | undefined>> {
-  const env: Record<string, string | undefined> = { ...values, ...readGeminiNativePathEnvironment(values, unset) };
+  const env: Record<string, string | undefined> = { ...values, ...readGeminiNativePathEnvironment(values, unset, inherited) };
   for (const key of Object.keys(env)) {
     if (unset.some(name => name.toUpperCase() === key.toUpperCase())) delete env[key];
   }
@@ -87,9 +88,13 @@ async function openGeminiAcpRuntime<Runtime extends Readonly<{ dispose(): void |
   ) => Promise<Runtime>,
 ): Promise<Runtime> {
   const requestedLaunchEnvironment = request.launchEnvironment ?? { values: {}, unset: [] };
+  if (!context.services.exec.readEnvironment) {
+    throw new PluginError({ code: 'plugin_service_unavailable', message: 'Inherited Session environment is unavailable.' });
+  }
   const sourceEnv = buildGeminiLaunchEnvironment(
     requestedLaunchEnvironment.values,
     requestedLaunchEnvironment.unset,
+    context.services.exec.readEnvironment(GEMINI_NATIVE_PATH_ENV_KEYS),
   );
   const auth = resolveGeminiAuthConfig(sourceEnv, resolveGeminiApiKeyFromEnv(sourceEnv));
   const authControlEnv = ignoredGeminiAcpAuthControlEnv(sourceEnv);

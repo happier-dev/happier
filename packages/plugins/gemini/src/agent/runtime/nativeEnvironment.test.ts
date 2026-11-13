@@ -27,7 +27,7 @@ function boundary() {
   }));
   const open = vi.fn(async () => ({ send: vi.fn(), watch: () => ({ dispose() {} }), dispose() {} }));
   return { run, open, context: { signal: new AbortController().signal,
-    services: { exec: { run } }, protocols: { acp: { open } },
+    services: { exec: { run, readEnvironment: () => ({}) } }, protocols: { acp: { open } },
   } as unknown as AgentSessionRuntimeContext };
 }
 
@@ -43,6 +43,16 @@ async function runtimeWithHome(platform: NodeJS.Platform) {
 }
 
 describe('Gemini native environment at the factory boundary', () => {
+  it('reports a missing host environment operation without reading the physical process', async () => {
+    const { runtime, home } = await runtimeWithHome('linux');
+    const io = boundary();
+    await expect(runtime.sessions.open({ kind: 'create', sessionId: 'missing-host-environment', cwd: home }, {
+      ...io.context, services: { ...io.context.services, exec: { ...io.context.services.exec, readEnvironment: undefined } },
+    })).rejects.toMatchObject({ code: 'plugin_service_unavailable' });
+    expect(io.run).not.toHaveBeenCalled();
+    expect(io.open).not.toHaveBeenCalled();
+  });
+
   it('uses the Windows winning selector for the ACP probe, not an earlier uppercase value', async () => {
     const { runtime, home } = await runtimeWithHome('win32');
     const safe = 'C:\\native\\safe.json';

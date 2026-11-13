@@ -35,7 +35,7 @@ function context() {
   // ACP transport and CLI help execution are genuine external boundaries; shaping stays real.
   return {
     signal: new AbortController().signal,
-    services: { exec: { run: async () => ({
+    services: { exec: { readEnvironment: () => ({}), run: async () => ({
       termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
       stdout: new TextEncoder().encode('--acp'), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false,
     }) } },

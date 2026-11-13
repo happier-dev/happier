@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, relative } from 'node:path';
 
 import { expect, vi } from 'vitest';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type {
   AgentSessionHostServices,
   AgentSessionRuntimeEvent,
@@ -30,6 +31,12 @@ import type {
 import type { ClaudeProviderEvent } from './providerEvents.js';
 
 const DEFAULT_TEST_FILE_FOLLOW_POLL_INTERVAL_MS = 25;
+// The host environment adapter is an external boundary. These standalone
+// plugin fixtures model one Session inheriting this test process's environment.
+const readTestEnvironment: NonNullable<ExecService['readEnvironment']> = keys => Object.fromEntries(keys.flatMap(key => {
+  const value = process.env[key];
+  return value === undefined ? [] : [[key, value]];
+}));
 type AgentTerminalHostService = NonNullable<AgentSessionHostServices['terminalHost']>;
 type ClaudeTestPluginContext = ClaudeAgentSdkContext & ClaudeUnifiedTerminalContext & Readonly<{
   settings: Readonly<{
@@ -237,7 +244,7 @@ export function createSdkExecFixture(options: Readonly<{ providerExitOwnership?:
   spawnClient: ReturnType<typeof vi.fn>;
   written: unknown[];
   processes: readonly ClaudeSdkExecFixtureProcess[];
-  service: ClaudeSdkQueryContext;
+  service: ClaudeSdkQueryContext & Pick<ExecService, 'readEnvironment'>;
   emit(record: unknown): Promise<void>;
   emitSessionHook(providerSessionId: string, payload: Readonly<Record<string, unknown>>): Promise<void>;
   exitWith(result: Readonly<{
@@ -345,9 +352,10 @@ export function createSdkExecFixture(options: Readonly<{ providerExitOwnership?:
     written,
     processes,
     service: {
+      readEnvironment: readTestEnvironment,
       // Boundary fixture: Vitest mock has one implementation while the SDK exposes overloads.
       spawnClient,
-    } as unknown as ClaudeSdkQueryContext,
+    } as unknown as ClaudeSdkQueryContext & Pick<ExecService, 'readEnvironment'>,
     async emit(record) {
       await Promise.all(processes.map((process) => process.emit(record)));
     },
@@ -607,6 +615,7 @@ export function createPluginContextFixture(
     readSystemRecord: extras?.sessionReadSystemRecord ?? vi.fn(async () => null),
     ...(extras?.sessionAuth ? { auth: extras.sessionAuth } : {}),
   };
+  const exec = { readEnvironment: readTestEnvironment, ...(extras?.exec ?? createSdkExecFixture().service) };
   // Boundary fixture: these tests exercise the Claude plugin contract and only need SDK services consumed by this runtime.
   return {
     logger: {
@@ -631,7 +640,7 @@ export function createPluginContextFixture(
     storage: createPluginStorageFixture(),
     events,
     agentRuntime: {
-      exec: extras?.exec ?? createSdkExecFixture().service,
+      exec,
       ...(extras?.toolExecution ? { toolExecution: extras.toolExecution } : {}),
       terminalHost,
       sessionHooks,

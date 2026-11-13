@@ -16,7 +16,7 @@ function createContext(): AgentSessionRuntimeContext {
       settings: { forScope: vi.fn(() => ({ get: vi.fn(async () => null), snapshot: async () => ({ values: {} }) })) },
       storage: { daemonSession: { get: vi.fn(), set: vi.fn() } },
       logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-      exec: {},
+      exec: { readEnvironment: () => ({}) },
       interactions: {
         requestApproval: vi.fn(async () => ({ status: 'approved' as const })),
         askQuestions: vi.fn(),

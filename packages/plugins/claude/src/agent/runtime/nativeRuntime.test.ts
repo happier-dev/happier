@@ -324,7 +324,7 @@ describe('createClaudeNativeRuntime', () => {
       if (typeof observe === 'function') await observe({ kind: 'started', plan: presentation.plan });
       await localHook.onSessionHook('local-resume-native', resume);
       await vi.waitFor(() => expect(activity.at(-1)).toMatchObject({ state: 'active', activeCount: 1 }));
-      expect(localHook.sessionHookSecret).not.toBe(oldHook.sessionHookSecret);
+      expect(localHook).not.toBe(oldHook);
       await oldHook.onSessionHook('local-resume-native', resume);
       await oldHook.onSessionHook('local-resume-native', { hook_event_name: 'PostToolUse',
         session_id: 'local-resume-native', tool_name: 'TaskStop', tool_input: { task_id: 'same-resumed-task' },
@@ -360,6 +360,7 @@ describe('createClaudeNativeRuntime', () => {
       settingsValues,
     });
     const exec = {
+      readEnvironment: () => ({}),
       systemTools: { resolve: async () => ({ executable: { kind: 'systemTool' as const, id: 'claude-cli' }, executablePath: '/managed/presentation-claude' }) },
       run: async () => ({
         termination: { observed: { kind: 'exit' as const, exitCode: 0 }, requestedBy: { kind: 'none' as const } },
@@ -647,7 +648,7 @@ describe('createClaudeNativeRuntime', () => {
         hooks: boundary.agentRuntime.sessionHooks, fileFollow: boundary.agentRuntime.transcripts.fileFollow,
         toolExecution: boundary.agentRuntime.toolExecution,
       } },
-      services: { exec, logger: boundary.logger, settings: boundary.settings, storage: boundary.storage,
+      services: { exec: { ...exec, readEnvironment: () => ({}) }, logger: boundary.logger, settings: boundary.settings, storage: boundary.storage,
         interactions: { requestApproval } },
       protocols: {}, signal: new AbortController().signal,
     } as unknown as AgentExecutionRunRuntimeContextV1;
@@ -1000,7 +1001,7 @@ describe('createClaudeNativeRuntime', () => {
         settings: { forScope: vi.fn(() => ({ get: settingsGet, snapshot: async () => ({ values: {} }) })) },
         storage: { daemonSession: { get: vi.fn(), set: vi.fn() } },
         logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-        exec: {},
+        exec: { readEnvironment: () => ({}) },
         connectedAccounts: {
           getBinding: vi.fn(async () => null),
           materialize: vi.fn(),
@@ -3136,6 +3137,7 @@ describe('createClaudeNativeRuntime', () => {
     const contextWithExec = {
       services: {
         exec: {
+          readEnvironment: createSdkExecFixture().service.readEnvironment,
           systemTools: {
             resolve: async () => ({
               executable: { kind: 'systemTool' as const, id: 'claude-cli' },
