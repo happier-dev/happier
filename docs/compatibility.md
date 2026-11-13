@@ -7215,6 +7215,16 @@ permits only observed settlement, preserving the parent revision and claim.
 The incumbent claimed-worker fact shape remains unchanged. This observation
 arm is development-only and changes no persisted format or released contract.
 
+In 0.3 development source, invocation replacement through `invocations.recover`
+is an Account Run control operation, shared by Retry and Resume recovery. It
+uses the existing editable-Run access owner rather than requiring the calling
+Machine to be the assigned executor. Account-mode validation, envelope bindings
+and change publication use the selected Run owner. Signed Action requests retain
+their exact Action purpose, Account and installed-publisher Machine binding;
+worker execution and retained-child observation keep their executor authority.
+The optional publisher field is accepted from existing callers; no persisted
+format or released-client compatibility contract changes.
+
 Managed Workflow Runs are origin-neutral `WorkflowRun` rows driven from the frozen
 accepted snapshot; observed Claude activity snapshots remain presentation-only and
 never drive the coordinator. Schedule and occurrence admission freeze the reviewed
@@ -11642,3 +11652,15 @@ the added field. No reverse-development shim, epoch, authority or persistence
 change is introduced. The scoped-clean `../0.2` frontier at
 `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no corresponding
 `packages/protocol/src/providers/brokerRouteGrantV1.ts` contract.
+
+## Promote source admission (unreleased 0.3)
+
+The closed native deployment admission adds a `kind: 'promote'` variant with
+`environmentId`, `sourceEnvironmentId` and `sourceDeploymentId`. Home admits
+the selected source provenance at mint; its signed binding and envelope matcher
+retain the exact projection so existing scoped preparation reads can spend it.
+Matching Protocol, Home and controller readers reload together. Older strict
+development readers reject the variant and old admissions must be reminted.
+The inspected `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf`
+has no corresponding deployment-native schema or working changes at that path.
+This uses the unpublished 0.3 direct cut; no migration, adapter or gate is added.

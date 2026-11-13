@@ -123,7 +123,7 @@ describe('workflow Run storage client', () => {
     }
   });
 
-  it.each(['get', 'list', 'invocations.list', 'pause', 'cancel', 'delete'] as const)(
+  it.each(['get', 'list', 'invocations.list', 'invocations.recover', 'pause', 'cancel', 'delete'] as const)(
     'executes Account %s without a machine or publisher authority', async (operation) => {
       post.mockResolvedValue({ data: { available: true } });
       const createPublisherHeader = vi.fn(async () => { throw new Error('publisher unavailable'); });
@@ -137,7 +137,7 @@ describe('workflow Run storage client', () => {
     },
   );
 
-  it.each(['initialize', 'invocations.recover'] as const)('refuses executor %s without its exact publisher before sending', async (operation) => {
+  it.each(['initialize', 'invocations.fact'] as const)('refuses executor %s without its exact publisher before sending', async (operation) => {
     const client = createWorkflowRunStorageClient({ token: 'token', serverHttpBaseUrl: 'https://home.test' });
     await expect(client.execute({ operation, runId: 'run-1' }))
       .rejects.toMatchObject({ code: 'target_unavailable' });

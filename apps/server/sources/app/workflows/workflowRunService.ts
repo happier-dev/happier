@@ -2617,7 +2617,6 @@ export async function waitWorkflowRun(params: Readonly<{
 
 export async function recoverWorkflowInvocations(params: Readonly<{
     accountId: string;
-    machineId: string;
     runId: string;
     expectedRevision: number;
     checkpointEnvelope: string;
@@ -2630,8 +2629,10 @@ export async function recoverWorkflowInvocations(params: Readonly<{
 }>) {
     if (params.recoveries.length === 0) throw new WorkflowRunServiceError("invalid_input");
     return await inTx(async (tx) => {
-        const mode = await loadCurrentWorkflowAccountModeTx(tx, params.accountId, params.accountCurrentness, params.runId);
-        const deliveryBefore = await readOriginDeliverySignalTx(tx, params.accountId, params.runId);
+        const access = await resolveEditableWorkflowRunAccessTx(tx, { actorAccountId: params.accountId, runId: params.runId });
+        const ownerAccountId = access.ownerAccountId;
+        const mode = await loadCurrentWorkflowAccountModeTx(tx, ownerAccountId, params.accountCurrentness, params.runId);
+        const deliveryBefore = await readOriginDeliverySignalTx(tx, ownerAccountId, params.runId);
         const ids = new Set<string>();
         for (const recovery of params.recoveries) {
             if (!WorkflowInvocationRecordIdSchema.safeParse(recovery.newInvocationId).success
@@ -2652,7 +2653,7 @@ export async function recoverWorkflowInvocations(params: Readonly<{
         if (existing.length > 0) {
             const existingById = new Map(existing.map((row) => [row.id, row]));
             const parent = await tx.automationRun.findFirst({
-                where: { id: params.runId, accountId: params.accountId, revision: params.expectedRevision + 1, assignments: { some: { machineId: params.machineId } } },
+                where: { id: params.runId, accountId: ownerAccountId, revision: params.expectedRevision + 1 },
                 select: workflowRunSelect,
             });
             const rejoinedRows: InvocationRow[] = [];
@@ -2689,18 +2690,17 @@ export async function recoverWorkflowInvocations(params: Readonly<{
         const parent = await tx.automationRun.findFirst({
             where: {
                 id: params.runId,
-                accountId: params.accountId,
+                accountId: ownerAccountId,
                 revision: params.expectedRevision,
                 state: "interrupted",
                 workflowCustodyState: { not: null },
-                assignments: { some: { machineId: params.machineId } },
             },
             select: { revision: true },
         });
         if (!parent || prior.length !== params.recoveries.length) throw new WorkflowRunServiceError("currentness_conflict");
-        assertWorkflowStoredEnvelopeOuterForMode({ raw: params.checkpointEnvelope, mode, binding: { v: 1, purpose: "checkpoint", accountId: params.accountId, runId: params.runId } });
+        assertWorkflowStoredEnvelopeOuterForMode({ raw: params.checkpointEnvelope, mode, binding: { v: 1, purpose: "checkpoint", accountId: ownerAccountId, runId: params.runId } });
         const changed = await tx.automationRun.updateMany({
-            where: { id: params.runId, accountId: params.accountId, revision: params.expectedRevision, state: "interrupted", assignments: { some: { machineId: params.machineId } } },
+            where: { id: params.runId, accountId: ownerAccountId, revision: params.expectedRevision, state: "interrupted" },
             data: { revision: { increment: 1 }, state: "queued", claimedByMachineId: null, claimedAt: null, leaseExpiresAt: null, workflowCheckpointEnvelope: params.checkpointEnvelope, workflowCustodyState: "pending", finishedAt: null },
         });
         if (changed.count !== 1) throw new WorkflowRunServiceError("currentness_conflict");
@@ -2732,7 +2732,7 @@ export async function recoverWorkflowInvocations(params: Readonly<{
                 binding: {
                     v: 1,
                     purpose: "invocation_progress",
-                    accountId: params.accountId,
+                    accountId: ownerAccountId,
                     runId: params.runId,
                     recordId: recovery.newInvocationId,
                     sequence: newSequence.toString(),
@@ -2757,8 +2757,8 @@ export async function recoverWorkflowInvocations(params: Readonly<{
             replacementByPriorId.set(previous.id, recovery.newInvocationId);
         }
         const updatedParent = await tx.automationRun.findUniqueOrThrow({ where: { id: params.runId }, select: workflowRunSelect });
-        const cursor = await markWorkflowRunChangedTx(tx, params.accountId, params.runId, deliveryBefore);
-        await publishWorkflowRunMachineWakeInTx(tx, { accountId: params.accountId,
+        const cursor = await markWorkflowRunChangedTx(tx, ownerAccountId, params.runId, deliveryBefore);
+        await publishWorkflowRunMachineWakeInTx(tx, { accountId: ownerAccountId,
             run: updatedParent as WorkflowRunFullRow, cursor });
         return { disposition: "accepted" as const, run: await projectRunInTx(tx, updatedParent as WorkflowRunProjectionRow, params.accountId), invocations: created.map(projectInvocation) };
     }, {

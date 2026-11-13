@@ -3444,6 +3444,18 @@ describe("external Action execution authorization", () => {
         const invocationId = crypto.randomUUID();
         const target = { kind: 'machine' as const, machineId: fixture.machine.id };
         const path = '/v3/automations/runs/workflow-storage';
+        const controllerKeys = tweetnacl.sign.keyPair();
+        const controllerId = crypto.randomUUID();
+        const controllerInstallationId = crypto.randomUUID();
+        const controllerContent = await db.machine.findUniqueOrThrow({ where: { id: fixture.machine.id },
+            select: { metadata: true, dataEncryptionKey: true } });
+        await db.machine.create({ data: { ...controllerContent, id: controllerId, accountId: fixture.account.id,
+            installationId: controllerInstallationId, installationPublicKey: new Uint8Array(controllerKeys.publicKey) } });
+        let controller = false;
+        const publisher = () => controller
+            ? { machineId: controllerId, installationId: controllerInstallationId, keyPair: controllerKeys }
+            : { machineId: fixture.machine.id, installationId: fixture.machine.installationId!, keyPair: fixture.keyPair };
+
         const issue = async (actionId: 'workflow.run.start' | 'workflow.run.invocations.get'
             | 'workflow.run.invocations.retry' | 'workflow.run.resume', rawInput: unknown) => {
             const input = getActionSpec(actionId).inputSchema.parse(rawInput);
@@ -3452,16 +3464,16 @@ describe("external Action execution authorization", () => {
                 authentication: { kind, tokenEpoch: fixture.account.tokenEpoch }, actionId, requestId: plain.requestId!, target };
             const envelope = material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input, material, randomBytes: tweetnacl.randomBytes }) : plain;
             if (material && envelope.v === 2) expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, envelope, material })?.input).toEqual(input);
-            const payload = { v: 1, machineId: fixture.machine.id, envelope };
+            const payload = { v: 1, machineId: publisher().machineId, envelope };
             const response = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
                 headers: { authorization: `Bearer ${token}` }, payload });
             expect(response.statusCode, `${actionId}: ${response.statusCode}`).toBe(200);
             const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(response.json());
-            expect(authorization.binding).toMatchObject({ actionId, machineId: fixture.machine.id,
+            expect(authorization.binding).toMatchObject({ actionId, machineId: publisher().machineId,
                 accountId: fixture.account.id, authentication: { kind } });
             expect(authorization.binding).not.toHaveProperty('sessionActionOrigin');
             expect(authorization.binding).not.toHaveProperty('workflowActionOrigin');
-            authorizationRequests.set(authorization.token, { target, installationId: fixture.machine.installationId!,
+            authorizationRequests.set(authorization.token, { target, installationId: publisher().installationId,
                 requestId: envelope.requestId! });
             return { authorization, payload };
         };
@@ -3470,10 +3482,10 @@ describe("external Action execution authorization", () => {
             method: 'POST', url: path, payload: body,
             headers: {
                 ...machineHeaders({ authorizationToken: authorization.token, effectActionId: authorization.binding.actionId,
-                    method: 'POST', path, body, privateKey: overrides.privateKey ?? fixture.keyPair.secretKey,
+                    method: 'POST', path, body, privateKey: overrides.privateKey ?? publisher().keyPair.secretKey,
                     ...(overrides.target ? { target: overrides.target } : {}) }),
                 [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
-                    keyPair: fixture.keyPair, machineId: fixture.machine.id, installationId: fixture.machine.installationId!, path, body }),
+                    ...publisher(), path, body }),
             },
         });
         try {
@@ -3504,6 +3516,8 @@ describe("external Action execution authorization", () => {
                         recipientPublicKey: contentPublicKey, randomBytes: tweetnacl.randomBytes })) }] } : {}),
             });
             expect(admitted.statusCode, `Run admission: ${admitted.statusCode}`).toBe(200);
+            controller = true;
+            target.machineId = controllerId;
             const inputs = [
                 ['workflow.run.invocations.get', { runId, invocationId }],
                 ['workflow.run.invocations.retry', { runId, invocation: { recordId: invocationId }, expectedRevision: 0,
@@ -3511,12 +3525,24 @@ describe("external Action execution authorization", () => {
                 ['workflow.run.resume', { runId, mode: 'recover', expectedRevision: 0,
                     invocations: [{ kind: 'reattach', invocation: { recordId: invocationId } }] }],
             ] as const;
-            for (const [actionId, input] of mode === 'e2ee' ? inputs.slice(0, 1) : inputs) {
+            for (const [actionId, input] of inputs) {
                 const { authorization, payload } = await issue(actionId, input);
-                const read = { operation: 'get', publisherMachineId: fixture.machine.id, runId };
+                const read = { operation: 'get', publisherMachineId: publisher().machineId, runId };
                 const opened = await post(authorization, read);
                 expect(opened.statusCode, `${actionId}: storage ${opened.statusCode}`).toBe(200);
                 expect(opened.json()).toMatchObject({ run: { id: runId, state: 'queued' } });
+                if (actionId === 'workflow.run.invocations.retry' || actionId === 'workflow.run.resume') {
+                    // A queued Run cannot recover yet, but its owner must reach
+                    // the storage lifecycle decision rather than fail signed admission.
+                    const recovery = await post(authorization, { operation: 'invocations.recover',
+                        publisherMachineId: publisher().machineId, runId, expectedRevision: 0,
+                        accountCurrentness: { mode: accountCurrentness.mode, version: accountCurrentness.version,
+                            contentKeyFingerprint: accountCurrentness.contentKeyFingerprint },
+                        checkpointEnvelope: acceptedEnvelope,
+                        recoveries: [{ invocationId, newInvocationId: crypto.randomUUID(), contentEnvelope: acceptedEnvelope }] });
+                    expect(recovery.statusCode, `${actionId}: recovery ${recovery.body}`).toBe(409);
+                    expect(recovery.json()).toMatchObject({ error: 'currentness_conflict' });
+                }
                 // Recovery roots retain their exact storage purposes, Machine,
                 // Account and verified installed publisher's signature.
                 expect((await post(authorization, { operation: 'cancel', publisherMachineId: fixture.machine.id,
@@ -4715,17 +4741,26 @@ describe("external Action execution authorization", () => {
         try {
             for (const actionId of ['search.conversations', 'ui.find', 'workspace.tabs.list',
                 'workflow.definition.list', 'workflow.definition.get', 'boards.list',
-                'workflow.run.list', 'workflow.starters.list', 'deployments.environments.list', 'artifact.public_link.create']) {
+                'workflow.run.list', 'workflow.starters.list', 'deployments.environments.list',
+                'artifact.public_link.create', 'session.public_link.create']) {
                 const origin = SessionActionRpcOriginV1Schema.parse({ v: 1,
                     caller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 },
                     sourceTurnId: 'client-read-turn', callerPermissionMode: null, requestId: crypto.randomUUID() });
+                if (actionId === 'artifact.public_link.create') {
+                    // Opaque admission never opens non-client operands to decide placement.
+                    expect(isOriginalAccountExecutionAction('skills.read', { sessionActionOrigin: origin, sessionActionSource: source })).toBe(true);
+                    expect(isOriginalTerminalExecutionAction('skills.read', { sessionActionOrigin: origin, sessionActionSource: source })).toBe(true);
+                    expect(isOriginalAccountExecutionAction('review.engines.list', { sessionActionOrigin: origin, sessionActionSource: source })).toBe(true);
+                    expect(isOriginalTerminalExecutionAction('review.engines.list', { sessionActionOrigin: origin, sessionActionSource: source })).toBe(true);
+                }
                 const input = actionId === 'search.conversations'
                     ? { query: { v: 1, query: 'session_handoff', scope: { type: 'global' }, mode: 'hints' },
                         machineIds: [fixture.machine.id], mode: 'indexed' }
                     : actionId === 'ui.find' ? { op: 'read' }
                     : actionId === 'workflow.definition.get' ? { definitionId: crypto.randomUUID() }
                     : actionId === 'deployments.environments.list' ? { serverId: homeId }
-                    : actionId === 'artifact.public_link.create' ? { artifactId: namedEnvironment.artifact.id, audience: 'anonymous' } : {};
+                    : actionId === 'artifact.public_link.create' ? { artifactId: namedEnvironment.artifact.id, audience: 'anonymous' }
+                    : actionId === 'session.public_link.create' ? { sessionId: session.id } : {};
                 const envelope = { v: 1, requestId: origin.requestId,
                     target: { kind: 'machine', machineId: fixture.machine.id }, input } satisfies ExternalActionRequestEnvelopeV1;
                 const installationProof = signMachineInstallationProof({ privateKey: fixture.keyPair.secretKey,
@@ -4787,13 +4822,69 @@ describe("external Action execution authorization", () => {
                 // reads; client reads require their installed Session caller proof.
                 const standalone = await mint({ v: 1, machineId: fixture.machine.id, envelope });
                 const standaloneAccountRead = ['workflow.definition.list', 'workflow.definition.get',
-                    'boards.list', 'workflow.run.list', 'workflow.starters.list', 'deployments.environments.list'].includes(actionId);
+                    'boards.list', 'workflow.run.list', 'workflow.starters.list', 'deployments.environments.list',
+                    'artifact.public_link.create', 'session.public_link.create'].includes(actionId);
                 expect(standalone.statusCode, actionId).toBe(standaloneAccountRead ? 200 : 403);
                 if (standaloneAccountRead) expect(ExternalActionExecutionAuthorizationV1Schema.parse(standalone.json()).binding)
                     .not.toHaveProperty('sessionActionOrigin');
                 publisher = null;
                 expect((await mint()).statusCode).toBe(403);
                 publisher = fixture.machine.id;
+            }
+            const runId = crypto.randomUUID();
+            const snapshot = await materializeWorkflowAcceptedSnapshotFixture({ definition: { version: 1,
+                defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } }, blocks: ['work'] },
+                context: { source: { kind: 'inline' }, inputs: {}, machineId: fixture.machine.id,
+                    executionTarget: { kind: 'session' }, workspaceTarget: { project: { machineId: fixture.machine.id,
+                        directory: '/repo', checkoutRootPath: '/repo' } }, origin: { kind: 'direct', originSessionId: session.id },
+                    authorization: { principal: { kind: 'host' } } } });
+            const run = await db.automationRun.create({ data: { id: runId, accountId: fixture.account.id,
+                originKind: 'direct', originSessionId: session.id, state: 'running', workflowCustodyState: 'pending',
+                claimedByMachineId: fixture.machine.id,
+                scheduledAt: new Date(), dueAt: new Date(), causeKind: null,
+                workflowAcceptedSnapshotEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+                    mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: fixture.account.id, runId }, acceptedSnapshot: snapshot })),
+                assignments: { create: { machineId: fixture.machine.id } } } });
+            for (const actionId of ['artifact.public_link.create', 'session.public_link.create'] as const) {
+                const envelope = { v: 1, requestId: crypto.randomUUID(),
+                    target: { kind: 'machine', machineId: fixture.machine.id },
+                    input: actionId === 'artifact.public_link.create'
+                        ? { artifactId: namedEnvironment.artifact.id, audience: 'anonymous' }
+                        : { sessionId: session.id } } satisfies ExternalActionRequestEnvelopeV1;
+                const workflowActionOrigin = { runId: run.id, requestId: envelope.requestId };
+                const installationProof = signMachineInstallationProof({ privateKey: fixture.keyPair.secretKey,
+                    payload: { version: 1, accountId: fixture.account.id, ...source, externalActionOrigin: {
+                        homeId, actionId, requestId: envelope.requestId,
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin: workflowActionOrigin } } });
+                const workflowRequest = { v: 1, machineId: fixture.machine.id, envelope, workflowActionOrigin, installationProof };
+                const mintWorkflow = (payload: unknown = workflowRequest) => app.inject({ method: 'POST',
+                    url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                    headers: { authorization: `Bearer ${token}` }, payload });
+                const workflowMinted = await mintWorkflow();
+                expect(workflowMinted.statusCode, workflowMinted.body).toBe(200);
+                expect(ExternalActionExecutionAuthorizationV1Schema.parse(workflowMinted.json()).binding)
+                    .toMatchObject({ actionId, workflowActionOrigin });
+                expect((await mintWorkflow({ ...workflowRequest, installationProof: undefined })).statusCode).not.toBe(200);
+                expect((await mintWorkflow({ ...workflowRequest,
+                    workflowActionOrigin: { ...workflowActionOrigin, runId: crypto.randomUUID() } })).statusCode).not.toBe(200);
+                const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+                const foreignTarget = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: custodian.id,
+                    metadata: fixture.machine.metadata, dataEncryptionKey: fixture.machine.dataEncryptionKey,
+                    installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(fixture.keyPair.publicKey) } });
+                await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: foreignTarget.id,
+                    principal: { kind: 'account', accountId: fixture.account.id }, level: 'admin' }));
+                const foreignEnvelope = { ...envelope, target: { kind: 'machine' as const, machineId: foreignTarget.id } };
+                const foreignProof = signMachineInstallationProof({ privateKey: fixture.keyPair.secretKey,
+                    payload: { version: 1, accountId: fixture.account.id, ...source, externalActionOrigin: {
+                        homeId, actionId, requestId: envelope.requestId,
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(foreignEnvelope), origin: workflowActionOrigin } } });
+                const foreignMinted = await mintWorkflow({ ...workflowRequest, envelope: foreignEnvelope, installationProof: foreignProof });
+                expect(foreignMinted.statusCode, foreignMinted.body).toBe(409);
+                expect(foreignMinted.json()).toMatchObject({ error: 'invalid_request', code: 'target_unavailable' });
+                expect(foreignMinted.json()).not.toHaveProperty('token');
+                await db.automationRunAssignment.deleteMany({ where: { runId: run.id } });
+                expect((await mintWorkflow()).statusCode).toBe(403);
+                await db.automationRunAssignment.create({ data: { runId: run.id, machineId: fixture.machine.id } });
             }
         } finally { await app.close(); }
     });

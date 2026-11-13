@@ -18,6 +18,7 @@ export function isWorkflowRunExecutorStorageOperationV1(operation: unknown): boo
     case 'invocations.current':
     case 'invocations.publish_draft':
     case 'invocations.complete_review':
+    case 'invocations.recover':
     case 'run-key.census':
     case 'run-key.commit':
     case 'pause':

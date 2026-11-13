@@ -2485,15 +2485,13 @@ describe("workflowRunService (integration)", () => {
         return { ...result, invocation: result.invocations[0] };
     }
 
-    async function recoverWorkflowInvocations(params: Omit<Parameters<typeof recoverWorkflowInvocationsOwner>[0], "checkpointEnvelope" | "recoveries" | "accountCurrentness" | "machineId"> & Readonly<{
-        machineId?: string;
+    async function recoverWorkflowInvocations(params: Omit<Parameters<typeof recoverWorkflowInvocationsOwner>[0], "checkpointEnvelope" | "recoveries" | "accountCurrentness"> & Readonly<{
         recoveries: readonly (Parameters<typeof recoverWorkflowInvocationsOwner>[0]["recoveries"][number] & Readonly<{ newSequence: bigint }>)[];
     }>) {
         const root = await db.workflowRunInvocation.findFirstOrThrow({ where: { runId: params.runId, parentRecordId: null }, select: { id: true } });
         const nextSequence = params.recoveries.reduce((maximum, recovery) => recovery.newSequence > maximum ? recovery.newSequence : maximum, -1n) + 1n;
         const recoveries = params.recoveries.map(({ newSequence: _callerSequence, ...recovery }) => recovery);
-        const assignment = await db.automationRunAssignment.findFirstOrThrow({ where: { runId: params.runId }, orderBy: { priority: "asc" }, select: { machineId: true } });
-        return await recoverWorkflowInvocationsOwner({ ...params, machineId: params.machineId ?? assignment.machineId, recoveries, checkpointEnvelope: checkpointEnvelope(params.accountId, params.runId, root.id, nextSequence), accountCurrentness: await accountCurrentness(params.accountId) });
+        return await recoverWorkflowInvocationsOwner({ ...params, recoveries, checkpointEnvelope: checkpointEnvelope(params.accountId, params.runId, root.id, nextSequence), accountCurrentness: await accountCurrentness(params.accountId) });
     }
 
     it("admits a direct Run, initializes exactly one root, and commits a row fact without advancing parent revision", async () => {
@@ -4565,7 +4563,7 @@ describe("workflowRunService (integration)", () => {
             .resolves.toEqual({ revision: 2 });
     });
 
-    it("recovers several interrupted invocations in one rejoinable parent CAS bound to the signed publisher Machine", async () => {
+    it("recovers interrupted invocations as the Run owner from another Machine and refuses another Account", async () => {
         const [{ auth }, { enableAuthentication }, { registerWorkflowRunStorageRoutes }] = await Promise.all([
             import("@/app/auth/auth"), import("@/app/api/utils/enableAuthentication"), import("@/app/api/routes/automations/registerWorkflowRunStorageRoutes"),
         ]);
@@ -4614,20 +4612,25 @@ describe("workflowRunService (integration)", () => {
         app.setSerializerCompiler(serializerCompiler);
         enableAuthentication(app);
         registerWorkflowRunStorageRoutes(app);
-        const wrongPublisher = () => app.inject({ method: "POST", url: path, headers: {
+        const ownerRecovery = () => app.inject({ method: "POST", url: path, headers: {
             authorization: `Bearer ${token}`,
             [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({ keyPair: publisherKeys, machineId: otherMachineId, installationId, path, body }),
         }, payload: body });
         try {
-            const refused = await wrongPublisher();
-            expect(refused.statusCode, refused.body).toBe(401);
-            expect(refused.json()).toBeNull();
+            const foreign = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" } });
+            const foreignToken = await auth.createToken(foreign.id, undefined, { kind: "account", authority: "present_user" });
+            const refused = await app.inject({ method: "POST", url: path,
+                headers: { authorization: `Bearer ${foreignToken}` }, payload: body });
+            expect(refused.statusCode, refused.body).toBe(404);
             expect(await db.workflowRunInvocation.count({ where: { id: { in: newIds } } })).toBe(0);
-            await expect(recoverWorkflowInvocations(request)).resolves.toMatchObject({ disposition: "accepted", run: { revision: 2, state: "queued" }, invocations: [{ id: newIds[0] }, { id: newIds[1] }] });
+            const recovered = await ownerRecovery();
+            expect(recovered.statusCode, recovered.body).toBe(200);
+            expect(recovered.json()).toMatchObject({ disposition: "accepted", run: { revision: 2, state: "queued" },
+                invocations: [{ id: newIds[0] }, { id: newIds[1] }] });
             await expect(recoverWorkflowInvocations(request)).resolves.toMatchObject({ disposition: "existing", run: { revision: 2 } });
-            const refusedRejoin = await wrongPublisher();
-            expect(refusedRejoin.statusCode, refusedRejoin.body).toBe(401);
-            expect(refusedRejoin.json()).toBeNull();
+            const rejoined = await ownerRecovery();
+            expect(rejoined.statusCode, rejoined.body).toBe(200);
+            expect(rejoined.json()).toMatchObject({ disposition: "existing", run: { revision: 2 } });
         } finally {
             await app.close();
         }
