@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { t } from '@/text';
 
 import {
-    continueSessionWithArmedAgent,
+    buildArmedAgentContinuationTransitionInput,
     prepareArmedAgentContinuation,
     reconcileArmedAgentContinuationDisposition,
     resolveArmedAgentContinuationDisposition,
@@ -20,9 +20,8 @@ vi.mock('@/text', async () => {
     return createTextModuleMock();
 });
 
-// The socket transport is the only genuine boundary in this path. Everything
-// below it — request sealing, result parsing, and the recovery decision — is
-// the code under test.
+// Capability detection uses the Machine transport boundary; mutation dispatch
+// is exercised through the real Action/HTTP journey in defaultActionExecutor.planMode.test.ts.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: (params: unknown) => machineRpcWithServerScope(params),
 }));
@@ -49,65 +48,9 @@ function submission(
     };
 }
 
-function rpcError(rpcErrorCode: string): Error {
-    return Object.assign(new Error(rpcErrorCode), { rpcErrorCode });
-}
-
-async function dispatchPreparedSubmission(value: ArmedAgentContinuationSubmission) {
-    const prepared = await prepareArmedAgentContinuation(value, MetadataSchema.parse({ path: '/repo', host: 'host', permissionMode: 'default' }));
-    if (prepared.status !== 'ready') throw new Error('Expected a prepared continuation');
-    return continueSessionWithArmedAgent(prepared);
-}
-
 describe('continueSessionWithArmedAgent', () => {
     beforeEach(() => {
         machineRpcWithServerScope.mockReset();
-    });
-
-    it('dispatches the submitted message to the ARMED TARGET Agent, not the current one', async () => {
-        machineRpcWithServerScope.mockResolvedValue({ type: 'accepted', localId: 'local-1' });
-
-        const outcome = await dispatchPreparedSubmission(submission());
-
-        expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
-        expect(machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine-1',
-            serverId: 'server-1',
-            method: 'session.agentTransition',
-            payload: {
-                v: 1,
-                sessionId: 'session-1',
-                // The Agent the client believes is running, so the daemon can
-                // refuse a switch decided against a stale view.
-                expectedCurrentAgentId: 'claude',
-                selection: { v: 1, agentId: 'codex', modelId: 'gpt-5' },
-                // The exact submitted input, carrying the stable localId that is
-                // the dedupe identity, divider correlation key, and the only key
-                // the composer may compare-clear against.
-                input: { text: 'ship it', localId: 'local-1', meta: {} },
-            },
-        }));
-        expect(outcome.result).toEqual({ type: 'accepted', localId: 'local-1' });
-        expect(outcome.disposition).toEqual({
-            draft: 'clear',
-            arm: 'clear',
-            notice: null,
-            send: 'allow',
-        });
-    });
-
-    it('reports an old daemon as a no-effect rejection rather than an unknown outcome', async () => {
-        machineRpcWithServerScope.mockRejectedValue(rpcError('RPC_METHOD_NOT_AVAILABLE'));
-
-        const outcome = await dispatchPreparedSubmission(submission());
-
-        expect(outcome.result).toEqual({
-            type: 'rejected',
-            code: 'unsupported_operation',
-            sourceEffect: 'none',
-        });
-        expect(outcome.disposition.draft).toBe('preserve');
-        expect(outcome.disposition.arm).toBe('keep');
     });
 
     it('preserves a changed permission intent when a legacy daemon reports unknown capability', async () => {
@@ -124,30 +67,23 @@ describe('continueSessionWithArmedAgent', () => {
         expect(outcome).toMatchObject({ status: 'refused', reason: 'unsupported_permission_intent' });
     });
 
-    it('continues on an older daemon when permission aliases have the same canonical intent', async () => {
-        machineRpcWithServerScope.mockResolvedValue({ type: 'accepted', localId: 'local-1' });
-        const prepared = await prepareArmedAgentContinuation(submission({
-            input: { text: 'ship it', meta: { permissionMode: 'yolo' } },
-        }), MetadataSchema.parse({ path: '/repo', host: 'host', permissionMode: 'bypassPermissions' }));
-        if (prepared.status !== 'ready') throw new Error('Expected equivalent permission intent to remain usable');
-        const outcome = await continueSessionWithArmedAgent(prepared);
-        expect(machineRpcWithServerScope.mock.calls.map(([request]) => request.method)).toEqual(['session.agentTransition']);
-        expect(outcome.result).toEqual({ type: 'accepted', localId: 'local-1' });
+    it('preserves equivalent permission aliases without probing an older daemon', async () => {
+        const value = submission({ input: { text: 'ship it', meta: { permissionMode: 'yolo' } } });
+        expect(await prepareArmedAgentContinuation(value,
+            MetadataSchema.parse({ path: '/repo', host: 'host', permissionMode: 'bypassPermissions' })))
+            .toEqual({ status: 'ready', submission: value });
+        expect(machineRpcWithServerScope).not.toHaveBeenCalled();
     });
 
-    it('prepares a supported changed permission and dispatches that exact input', async () => {
+    it('prepares a supported changed permission without replacing that exact input', async () => {
         machineRpcWithServerScope.mockResolvedValueOnce({ protocolVersion: 1, results: {
             'tool.sessionAgentTransition': { ok: true, checkedAt: 1, data: { supportsInputPermissionIntent: true } },
         } }).mockResolvedValueOnce({ type: 'accepted', localId: 'local-1' });
         const value = submission({ input: { text: 'ship it', meta: { permissionMode: 'yolo' } } });
         const prepared = await prepareArmedAgentContinuation(value, MetadataSchema.parse({ path: '/repo', host: 'host', permissionMode: 'default' }));
         if (prepared.status !== 'ready') throw new Error('Expected supported intent to prepare');
-        const outcome = await continueSessionWithArmedAgent(prepared);
-        expect(outcome.result).toEqual({ type: 'accepted', localId: 'local-1' });
-        expect(machineRpcWithServerScope.mock.calls.map(([request]) => request.method)).toEqual(['capabilities.detect', 'session.agentTransition']);
-        expect(machineRpcWithServerScope).toHaveBeenLastCalledWith(expect.objectContaining({
-            payload: expect.objectContaining({ input: { localId: 'local-1', text: 'ship it', meta: { permissionMode: 'yolo' } } }),
-        }));
+        expect(prepared.submission).toEqual(value);
+        expect(machineRpcWithServerScope.mock.calls.map(([request]) => request.method)).toEqual(['capabilities.detect']);
     });
 
     it('does not infer unchanged intent from an unknown token and missing owner metadata', async () => {
@@ -157,12 +93,8 @@ describe('continueSessionWithArmedAgent', () => {
         const value = submission({ input: { text: 'ship it', meta: { permissionMode: 'future-intent' } } });
         const prepared = await prepareArmedAgentContinuation(value, null);
         if (prepared.status !== 'ready') throw new Error('Expected capable daemon to validate the token');
-        const outcome = await continueSessionWithArmedAgent(prepared);
-        expect(outcome.result).toEqual({ type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' });
-        expect(machineRpcWithServerScope.mock.calls.map(([request]) => request.method)).toEqual(['capabilities.detect', 'session.agentTransition']);
-        expect(machineRpcWithServerScope).toHaveBeenLastCalledWith(expect.objectContaining({
-            payload: expect.objectContaining({ input: expect.objectContaining({ meta: { permissionMode: 'future-intent' } }) }),
-        }));
+        expect(prepared.submission).toEqual(value);
+        expect(machineRpcWithServerScope.mock.calls.map(([request]) => request.method)).toEqual(['capabilities.detect']);
     });
 
     it.each([{}, { protocolVersion: 1, results: { 'tool.sessionAgentTransition': { ok: true, checkedAt: 1, data: { supportsInputPermissionIntent: 'yes' } } } }])(
@@ -179,65 +111,14 @@ describe('continueSessionWithArmedAgent', () => {
         },
     );
 
-    it('never fabricates a rejection when the transport proves nothing', async () => {
-        machineRpcWithServerScope.mockRejectedValue(new Error('socket closed'));
-
-        const outcome = await dispatchPreparedSubmission(submission());
-
-        // A rejection would promise `sourceEffect: 'none'` and hand the reader
-        // Keep editing in front of a Session that may already have switched.
-        expect(outcome.result).toEqual({ type: 'outcome_unknown', localId: 'local-1' });
-        expect(outcome.disposition.draft).toBe('preserve');
+    it('retains display text in the exact nested input without blanking transcript text', () => {
+        expect(buildArmedAgentContinuationTransitionInput({ localId: 'local-1', input: {
+            text: 'expanded prompt', displayText: 'ship it', meta: { source: 'ui' },
+        } })).toEqual({ text: 'expanded prompt', localId: 'local-1', meta: { displayText: 'ship it', source: 'ui' } });
+        expect(buildArmedAgentContinuationTransitionInput({ localId: 'local-1', input: {
+            text: 'expanded prompt', displayText: '   ',
+        } }).meta).toEqual({});
     });
-
-    it('treats an unreadable answer as unknown, not as success', async () => {
-        machineRpcWithServerScope.mockResolvedValue({ type: 'definitely_fine' });
-
-        const outcome = await dispatchPreparedSubmission(submission());
-
-        expect(outcome.result).toEqual({ type: 'outcome_unknown', localId: 'local-1' });
-        expect(outcome.disposition.draft).toBe('preserve');
-    });
-
-    it('carries the short display text the reader expects to read in the transcript', async () => {
-        machineRpcWithServerScope.mockResolvedValue({ type: 'accepted', localId: 'local-1' });
-
-        await dispatchPreparedSubmission(submission({
-            input: {
-                text: 'review comment 1\nreview comment 2\n\nship it',
-                displayText: 'ship it',
-                meta: { source: 'ui' },
-            },
-        }));
-
-        // `displayText` is a canonical `MessageMeta` field, and the frozen wire
-        // already carries `input.meta` — so the expanded prompt still reaches the
-        // Agent while the transcript reads back what the reader actually wrote.
-        expect(machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
-            payload: expect.objectContaining({
-                input: {
-                    text: 'review comment 1\nreview comment 2\n\nship it',
-                    localId: 'local-1',
-                    meta: { displayText: 'ship it', source: 'ui' },
-                },
-            }),
-        }));
-    });
-
-    it('never lets a blank display text blank out the transcript row', async () => {
-        machineRpcWithServerScope.mockResolvedValue({ type: 'accepted', localId: 'local-1' });
-
-        await dispatchPreparedSubmission(submission({
-            input: { text: '[image.png](https://example.test/a.png)', displayText: '   ' },
-        }));
-
-        expect(machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
-            payload: expect.objectContaining({
-                input: expect.objectContaining({ meta: {} }),
-            }),
-        }));
-    });
-
 });
 
 describe('resolveArmedAgentContinuationDisposition', () => {

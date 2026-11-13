@@ -251,28 +251,6 @@ describe('machineRpcWithServerScope', () => {
         expect(emitWithAck).toHaveBeenCalledOnce();
     });
 
-    it.each(['RPC_METHOD_NOT_AVAILABLE', 'target_unavailable'] as const)(
-        'preserves operation-scoped transition rejection and target reachability (%s)', async rpcErrorCode => {
-            getActiveServerSnapshotSpy.mockReturnValue({ serverId: 'server-a', serverUrl: 'https://server-a.example.test', kind: 'custom', generation: 1 });
-            machineRpcSpy.mockRejectedValue(Object.assign(new Error('unavailable'), { rpcErrorCode }));
-            getCredentialsSpy.mockResolvedValue({ token: TOKEN_A, secret: SECRET_A });
-            await useRealScopedMachineEncryption();
-            const emitWithAck = async () => ({ ok: false, error: 'unavailable', errorCode: rpcErrorCode });
-            createEphemeralSocketSpy.mockResolvedValue({ timeout: () => ({ emitWithAck }), emitWithAck,
-                emit: vi.fn(), disconnect: vi.fn() });
-            const { runSessionAgentTransitionOnMachine } = await import('@/sync/ops/sessionAgentTransition');
-            const result = await runSessionAgentTransitionOnMachine({ machineId: 'machine-1', serverId: 'server-a', request: {
-                v: 1, sessionId: 'session-1', expectedCurrentAgentId: 'claude', selection: { v: 1, agentId: 'codex' },
-                input: { localId: 'transition-1', text: 'Continue this task', meta: {} },
-            } });
-            expect(result).toMatchObject(rpcErrorCode === 'RPC_METHOD_NOT_AVAILABLE'
-                ? { type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' }
-                : { type: 'outcome_unknown' });
-            expect(isMachineReachable({ serverId: 'server-a', accountId: 'account-a' },
-                { id: 'machine-1', active: true, activeAt: Date.now() }))
-                .toBe(rpcErrorCode === 'RPC_METHOD_NOT_AVAILABLE');
-        },
-    );
     it.each(['envelope', 'custody'] as const)('rejects unavailable Machine %s before dispatch, closes its prepared socket and retires its previous cipher', async (failure) => {
         getActiveServerSnapshotSpy.mockReturnValue({
             serverId: 'server-a', serverUrl: 'https://server-a.example.test', kind: 'custom', generation: 1,

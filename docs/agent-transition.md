@@ -1,7 +1,9 @@
 # Same-Session Agent transition
 
 One Happier Session keeps its identity and transcript while the Agent running it is replaced. The
-product name is **Continue with another Agent**; the machine RPC is `session.agentTransition`.
+product name is **Continue with another Agent**. In current 0.3 development source, mutation enters
+through the admitted `session.agent.transition` Account Action; the raw `session.agentTransition`
+machine mutation is retired. Inspection and brief preview remain read-only Machine RPCs.
 
 > **Release status.** Unreleased. This exists in the current development source of `dev` and
 > `../0.2`. Do not describe it as available in a
@@ -47,8 +49,13 @@ divider. This development compatibility path uses the existing layout discrimina
 it adds no server feature bit or retry after a 400 response.
 
 `packages/protocol/src/sessions/agentTransition.ts` is the single owner. Methods are declared in
-`packages/protocol/src/rpc/methods.ts`: `session.agentTransition` and
-`session.continuation.inspect`.
+`packages/protocol/src/actions/sessionAgentTransitionActionFamily.ts` declares the mutation Action.
+Its input uses the request below without `v`. The composer operation invokes the real UI Action
+executor, which selects the Session Machine and admits requester custody before daemon execution.
+`session.continuation.inspect` remains declared in `packages/protocol/src/rpc/methods.ts`.
+Action failures retain their typed owner code and use the existing Action failure presenter in the
+composer banner. Known refusals preserve the prompt and arm; the canonical Action unknown-outcome
+classification still blocks resend until reconciliation. No raw-RPC fallback is attempted.
 
 The request is strict: `{ v: 1, sessionId, expectedCurrentAgentId, selection, input }`. `selection`
 carries `agentId` plus optional `modelId`, `providerConnectionId`, `acpSessionModeId` and
@@ -712,15 +719,12 @@ an already admitted message into a rejection.
 
 ## Compatibility
 
-**New client against a daemon older than `cli-v0.2.14`.** Transition registration shipped in
-`cli-v0.2.14`; a daemon without it rejects `session.agentTransition` with
-`RPC_ERROR_CODES.METHOD_NOT_AVAILABLE`, which the client op maps to the operation-scoped arm
-`rejected('unsupported_operation')` with `sourceEffect: 'none'`. Inspection maps the same code to
-`reason: 'operation_unavailable'`, and
-`resolveSessionContinuationUnavailablePresentationV1` disambiguates old-daemon from offline using
-Machine presence (`update_cli` / `machine_offline` / `update_or_reconnect`). The connection is never
-failed wholesale; only this operation degrades. **Every other transport failure, and any unparseable
-response, is `outcome_unknown` — never a rejection.**
+**Current 0.3 client.** Switching requires the admitted Account Action transport. A known Action
+refusal is presented with the Action owner's reason rather than flattened into an unknown cutover.
+Lost acknowledgement follows `isActionOutcomeUnknownErrorCodeV1`; it does not promise an untouched
+source. The older raw mutation transport is not retried. Read-only inspection still maps
+`RPC_ERROR_CODES.METHOD_NOT_AVAILABLE` to `operation_unavailable`, with Machine presence supplying
+the existing update/reconnect presentation.
 
 **Old client against a new daemon/server.** Unchanged: the divider rides the shipped passthrough
 event arm, and no existing fork/spawn/message vector changed shape.

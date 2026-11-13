@@ -1222,7 +1222,7 @@ describe('default Action executor mode and catalog contracts', () => {
     expect(outgoing).toEqual([{ method: `machine-a:${RPC_METHODS.SESSION_CONTINUATION_INSPECT}`,
       params: { v: 1, sourceSessionId: 'inspect-session', selection } }]);
   });
-  it('switches through the same Session daemon without replacing the exact first input', async () => {
+  it.each(['accepted', 'rejected', 'credential_scope_denied', 'action_outcome_unknown'] as const)('switches through the same Session daemon without replacing the exact first input (%s)', async outcomeKind => {
     installSession('switch-session', { path: '/repo', machineId: 'machine-a', flavor: 'claude' });
     const machine = createMachineFixture({ id: 'machine-a', storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
     storage.setState({ machines: { 'machine-a': machine }, machineListByServerId: { [serverId]: [machine] } });
@@ -1232,10 +1232,14 @@ describe('default Action executor mode and catalog contracts', () => {
     let transitionInput: unknown;
     const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://mode-actions.test',
       serverIdentityId: 'srv_mode_home', accountId: 'alice', machineId: 'machine-a', tokenEpoch: 0,
-      actionId: 'session.agent.transition', execute: (input, { invocation }) => {
+      actionId: 'session.agent.transition',
+      failure: () => outcomeKind === 'credential_scope_denied' || outcomeKind === 'action_outcome_unknown'
+        ? { errorCode: outcomeKind, error: outcomeKind } : null,
+      execute: (input, { invocation }) => {
         expect(invocation).toMatchObject({ caller: { kind: 'host' }, surface: 'ui', authority: 'present_user' });
         transitionInput = input;
-        return { type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' };
+        return outcomeKind === 'accepted' ? { type: 'accepted', localId: 'retained-input' }
+          : { type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' };
       } });
     homes.answer(serverId, '/v1/machines', { body: [boundary.machine] });
     homes.answer(serverId, '/v1/machines/machine-a', { body: { machine: boundary.machine } });
@@ -1256,10 +1260,22 @@ describe('default Action executor mode and catalog contracts', () => {
     const execute = createDefaultActionExecutor().execute;
     expect(await execute('session.continuation.inspect', { sessionId: request.sessionId, selection }, context()))
       .toMatchObject({ ok: true, result: { status: 'answered', inspection: { type: 'available' } } });
-    const switched = await execute('session.agent.transition', request, context());
-    expect(switched, JSON.stringify({ switched, scope: storage.getState().profileScope,
-      requests: homes.requests.slice(-12).map(request => request.path), outgoing: outgoing.map(request => request.method) }))
-      .toEqual({ ok: true, result: { type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' } });
+    const { continueSessionWithArmedAgent } = await import('@/sync/domains/session/input/continueSessionWithArmedAgent');
+    const switched = await continueSessionWithArmedAgent({ status: 'ready', submission: {
+      machineId: 'machine-a', serverId, sessionId: request.sessionId, localId: request.input.localId,
+      sourceAgentLabel: 'Claude', targetAgentLabel: 'Codex', input: request.input,
+      intent: { v: 1, mode: 'same_session', sourceAgentId: 'claude', selection: { v: 1, agentId: 'codex' } },
+    } });
+    expect(switched.result).toEqual(outcomeKind === 'accepted' ? { type: 'accepted', localId: 'retained-input' }
+      : outcomeKind === 'rejected' ? { type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' }
+      : outcomeKind === 'action_outcome_unknown' ? { type: 'outcome_unknown', localId: 'retained-input' } : null);
+    expect(switched.disposition.draft).toBe(outcomeKind === 'accepted' ? 'clear' : 'preserve');
+    expect(switched.disposition.send).toBe(outcomeKind === 'action_outcome_unknown' ? 'block' : 'allow');
+    if (outcomeKind === 'credential_scope_denied') {
+      const { resolveActionExecutionFailureMessage } = await import('./resolveActionExecutionFailureMessage');
+      expect(switched.disposition.notice?.message).toBe(resolveActionExecutionFailureMessage(
+        { ok: false, errorCode: outcomeKind, error: outcomeKind }, outcomeKind));
+    }
     expect(outgoing.map(rpc => rpc.method)).toEqual([`machine-a:${RPC_METHODS.SESSION_CONTINUATION_INSPECT}`]);
     expect(transitionInput).toEqual(request);
     expect(storage.getState().sessions['switch-session']?.metadata?.flavor).toBe('claude');

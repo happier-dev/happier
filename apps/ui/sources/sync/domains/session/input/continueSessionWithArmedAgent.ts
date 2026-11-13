@@ -1,3 +1,5 @@
+import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type {
     ComposerAgentContinuationIntentV1,
     SessionAgentTransitionInputV1,
@@ -548,7 +550,7 @@ export async function continueSessionWithArmedAgent(
         },
     });
     if (options?.isCurrent?.() === false || options?.onBeforeTransitionDispatch?.() === false) return refuseLocally(null);
-    const result = await runSessionAgentTransitionOnMachine({
+    const outcome = await runSessionAgentTransitionOnMachine({
         machineId: submission.machineId,
         serverId: submission.serverId,
         ...(options?.signal ? { signal: options.signal } : {}),
@@ -560,6 +562,14 @@ export async function continueSessionWithArmedAgent(
             input: buildArmedAgentContinuationTransitionInput(submission),
         },
     });
+    if ('ok' in outcome) {
+        const message = resolveActionExecutionFailureMessage(outcome, outcome.errorCode) ?? outcome.errorCode;
+        if (!isActionOutcomeUnknownErrorCodeV1(outcome.errorCode)) return refuseLocally(message);
+        const result = { type: 'outcome_unknown' as const, localId: submission.localId };
+        const disposition = resolveArmedAgentContinuationDisposition(result, submission);
+        return { result, disposition: { ...disposition, notice: { tone: 'warning', recovery: 'none', message } } };
+    }
+    const result = outcome;
     return {
         result,
         disposition: resolveArmedAgentContinuationDisposition(result, {
