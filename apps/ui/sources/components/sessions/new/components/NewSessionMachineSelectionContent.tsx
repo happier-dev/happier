@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { retryableLazy } from '@/components/ui/performance/retryableLazy';
 
-import { SelectionList, resolvePopoverSelectionListHeightBehavior } from '@/components/ui/selectionList';
+import { SelectionList, resolvePopoverSelectionListHeightBehavior, type SelectionListStep } from '@/components/ui/selectionList';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import type { ManagedSessionPlacementV1 } from '@happier-dev/protocol/teams/managedDefaults';
@@ -86,7 +86,21 @@ export type NewSessionMachineSelectionContentProps<TMachine extends MachineDispl
     /** Exposes the list to an agent's UI commands under this scope, as `MachineSelector` does. */
     currentUiContextCommandScope?: string;
     currentUiContextForegroundOverlay?: boolean;
+    /**
+     * A host's choice that is no particular Machine ("Your usual Machine", "Auto"), listed first and
+     * marked while it holds, as the folder picker's "No folder".
+     */
+    defaultOption?: MachineSelectionDefaultOption;
 }>;
+
+export type MachineSelectionDefaultOption = Readonly<{
+    title: string;
+    subtitle?: string;
+    selected: boolean;
+    onSelect: () => void;
+}>;
+
+const DEFAULT_OPTION_ID = 'machine-default';
 
 export function NewSessionMachineSelectionContent<TMachine extends MachineDisplayRenderable = Machine>(
     props: NewSessionMachineSelectionContentProps<TMachine>,
@@ -138,6 +152,23 @@ export function NewSessionMachineSelectionContent<TMachine extends MachineDispla
         testIdPrefix: props.testIdPrefix,
     });
 
+    const defaultOption = props.defaultOption;
+    const rootStep = React.useMemo((): SelectionListStep => defaultOption ? {
+        ...listModel.rootStep,
+        sections: [{
+            kind: 'static',
+            id: DEFAULT_OPTION_ID,
+            options: [{
+                id: DEFAULT_OPTION_ID,
+                label: defaultOption.title,
+                ...(defaultOption.subtitle === undefined ? {} : { subtitle: defaultOption.subtitle }),
+                ...(props.testIdPrefix ? { testID: `${props.testIdPrefix}-option:default` } : {}),
+                onSelect: defaultOption.onSelect,
+            }],
+        }, ...listModel.rootStep.sections],
+    } : listModel.rootStep, [defaultOption, listModel.rootStep, props.testIdPrefix]);
+    const selectedOptionId = defaultOption?.selected ? DEFAULT_OPTION_ID : listModel.selectedOptionId;
+
     const inline = props.presentation === 'inline';
     const maxHeight = inline ? undefined : props.maxHeight;
     return (
@@ -150,8 +181,8 @@ export function NewSessionMachineSelectionContent<TMachine extends MachineDispla
             testID={props.testID ?? 'new-session-machine-list'}
             currentUiContextCommandScope={props.currentUiContextCommandScope}
             currentUiContextForegroundOverlay={props.currentUiContextForegroundOverlay}
-            rootStep={listModel.rootStep}
-            selectedOptionId={listModel.selectedOptionId}
+            rootStep={rootStep}
+            selectedOptionId={selectedOptionId}
             onSelect={() => {}}
             onRequestClose={() => {}}
             autoFocusInputOnWeb={!inline}

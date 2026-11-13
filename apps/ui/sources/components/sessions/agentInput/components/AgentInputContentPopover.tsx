@@ -66,6 +66,8 @@ export type AgentInputContentPopoverProps = Readonly<{
     /** The hover preview's stacking (`useHoverPreviewPopover`'s `popoverLayer`). */
     layer?: 'hoverCard';
     anchorRef: React.RefObject<any>;
+    /** `field`: the picker of a form field, hanging below it; default: a composer chip's, above it. */
+    anchor?: 'field';
     boundaryRef?: React.RefObject<any> | null;
     content: AgentInputPopoverContent;
     header?: AgentInputContentPopoverHeader;
@@ -116,6 +118,7 @@ export function AgentInputContentPopover(props: AgentInputContentPopoverProps) {
             autoFocusOnOpen={props.autoFocusOnOpen}
             layer={props.layer}
             anchorRef={props.anchorRef}
+            {...(props.anchor === undefined ? {} : { anchor: props.anchor })}
             boundaryRef={props.boundaryRef}
             maxHeightCap={props.maxHeightCap ?? 420}
             maxWidthCap={maxWidthCap}

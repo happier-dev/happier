@@ -17,6 +17,7 @@ import type { NewSessionMachinePickerInventory } from '@/components/sessions/new
 import { buildServerScopedMachine } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { useSettingMutable } from '@/sync/domains/state/storage';
+import { useServerScopedMachine } from '@/sync/store/hooks';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -30,6 +31,7 @@ import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToH
 import {
   useSessionMachineChoicePopover,
   useSessionPathChoicePopover,
+  type SessionMachineChoiceParams,
   type SessionPathChoiceParams,
 } from './sessionPlacementPopovers';
 
@@ -179,10 +181,12 @@ export function SessionPlacementChips(
   // A folder is chosen for one Machine: when the host's Machine changes underneath, its pickers close.
   const machineId = props.machine?.id ?? null;
   React.useEffect(() => setOpen(null), [machineId]);
+  // In a form the pickers hang below their fields; on a chip row they open above, as the composer's do.
+  const popoverAnchor = props.presentation === 'fields' ? 'field' as const : undefined;
   const popovers = (
     <>
-      {open === 'machine' ? <PlacementPopover config={machinePopover} anchorRef={machineAnchor} onClose={close} /> : null}
-      {open === 'folder' ? <PlacementPopover config={pathPopover} anchorRef={folderAnchor} onClose={close} /> : null}
+      {open === 'machine' ? <PlacementPopover config={machinePopover} anchorRef={machineAnchor} onClose={close} {...(popoverAnchor ? { anchor: popoverAnchor } : {})} /> : null}
+      {open === 'folder' ? <PlacementPopover config={pathPopover} anchorRef={folderAnchor} onClose={close} {...(popoverAnchor ? { anchor: popoverAnchor } : {})} /> : null}
     </>
   );
 
@@ -271,6 +275,98 @@ export function SessionPlacementChips(
   );
 }
 
+/**
+ * A form's Machine alone (where a deploy, a build or a backup runs; which Machine holds a Provider's
+ * login): one field row opening New Session's Machine picker, as the placement fields do. The host owns
+ * the value and the list; absent `machines`, the open picker resolves this Home's Machines itself.
+ */
+export function SessionMachineField(props: Readonly<{
+  serverId: string;
+  machineId: string | null;
+  /** The host's eligible Machines (a deploy's linkable ones); absent: this Home's launch Machines. */
+  machines?: readonly Machine[];
+  /** The chosen Machine's name when no listed record names it (a Machine no longer known). */
+  machineName?: string | null;
+  title: string;
+  subtitle?: string;
+  icon?: React.ReactNode;
+  placeholder?: string;
+  /** Listed first and shown while no Machine is chosen ("Your usual Machine"). */
+  defaultChoice?: Omit<NonNullable<SessionMachineChoiceParams['defaultChoice']>, 'selected'>;
+  awayMachinesChoosable?: boolean;
+  disabled?: boolean;
+  showDivider?: boolean;
+  testID?: string;
+  onSelectMachine: (machine: Machine) => void;
+}>): React.ReactElement {
+  const anchor = React.useRef<View | null>(null);
+  const [open, setOpen] = React.useState(false);
+  const hostMachine = props.machines?.find((machine) => machine.id === props.machineId) ?? null;
+  const homeMachine = useServerScopedMachine(props.serverId, props.machines === undefined ? props.machineId : null);
+  const machine = hostMachine ?? homeMachine;
+  const activeServer = useNewSessionActiveServerSource();
+  const machineInventory = React.useMemo(() => ({
+    allowedServerIds: [props.serverId],
+    activeServerId: activeServer.activeServerId,
+    refreshToken: activeServer.serverProfilesSignature,
+    targetServerId: props.serverId,
+    recentMachinePaths: NO_MACHINE_PATHS,
+    favoriteMachineIds: NO_STRINGS,
+  }), [activeServer.activeServerId, activeServer.serverProfilesSignature, props.serverId]);
+  const hostMachines = props.machines;
+  const machineGroups = React.useMemo(() => hostMachines === undefined ? undefined : [{
+    serverId: props.serverId, serverName: '', loading: false, signedOut: false,
+    machines: hostMachines.map((row) => buildServerScopedMachine(row, { serverId: props.serverId, serverName: '' })),
+  }], [hostMachines, props.serverId]);
+  // Choosing the value already held is no change.
+  const select = useEventCallback((next: Machine) => {
+    if (next.id !== props.machineId) props.onSelectMachine(next);
+  });
+  const defaultChoice = props.defaultChoice;
+  const defaultSelected = props.machineId === null;
+  const machinePopover = useSessionMachineChoicePopover({
+    selectedMachine: machine,
+    selectedServerId: props.serverId,
+    targetServerId: props.serverId,
+    selectMachineTarget: select,
+    ...(machineGroups === undefined ? { machineInventory } : { machineGroups }),
+    useMachinePickerSearch: true,
+    awayMachinesChoosable: props.awayMachinesChoosable === true,
+    ...(defaultChoice ? { defaultChoice: { ...defaultChoice, selected: defaultSelected } } : {}),
+    ...(props.testID === undefined ? {} : { testIdPrefix: `${props.testID}-machine` }),
+  });
+  const value = machine ? getMachineDisplayName(machine) ?? props.machineName ?? null
+    : props.machineId !== null ? props.machineName ?? null
+      : defaultChoice?.title ?? null;
+  const close = React.useCallback(() => setOpen(false), []);
+  const openPicker = React.useCallback(() => setOpen(true), []);
+  return (
+    <Item
+      {...(props.testID === undefined ? {} : { testID: props.testID })}
+      title={props.title}
+      {...(props.subtitle === undefined ? {} : { subtitle: props.subtitle })}
+      {...(props.icon === undefined ? {} : { icon: props.icon })}
+      accessoryLayout="adaptive"
+      fieldAccessory
+      showChevron={false}
+      selected={false}
+      disabled={props.disabled}
+      {...(props.showDivider === undefined ? {} : { showDivider: props.showDivider })}
+      accessibilityExpanded={open}
+      webRole="button"
+      {...(props.disabled ? {} : { onPress: openPicker })}
+      rightElement={
+        <>
+          <PlacementField anchorRef={anchor} testID={`${props.testID ?? 'session-machine-field'}.field`}
+            label={props.title} value={value} placeholder={props.placeholder ?? t('agentInput.runOn')}
+            open={open} disabled={props.disabled === true} span="column" />
+          {open ? <PlacementPopover config={machinePopover} anchorRef={anchor} onClose={close} anchor="field" /> : null}
+        </>
+      }
+    />
+  );
+}
+
 /** A bordered chip hosts the same picker in its own popover. */
 function renderPlacementContent(
   config: AgentInputContentPopoverConfig,
@@ -296,31 +392,37 @@ function PlacementField(props: Readonly<{
   placeholder: string;
   open: boolean;
   disabled: boolean;
-  onPress: () => void;
+  /** Absent: the row around the field is the control, and the field only shows the value and anchors the picker. */
+  onPress?: () => void;
+  /** `row` beneath its label (the placement row); `column` beside it in an adaptive form row. */
+  span?: 'row' | 'column';
 }>): React.ReactElement {
   const { theme } = useUnistyles();
   const fieldColors = React.useMemo(() => resolveFieldBoxColors(theme), [theme]);
+  const box = renderDropdownItemTriggerRightElement({
+    detail: props.value,
+    open: props.open,
+    detailColor: props.disabled ? theme.colors.text.tertiary : theme.colors.text.secondary,
+    chevronColor: theme.colors.text.secondary,
+    field: fieldColors,
+    fieldSpan: props.span ?? 'row',
+    placeholder: props.placeholder,
+    placeholderColor: theme.colors.input.placeholder,
+  });
   return (
     <View ref={props.anchorRef} collapsable={false}>
-      <HappierPressable
-        testID={props.testID}
-        accessibilityRole="button"
-        accessibilityLabel={`${props.label}: ${props.value ?? props.placeholder}`}
-        expanded={props.open}
-        disabled={props.disabled}
-        {...(props.disabled ? {} : { onPress: props.onPress })}
-      >
-        {renderDropdownItemTriggerRightElement({
-          detail: props.value,
-          open: props.open,
-          detailColor: props.disabled ? theme.colors.text.tertiary : theme.colors.text.secondary,
-          chevronColor: theme.colors.text.secondary,
-          field: fieldColors,
-          fieldSpan: 'row',
-          placeholder: props.placeholder,
-          placeholderColor: theme.colors.input.placeholder,
-        })}
-      </HappierPressable>
+      {props.onPress === undefined ? box : (
+        <HappierPressable
+          testID={props.testID}
+          accessibilityRole="button"
+          accessibilityLabel={`${props.label}: ${props.value ?? props.placeholder}`}
+          expanded={props.open}
+          disabled={props.disabled}
+          {...(props.disabled ? {} : { onPress: props.onPress })}
+        >
+          {box}
+        </HappierPressable>
+      )}
     </View>
   );
 }
@@ -330,6 +432,8 @@ function PlacementPopover(
     config: AgentInputContentPopoverConfig;
     anchorRef: React.RefObject<View | null>;
     onClose: () => void;
+    /** `field`: a form's field, whose picker hangs below it; default: a chip's, above. */
+    anchor?: 'field';
   }>,
 ): React.ReactElement {
   const { config, onClose } = props;
@@ -341,6 +445,7 @@ function PlacementPopover(
     <AgentInputContentPopover
       open
       anchorRef={props.anchorRef}
+      {...(props.anchor === undefined ? {} : { anchor: props.anchor })}
       content={config.renderContent}
       onRequestClose={requestClose}
       {...(config.header === undefined ? {} : { header: config.header })}

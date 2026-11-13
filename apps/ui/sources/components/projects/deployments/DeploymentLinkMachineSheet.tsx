@@ -3,10 +3,7 @@ import { MachineCreationContinuation, type MachineCreationContinuationDraft } fr
 import { View } from 'react-native';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import {
-  DropdownMenu,
-  type DropdownMenuItem,
-} from '@/components/ui/forms/dropdown/DropdownMenu';
+import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -18,7 +15,6 @@ import type { CustomModalInjectedProps } from '@/modal/types';
 import { useMachineListForServer } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
 
 import {
   DeploymentRetentionChoice,
@@ -66,22 +62,8 @@ function DeploymentLinkMachineSheet(
     chosenId !== null ? machines.find((machine) => machine.id === chosenId) ?? null :
     machines.find((machine) => machine.id === props.suggestedMachineId) ?? (machines.length === 1 ? machines[0] : null);
   const chosenName = chosen ? getMachineDisplayName(chosen, machines) : null;
-  const [menuOpen, setMenuOpen] = React.useState(false);
   const [retention, setRetention] =
     React.useState<DeploymentRetentionChoiceValue>('alwaysOn');
-  // The same Machine select as the new-environment draft's "Where it runs": a Home can hold many Machines.
-  const machineItems = React.useMemo(
-    (): DropdownMenuItem[] =>
-      [...(chosenId && !machines.some(machine => machine.id === chosenId) ? [{
-        id: chosenId, title: t('approvals.machineNotKnown'), subtitle: t('common.unavailable'), checked: true,
-      }] : []), ...machines.map((machine) => ({
-        id: machine.id,
-        title: getMachineDisplayName(machine, machines),
-        subtitle: isMachineOnline(machine) === false ? t('projects.deployments.machineAway') : undefined,
-        checked: machine.id === chosen?.id,
-      }))],
-    [chosen?.id, chosenId, machines],
-  );
   const [busy, setBusy] = React.useState(false);
   const [refused, setRefused] = React.useState<string | null>(null);
   const { onClose, onApproval, run } = props;
@@ -154,21 +136,18 @@ function DeploymentLinkMachineSheet(
             />} />
         ) : (
           <ItemGroup header="none">
-            <DropdownMenu
+            <SessionMachineField
               testID="project-deployments.link.machine"
-              open={menuOpen}
-              onOpenChange={setMenuOpen}
-              items={machineItems}
-              selectedId={chosenId ?? chosen?.id ?? null}
-              onSelect={(id) => {
-                setMenuOpen(false);
-                setChosenId(id);
+              serverId={props.serverId}
+              machines={machines}
+              machineId={chosenId ?? chosen?.id ?? null}
+              machineName={t('approvals.machineNotKnown')}
+              title={t('projects.deployments.machine')}
+              awayMachinesChoosable
+              onSelectMachine={(machine) => {
+                setChosenId(machine.id);
                 setRetention('alwaysOn');
                 setRefused(null);
-              }}
-              itemTrigger={{
-                title: t('projects.deployments.machine'),
-                showSelectedSubtitle: false,
               }}
             />
             <DeploymentRetentionChoice

@@ -74,8 +74,9 @@ export function useAgentInputPopoverLayout(input: Readonly<{
     /**
      * `chip` (default): a composer picker opens directly above its chip and may overlap the composer
      * (the 0.2 composition, owner 2026-10-18). `caret`: the slash/@ menu clears the whole composer.
+     * `field`: a form field's picker hangs below its field, as every form select does (bc270db50c).
      */
-    anchor?: 'chip' | 'caret';
+    anchor?: 'chip' | 'caret' | 'field';
     /**
      * The room the content needs to show whole, when it is known up front (a list that keeps its whole
      * height needs its whole cap). A chip popover whose side above cannot hold it opens below when that
@@ -195,6 +196,19 @@ export function useAgentInputPopoverLayout(input: Readonly<{
         };
     }
 
+    if (input.anchor === 'field') {
+        return {
+            maxHeightCap,
+            keyboardBottomInset: effectiveKeyboardHeight,
+            placement: 'bottom',
+            placementMinSpace: input.contentRoom ?? POPOVER_PREFERRED_ROOM_PX,
+            flip: true,
+            gap: DEFAULT_POPOVER_GAP,
+            edgePadding,
+            portal,
+            ...(pickerWidth === 'window' ? {} : { horizontalBoundaryRef: columnRef }),
+        };
+    }
     const caretAnchored = input.anchor === 'caret';
     // A chip's popover opens above its chip (owner 2026-10-18). A composer high in the window (first-run Home,
     // New Session, a Run now form under the page header) leaves less room there than a popover's content needs:

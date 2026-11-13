@@ -16,7 +16,7 @@ import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/
 import { resolveUiAccountActionFallbackMachineId } from '@/sync/ops/actions/accountActionDeps';
 import { presentNotificationDestinationSelection } from '@/components/plugins/actions/presentNotificationDestinationSelection';
 import { t } from '@/text';
-import { EnvironmentMachineChoice } from './EnvironmentMachineChoice';
+import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { deploymentBackupKeepFields, deploymentBackupKeepLabels, deploymentBackupRetentionDraftFrom,
   retentionFromDraft } from './deploymentBackupRetention';
 
@@ -117,13 +117,13 @@ export function DeploymentExtraDefaultsRows(props: Readonly<{
         onPress={() => change('alertChannels', preferences.alertChannels?.filter((_, position) => position !== index))} />} />)}
     {preferences.alertChannels?.length ? <Item testID="deployment-defaults.alertChannels.add"
       title={t('common.add')} disabled={props.disabled || selectingAlert} onPress={() => selectAlert()} /> : null}
-    <EnvironmentMachineChoice testID="deployment-defaults.previewMachine" serverId={props.serverId} icon={null}
+    <SessionMachineField testID="deployment-defaults.previewMachine" serverId={props.serverId}
       title={`${t('projects.deployments.settingsSections.previewsTitle')} · ${t('projects.deployments.settingsSections.previewsRunsOn')}`}
-      currentMachineId={preferences.previewMachineId ?? null}
-      fallback={resolved.values.previewMachineId ?? props.inheritLabel}
+      machineId={preferences.previewMachineId ?? null}
+      machineName={resolved.values.previewMachineId ?? props.inheritLabel}
       subtitle={props.sourceLabel(resolved.sources.previewMachineId)}
       defaultChoice={{ title: props.inheritLabel, onChoose: () => change('previewMachineId', undefined) }}
-      disabled={props.disabled} onChoose={id => change('previewMachineId', id)} />
+      awayMachinesChoosable disabled={props.disabled} onSelectMachine={machine => change('previewMachineId', machine.id)} />
     <SegmentedChoiceItem<'inherit' | 'none' | 'own' | 'branch'> testIDPrefix="deployment-defaults.previewDatabase"
       title={`${t('projects.deployments.settingsSections.previewsTitle')} · ${t('projects.deployments.settingsSections.previewsData')}`}
       subtitle={props.sourceLabel(resolved.sources.previewDatabase)} disabled={props.disabled}

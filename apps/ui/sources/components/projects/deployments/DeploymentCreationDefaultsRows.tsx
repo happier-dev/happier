@@ -4,7 +4,7 @@ import type { DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protoco
 import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
-import { EnvironmentMachineChoice } from './EnvironmentMachineChoice';
+import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { DeploymentExtraDefaultsRows } from './DeploymentExtraDefaultsRows';
 import { DeploymentCreationDefaultsV1Schema, type DeploymentCreationDefaultsV1 } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
 
@@ -32,18 +32,18 @@ export function renderDeploymentDefaultsEditorRows(props: Readonly<{
     });
   }
   return <>
-    <EnvironmentMachineChoice testID="deployment-defaults.builder" serverId={props.serverId} icon={null}
-      title={t('projects.deployments.buildsOn')} currentMachineId={props.preferences.buildMachineId ?? null}
-      fallback={props.resolved.values.buildMachineId ?? t('projects.deployments.buildsOnTarget')}
+    <SessionMachineField testID="deployment-defaults.builder" serverId={props.serverId}
+      title={t('projects.deployments.buildsOn')} machineId={props.preferences.buildMachineId ?? null}
+      machineName={props.resolved.values.buildMachineId ?? t('projects.deployments.buildsOnTarget')}
       subtitle={sourceWord(props.resolved.sources.buildMachineId ?? 'builtin')}
       defaultChoice={{ title: props.inheritLabel, onChoose: () => change('buildMachineId', undefined) }}
-      disabled={props.disabled} onChoose={id => change('buildMachineId', id)} />
-    <EnvironmentMachineChoice testID="deployment-defaults.controller" serverId={props.serverId} icon={null}
-      title={t('projects.deployments.controllerRow')} currentMachineId={props.preferences.controllerMachineId ?? null}
-      fallback={props.resolved.values.controllerMachineId ?? t('projects.deployments.buildsOnTarget')}
+      awayMachinesChoosable disabled={props.disabled} onSelectMachine={machine => change('buildMachineId', machine.id)} />
+    <SessionMachineField testID="deployment-defaults.controller" serverId={props.serverId}
+      title={t('projects.deployments.controllerRow')} machineId={props.preferences.controllerMachineId ?? null}
+      machineName={props.resolved.values.controllerMachineId ?? t('projects.deployments.buildsOnTarget')}
       subtitle={sourceWord(props.resolved.sources.controllerMachineId ?? 'builtin')}
       defaultChoice={{ title: props.inheritLabel, onChoose: () => change('controllerMachineId', undefined) }}
-      disabled={props.disabled} onChoose={id => change('controllerMachineId', id)} />
+      awayMachinesChoosable disabled={props.disabled} onSelectMachine={machine => change('controllerMachineId', machine.id)} />
     <FieldValueItem testID="deployment-defaults.retention" fieldTestID="deployment-defaults.retention.input"
       title={t('projects.deployments.defaultsEditor.retention')}
       subtitle={`${sourceWord(props.resolved.sources.retainPreviousDeployments)} · ${t('projects.deployments.defaultsEditor.clearToInherit')}`}

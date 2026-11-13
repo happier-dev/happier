@@ -1,9 +1,11 @@
 import { resolvePublishTargetRecommendation } from '@happier-dev/deployments';
+import { isMachineRoleActiveV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { deploymentRecommendationDescription } from './deploymentRecommendationDescription';
 import * as React from 'react';
 import { MachineCreationContinuation, type MachineCreationContinuationDraft } from '@/components/machines/add/MachineCreationContinuation';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionConfirmationReviewFacts } from '@/components/approvals/ActionConfirmationReview';
+import { DeploymentCreationReviewFacts } from '@/components/approvals/ApprovalReviewFacts';
 import { useInStepActionConfirmation } from '@/components/approvals/useInStepActionConfirmation';
 import type { DeploymentEnvironmentTabV1 } from '@happier-dev/deployments';
 import { DeploymentPartialProgress } from './DeploymentPartialProgress';
@@ -16,10 +18,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ProjectRefSelect } from '@/components/projects/ProjectRefSelect';
 import { useProjectSource } from '@/components/projects/sources/useProjectSources';
-import {
-  DropdownMenu,
-  type DropdownMenuItem,
-} from '@/components/ui/forms/dropdown/DropdownMenu';
+import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { SelectionTiles, type SelectionTile } from '@/components/ui/forms/SelectionTiles';
 import { PluginMark } from '@/components/settings/plugins/PluginMark';
 import { PLUGINS_APP_ROUTE } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
@@ -54,7 +53,6 @@ import { DeploymentManagedDataProvisionEditor, type ManagedDataProvisionDraft } 
 
 import type { createDeploymentActions } from './deploymentActions';
 import { DeploymentDeployerFields } from './DeploymentDeployerFields';
-import { renderDeploymentCreationDefaultsRows } from './DeploymentCreationDefaultsRows';
 import { useDeployHostReadiness } from './EnvironmentMachineChoice';
 import { MachineSetupPlanReview, describeMachineSetupPlanFailure, describeMachineSetupReviewUnavailable } from '@/components/settings/machines/managed/MachineSetupPlanReview';
 import { MachineSetupRecipeInputs } from '@/components/settings/machines/managed/MachineSetupRecipeInputs';
@@ -164,7 +162,6 @@ export const DeploymentEnvironmentDraft = React.memo(
     const [refusal, setRefusal] =
       React.useState<DeploymentActionOutcome | null>(null);
     const partial = refusal?.kind === 'refused' ? refusal.progress : undefined;
-    const [machineMenuOpen, setMachineMenuOpen] = React.useState(false);
     const [retention, setRetention] =
       React.useState<DeploymentRetentionChoiceValue>('alwaysOn');
     const draftTitle = useCollectionDraftTitle();
@@ -180,12 +177,14 @@ export const DeploymentEnvironmentDraft = React.memo(
     const presence = React.useMemo(() => new Map(machines.map((machine) =>
       [machine.id, describeMachinePresenceLine(machine, presenceNowMs, undefined, presenceScope)])), [machines, presenceNowMs, presenceScope]);
     const answers = (machine: (typeof machines)[number]) => presence.get(machine.id)?.online === true;
+    // A Machine whose Deployments role is off refuses deploys, so it is never the default home (Machine roles).
+    const deploysHere = (machine: (typeof machines)[number]) => answers(machine) && isMachineRoleActiveV1(machine.metadata, 'deployments');
     // The person's choice wins. Otherwise a copy starts on its source's Machine and a new draft on the first one that
     // answers; an unreachable Machine is never chosen for the person, so with none answering nothing is chosen.
     const preferredId = props.copyFrom ? copySourceMachineId(props.copyFrom) : null;
     const chosen =
       machineId !== null ? machines.find((machine) => machine.id === machineId) ?? null :
-      machines.find((machine) => machine.id === preferredId && answers(machine)) ?? machines.find(answers) ?? null;
+      machines.find((machine) => machine.id === preferredId && answers(machine)) ?? machines.find(deploysHere) ?? null;
     const branch = ref ?? source?.defaultRef ?? null;
     const platformEnvironment = React.useMemo(() => sourceId ? { projectSourceId: sourceId,
       ...(chosen ? { controllerMachineId: chosen.id } : {}) } : null, [sourceId, chosen?.id]);
@@ -363,20 +362,6 @@ export const DeploymentEnvironmentDraft = React.memo(
       if (next === RETRY_TILE) { platforms.retry(); return; }
       setTargetKey(next);
     };
-    const machineItems = React.useMemo(
-      (): DropdownMenuItem[] =>
-        // Answering Machines first; every row says its presence, and an away one stays choosable.
-        [...(machineId && !machines.some(machine => machine.id === machineId) ? [{
-          id: machineId, title: t('approvals.machineNotKnown'), subtitle: t('common.unavailable'), checked: true,
-        }] : []), ...[...machines].sort((left, right) => Number(presence.get(right.id)?.online === true) - Number(presence.get(left.id)?.online === true))
-          .map((machine) => ({
-            id: machine.id,
-            title: getMachineDisplayName(machine, machines),
-            subtitle: presence.get(machine.id)?.label || undefined,
-            checked: machine.id === chosen?.id,
-          }))],
-      [chosen?.id, machineId, machines, presence],
-    );
 
     const saveAction = {
       title: partial
@@ -448,24 +433,14 @@ export const DeploymentEnvironmentDraft = React.memo(
               details={[refusal.code]}
             />
           ) : null}
-          {prepared ? (
-            <ItemGroup
-              testID="project-deployments.draft.defaults"
-              title={t('projects.deployments.creationReview.title')}
-              description={stepReview?.summary ?? t('projects.deployments.creationReview.description')}
-            >
-              {renderDeploymentCreationDefaultsRows({
-                defaults: prepared.review.creationDefaults,
-                machineName,
-                testID: 'project-deployments.draft.defaults',
-              })}
-            </ItemGroup>
-          ) : null}
           {stepReview ? (
             <ActionConfirmationReviewFacts actionId={stepReview.actionId} actionArgs={stepReview.actionArgs}
               summaryPlacement="host"
               preview={stepReview.preview} serverId={props.lifetime?.scope.serverId ?? null}
               testID="project-deployments.draft.confirmation" />
+          ) : prepared ? (
+            <DeploymentCreationReviewFacts review={prepared.review} serverId={props.lifetime?.scope.serverId ?? null}
+              testID="project-deployments.draft" />
           ) : null}
           {props.projectChoice ? <DeploymentProjectChoiceGroups model={props.projectChoice}
             testIDPrefix="project-deployments.draft.project"
@@ -497,22 +472,17 @@ export const DeploymentEnvironmentDraft = React.memo(
                   disabled={!props.lifetime}
                 />} />
             ) : (
-              <DropdownMenu
+              <SessionMachineField
                 testID="project-deployments.draft.machine"
-                open={machineMenuOpen}
-                onOpenChange={setMachineMenuOpen}
-                items={machineItems}
-                selectedId={machineId ?? chosen?.id ?? null}
-                onSelect={(id) => {
-                  setMachineMenuOpen(false);
-                  setMachineId(id);
-                }}
-                itemTrigger={{
-                  title: onPlatform
-                    ? t('projects.deployments.platformLink.deploysFrom')
-                    : t('projects.deployments.machine'),
-                  showSelectedSubtitle: false,
-                }}
+                serverId={props.lifetime?.scope.serverId ?? ''}
+                machines={machines}
+                machineId={machineId ?? chosen?.id ?? null}
+                machineName={t('approvals.machineNotKnown')}
+                title={onPlatform
+                  ? t('projects.deployments.platformLink.deploysFrom')
+                  : t('projects.deployments.machine')}
+                awayMachinesChoosable
+                onSelectMachine={(machine) => setMachineId(machine.id)}
               />
             )}
             {onPlatform ? null : (

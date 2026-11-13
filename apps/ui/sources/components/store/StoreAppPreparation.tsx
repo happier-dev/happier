@@ -15,10 +15,7 @@ import { useActionApprovalContinuation } from '@/components/approvals/useActionA
 import { renderDeploymentCreationDefaultsRows } from '@/components/projects/deployments/DeploymentCreationDefaultsRows';
 import { DeploymentProjectChoiceGroups, useDeploymentProjectChoice } from '@/components/projects/deployments/DeploymentProjectChoice';
 import { MachineSetupReviewFooter } from '@/components/settings/machines/managed/MachineSetupPlanReview';
-import {
-  DropdownMenu,
-  type DropdownMenuItem,
-} from '@/components/ui/forms/dropdown/DropdownMenu';
+import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -37,10 +34,9 @@ import type { CustomModalInjectedProps } from '@/modal/types';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useMachineListForServer } from '@/sync/store/hooks';
 import { t } from '@/text';
-import { getMachineDisplayName, keepHyphenatedNameTogether, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { getMachineDisplayName, keepHyphenatedNameTogether } from '@/utils/sessions/machineDisplayNames';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { resolveMachinePickerPresence } from '@/sync/domains/machines/identity/resolveMachinePickerPresence';
-import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 
 import type {
@@ -53,7 +49,6 @@ import { createStoreAppPreparationState, type StoreAppPreparationStore } from '.
 
 type Ready = Extract<StoreAppListingState, { kind: 'ready' }>;
 /** The Deploys field's choice for the Account's usual controller; a Machine id is never this word. */
-const CONTROLLER_DEFAULT = 'default';
 type ReviewProps = Readonly<{
   ready: Ready;
   lifetime: ServerAccountScopeLifetime;
@@ -116,18 +111,16 @@ export function StoreAppPreparationReview(
     props.name ?? catalogText(ready.app.title) ?? ready.item.summary.title;
   const allMachines = useMachineListForServer(serverId, true);
   // A Machine runs an App through its installation; one without an installation cannot be chosen.
-  const { machines, machineNames } = React.useMemo(() => {
-    const machines = (allMachines ?? []).filter((machine) => Boolean(machine.installationId));
-    return { machines, machineNames: resolveMachineDisplayNames(machines) };
-  }, [allMachines]);
+  const machines = React.useMemo(
+    () => (allMachines ?? []).filter((machine) => Boolean(machine.installationId)),
+    [allMachines],
+  );
   const projectChoice = useDeploymentProjectChoice({ lifetime });
   const sources = projectChoice.sources;
   const [reviewState] = React.useState(() => props.reviewState ?? createReviewState(props));
   const { machineId, controllerId, pending, prepared, refusal, environmentName, domainHostnames, production, creating, templateChoices } = useStore(reviewState);
-  const [controllerMenuOpen, setControllerMenuOpen] = React.useState(false);
   const [optionsOpen, setOptionsOpen] = React.useState(false);
   const [deployDefaultsOpen, setDeployDefaultsOpen] = React.useState(false);
-  const [machineMenuOpen, setMachineMenuOpen] = React.useState(false);
   const partialFailure = refusal?.failure?.progress ? refusal.failure : null;
   const created = refusal?.failure?.created;
   // The Environment's own choices, with the existing create form's starting values: no name, not production,
@@ -166,22 +159,6 @@ export function StoreAppPreparationReview(
     [lifetime.scope, machines, presenceNowMs],
   );
   const chosen = machines.find((machine) => machine.id === machineId && selectable.has(machine.id)) ?? null;
-  // A fleet can hold many Machines: one field, choosable ones first, each other one disabled with its presence line.
-  const machineItems = React.useMemo(
-    (): DropdownMenuItem[] =>
-      [...machines]
-        .sort((left, right) => Number(selectable.has(right.id)) - Number(selectable.has(left.id)))
-        .map((machine) => ({
-          id: machine.id,
-          testID: `store.app.prepare.machine.${machine.id}`,
-          title: machineNames.get(machine.id)!,
-          ...(selectable.has(machine.id)
-            ? {}
-            : { disabled: true, subtitle: describeMachinePresenceLine(machine, presenceNowMs, undefined, lifetime.scope).label }),
-          checked: machine.id === machineId,
-        })),
-    [lifetime.scope, machineId, machineNames, machines, presenceNowMs, selectable],
-  );
   const nameOf = React.useCallback(
     (id: string) => {
       const machine = (allMachines ?? []).find((entry) => entry.id === id);
@@ -451,21 +428,16 @@ export function StoreAppPreparationReview(
           />
         ) : null}
         {machines.length > 0 ? (
-          <DropdownMenu
+          // New Session's Machine picker: a Machine that can't take the request now is listed, disabled, saying why.
+          <SessionMachineField
             testID="store.app.prepare.machine"
-            open={machineMenuOpen}
-            onOpenChange={setMachineMenuOpen}
-            search={machineItems.length > 8}
-            searchPlaceholder={t('capabilities.store.softwarePage.machineLabel')}
-            items={machineItems}
-            selectedId={machineId ?? ''}
-            onSelect={(id) => {
-              setMachineMenuOpen(false);
-              if (id && selectable.has(id)) reviewState.setState({ machineId: id });
-            }}
-            itemTrigger={{
-              title: t('capabilities.store.softwarePage.machineLabel'),
-              placeholder: t('capabilities.store.softwarePage.chooseMachine'),
+            serverId={serverId}
+            machines={machines}
+            machineId={machineId}
+            title={t('capabilities.store.softwarePage.machineLabel')}
+            placeholder={t('capabilities.store.softwarePage.chooseMachine')}
+            onSelectMachine={(next) => {
+              if (selectable.has(next.id)) reviewState.setState({ machineId: next.id });
             }}
           />
         ) : null}
@@ -544,31 +516,18 @@ export function StoreAppPreparationReview(
               />
             )}
           >
-            <DropdownMenu
+            <SessionMachineField
               testID="store.app.prepare.controller"
-              open={controllerMenuOpen}
-              onOpenChange={setControllerMenuOpen}
-              items={[
-                {
-                  id: CONTROLLER_DEFAULT,
-                  title: t('capabilities.store.appPage.controllerDefault'),
-                  checked: controllerId === null,
-                },
-                ...machines.map((machine): DropdownMenuItem => ({
-                  id: machine.id,
-                  title: machineNames.get(machine.id)!,
-                  checked: machine.id === controllerId,
-                })),
-              ]}
-              selectedId={controllerId ?? CONTROLLER_DEFAULT}
-              onSelect={(id) => {
-                setControllerMenuOpen(false);
-                reviewState.setState({ controllerId: id && id !== CONTROLLER_DEFAULT ? id : null });
+              serverId={serverId}
+              machines={machines}
+              machineId={controllerId}
+              title={t('capabilities.store.appPage.controllerLabel')}
+              defaultChoice={{
+                title: t('capabilities.store.appPage.controllerDefault'),
+                onChoose: () => reviewState.setState({ controllerId: null }),
               }}
-              itemTrigger={{
-                title: t('capabilities.store.appPage.controllerLabel'),
-                showSelectedSubtitle: false,
-              }}
+              awayMachinesChoosable
+              onSelectMachine={(next) => reviewState.setState({ controllerId: next.id })}
             />
             <Item
               testID="store.app.prepare.production"

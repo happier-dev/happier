@@ -1,7 +1,6 @@
 import { DeploymentMigrationSettings } from './DeploymentMigrationSettings';
 import { DeploymentRegistryCredentials } from './DeploymentRegistryCredentials';
-import { EnvironmentMachineChoice } from './EnvironmentMachineChoice';
-export { EnvironmentMachineChoice } from './EnvironmentMachineChoice';
+import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
@@ -268,16 +267,18 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             />
           )}
           {editing ? (
-            <EnvironmentMachineChoice
+            <SessionMachineField
               testID={`${section('servers-build')}.buildsOn`}
               serverId={editing.serverId}
               icon={machineIcon}
               title={t('projects.deployments.buildsOn')}
-              currentMachineId={buildMachineId ?? null}
-              fallback={t('projects.deployments.buildsOnTarget')}
+              machineId={buildMachineId ?? null}
+              placeholder={t('projects.deployments.buildsOnTarget')}
+              machineName={buildMachineId ? machineName(buildMachineId) : null}
+              awayMachinesChoosable
               disabled={change.running}
-              onChoose={(machineId) => {
-                void change.press(() => editing.actions.updateEnvironment(detail.environment, { buildMachineId: machineId }), 'servers-build');
+              onSelectMachine={(machine) => {
+                void change.press(() => editing.actions.updateEnvironment(detail.environment, { buildMachineId: machine.id }), 'servers-build');
               }}
             />
           ) : (
@@ -311,16 +312,17 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
         >
           {changeOutcome('controller')}
           {editing ? (
-            <EnvironmentMachineChoice
+            <SessionMachineField
               testID={`${section('controller')}.machine`}
               serverId={editing.serverId}
               icon={machineIcon}
               title={t('projects.deployments.controllerRow')}
-              currentMachineId={detail.environment.controllerMachineId}
-              fallback={machineName(detail.environment.controllerMachineId)}
+              machineId={detail.environment.controllerMachineId}
+              machineName={machineName(detail.environment.controllerMachineId)}
+              awayMachinesChoosable
               disabled={change.running}
-              onChoose={(machineId) => {
-                void change.press(() => editing.actions.setController(detail.environment, machineId), 'controller');
+              onSelectMachine={(machine) => {
+                void change.press(() => editing.actions.setController(detail.environment, machine.id), 'controller');
               }}
             />
           ) : (

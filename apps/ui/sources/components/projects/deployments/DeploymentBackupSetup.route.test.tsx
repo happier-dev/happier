@@ -45,7 +45,7 @@ const { formatMachineBytes } = await import('@/components/machines/vitals/machin
 const { Item } = await import('@/components/ui/lists/Item');
 const { DeploymentBackupSetup, DeploymentBackupSetupSheet, DeploymentBackupDestinationRow, DeploymentBackupScheduleRow } = await import('./DeploymentBackupControls');
 const { ValueFieldSelect } = await import('@/components/ui/forms/ValueFieldSelect');
-const { EnvironmentMachineChoice } = await import('./EnvironmentMachineChoice');
+const { SessionMachineField } = await import('@/components/sessions/new/placement/SessionPlacementChips');
 const { MachineSetupRecipeInputs } = await import('@/components/settings/machines/managed/MachineSetupRecipeInputs');
 const { HappierInputField } = await import('@happier-dev/plugin-ui/presentation');
 afterEach(() => { standardCleanup(); modal.show.mockClear(); transport.read.mockReset(); });
@@ -299,7 +299,7 @@ it('sets up another Machine through its receiver recipe and retains settled cred
     expect(select).toBeDefined();
     expect(select!.props.items.some((entry: { id: string }) => entry.id === 'anotherMachine')).toBe(true);
     await act(async () => select!.props.onSelect('anotherMachine'));
-    await act(async () => screen.findAllByType(EnvironmentMachineChoice)[0]!.props.onChoose(receiver.id));
+    await act(async () => screen.findAllByType(SessionMachineField)[0]!.props.onSelectMachine(receiver));
     await vi.waitFor(() => expect(screen.findAllByType(MachineSetupRecipeInputs)).toHaveLength(1));
     const recipe = screen.findAllByType(MachineSetupRecipeInputs)[0]!;
     expect(recipe.props.suppliedInputKeys).toEqual(['senderPublicKey']);

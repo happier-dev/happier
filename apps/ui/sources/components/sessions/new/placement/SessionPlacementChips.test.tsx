@@ -156,6 +156,57 @@ describe('SessionPlacementChips', () => {
     await screen.unmount();
   });
 
+  it("asks for a Machine alone in a form with New Session's Machine picker: host Machines, an away one choosable, the host's default first", async () => {
+    const { SessionMachineField } = await import('./SessionPlacementChips');
+    const { NewSessionMachineSelectionContent } = await import('@/components/sessions/new/components/NewSessionMachineSelectionContent');
+    const { NewSessionPathSelectionContent } = await import('@/components/sessions/new/components/NewSessionPathSelectionContent');
+    const studio = machine('machine-1', 'Studio');
+    const away = createMachineFixture({ ...machine('machine-2', 'Away box'), active: false, activeAt: 1 }) as Machine;
+    const onChoose = vi.fn();
+    const onDefault = vi.fn();
+    const screen = await renderScreen(
+      <SessionMachineField testID="controller" serverId="server-a" title="Runs on" machines={[studio, away]}
+        machineId={null} awayMachinesChoosable defaultChoice={{ title: 'Your usual Machine', onChoose: onDefault }}
+        onSelectMachine={onChoose} />,
+    );
+    // One field, no folder; the value says the default while it holds.
+    expect(screen.findAllByTestId('agent-input-path-chip')).toHaveLength(0);
+    expect(screen.getTextContent()).toContain('Runs on');
+    expect(screen.getTextContent()).toContain('Your usual Machine');
+    expect(screen.findAllByType(NewSessionMachineSelectionContent)).toHaveLength(0);
+
+    await screen.pressByTestIdAsync('controller');
+    const content = screen.findByType(NewSessionMachineSelectionContent);
+    expect(content.props.groups[0].machines.map((row: Machine) => row.id)).toEqual(['machine-1', 'machine-2']);
+    expect(content.props.disableOfflineMachines).toBe(false);
+    expect(content.props.resolveMachineAvailability(away, 'server-a').selectable).toBe(true);
+    expect(content.props.defaultOption).toMatchObject({ title: 'Your usual Machine', selected: true });
+    expect(screen.findAllByType(NewSessionPathSelectionContent)).toHaveLength(0);
+
+    await act(async () => { content.props.onSelectMachine(away); });
+    expect(onChoose).toHaveBeenCalledWith(away);
+    expect(screen.findAllByType(NewSessionMachineSelectionContent)).toHaveLength(0);
+
+    await screen.pressByTestIdAsync('controller');
+    await act(async () => { screen.findByType(NewSessionMachineSelectionContent).props.defaultOption.onSelect(); });
+    expect(onDefault).toHaveBeenCalledTimes(1);
+    await screen.unmount();
+  });
+
+  it('names a chosen Machine the host no longer lists with its fallback, and stays closed while disabled', async () => {
+    const { SessionMachineField } = await import('./SessionPlacementChips');
+    const { NewSessionMachineSelectionContent } = await import('@/components/sessions/new/components/NewSessionMachineSelectionContent');
+    const screen = await renderScreen(
+      <SessionMachineField testID="builder" serverId="server-a" title="Builds on" machines={[machine('machine-1', 'Studio')]}
+        machineId="gone" machineName="Machine not known" disabled onSelectMachine={vi.fn()} />,
+    );
+    expect(screen.getTextContent()).toContain('Machine not known');
+    // Nothing to press: the row names the Machine and opens no picker.
+    expect(screen.findAllByTestId('builder').some((node) => typeof node.props.onPress === 'function')).toBe(false);
+    expect(screen.findAllByType(NewSessionMachineSelectionContent)).toHaveLength(0);
+    await screen.unmount();
+  });
+
   it('renders as one form row of Machine and folder fields, as Agent and model does (ruling 2)', async () => {
     const { SessionPlacementChips } = await import('./SessionPlacementChips');
     const { NewSessionMachineSelectionContent } = await import('@/components/sessions/new/components/NewSessionMachineSelectionContent');

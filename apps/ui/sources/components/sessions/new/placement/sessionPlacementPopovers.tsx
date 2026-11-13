@@ -4,6 +4,7 @@ import type { AgentInputContentPopoverConfig } from '@/components/sessions/agent
 import { NewSessionPathSelectionContent } from '@/components/sessions/new/components/NewSessionPathSelectionContent';
 import {
   NewSessionMachineSelectionContent,
+  type MachineSelectionDefaultOption,
   type NewSessionMachineSelectionContentProps,
 } from '@/components/sessions/new/components/NewSessionMachineSelectionContent';
 import type { ServerScopedMachineGroup } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
@@ -137,6 +138,8 @@ const NO_POOL_GROUPS: ReadonlyArray<ServerScopedMachinePoolGroup> = [];
 const NO_STRINGS: ReadonlyArray<string> = [];
 const IGNORE_POOL_TARGET = (): void => {};
 const IGNORE_SEARCH_QUERY = (): void => {};
+// A host whose work waits for an away Machine (a deploy, a backup) keeps it choosable; its row still says it is away.
+const AWAY_MACHINE_CHOOSABLE = (): Readonly<{ selectable: true }> => ({ selectable: true });
 
 export type SessionMachineChoiceParams = Readonly<{
   selectedMachine: Machine | null;
@@ -198,6 +201,10 @@ export type SessionMachineChoiceParams = Readonly<{
   testIdPrefix?: string;
   /** Exposes the Machine list to an agent's UI commands under this scope. */
   currentUiContextCommandScope?: string;
+  /** A Machine away right now stays choosable (work that waits for it); absent: away Machines are not offered, as for a Session. */
+  awayMachinesChoosable?: boolean;
+  /** The host's choice that is no particular Machine, listed first ("Your usual Machine"). */
+  defaultChoice?: Omit<MachineSelectionDefaultOption, 'onSelect'> & Readonly<{ onChoose: () => void }>;
 }>;
 
 /** The Machine popover New Session's Machine chip opens; any host's Machine chip opens the same. */
@@ -265,6 +272,8 @@ export function useSessionMachineChoicePopover(
     managedMachineStartsSession: params.managedMachineStartsSession,
     testIdPrefix: params.testIdPrefix ?? 'new-session-machine',
     currentUiContextCommandScope: params.currentUiContextCommandScope,
+    awayMachinesChoosable: params.awayMachinesChoosable === true,
+    defaultChoice: params.defaultChoice,
   });
 
   const machinePopoverSignature = React.useMemo(
@@ -282,6 +291,8 @@ export function useSessionMachineChoicePopover(
         selectedManagedMachine: params.selectedManagedMachine,
         managedPlacementPreset: params.managedPlacementPreset,
         useMachinePickerSearch: params.useMachinePickerSearch === true,
+        awayMachinesChoosable: params.awayMachinesChoosable === true,
+        defaultChoice: params.defaultChoice ? { title: params.defaultChoice.title, subtitle: params.defaultChoice.subtitle, selected: params.defaultChoice.selected } : null,
         temporaryComputerTargets:
           params.temporaryComputers?.availability.status === 'available'
             ? params.temporaryComputers.availability.artifacts.map(
@@ -307,6 +318,10 @@ export function useSessionMachineChoicePopover(
       executionTarget,
       params.temporaryComputers?.availability,
       params.useMachinePickerSearch,
+      params.awayMachinesChoosable,
+      params.defaultChoice?.title,
+      params.defaultChoice?.subtitle,
+      params.defaultChoice?.selected,
       machinePoolSelection.status,
     ],
   );
@@ -427,6 +442,22 @@ export function useSessionMachineChoicePopover(
             currentUiContextForegroundOverlay={renderParams.currentUiContextCommandScope !== undefined}
             maxHeight={maxHeight}
             presentation={inline ? 'inline' : undefined}
+            {...(renderParams.awayMachinesChoosable
+              ? { disableOfflineMachines: false, resolveMachineAvailability: AWAY_MACHINE_CHOOSABLE }
+              : {})}
+            {...(renderParams.defaultChoice
+              ? {
+                  defaultOption: {
+                    title: renderParams.defaultChoice.title,
+                    ...(renderParams.defaultChoice.subtitle === undefined ? {} : { subtitle: renderParams.defaultChoice.subtitle }),
+                    selected: renderParams.defaultChoice.selected,
+                    onSelect: () => {
+                      renderParams.defaultChoice?.onChoose();
+                      requestClose();
+                    },
+                  },
+                }
+              : {})}
           />
         );
       },

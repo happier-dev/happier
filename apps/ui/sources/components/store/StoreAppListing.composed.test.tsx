@@ -428,15 +428,22 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
   };
 }
 
-/** The review's one Machine field: choose through the select's own onSelect, as a person picking from it does. */
-async function chooseMachine(
+/** The review's one Machine field (New Session's Machine picker): choose one of its listed Machines, as a person picking from it does. */
+function machineField(
   screen: Readonly<{ findAll: (predicate: (node: { props?: Record<string, unknown> }) => boolean) => { props: Record<string, unknown> }[] }>,
+  testID = 'store.app.prepare.machine',
+) {
+  return screen.findAll((node) => node.props?.testID === testID && typeof node.props.onSelectMachine === 'function')[0];
+}
+async function chooseMachine(
+  screen: Parameters<typeof machineField>[0],
   machineId: string,
 ) {
-  const select = screen.findAll((node) => node.props?.testID === 'store.app.prepare.machine'
-    && typeof node.props.onSelect === 'function')[0];
-  expect(select).toBeDefined();
-  await act(async () => { (select!.props.onSelect as (id: string) => void)(machineId); });
+  const field = machineField(screen);
+  expect(field).toBeDefined();
+  const machine = (field!.props.machines as readonly { id: string }[]).find((entry) => entry.id === machineId);
+  expect(machine).toBeDefined();
+  await act(async () => { (field!.props.onSelectMachine as (machine: unknown) => void)(machine); });
 }
 
 /** The review's one Project field (more than four choices): choose through the select's own onSelect. */
@@ -773,7 +780,7 @@ it('defers each kind until presented and recovers a retained missing-plugin item
   }
 });
 
-it('builds both preparation Machine menus with linear name reads and keeps duplicate names qualified', async () => {
+it('hands both preparation Machine fields every Machine with linear name reads', async () => {
   const { StoreAppPreparationReview } = await import('./StoreAppPreparation');
   async function measure(machineCount: number) {
     const fixture = await createFixture();
@@ -801,20 +808,13 @@ it('builds both preparation Machine menus with linear name reads and keeps dupli
     const screen = await renderScreen(<Harness />);
     try {
       await waitForHomeGovernance(() => expect(screen.findHostByTestId('store.app.prepare.review')).toBeTruthy());
-      const machineMenu = screen.findAll(node => node.props.testID === 'store.app.prepare.machine'
-        && Array.isArray(node.props.items))[0]!;
-      const machineItems = machineMenu.props.items as readonly { id: string; title: string }[];
-      expect(machineItems).toHaveLength(machineCount);
-      expect(machineItems.find(item => item.id === machines[0]!.id)?.title).toBe('Shared name · host-0');
-      expect(machineItems.find(item => item.id === machines[1]!.id)?.title).toBe('Shared name · host-1');
-      // Opening the controller choices exercises the other menu, using the same names.
+      // Both fields hand every Machine to New Session's picker, which names and qualifies them (its own suite).
+      expect((machineField(screen)!.props.machines as readonly unknown[])).toHaveLength(machineCount);
       await act(async () => {
         screen.findAll(node => node.props.testID === 'store.app.prepare.options'
           && typeof node.props.onExpandedChange === 'function')[0]!.props.onExpandedChange(true);
       });
-      const controllerItems = screen.findAll(node => node.props.testID === 'store.app.prepare.controller'
-        && Array.isArray(node.props.items))[0]!.props.items as readonly { id: string; title: string }[];
-      expect(controllerItems.find(item => item.id === machines[0]!.id)?.title).toBe('Shared name · host-0');
+      expect((machineField(screen, 'store.app.prepare.controller')!.props.machines as readonly unknown[])).toHaveLength(machineCount);
       return nameReads;
     } finally {
       await screen.unmount();
@@ -929,14 +929,11 @@ it('prepares the exact App only on the person’s review and shows prepared, ref
       expect(screen.findHostByTestId('store.app.prepare.review')).toBeTruthy(),
     );
     expect(fixture.preparations).toEqual([]);
-    // An offline Machine is listed with its presence line (the canonical owner's offline reason) and can't be chosen.
-    const machineItems = screen.findAll((node) => node.props?.testID === 'store.app.prepare.machine'
-      && Array.isArray(node.props.items))[0]!.props.items as readonly { id: string; disabled?: boolean; subtitle?: string }[];
-    const { describeMachinePresenceLine } = await import('@/utils/sessions/machinePresenceLine');
-    const parkedLine = describeMachinePresenceLine({ id: 'parked', active: false, activeAt: 1 }, Date.now(), undefined, fixture.lifetime.scope).label;
-    expect(parkedLine).toBeTruthy();
-    expect(machineItems.find((item) => item.id === 'parked')).toMatchObject({ disabled: true, subtitle: parkedLine });
-    expect(machineItems.find((item) => item.id === 'target')?.disabled).toBeFalsy();
+    // An offline Machine is listed by New Session's Machine picker, which disables it with its presence line.
+    const field = machineField(screen)!;
+    expect((field.props.machines as readonly { id: string }[]).map((entry) => entry.id)).toEqual(expect.arrayContaining(['parked', 'target']));
+    expect(field.props.awayMachinesChoosable).toBeFalsy();
+    // Even if chosen, an offline Machine never admits Review.
     await chooseMachine(screen, 'parked');
     expect(screen.findHostByTestId('store.app.prepare.review')!.props.disabled).toBe(true);
     await chooseMachine(screen, 'target');

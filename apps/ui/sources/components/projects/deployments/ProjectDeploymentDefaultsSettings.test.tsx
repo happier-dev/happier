@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
-import { act, renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
@@ -21,7 +21,7 @@ vi.mock('socket.io-client', async original =>
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 const { FieldValueItem } = await import('@/components/ui/forms/FieldValueItem');
-const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+const { SessionMachineField } = await import('@/components/sessions/new/placement/SessionPlacementChips');
 const original = storage.getState();
 const projectPages = import.meta.glob<{ ProjectDeploymentDefaultsSettings: React.ComponentType<{
     lifetime: ServerAccountScopeLifetime | null; sourceId: string; demand: { mounted: boolean; visible: boolean; focused: boolean };
@@ -102,9 +102,9 @@ describe('Project deployment defaults', () => {
                 return JSON.parse(String(artifact?.body)).deploymentDefaults;
             };
             expect(await readPreferences()).toEqual({ retainPreviousDeployments: 0 });
-            const controllerChoice = () => screen.findAllByType(DropdownMenu).find(row => row.props.testID === 'deployment-defaults.controller')!;
-            await vi.waitFor(() => expect(controllerChoice().props.itemTrigger.itemProps.disabled).toBe(false));
-            await act(async () => controllerChoice().props.onSelect('project-controller'));
+            const controllerChoice = () => screen.findAllByType(SessionMachineField).find(row => row.props.testID === 'deployment-defaults.controller')!;
+            await vi.waitFor(() => expect(controllerChoice().props.disabled).toBe(false));
+            await act(async () => controllerChoice().props.onSelectMachine(createMachineFixture({ id: 'project-controller' })));
             await vi.waitFor(async () => expect(await readPreferences()).toEqual({ retainPreviousDeployments: 0, controllerMachineId: 'project-controller' }));
             const beforeRefusal = metadata;
             await act(async () => account.replaceSettings(settingsParse({ ...baseline, actionsSettingsV1: { ...baseline.actionsSettingsV1,
@@ -116,8 +116,8 @@ describe('Project deployment defaults', () => {
             await act(async () => account.replaceSettings(baseline));
             await act(async () => retention().props.onCommit(''));
             await vi.waitFor(async () => expect(await readPreferences()).toEqual({ controllerMachineId: 'project-controller' }));
-            await vi.waitFor(() => expect(controllerChoice().props.itemTrigger.itemProps.disabled).toBe(false));
-            await act(async () => controllerChoice().props.onSelect(''));
+            await vi.waitFor(() => expect(controllerChoice().props.disabled).toBe(false));
+            await act(async () => controllerChoice().props.defaultChoice!.onChoose());
             await vi.waitFor(() => expect(metadata.ok && metadata.content).toBeNull());
             expect(account.persistedSettings.deploymentDefaultsV1).toEqual(baseline.deploymentDefaultsV1);
         } finally { standardCleanup(); controller.retire(); context.dispose(); await account.dispose(); }

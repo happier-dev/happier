@@ -27,25 +27,6 @@ async function activateMigrationHome(suffix: string, accountId = `account-migrat
     return { home, scope: { serverId: home.serverIdentityId, accountId } };
 }
 
-it('updates provider picker presence from the scoped activity owner without replacing machine records', async () => {
-    const { scope } = await activateMigrationHome('picker-presence');
-    const machines = ['first', 'second'].map(id => createMachineFixture({ id, active: true, activeAt: Date.now(), presenceProtocolVersion: 1 }));
-    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
-    await publishMachineInventoryForTest(scope, machines);
-    const { ProviderMachineSelector } = await import('@/components/settings/providers/ProviderMachineSelector');
-    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
-    const { t } = await import('@/text');
-    const { publishMachineActivity } = await import('@/sync/domains/machines/machineActivity');
-    const screen = await renderScreen(<ProviderMachineSelector serverId={scope.serverId} machines={machines} selectedId={null} onSelect={() => {}} />);
-    const status = () => screen.findByType(DropdownMenu).props.items[0].subtitle;
-    await vi.waitFor(() => expect(status()).toBe(t('settingsProviders.detail.machineOnline')));
-    await act(async () => publishMachineActivity(machines[0]!, { active: false, activeAt: Date.now() }, []));
-    expect(machines[0]!.active).toBe(true);
-    expect(status()).toBe(t('settingsProviders.detail.machineOffline'));
-    await act(async () => publishMachineActivity(machines[0]!, { active: true, activeAt: Date.now() }, []));
-    expect(status()).toBe(t('settingsProviders.detail.machineOnline'));
-});
-
 it('offers only executable migration targets and withdraws a selected target after request failure', async () => {
     const { scope } = await activateMigrationHome('eligibility');
     const machines = [
@@ -101,9 +82,9 @@ it.each(['migration', 'conflict'] as const)('keeps %s target selection available
     storage.setState({ profileScope: scope, machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
         machineListByServerId: { [scope.serverId]: machines }, machineListStatusByServerId: { [scope.serverId]: 'idle' } });
     const [{ LegacyProfileMigrationFlow }, { LegacyProfileMigrationConflictFlow }, { LegacyProfileMigrationReview },
-        { LegacyProfileMigrationConflictReview }, { ProviderMachineSelector }] = await Promise.all([
+        { LegacyProfileMigrationConflictReview }, { SessionMachineField }] = await Promise.all([
         import('./LegacyProfileMigrationFlow'), import('./LegacyProfileMigrationConflictFlow'), import('./LegacyProfileMigrationReview'),
-        import('./LegacyProfileMigrationConflictReview'), import('@/components/settings/providers/ProviderMachineSelector'),
+        import('./LegacyProfileMigrationConflictReview'), import('@/components/sessions/new/placement/SessionPlacementChips'),
     ]);
     const profile = AIBackendProfileSchema.parse({ id: 'legacy', name: 'Legacy profile' });
     const conflict = ProviderSettingsMigrationPendingConflictV1Schema.parse({ v: 1,
@@ -116,11 +97,11 @@ it.each(['migration', 'conflict'] as const)('keeps %s target selection available
         : <LegacyProfileMigrationConflictFlow profileName={profile.name} conflict={conflict} onClose={onClose} />);
     const review = kind === 'migration' ? LegacyProfileMigrationReview : LegacyProfileMigrationConflictReview;
     await act(async () => { await vi.waitFor(() => {
-        expect(screen.findAllByType(ProviderMachineSelector)).toHaveLength(1);
-        expect(screen.findByType(ProviderMachineSelector).props.selectedId).toBeNull();
+        expect(screen.findAllByType(SessionMachineField)).toHaveLength(1);
+        expect(screen.findByType(SessionMachineField).props.machineId).toBeNull();
         expect(screen.findAllByType(review)).toHaveLength(0);
     }); });
-    await act(async () => screen.findByType(ProviderMachineSelector).props.onSelect('second'));
+    await act(async () => screen.findByType(SessionMachineField).props.onSelectMachine(machines[1]!));
     expect(screen.findByType(review).props.machineId).toBe('second');
     await act(async () => recordMachineRequestFailed({ ...scope, machineId: 'second' }));
     expect(screen.findByType(review).props.machineId).toBe('first');

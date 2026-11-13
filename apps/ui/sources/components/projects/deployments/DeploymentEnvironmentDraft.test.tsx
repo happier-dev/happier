@@ -27,7 +27,7 @@ const { createDeploymentReadTransport } = await import('./deploymentReadTranspor
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
 const { storage } = await import('@/sync/domains/state/storageStore');
-const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+const { SessionMachineField } = await import('@/components/sessions/new/placement/SessionPlacementChips');
 const { setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
 const { PageHeader } = await import('@/components/ui/layout/PageHeader');
 const { Item } = await import('@/components/ui/lists/Item');
@@ -143,12 +143,12 @@ describe('Environment draft Machine Home', () => {
       ]));
       await act(async () => screen.findAllByType(MachineCreationContinuation)[0]!.props.onArrived({ serverId, machineId: 'created' }));
       expect(header().props.titleEditor.value).toBe('My app');
-      expect(screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'project-deployments.draft.machine')?.props.selectedId).toBe('created');
+      expect(screen.findAllByType(SessionMachineField).find(node => node.props.testID === 'project-deployments.draft.machine')?.props.machineId).toBe('created');
       await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.disabled, value => value === false);
       await act(async () => publishMachineInventoryForTest(account.accountLifetime.scope, [
         createMachineFixture({ id: 'other', installationId: 'other-installation', activeAt: Date.now() }),
       ]));
-      expect(screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'project-deployments.draft.machine')?.props.selectedId).toBe('created');
+      expect(screen.findAllByType(SessionMachineField).find(node => node.props.testID === 'project-deployments.draft.machine')?.props.machineId).toBe('created');
       expect(header().props.primaryAction.disabled).toBe(true);
       await screen.unmount();
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
@@ -812,17 +812,11 @@ describe('Environment draft Machine Home', () => {
       const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
         phone={false} actions={createDeploymentActions(account.accountLifetime, 'source-app')}
         onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
-      const machine = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'project-deployments.draft.machine')!;
-      expect(machine().props.selectedId).toBe('here');
-      // Every row says whether its Machine answers, in the presence owner's words; answering ones come first.
-      const { describeMachinePresenceLine } = await import('@/utils/sessions/machinePresenceLine');
-      const items = machine().props.items as { id: string; subtitle?: string }[];
-      expect(items.map(item => item.id)).toEqual(['here', 'away']);
-      for (const item of items) {
-        const fixture = item.id === 'away' ? away : storage.getState().machines.here ?? null;
-        if (fixture) expect(item.subtitle).toBe(describeMachinePresenceLine(fixture, Date.now(), undefined, account.accountLifetime.scope).label);
-        expect(item.subtitle).toBeTruthy();
-      }
+      const machine = () => screen.findAllByType(SessionMachineField).find(node => node.props.testID === 'project-deployments.draft.machine')!;
+      expect(machine().props.machineId).toBe('here');
+      // Both are offered through New Session's Machine picker, which says each one's presence; the away one stays choosable.
+      expect((machine().props.machines as { id: string }[]).map(row => row.id).sort()).toEqual(['away', 'here']);
+      expect(machine().props.awayMachinesChoosable).toBe(true);
       const header = () => screen.findAllByType(PageHeader)[0]!;
       await act(async () => header().props.titleEditor.onChangeText('Shop'));
       await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.disabled, disabled => disabled === false);
@@ -832,7 +826,7 @@ describe('Environment draft Machine Home', () => {
       expect(screen.getTextContent()).toContain(readDeploymentRefusalRecoveryV1('target_unavailable')!.remedy);
       // With only an unreachable Machine left, nothing is chosen for the person.
       await publishMachineInventoryForTest(account.accountLifetime.scope, [away]);
-      await waitForTestEvent(screen.subscribe, () => machine().props.selectedId, selected => selected === null);
+      await waitForTestEvent(screen.subscribe, () => machine().props.machineId, selected => selected === null);
       await screen.unmount();
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
@@ -854,13 +848,13 @@ describe('Environment draft Machine Home', () => {
       const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
         phone={false} actions={createDeploymentActions(account.accountLifetime, 'source-app')}
         onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
-      const machine = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'project-deployments.draft.machine')!;
-      // The Deployments-off Machine is listed first and answers; it must still not be the default.
-      expect((machine().props.items as { id: string }[]).map(item => item.id)[0]).toBe('a-parked');
-      expect(machine().props.selectedId).toBe('z-deployer');
+      const machine = () => screen.findAllByType(SessionMachineField).find(node => node.props.testID === 'project-deployments.draft.machine')!;
+      // The Deployments-off Machine is listed and answers; it must still not be the default.
+      expect((machine().props.machines as { id: string }[]).map(row => row.id)).toContain('a-parked');
+      expect(machine().props.machineId).toBe('z-deployer');
       // With only the Deployments-off Machine, nothing is chosen for the person.
       await publishMachineInventoryForTest(account.accountLifetime.scope, [parked]);
-      await waitForTestEvent(screen.subscribe, () => machine().props.selectedId, selected => selected === null);
+      await waitForTestEvent(screen.subscribe, () => machine().props.machineId, selected => selected === null);
       await screen.unmount();
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
@@ -1075,21 +1069,22 @@ describe('Environment draft Machine Home', () => {
       const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime}
         sourceId="source-app" phone={false} actions={null} onApprovalRequested={() => {}}
         onSaved={() => {}} onDiscard={() => {}} />);
-      const picker = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'project-deployments.draft.machine');
-      expect(picker()?.props.items).toMatchObject([{ id: projectMachine.id, title: 'Project runner', checked: true }]);
-      expect(picker()?.props.items).toHaveLength(1);
-      expect(picker()?.props.selectedId).toBe(projectMachine.id);
+      const picker = () => screen.findAllByType(SessionMachineField).find(node => node.props.testID === 'project-deployments.draft.machine');
+      expect((picker()?.props.machines as { id: string }[]).map(row => row.id)).toEqual([projectMachine.id]);
+      expect(picker()?.props.machineId).toBe(projectMachine.id);
+      expect(screen.getTextContent()).toContain('Project runner');
       // An unrelated active-Home publication must not replace the qualified picker inputs.
-      const items = picker()?.props.items;
+      const machines = picker()?.props.machines;
       await act(async () => storage.setState({ machines: { unrelated: createMachineFixture({ id: 'unrelated', installationId: 'other-installation' }) } }));
-      expect(picker()?.props.items).toBe(items);
-      expect(picker()?.props.selectedId).toBe(projectMachine.id);
+      expect(picker()?.props.machines).toBe(machines);
+      expect(picker()?.props.machineId).toBe(projectMachine.id);
       await act(async () => { await setActiveServerId(projectHome, { scope: 'device' }); });
       await act(async () => { await setActiveServerId(activeHome, { scope: 'device' }); });
-      expect(picker()?.props.selectedId).toBe(projectMachine.id);
+      expect(picker()?.props.machineId).toBe(projectMachine.id);
       const renamed = { ...projectMachine, metadata: { ...projectMachine.metadata!, displayName: 'Renamed project runner' } };
       await act(async () => { await publishMachineInventoryForTest(account.accountLifetime.scope, [renamed]); });
-      expect(picker()?.props.items).toMatchObject([{ id: projectMachine.id, title: 'Renamed project runner', checked: true }]);
+      expect(picker()?.props.machineId).toBe(projectMachine.id);
+      expect(screen.getTextContent()).toContain('Renamed project runner');
       await screen.unmount();
     } finally {
       standardCleanup();

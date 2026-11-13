@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { AIBackendProfile } from '@happier-dev/protocol/profiles/backendProfileSchema';
 
-import { ProviderMachineSelector } from '@/components/settings/providers/ProviderMachineSelector';
+import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -27,11 +27,12 @@ export const LegacyProfileMigrationFlow = React.memo(function LegacyProfileMigra
     if (!machineId) {
         return <ItemList style={{ paddingTop: 0 }}>
             <ItemGroup>
-                {targetMachines.length > 0 ? <ProviderMachineSelector
-                    serverId={serverId}
+                {targetMachines.length > 0 ? <SessionMachineField
+                    serverId={serverId ?? ''}
                     machines={targetMachines}
-                    selectedId={null}
-                    onSelect={setPreferredMachineId}
+                    machineId={null}
+                    title={t('settingsProviders.detail.targetMachine')}
+                    onSelectMachine={(machine) => setPreferredMachineId(machine.id)}
                 /> : <Item mode="info" title={t('settingsProviders.noMachine')} subtitle={t('settingsProviders.noMachineDescription')} />}
                 <Item title={t('common.cancel')} onPress={props.onClose} />
             </ItemGroup>
@@ -39,12 +40,13 @@ export const LegacyProfileMigrationFlow = React.memo(function LegacyProfileMigra
     }
 
     return <>
-        {targetMachines.length > 1 ? <ItemGroup title={t('settingsProviders.detail.targetMachine')}>
-            <ProviderMachineSelector
-                serverId={serverId}
+        {targetMachines.length > 1 ? <ItemGroup>
+            <SessionMachineField
+                serverId={serverId ?? ''}
                 machines={targetMachines}
-                selectedId={machineId}
-                onSelect={setPreferredMachineId}
+                machineId={machineId}
+                title={t('settingsProviders.detail.targetMachine')}
+                onSelectMachine={(machine) => setPreferredMachineId(machine.id)}
             />
         </ItemGroup> : null}
         <LegacyProfileMigrationReview

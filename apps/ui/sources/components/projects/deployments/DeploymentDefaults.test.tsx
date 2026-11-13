@@ -24,7 +24,7 @@ await loadSyncSingletonForTests();
 const { SETTINGS_PAGE_CATALOG } = await import('@/components/settings/catalog/pageCatalog');
 const { SETTINGS_PAGE_DECLARATIONS } = await import('@/components/settings/catalog/settingsPageDeclarations');
 const { FieldValueItem } = await import('@/components/ui/forms/FieldValueItem');
-const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+const { SessionMachineField } = await import('@/components/sessions/new/placement/SessionPlacementChips');
 const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
 const { Item } = await import('@/components/ui/lists/Item');
 const { IconButton } = await import('@/components/ui/buttons/IconButton');
@@ -54,8 +54,8 @@ describe('deployment defaults pages', () => {
             await act(async () => { retention().props.onCommit('2'); });
             await vi.waitFor(() => expect(account.persistedSettings.deploymentDefaultsV1).toEqual({
                 buildMachineId: 'builder', controllerMachineId: 'controller', retainPreviousDeployments: 2 }));
-            const builder = () => screen.findAllByType(DropdownMenu).find(row => row.props.testID === 'deployment-defaults.builder')!;
-            await act(async () => builder().props.onSelect(''));
+            const builder = () => screen.findAllByType(SessionMachineField).find(row => row.props.testID === 'deployment-defaults.builder')!;
+            await act(async () => builder().props.defaultChoice!.onChoose());
             await vi.waitFor(() => expect(account.persistedSettings.deploymentDefaultsV1).toEqual({ controllerMachineId: 'controller', retainPreviousDeployments: 2 }));
             const database = () => screen.findAllByType(SegmentedChoiceItem).find(row => row.props.testIDPrefix === 'deployment-defaults.previewDatabase')!;
             expect(database()).toBeDefined();

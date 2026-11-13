@@ -19,6 +19,8 @@ export type AgentInputSelectionPopoverProps = Readonly<{
     maxWidthCap?: number;
     /** The room the content needs to show whole, when known up front (see `useAgentInputPopoverLayout`). */
     contentRoom?: number;
+    /** `field`: a form field's picker hangs below it (see `useAgentInputPopoverLayout`); default: a chip's, above. */
+    anchor?: 'field';
     portalTopBottomLayout?: 'anchored' | 'boundary';
     /** A pushed view's name: the title beside its Back (default) or `none` when the content draws its own. */
     sheetHeader?: 'band' | 'none';
@@ -43,6 +45,7 @@ function OpenAgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) 
         maxHeightCap: props.maxHeightCap,
         portalTopBottomLayout: props.portalTopBottomLayout,
         contentRoom: props.contentRoom,
+        ...(props.anchor === undefined ? {} : { anchor: props.anchor }),
     });
     // On web, agent-input popovers should be constrained to the viewport (not to an in-modal boundary
     // provider), so they can extend outside sheet-like modal cards.

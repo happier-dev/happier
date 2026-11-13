@@ -263,6 +263,36 @@ describe('NewSessionMachineSelectionContent', () => {
         expect(offlineOption.testID).toBe('new-session-machine-option:m-offline');
     });
 
+    it("leads with a host's default choice, marked while it holds, and reports it instead of a Machine", async () => {
+        const { NewSessionMachineSelectionContent } = await import('./NewSessionMachineSelectionContent');
+        const machine = createMachine({ id: 'm-default', metadata: { displayName: 'Studio', host: 'host', homeDir: '/Users/tester' } });
+        const onDefault = vi.fn();
+        const onSelectMachine = vi.fn();
+        const screen = await renderScreen(<NewSessionMachineSelectionContent
+            groups={[{
+                serverId: 'server-a', serverName: 'Server A', loading: false, signedOut: false,
+                machines: [createScopedMachine(machine, { serverId: 'server-a', serverName: 'Server A' })],
+            }]}
+            selectedMachine={null}
+            selectedServerId="server-a"
+            recentMachines={[]}
+            favoriteMachines={[]}
+            onSelectMachine={onSelectMachine}
+            onSelectScopedMachine={vi.fn()}
+            defaultOption={{ title: 'Your usual Machine', selected: true, onSelect: onDefault }}
+            testIdPrefix="new-session-machine"
+        />);
+
+        const list = getLastSelectionList();
+        expect(list.rootStep.sections[0]?.id).toBe('machine-default');
+        expect(list.selectedOptionId).toBe(optionIds(getSection(list, 'machine-default'))[0]);
+        expect(optionIds(getSection(list, 'machine-default'))).toHaveLength(1);
+
+        await screen.pressByTestIdAsync('new-session-machine-option:default');
+        expect(onDefault).toHaveBeenCalledTimes(1);
+        expect(onSelectMachine).not.toHaveBeenCalled();
+    });
+
     it('routes single-server option activation through the plain machine callback', async () => {
         const { NewSessionMachineSelectionContent } = await import('./NewSessionMachineSelectionContent');
         const machine = createMachine({ id: 'm-select', metadata: { displayName: 'Select', host: 'host', homeDir: '/Users/tester' } });

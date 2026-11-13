@@ -39,7 +39,6 @@ import ProfileEditScreen from '@/app/(app)/new/pick/profile-edit';
 import { LaunchProfileEditForm } from '@/components/profiles/edit/LaunchProfileEditForm';
 import { ProfileDetailScreen } from '@/components/settings/profiles/ProfileDetailScreen';
 import { Alert } from 'react-native';
-import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 
 const routeBoundary = vi.hoisted(() => ({ params: {} as ExpoRouterParams, reset: () => {} }));
 
@@ -281,15 +280,17 @@ describe('Legacy Profile guided source preparation', () => {
             .toEqual({ serverId: homeScope.serverId, machineId: selectedMachineId });
     }
 
-    async function seedDestinationLegacy(input: Readonly<{ holdPublication: boolean; machineLogin?: boolean }>) {
+    async function seedDestinationLegacy(input: Readonly<{ holdPublication: boolean; machineLogin?: boolean; builtin?: boolean }>) {
         // An acknowledged destination row, never authority fabricated by a
         // preparation ACK. Private-copy and guided-confirmation callers consume it.
-        const legacy = AIBackendProfileSchema.parse(input.machineLogin ? { id: profile.id, name: profile.name,
+        const builtin = input.builtin ? (await import('@/sync/domains/profiles/profileUtils')).getBuiltInProfile('azure-openai') : null;
+        if (input.builtin && !builtin) throw new Error('Expected canonical Azure builtin');
+        const legacy = AIBackendProfileSchema.parse(builtin ?? (input.machineLogin ? { id: profile.id, name: profile.name,
             authMode: 'machineLogin', requiresMachineLoginTargetKey: machineLoginTargetKey,
             compatibilityByTargetKey: { [machineLoginTargetKey]: true }, createdAt: 1, updatedAt: 1,
             environmentVariables: [{ name: 'DEPLOY_REGION', value: 'west' }], envVarRequirements: [],
-        } : { ...profile, environmentVariables: profile.environmentVariables.filter(entry => entry.isSecret !== true) });
-        const record = ProfileRecordV1Schema.parse({ v: 1, id: profile.id,
+        } : { ...profile, environmentVariables: profile.environmentVariables.filter(entry => entry.isSecret !== true) }));
+        const record = ProfileRecordV1Schema.parse({ v: 1, id: legacy.id,
             definition: { kind: 'legacy', profile: legacy }, enabled: false,
             promptStack: [{ id: 'private-prompt', ref: { kind: 'doc', artifactId: 'private-prompt-document' },
                 enabled: true, placement: 'system_append' }],
@@ -314,7 +315,7 @@ describe('Legacy Profile guided source preparation', () => {
             records: [{ revision: 7, record: { definition: { kind: 'legacy' } } }] });
         rpc.mockImplementation(async call => {
             if (call.method.endsWith(`:${RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_PREVIEW}`)) {
-                return DaemonProviderProfileMigrationPreviewResponseV1Schema.parse({ status: 'success', sourceProfileId: profile.id,
+                return DaemonProviderProfileMigrationPreviewResponseV1Schema.parse({ status: 'success', sourceProfileId: record.id,
                     sourceFingerprint: `legacy-profile-migration-source:v1:${'a'.repeat(43)}` });
             }
             if (call.method.endsWith(`:${RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_CONFIRM}`)) {
@@ -325,13 +326,15 @@ describe('Legacy Profile guided source preparation', () => {
                         confirmed = true;
                         settingsVersion = 14;
                         const converted = ProfileRecordV1Schema.parse({ ...record,
-                            definition: { kind: 'inline', profile: { v: 2, id: profile.id, name: 'Confirmed converted Profile',
+                            definition: { kind: 'inline', profile: { v: 2, id: record.id, name: 'Confirmed converted Profile',
+                                preferredModelSelection: { v: 1, ref: { agentTargetKey: machineLoginTargetKey,
+                                    providerConnectionId: request.reviewedMapping.connection.id, modelId: 'reviewed-model' }, updatedAt: 14 },
                                 extraEnvironmentVariables: [], createdAt: 1, updatedAt: 14 } },
                             secretBindings: { TOKEN: record.secretBindings.TOKEN, MASKED: record.secretBindings.MASKED } });
                         rows = [{ id: record.id, revision: 8, content: { t: 'plain', v: converted } }];
                         referenceGuardRevision = 4;
                         resolve(DaemonProviderProfileMigrationConfirmResponseV1Schema.parse({ status: 'success',
-                            sourceProfileId: profile.id, connectionId: request.reviewedMapping.connection.id, settingsVersion }));
+                            sourceProfileId: record.id, connectionId: request.reviewedMapping.connection.id, settingsVersion }));
                     };
                 });
             }
@@ -348,14 +351,14 @@ describe('Legacy Profile guided source preparation', () => {
         await target.unmount();
         const { LegacyProfileMigrationFlow } = await import('./LegacyProfileMigrationFlow');
         const { Item } = await import('@/components/ui/lists/Item');
-        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const { SessionMachineField } = await import('@/components/sessions/new/placement/SessionPlacementChips');
         const screen = await renderScreen(<LegacyProfileMigrationFlow profile={profile} secretBindings={{}} onClose={vi.fn()} />);
         expect(rpc).not.toHaveBeenCalled();
         catalogReads.mockClear();
-        const machinePicker = screen.findAllByType(DropdownMenu).find(row =>
-            row.props.items?.some((item: DropdownMenuItem) => item.id === selectedMachineId));
+        const machinePicker = screen.findAllByType(SessionMachineField).find(row =>
+            row.props.machines?.some((machine: Readonly<{ id: string }>) => machine.id === selectedMachineId));
         expect(machinePicker).toBeDefined();
-        await act(async () => { machinePicker!.props.onSelect(selectedMachineId); });
+        await act(async () => { machinePicker!.props.onSelectMachine(machinePicker!.props.machines!.find((machine: Readonly<{ id: string }>) => machine.id === selectedMachineId)!); });
         const preview = screen.findAllByType(Item).find(item => item.props.title === t('settingsProviders.migration.preview'));
         expect(preview).toBeDefined();
         expect(preview?.props.disabled).not.toBe(true);
@@ -469,16 +472,25 @@ describe('Legacy Profile guided source preparation', () => {
         expect(rawSettings).toEqual(migrationPreferences);
     });
 
-    it('opens an API-source copy only after guided confirmation publishes the canonical migrated row', async () => {
-        const record = await seedDestinationLegacy({ holdPublication: true });
-        const [{ LegacyProfileMigrationFlow }, { Item }, { DropdownMenu }] = await Promise.all([
+    it.each(['settings-copy', 'picker-copy', 'picker-builtin'] as const)('opens %s only after guided confirmation publishes the canonical migrated row', async entry => {
+        const record = await seedDestinationLegacy({ holdPublication: true, builtin: entry === 'picker-builtin' });
+        const [{ LegacyProfileMigrationFlow }, { Item }, { SessionMachineField }] = await Promise.all([
             import('./LegacyProfileMigrationFlow'), import('@/components/ui/lists/Item'),
-            import('@/components/ui/forms/dropdown/DropdownMenu'),
+            import('@/components/sessions/new/placement/SessionPlacementChips'),
         ]);
-        const screen = await renderScreen(<ProfileDetailScreen target={{ kind: 'draft', cloneFrom: record.id }} />);
+        const { HeaderHeightContext } = await import('@react-navigation/elements');
+        routeBoundary.params = entry === 'picker-builtin' ? { profileId: record.id }
+            : entry === 'picker-copy' ? { cloneFromProfileId: record.id } : {};
+        routeBoundary.reset();
+        const wrapper = ({ children }: React.PropsWithChildren) => <HeaderHeightContext.Provider value={0}>{children}</HeaderHeightContext.Provider>;
+        const screen = await renderScreen(entry !== 'settings-copy' ? <ProfileEditScreen />
+            : <ProfileDetailScreen target={{ kind: 'draft', cloneFrom: record.id }} />, { wrapper });
         expect(screen.findAllByType(LegacyProfileMigrationFlow)).toHaveLength(1);
-        const picker = screen.findAllByType(DropdownMenu).find(row => row.props.items?.some((item: DropdownMenuItem) => item.id === selectedMachineId));
-        await act(async () => { picker!.props.onSelect(selectedMachineId); });
+        const picker = screen.findAllByType(SessionMachineField).find(row => row.props.machines?.some((machine: Readonly<{ id: string }>) => machine.id === selectedMachineId));
+        await act(async () => { picker!.props.onSelectMachine(picker!.props.machines!.find((machine: Readonly<{ id: string }>) => machine.id === selectedMachineId)!); });
+        if (entry === 'picker-builtin') {
+            await act(async () => { screen.changeTextByTestId('profile-migration-base-url', 'https://gateway.example.test'); });
+        }
         await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.title === t('settingsProviders.migration.preview')));
         await vi.waitFor(() => expect(screen.findAllByType(Item).some(row => row.props.title === t('settingsProviders.migration.confirm'))).toBe(true));
         await vi.waitFor(() => expect(screen.findAllByType(Item).find(row => row.props.title === t('settingsProviders.migration.confirm'))?.props.disabled).toBe(false));
@@ -500,13 +512,31 @@ describe('Legacy Profile guided source preparation', () => {
         await vi.waitFor(() => expect(screen.findAllByType(LaunchProfileEditForm)).toHaveLength(1));
         const copy = screen.findAllByType(LaunchProfileEditForm)[0];
         expect(copy.props.profile.id).not.toBe(record.id);
-        expect(copy.props).toMatchObject({ profile: { v: 2, enabled: record.enabled, promptStack: record.promptStack },
+        expect(copy.props).toMatchObject({ profile: { v: 2, enabled: record.enabled, promptStack: record.promptStack,
+            preferredModelSelection: { ref: { providerConnectionId: DaemonProviderProfileMigrationConfirmRequestV1Schema.parse(confirmation?.payload)
+                .reviewedMapping.connection.id, modelId: 'reviewed-model' } } },
             draftSecretBindings: { TOKEN: record.secretBindings.TOKEN, MASKED: null } });
         expect(getProfileCatalogSnapshot(homeScope)?.catalog).toMatchObject({ status: 'ready', source: 'destination',
             records: [{ revision: 8, record: { definition: { kind: 'inline' } } }] });
         expect(profileRecordWrites).not.toHaveBeenCalled();
         expect(transferWrites).not.toHaveBeenCalled();
         expect(resourceWrites).toEqual([]);
+        if (entry === 'picker-builtin') {
+            const posted: ProfileRowMutationV1[] = [];
+            profileRecordWrites.mockImplementation(async (_url, init) => {
+                posted.push(ProfileRowMutationV1Schema.parse(JSON.parse(String(init?.body))));
+                return Response.json({ status: 'updated', revision: 0, cursor: 27, referenceGuardRevision: 5 });
+            });
+            await act(async () => { screen.changeTextByTestId('profile-slim-name', 'My Azure copy'); });
+            await screen.pressByTestIdAsync('profile-edit-save');
+            await vi.waitFor(() => expect(posted).toHaveLength(1));
+            expect(posted[0]).toMatchObject({ id: copy.props.profile.id, operation: 'create', expectedRevision: 'absent',
+                content: { t: 'plain', v: { id: copy.props.profile.id, definition: { kind: 'inline', profile: {
+                    v: 2, name: 'My Azure copy', preferredModelSelection: copy.props.profile.preferredModelSelection,
+                } }, promptStack: record.promptStack, enabled: record.enabled,
+                secretBindings: { TOKEN: record.secretBindings.TOKEN, MASKED: null } } } });
+            expect(getProfileCatalogSnapshot(homeScope)?.data?.find(row => row.record.id === record.id)?.record.definition.kind).toBe('inline');
+        }
         await screen.unmount();
     });
 

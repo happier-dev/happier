@@ -8,7 +8,7 @@ import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/Plu
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -26,7 +26,6 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { WizardStepDots } from '@/components/onboarding/ui/WizardStepDots';
 import { useThisComputerMachineId } from '@/components/machines/add/useMachineAddPaths';
-import { resolveMachineKindGlyph } from '@/components/machines/machineKindGlyph';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import type { CustomModalInjectedProps } from '@/modal/types';
@@ -49,7 +48,6 @@ import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
-import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 
 import {
   buildStarterCreateInput,
@@ -147,7 +145,6 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const [machineHomeMismatch, setMachineHomeMismatch] = React.useState(false);
   const [machineCreationDraft, setMachineCreationDraft] = React.useState<MachineCreationContinuationDraft | null>(null);
   const [detailsOpen, setDetailsOpen] = React.useState(false);
-  const [machineMenuOpen, setMachineMenuOpen] = React.useState(false);
   const [owner, setOwner] = React.useState<OwnerFact>({ kind: 'loading' });
   const [create, setCreate] = React.useState<CreateState | null>(null);
   // One create intent per reviewed draft: a retry of the same review reuses it, so nothing is created twice.
@@ -156,10 +153,6 @@ export const NewAppScreen = React.memo(function NewAppScreen(
 
   const starter =
     starters.find((candidate) => candidate.itemId === starterId) ?? null;
-  const machineNames = React.useMemo(
-    () => resolveMachineDisplayNames(machines),
-    [machines],
-  );
   const effectiveMachineId =
     machineId ??
     (machines.some((candidate) => candidate.id === thisComputerMachineId)
@@ -168,7 +161,6 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const machine =
     machines.find((candidate) => candidate.id === effectiveMachineId) ?? null;
   const homeDir = readMachineHomeDir(machine);
-  const machineName = machine ? (machineNames.get(machine.id) ?? null) : null;
 
   // Code lives in: the default GitHub owner the Machine's SCM owner would publish to.
   const ownerProbe = React.useRef(0);
@@ -460,31 +452,6 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     </NavigationBackChromeProvider>
   );
 
-  const machineItems = React.useMemo(
-    () =>
-      machines.map((candidate) => ({
-        id: candidate.id,
-        title: machineNames.get(candidate.id) ?? candidate.id,
-        checked: candidate.id === effectiveMachineId,
-        icon: (
-          <Icon
-            name={resolveMachineKindGlyph({
-              isThisComputer: candidate.id === thisComputerMachineId,
-              platform: candidate.metadata?.platform,
-            })}
-            size={ICON_SIZE.sm}
-            color={theme.colors.text.secondary}
-          />
-        ),
-      })),
-    [
-      effectiveMachineId,
-      machineNames,
-      machines,
-      theme.colors.text.secondary,
-      thisComputerMachineId,
-    ],
-  );
 
   let body: React.ReactNode;
   if (addingMachine && scope) {
@@ -695,31 +662,17 @@ export const NewAppScreen = React.memo(function NewAppScreen(
               }
             />
           ) : (
-            <DropdownMenu
-              testID="newApp.machineMenu"
-              open={machineMenuOpen}
-              onOpenChange={setMachineMenuOpen}
-              items={machineItems}
-              onSelect={(id) => {
-                setMachineMenuOpen(false);
-                setMachineId(id);
-              }}
-              placement="bottom"
-              trigger={({ toggle }) => (
-                <Item
-                  testID="newApp.machine"
-                  title={t('newApp.builtBy')}
-                  // A phone keeps only the chevron beside the label; the Machine joins its folder beneath.
-                  detail={phone ? undefined : (machineName ?? undefined)}
-                  subtitle={[
-                    phone ? machineName : null,
-                    homeDir && repositoryName
-                      ? formatPathRelativeToHome(`${projectCheckoutParentPath(homeDir)}/${repositoryName}`, homeDir)
-                      : null,
-                  ].filter(Boolean).join(' · ') || undefined}
-                  onPress={toggle}
-                />
-              )}
+            // The folder is the app's own checkout under the Machine's projects folder, so only the Machine is asked.
+            <SessionMachineField
+              testID="newApp.machine"
+              serverId={scope?.serverId ?? ''}
+              machines={machines}
+              machineId={effectiveMachineId}
+              title={t('newApp.builtBy')}
+              {...(homeDir && repositoryName
+                ? { subtitle: formatPathRelativeToHome(`${projectCheckoutParentPath(homeDir)}/${repositoryName}`, homeDir) }
+                : {})}
+              onSelectMachine={(next) => setMachineId(next.id)}
             />
           )}
         </ItemGroup>

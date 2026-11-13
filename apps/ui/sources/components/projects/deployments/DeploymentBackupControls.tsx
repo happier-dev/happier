@@ -61,7 +61,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { StoragePathCapacityV1 } from '@happier-dev/protocol/storage/storageV1';
 import { fetchMachineStoragePathCapacityViaAction } from '@/sync/domains/machines/storage/machineRpc';
 import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
-import { EnvironmentMachineChoice } from './EnvironmentMachineChoice';
+import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { MachineSetupRecipeInputs } from '@/components/settings/machines/managed/MachineSetupRecipeInputs';
 import { readMachineSetupRecipeInputState } from '@/components/settings/machines/managed/machineSetupRecipeInputs';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
@@ -580,6 +580,8 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
   const [destinationSetup, setDestinationSetup] = React.useState<DeploymentBackupAnotherMachineSetupV1>();
   const serverId = props.lifetime?.scope.serverId ?? props.detail.environment.serverId;
   const machines = useMachineListForServer(serverId);
+  // A receiver is set up by its installation: only Machines that report one can be chosen.
+  const receiverMachines = React.useMemo(() => (machines ?? []).filter(machine => Boolean(machine.installationId)), [machines]);
   const receiverProjection = usePluginUiProjectionCurrentness({ serverId, machineId: destinationSetup?.machineId,
     enabled: anotherMachine && !!destinationSetup, sections: BACKUP_RECEIVER_SECTIONS });
   const receiverSetup = React.useMemo(() => ({ items: [{ kind: 'setupRecipe' as const,
@@ -704,13 +706,12 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
     {destination.definition.locality === 'local' && !result?.review?.capacity ? <BackupPathCapacityReview
       capacity={localCapacity.capacity} machine={localCapacity.machineName || props.machine} testID={id} /> : null}
     {anotherMachine ? <>
-      <EnvironmentMachineChoice serverId={serverId} testID={`${id}.receiver`} icon={null}
+      <SessionMachineField serverId={serverId} testID={`${id}.receiver`} machines={receiverMachines}
         title={t('projects.deployments.settingsSections.setupReceiverMachine')}
-        currentMachineId={destinationSetup?.machineId ?? null} fallback={t('projects.deployments.settingsSections.setupReceiverMachine')}
-        disabled={locked} onChoose={machineId => {
-          const selected = machines?.find(machine => machine.id === machineId);
-          if (!selected?.installationId) return;
-          setDestinationSetup({ kind: 'anotherMachine', machineId, expectedInstallationId: selected.installationId, receiverInputs: {} });
+        machineId={destinationSetup?.machineId ?? null} placeholder={t('projects.deployments.settingsSections.setupReceiverMachine')}
+        awayMachinesChoosable disabled={locked} onSelectMachine={selected => {
+          if (!selected.installationId) return;
+          setDestinationSetup({ kind: 'anotherMachine', machineId: selected.id, expectedInstallationId: selected.installationId, receiverInputs: {} });
           setResult(null);
         }} />
       {destinationSetup && receiverProjection.interactionEnabled ? <MachineSetupRecipeInputs setup={receiverSetup}
