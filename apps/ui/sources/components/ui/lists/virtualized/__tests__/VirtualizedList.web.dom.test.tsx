@@ -4,12 +4,13 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { StyleSheet, type ViewToken } from 'react-native';
+import { StyleSheet, type ViewStyle, type ViewToken } from 'react-native';
 
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 import { VirtualizedList } from '../VirtualizedList';
+import { VirtualizedItemList } from '../../VirtualizedItemList';
 import { CollectionList } from '../../collection/CollectionList';
 import { DiffFilesListView, type DiffFilesListViewHandle } from '@/components/ui/code/diff/DiffFilesListView';
 import { installClampedWebScrollGeometry, readVirtualizedWebRowTop } from '@/dev/testkit/legend/webScrollGeometry';
@@ -191,6 +192,30 @@ describe('VirtualizedList web DOM integration', () => {
         vi.useRealTimers();
     });
 
+    it.each([VirtualizedList, VirtualizedItemList])('preserves Unistyles bounds and content padding through %s', async (List) => {
+        // Unistyles 3 web create/removeInlineStyles stores values as non-enumerable own properties.
+        // Model that external style boundary; keep RNW and the recycler real.
+        const entry = (values: ViewStyle): ViewStyle => Object.defineProperties({}, {
+            unistyles_test: { value: {}, enumerable: true },
+            ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, { value, enumerable: false }])),
+        });
+        await act(async () => root.render(
+            <List data={[{ id: 'bounded' }]} testID="bounded-list"
+                style={[entry({ maxHeight: 240, flexGrow: 0 }), false, [{ minHeight: 0 }]]}
+                contentContainerStyle={[entry({ paddingHorizontal: 18, paddingVertical: 12 }), [{ paddingBottom: 8 }]]}
+                estimatedItemSize={56} keyExtractor={item => item.id}
+                renderItem={({ item }) => <div data-row-height="56">{item.id}</div>} />,
+        ));
+        await flushLegendWork();
+        const scroller = container.querySelector<HTMLElement>('[data-testid="bounded-list"]')!;
+        expect(window.getComputedStyle(scroller).maxHeight).toBe('240px');
+        expect(window.getComputedStyle(scroller).flexGrow).toBe('0');
+        const content = container.querySelector<HTMLElement>('.legend-list-content-container')!;
+        expect(window.getComputedStyle(content).paddingTop).toBe('12px');
+        expect(window.getComputedStyle(content).paddingLeft).toBe('18px');
+        expect(window.getComputedStyle(content).paddingBottom).toBe('8px');
+    });
+
     it('applies content padding with React Native array order and explicit-side precedence', async () => {
         const listRef = React.createRef<import('../virtualizedListTypes').VirtualizedListRef>();
         const styles = StyleSheet.create({
@@ -290,9 +315,8 @@ describe('VirtualizedList web DOM integration', () => {
         expect(event.nativeEvent.contentOffset.y).toBe(250);
         expect(event.nativeEvent.layoutMeasurement.height).toBe(400);
         expect(event.nativeEvent.contentSize.height).toBeGreaterThan(400);
-        // The web backend deliberately omits this native-only DOM prop;
-        // scroll consumers use the metrics the real event already publishes.
-        expect(onContentSizeChange).not.toHaveBeenCalled();
+        // The backend adapts Legend's pushed virtual extent to the shared content-size contract.
+        expect(onContentSizeChange).toHaveBeenLastCalledWith(800, event.nativeEvent.contentSize.height);
     });
 
     it.each(['standalone', 'collection-rail'] as const)('fills a bounded %s host and mounts only a virtualized window', async (surface) => {

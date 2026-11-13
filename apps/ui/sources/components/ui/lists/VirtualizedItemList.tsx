@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, StyleSheet as RNStyleSheet, View, type ViewStyle } from 'react-native';
+import { Platform, View, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 
@@ -71,15 +71,13 @@ function VirtualizedItemListInner<T>(props: VirtualizedItemListProps<T>, ref: Re
         else if (ref) ref.current = node;
     }, [ref]);
     const { onWheel: pageOnWheel, ...handlers } = page.handlers;
-    // The web recycler assigns its style to its scroll element as is: one plain object.
-    const scrollStyle = RNStyleSheet.flatten([FILL, ...page.style]) as ViewStyle;
     const bottom = (presentation === 'page' ? HAPPIER_PAGE_METRICS.pagePaddingBottomPx : BASE_CONTENT_PADDING_BOTTOM) + page.bottomChromeHeight + (bottomOverlay ? overlayHeight : 0);
     const list = (
         <VirtualizedList<T>
             {...listProps}
             ref={setRefs}
             horizontal={horizontal}
-            style={scrollStyle}
+            style={[FILL, ...page.style]}
             contentContainerStyle={[
                 page.contained && presentation === 'grouped' ? { paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx } : null,
                 { paddingBottom: bottom },

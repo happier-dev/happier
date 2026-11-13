@@ -7,6 +7,7 @@ import {
 import { Platform, StyleSheet, type ViewStyle } from 'react-native';
 
 import { usePresentedValue } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { flattenWebStyle } from '@/utils/web/flattenWebStyle';
 import { normalizeVirtualizedListProps } from '../normalizeVirtualizedListProps';
 import type {
     VirtualizedListProps,
@@ -84,7 +85,7 @@ function LegendListBackendInner<T>(
     } = shared;
     const legendContentContainerStyle = React.useMemo(() => (
         Platform.OS === 'web' && contentContainerStyle
-            ? resolveLegendWebContentStyle(StyleSheet.flatten(contentContainerStyle))
+            ? resolveLegendWebContentStyle(flattenWebStyle(contentContainerStyle) ?? {})
             : contentContainerStyle
     ), [contentContainerStyle]);
     const platformIdentityAndKeyboardProps = Platform.OS === 'web'
@@ -166,7 +167,7 @@ function LegendListBackendInner<T>(
         contentContainerStyle: legendContentContainerStyle,
         // Legend's web scroll view takes one level of style; a caller's own array must not reach the DOM nested.
         style: Platform.OS === 'web'
-            ? StyleSheet.flatten([LEGEND_LIST_WEB_FILL_STYLE, style])
+            ? flattenWebStyle([LEGEND_LIST_WEB_FILL_STYLE, style])
             : style,
         estimatedItemSize: virtualization.estimatedItemSize,
         drawDistance: virtualization.drawDistance,
