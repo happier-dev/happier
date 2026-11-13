@@ -56,6 +56,8 @@ const apiSocketRequestMock = vi.hoisted(() =>
     { status: 200, headers: { 'Content-Type': 'application/json' } },
   )),
 );
+// Per-case override of the Home's Plugin Availability HTTP answer (the server boundary).
+const availabilityResponseOverride = vi.hoisted(() => ({ current: null as null | ((path: string) => Response | null) }));
 const fetchChangesMock = vi.hoisted(() =>
   vi.fn<(path: string, init?: RequestInit) => Promise<Response>>(),
 );
@@ -364,6 +366,8 @@ function defaultHomeResponse(path: string, init?: RequestInit): Response {
   if (path === '/v1/kv') return Response.json({ items: [] });
   if (path === '/v1/plugins/availability/intents/list'
     || path === '/v1/plugins/availability/materializations/read') {
+    const overridden = availabilityResponseOverride.current?.(path);
+    if (overridden) return overridden;
     const bootstrapResponse = createEmptyAccountBootstrapHttpResponse(path, init);
     if (bootstrapResponse) return bootstrapResponse;
   }
@@ -1241,6 +1245,28 @@ describe('sync socket offline tracking', () => {
     emitSocketStatus('connected');
 
     expect((sync as any).lastSocketDisconnectedAtMs ?? null).toBeNull();
+  }, 60_000);
+
+  it('keeps a connected Home reachable when a Plugin Availability read fails', async () => {
+    emitSocketStatus('connected');
+    const availabilityQueue = Reflect.get(sync, 'pluginAvailabilitySync') as InvalidateSync;
+    await availabilityQueue.awaitQueue({ timeoutMs: loadSyncTuning().invalidateSyncAwaitTimeoutMs });
+    expect(storage.getState().syncError).toBeNull();
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('The real fixture Account was not admitted');
+    // Release 2026-11-12: one invalid census body stamped the Home-wide sync error, so a Home with an
+    // open socket read "Can't reach This Home" with no request or retry until the user pressed Retry.
+    availabilityResponseOverride.current = () => Response.json({ unexpected: true });
+    try {
+      availabilityQueue.invalidate();
+      await availabilityQueue.awaitQueue({ timeoutMs: loadSyncTuning().invalidateSyncAwaitTimeoutMs });
+    } finally {
+      availabilityResponseOverride.current = null;
+    }
+    // Availability retains its last complete projection and reports its own failure.
+    expect(readPluginAccountAvailability(lifetime.scope).readMaterializations()).toMatchObject({ kind: 'available' });
+    expect(storage.getState().socketStatus).toBe('connected');
+    expect(storage.getState().syncError).toBeNull();
   }, 60_000);
 
   it('checks the Account Settings head once on the next read and on reconnect after a socket gap', async () => {

@@ -1821,7 +1821,10 @@ class Sync {
                 shouldRetry,
             });
             this.profileSync = new InvalidateSync(this.fetchProfile, { onError, onSuccess, onRetry, pause, backoff, shouldRetry });
-            this.purchasesSync = new ViewDemandSync(this.syncPurchases, { onError, onSuccess, onRetry, pause, backoff, shouldRetry });
+            // The Home-wide sync error is the Home's connection verdict (it reads "Can't reach this Home").
+            // Store purchases and Plugin Availability own their failures: RevenueCat logs its own, and
+            // Availability publishes its failure into its projection. Neither sets nor clears the Home's.
+            this.purchasesSync = new ViewDemandSync(this.syncPurchases, { pause, backoff, shouldRetry });
             this.machinesSync = new InvalidateSync(async () => {
                 const ids = this.machineRefreshIds;
                 const generation = this.serverScopeGeneration;
@@ -1841,7 +1844,7 @@ class Sync {
             this.accountPetsSync = new ViewDemandSync(this.fetchAccountPets, { pause, backoff, shouldRetry });
             this.pluginAvailabilitySync = new InvalidateSync(
                 () => refreshPluginAccountAvailabilityProjection(this.pluginAvailabilityProjectionHydrator),
-                { onError, onSuccess, onRetry, pause, backoff, shouldRetry },
+                { pause, backoff, shouldRetry },
             );
 
             this.activityAccumulator = new ActivityUpdateAccumulator(
