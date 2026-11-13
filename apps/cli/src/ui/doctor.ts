@@ -12,9 +12,10 @@ import { readSettings, readCredentials } from '@/persistence'
 import { checkIfDaemonRunningAndCleanupStaleState } from '@/daemon/controlClient'
 import { findRunawayHappyProcesses, findAllHappyProcesses } from '@/daemon/doctor'
 import { readDaemonState, type DaemonLocallyPersistedState } from '@/persistence'
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, statSync, lstatSync, readlinkSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve as pathResolve } from 'node:path'
+import { homedir } from 'node:os'
 import packageJson from '../../package.json'
 import { buildDoctorSnapshot, type DoctorSnapshot } from '@/ui/doctorSnapshot'
 import { formatAccountIdentity, formatRelayHost } from '@/auth/describeSignedInIdentity'
@@ -234,6 +235,22 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
             console.log(`CLI Exists: ${runtimeDiagnostics.cliEntrypointExists ? ok('Yes') : fail('No')}`);
         }
         console.log('');
+
+        // Check for legacy ~/.happier/bin in PATH
+        const pathEnv = process.env.PATH || '';
+        const legacyBinInPath = pathEnv.split(':').some(p => {
+            const resolved = pathResolve(p);
+            const happierBin = pathResolve(join(homedir(), '.happier', 'bin'));
+            return resolved === happierBin;
+        });
+
+        if (legacyBinInPath) {
+            console.log(warn(`Legacy ~/.happier/bin found in PATH`));
+            console.log(warn(`  Modern installations use ~/.local/bin instead.`));
+            console.log(warn(`  Remove ~/.happier/bin from your shell PATH configuration.`));
+            console.log(warn(`  Ensure ~/.local/bin is in your PATH instead.`));
+            console.log('');
+        }
 
 		        // Configuration
 		        console.log(sectionTitle('Configuration'));
