@@ -2,7 +2,7 @@ import type { ResolveSessionAccessPrincipalsResponseV1 } from '@happier-dev/prot
 import { projectAccountDisplayProfileV1, ACCOUNT_DISPLAY_PROFILE_SELECT } from "@/app/account/profile/accountDisplayProfile";
 import { buildShareEligibleAccountWhere } from "@/app/teams/shareEligibility";
 import { resolveGrantableTeamsForActorInTx } from "@/app/teams/queries";
-import { resolveGrantableTeamGroupsForActorInTx } from "@/app/teams/groups/groupService";
+import { resolveGrantableTeamGroupsForActorInTx } from "@/app/teams/groups/grantableGroups";
 import {
     qualifyTeamProjectionReadAuthenticationsInTx,
     resolveTeamActorContextsInTx,

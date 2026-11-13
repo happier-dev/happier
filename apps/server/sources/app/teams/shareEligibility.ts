@@ -3,7 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { AccountStatus, TeamMembershipStatus } from '@/storage/prisma';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { resolveGrantableTeamsForActorInTx } from '@/app/teams/queries';
-import { resolveGrantableTeamGroupsForActorInTx } from '@/app/teams/groups/groupService';
+import { resolveGrantableTeamGroupsForActorInTx } from '@/app/teams/groups/grantableGroups';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 
 /**
