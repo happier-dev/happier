@@ -13,6 +13,7 @@
     "jsx": "react",
     "paths": {
       "@/*": ["./../../apps/cli/src/*"],
+      "@happier-tests/ui-action-client": ["./../../apps/ui/sources/dev/testkit/actionClientIntegrationTestkit.d.mts"],
       "@happier-tests/ui-machine-carrier": ["./../../apps/ui/sources/dev/testkit/machineCarrierHttpIntegrationTestkit.d.mts"],
       "@happier-tests/ui-scm-refine-admission": ["./../../apps/ui/sources/dev/testkit/scmRefineAdmissionIntegrationTestkit.d.mts"],
       "@happier-tests/server-machine-carrier-grant": ["./../../apps/server/sources/app/api/testkit/machineCarrierGrantIntegrationTestkit.d.mts"],

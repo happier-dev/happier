@@ -38,7 +38,7 @@ export async function createRequesterSessionControlRuntimeFixture(input: Readonl
       'deviceLocalSecretStorage' | 'onHappySessionWebhook' | 'createRequesterSessionRuntimeContext'
       | 'liveStreamCaptureRegistry' | 'onComputerRoutesReady' | 'onDevicesRoleStopped' | 'machineRoles' | 'onBrowserStoragePurgeOwnerReady' | 'onLocalServicesRoutesReady' | 'onMachineAccessLossReceiverReady' | 'workflowAcceptedAuthorizationCurrentness'
       | 'runtimeActionExecute' | 'pluginRuntimeController' | 'projectProviderModelsForAccount' | 'readProviderForAccount' | 'resolveServerFeaturesSnapshot'
-      | 'readLiveWorkInventory'>>;
+      | 'readLiveWorkInventory' | 'managedProviderOperationAuthority'>>;
 }>) {
   const previousConfiguration = {
     happyHomeDir: configuration.happyHomeDir,
