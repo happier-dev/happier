@@ -15,12 +15,7 @@ import { enableAuthentication } from "../../utils/enableAuthentication";
 import { resolveEffectiveHomeAuthMethods } from "@/app/auth/methods/effectiveHomeAuthMethods";
 import { digestTeamInvitationToken, mintTeamInvitationToken } from "@/app/teams/invitations/token";
 
-vi.mock("@/app/net/outboundIdentityFetch", () => ({
-    createOutboundIdentityFetch: vi.fn(() => ({
-        fetch: (input: string | URL, init?: RequestInit) => globalThis.fetch(input, init),
-        close: vi.fn(async () => undefined),
-    })),
-}));
+vi.mock("@/app/net/outboundIdentityFetch", () => import("@/testkit/outboundFetchViaGlobalFetch"));
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
 

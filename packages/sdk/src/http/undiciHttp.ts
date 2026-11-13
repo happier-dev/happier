@@ -1,4 +1,6 @@
-import { Agent, request } from 'undici';
+// The declared package's physical entry: Bun maps a bare `undici` to a builtin whose
+// Agent has no destroy and whose request ignores the dispatcher and its timeouts.
+import { Agent, request } from 'undici/index.js';
 import type { HttpExchange } from './httpExchange.js';
 
 export function createHttpExchange(): HttpExchange {

@@ -2,6 +2,9 @@ import { signAccountContentKeyBindingV1 } from "@happier-dev/protocol";
 import Fastify from "fastify";
 import { createHash } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+// The GitHub endpoints and avatar host are faked through the global fetch stub below.
+vi.mock("@/app/net/outboundIdentityFetch", () => import("@/testkit/outboundFetchViaGlobalFetch"));
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 import * as privacyKit from "privacy-kit";
 import tweetnacl from "tweetnacl";

@@ -2,6 +2,9 @@ import Fastify from "fastify";
 import type { Fastify as ServerApp } from "../../../types";
 import tweetnacl from "tweetnacl";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+// The GitHub endpoints and avatar host are faked through the global fetch stub below.
+vi.mock("@/app/net/outboundIdentityFetch", () => import("@/testkit/outboundFetchViaGlobalFetch"));
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
 import * as privacyKit from "privacy-kit";
 import { createHash } from "node:crypto";

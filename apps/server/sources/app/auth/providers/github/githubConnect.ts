@@ -5,9 +5,17 @@ import { prepareUploadedImage } from "@/storage/blob/uploadImage";
 import { type GitHubProfile } from "@/app/auth/providers/github/types";
 import { inTx } from "@/storage/inTx";
 import { shouldStoreGithubAccessToken } from "@/app/auth/providers/github/restrictions";
+import { fetchGitHubAvatar } from "@/app/auth/providers/github/endpoints";
+import { OutboundIdentityEndpointError } from "@/app/net/outboundIdentityNetworkPolicy";
+import { log } from "@/utils/logging/log";
 import type { PreparedIdentityConnection } from "@/app/auth/providers/identityProviders/types";
 
 export { ProviderAlreadyLinkedError } from "../accountIdentityLifecycle";
+
+/** Only the failure class is logged: the avatar URL can carry signed query parameters. */
+function reportAvatarImportFailure(reason: string): void {
+    log({ module: "github-avatar", level: "warn", reason }, "GitHub avatar import failed; connecting without an avatar");
+}
 
 /**
  * Validates the GitHub link before external avatar preparation and supplies its
@@ -35,13 +43,19 @@ export async function prepareGithubConnect(
     try {
         const avatarUrl = githubProfile.avatar_url?.toString?.() ?? "";
         if (!sameSubject && avatarUrl.trim()) {
-            const imageResponse = await fetch(avatarUrl);
+            const imageResponse = await fetchGitHubAvatar(process.env, avatarUrl);
             if (imageResponse.ok) {
                 const imageBuffer = await imageResponse.arrayBuffer();
                 preparedAvatar = await prepareUploadedImage(userId, "avatars", "github", avatarUrl, Buffer.from(imageBuffer));
+            } else {
+                reportAvatarImportFailure(`http_${imageResponse.status}`);
             }
         }
-    } catch {
+    } catch (error) {
+        // The connection proceeds without an avatar; the failure is still reported.
+        reportAvatarImportFailure(
+            error instanceof OutboundIdentityEndpointError ? error.code : error instanceof Error ? error.name : "unknown",
+        );
         preparedAvatar = null;
     }
 

@@ -4,13 +4,15 @@ import {
     readHomeGovernancePolicyInTx,
     type HomeGovernancePolicyRecord,
 } from "@/app/home/governance/governancePolicy";
-import type { OutboundIdentityNetworkPolicy } from "@/app/net/outboundIdentityNetworkPolicy";
+import {
+    IDENTITY_ENDPOINT_MAX_HEADER_BYTES,
+    IDENTITY_ENDPOINT_MAX_RESPONSE_BYTES,
+    type OutboundIdentityNetworkPolicy,
+} from "@/app/net/outboundIdentityNetworkPolicy";
 import type { Tx } from "@/storage/inTx";
 
 import { validateManagedIdentityNetworkPolicyForSave } from "./managedIdentityNetworkPolicyValidation";
 
-const MAX_RESPONSE_BYTES = 1024 * 1024;
-const MAX_HEADER_BYTES = 32 * 1024;
 
 export { deploymentAllowsPrivateIdentityNetwork } from "./managedIdentityNetworkPolicyValidation";
 
@@ -41,8 +43,8 @@ export function resolveManagedIdentityNetworkPolicy(input: Readonly<{
             : Object.freeze({ kind: "publicOnly" as const }),
         allowedPorts: privatePolicy ? Object.freeze([...privatePolicy.ports]) : Object.freeze([443]),
         allowLoopbackHttp: false,
-        maxResponseBytes: MAX_RESPONSE_BYTES,
-        maxHeaderBytes: MAX_HEADER_BYTES,
+        maxResponseBytes: IDENTITY_ENDPOINT_MAX_RESPONSE_BYTES,
+        maxHeaderBytes: IDENTITY_ENDPOINT_MAX_HEADER_BYTES,
         timeoutMs: input.timeoutSeconds * 1000,
     });
     const fingerprint = createHash("sha256")

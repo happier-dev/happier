@@ -1,6 +1,9 @@
 import { lookup } from "node:dns/promises";
 
-import { Agent, buildConnector, fetch as undiciFetch } from "undici";
+// The declared package's physical entry: Bun (and Bun.build for the light server) maps a
+// bare `undici` to a builtin whose fetch ignores the dispatcher, so the pinned connector
+// below would never run. Undici publishes no `exports` map; Node resolves the same file.
+import { Agent, buildConnector, fetch as undiciFetch } from "undici/index.js";
 
 import { parseIpAddress } from "@/app/net/addressPolicy";
 import {

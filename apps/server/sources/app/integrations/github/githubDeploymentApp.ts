@@ -1,4 +1,8 @@
-import type { OutboundIdentityNetworkPolicy } from "@/app/net/outboundIdentityNetworkPolicy";
+import {
+    IDENTITY_ENDPOINT_MAX_HEADER_BYTES,
+    IDENTITY_ENDPOINT_MAX_RESPONSE_BYTES,
+    type OutboundIdentityNetworkPolicy,
+} from "@/app/net/outboundIdentityNetworkPolicy";
 
 import type {
     DirectoryGroup,
@@ -76,8 +80,8 @@ const DEPLOYMENT_GITHUB_NETWORK_POLICY: OutboundIdentityNetworkPolicy = Object.f
     address: Object.freeze({ kind: "publicOnly" as const }),
     allowedPorts: Object.freeze([443]),
     allowLoopbackHttp: false,
-    maxResponseBytes: 1024 * 1024,
-    maxHeaderBytes: 32 * 1024,
+    maxResponseBytes: IDENTITY_ENDPOINT_MAX_RESPONSE_BYTES,
+    maxHeaderBytes: IDENTITY_ENDPOINT_MAX_HEADER_BYTES,
     timeoutMs: 30_000,
 });
 

@@ -5,6 +5,8 @@ import * as oidcClient from "openid-client";
 import { createOutboundIdentityFetch, type OutboundIdentityFetch } from "@/app/net/outboundIdentityFetch";
 import {
     evaluateOutboundUrl,
+    IDENTITY_ENDPOINT_MAX_HEADER_BYTES,
+    IDENTITY_ENDPOINT_MAX_RESPONSE_BYTES,
     OutboundIdentityEndpointError,
     redactEndpoint,
     type OutboundIdentityNetworkPolicy,
@@ -25,9 +27,6 @@ type CachedDiscovery = Readonly<{
 }>;
 
 const DISCOVERY_TTL_MS = 10 * 60 * 1000;
-/** Discovery/JWKS/token/UserInfo documents are small; this only has to stop an unbounded body. */
-const MAX_RESPONSE_BYTES = 1024 * 1024;
-const MAX_HEADER_BYTES = 32 * 1024;
 
 /**
  * Keyed by provider instance **and** runtime fingerprint, because one provider instance is
@@ -61,8 +60,8 @@ export function deploymentConfiguredOidcNetworkPolicy(
         address: Object.freeze({ kind: "deploymentConfigured" as const }),
         allowedPorts: "any" as const,
         allowLoopbackHttp: true,
-        maxResponseBytes: MAX_RESPONSE_BYTES,
-        maxHeaderBytes: MAX_HEADER_BYTES,
+        maxResponseBytes: IDENTITY_ENDPOINT_MAX_RESPONSE_BYTES,
+        maxHeaderBytes: IDENTITY_ENDPOINT_MAX_HEADER_BYTES,
         timeoutMs: instance.httpTimeoutSeconds * 1000,
     });
 }

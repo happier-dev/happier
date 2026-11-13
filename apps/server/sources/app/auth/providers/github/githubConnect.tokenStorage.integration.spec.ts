@@ -1,5 +1,8 @@
 import { afterEach, beforeAll, afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+// The GitHub endpoints and avatar host are faked through the global fetch stub below.
+vi.mock("@/app/net/outboundIdentityFetch", () => import("@/testkit/outboundFetchViaGlobalFetch"));
+
 import { db } from "@/storage/db";
 import { Context } from "@/context";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";

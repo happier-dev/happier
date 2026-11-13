@@ -19,6 +19,9 @@ import {
 } from "@happier-dev/protocol";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
+// The GitHub endpoints and avatar host are faked through the global fetch stub below.
+vi.mock("@/app/net/outboundIdentityFetch", () => import("@/testkit/outboundFetchViaGlobalFetch"));
+
 import { auth } from "@/app/auth/auth";
 import { getOrCreateServerIdentityId, initializeServerIdentityCache } from "@/app/serverIdentity/serverIdentity";
 import {

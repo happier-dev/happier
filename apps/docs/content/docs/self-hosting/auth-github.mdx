@@ -142,7 +142,7 @@ Optional (typically only needed for mobile deep links / custom schemes):
 - `HAPPIER_OAUTH_RETURN_ALLOWED_SCHEMES`
 - `OAUTH_STATE_TTL_SECONDS` (default `600`, clamp 60–3600)
 - `OAUTH_PENDING_TTL_SECONDS` (default `600`, clamp 60–3600; legacy fallback: `GITHUB_OAUTH_PENDING_TTL_SECONDS`)
-- `GITHUB_HTTP_TIMEOUT_SECONDS` (default `10`, clamp 1–120)
+- `GITHUB_HTTP_TIMEOUT_SECONDS` (default `10`, clamp 1–120). Bounds the token exchange, the profile request and the avatar download.
 
 Notes:
 - `GITHUB_REDIRECT_URL` must be reachable by GitHub (it’s where GitHub redirects the browser after the user approves OAuth).

@@ -49,6 +49,33 @@ export type OutboundIdentityNetworkPolicy = OutboundNetworkPolicy & Readonly<{
     timeoutMs: number;
 }>;
 
+/**
+ * Shared identity-endpoint bounds (OIDC discovery/JWKS/token/UserInfo, GitHub token/user/app).
+ * These documents are small; the response bound only has to stop an unbounded body.
+ */
+export const IDENTITY_ENDPOINT_MAX_RESPONSE_BYTES = 1024 * 1024;
+export const IDENTITY_ENDPOINT_MAX_HEADER_BYTES = 32 * 1024;
+
+/**
+ * A vendor identity endpoint whose host the deployment operator may replace (GitHub
+ * Enterprise, connected-service OAuth token overrides, local fakes). The vendor default
+ * is public unicast on 443; an operator override keeps addresses unfiltered because the
+ * operator chose the host. Peer pinning, redirect rejection, loopback-only plaintext and
+ * the identity bounds apply to both. The consumer adds its own timeout when it has one.
+ */
+export function vendorIdentityEndpointNetworkPolicy(operatorConfigured: boolean): OutboundNetworkPolicy & Readonly<{
+    maxResponseBytes: number;
+    maxHeaderBytes: number;
+}> {
+    return Object.freeze({
+        address: Object.freeze(operatorConfigured ? { kind: "deploymentConfigured" as const } : { kind: "publicOnly" as const }),
+        allowedPorts: operatorConfigured ? ("any" as const) : Object.freeze([443]),
+        allowLoopbackHttp: operatorConfigured,
+        maxResponseBytes: IDENTITY_ENDPOINT_MAX_RESPONSE_BYTES,
+        maxHeaderBytes: IDENTITY_ENDPOINT_MAX_HEADER_BYTES,
+    });
+}
+
 export type OutboundIdentityDenialCode =
     | "outbound_scheme_forbidden"
     | "outbound_url_credentials_forbidden"
