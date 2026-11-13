@@ -1,3 +1,5 @@
+import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readNativeStartupFailureDetail } from '@/agent/runtime/session/errors/nativeStartupFailureDetail';
 /**
  * AcpBackend - Agent Client Protocol backend using official SDK
  *
@@ -1140,8 +1142,8 @@ export class AcpBackend implements CatalogAcpBackend {
       onMessageWritten: (message) => {
         this.observeAcpTransportMessageWritten(message);
       },
-      sessionHolderAdoption: deliver => createSessionHolderAdoption({
-        child: spawnedProcess, handshake: ACP_SESSION_HOLDER_HANDSHAKE, deliver,
+      sessionHolderAdoption: (deliver, settleInOrder) => createSessionHolderAdoption({
+        child: spawnedProcess, handshake: ACP_SESSION_HOLDER_HANDSHAKE, deliver, settleInOrder,
       }),
     });
     this.sessionHolderAdoption = ndJsonStream.sessionHolderAdoption;
@@ -1503,7 +1505,12 @@ export class AcpBackend implements CatalogAcpBackend {
       this.seedSessionConfigOptionsFromSessionResponse(initialSessionResponse);
       await this.providerTurns?.start();
 
-      if (!this.resumeHeldPrompt()) this.emitIdleStatus();
+      if (this.resumeHeldPrompt()) {
+        // The held output belongs to the resumed turn: it flows once the Session
+        // runtime opened that turn (`releaseResumedHeldOutput`), never before it.
+        return { sessionId: normalized };
+      }
+      this.emitIdleStatus();
       // The backend knows its Session again: the Agent's held output may flow.
       this.sessionHolderAdoption?.release();
       return { sessionId: normalized };
@@ -1557,7 +1564,10 @@ export class AcpBackend implements CatalogAcpBackend {
       }
       const connection = this.connection;
       if (!connection?.peer) {
-        throw new Error(`${this.transport.agentName} does not support ACP session/fork`);
+        throw Object.assign(new Error(`${this.transport.agentName} does not support ACP session/fork`, { cause: error }), {
+            failureCause: { ...readNativeStartupFailureDetail(error),
+              ...projectSessionRuntimeFailureCause(error, 'thread_open', 'agent.launch') },
+          });
       }
       // The handshake is the runtime authority here exactly as it is for
       // `session/load`. Discovering non-support from a `-32601` reply means the
@@ -1578,7 +1588,10 @@ export class AcpBackend implements CatalogAcpBackend {
 
       const response = await connection.peer.forkSession(request).catch((error) => {
         if (error instanceof RequestError && error.code === -32601) {
-          throw new Error(`${this.transport.agentName} does not support ACP session/fork`);
+          throw Object.assign(new Error(`${this.transport.agentName} does not support ACP session/fork`, { cause: error }), {
+            failureCause: { ...readNativeStartupFailureDetail(error),
+              ...projectSessionRuntimeFailureCause(error, 'thread_open', 'agent.launch') },
+          });
         }
         throw error;
       });
@@ -2034,12 +2047,23 @@ export class AcpBackend implements CatalogAcpBackend {
     const standardState = this.options.prepareSessionModels
       ? await this.options.prepareSessionModels(sessionResponse)
       : readSessionModelStateFromSessionResponse(sessionResponse, this.options.projectModel);
-    const rawState = standardState ?? readSessionModelStateFromConfigOptions(sessionResponse, this.options.modelConfigOptionId);
+    const selectorState = this.options.modelConfigOptionId
+      ? readSessionModelStateFromConfigOptions(sessionResponse, this.options.modelConfigOptionId)
+      : null;
+    let rawState = standardState ?? readSessionModelStateFromConfigOptions(sessionResponse, this.options.modelConfigOptionId);
+    if (selectorState) {
+      // The declared selector owns membership and current selection. Legacy
+      // models may still contribute controls for the same advertised identities.
+      const standardModels = new Map(standardState?.availableModels.map(model => [model.id, model]));
+      rawState = { ...selectorState, availableModels: selectorState.availableModels.map(model => ({
+        ...standardModels.get(model.id), ...model,
+      })) };
+    }
     if (!rawState) return;
     const state = this.options.sessionModelAdapter?.projectModelState?.({
       normalizedModelState: rawState,
     }) ?? rawState;
-    this.sessionModelsDerivedFromConfigOptions = standardState === null;
+    this.sessionModelsDerivedFromConfigOptions = selectorState !== null || standardState === null;
     this.sessionModelState = state;
     this.emit({ type: 'event', name: 'session_models_state', payload: this.sessionModelState });
   }
@@ -2380,6 +2404,14 @@ export class AcpBackend implements CatalogAcpBackend {
   /** After adopt: the Agent is still answering the previous runner's prompt (resumed as this backend's turn). */
   hasResumedHeldPrompt(): boolean {
     return this.adoptingHeldAgent && this.pendingPromptResponseTurnGeneration !== null;
+  }
+
+  /**
+   * The Session runtime opened the resumed held prompt's turn: the Agent output
+   * held since the previous runner was lost is delivered into that turn.
+   */
+  releaseResumedHeldOutput(): void {
+    this.sessionHolderAdoption?.release();
   }
 
   private handlePromptResponseForTurn(

@@ -1,7 +1,7 @@
 import { resolveAmbientTeamCredentialModelForModelIntent } from '@happier-dev/agents/session/state/metadataReaders';
 import type { StoredCredentials } from '@/persistence';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { ProviderBoundModelRefSchema, SessionModelSelectionResolutionError } from '@happier-dev/protocol/providers/model-selection';
+import { ProviderBoundModelRefSchema, SessionActiveModelSelectionV1Schema, SessionModelSelectionResolutionError } from '@happier-dev/protocol/providers/model-selection';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { SessionModelTransitionResultV1Schema, type SessionModelMutationExpectedV1, type SessionModelMutationReversalV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
@@ -151,6 +151,8 @@ async function invokeActiveModelTransition(params: Readonly<{
   credentials: StoredCredentials;
   sessionTarget: ResolvedSessionTransportContext;
   selection: ProviderBoundModelRef;
+  currentSelection: ProviderBoundModelRef;
+  metadata: ReturnType<typeof tryDecryptSessionOwnerMetadataView>;
   applyTiming?: 'immediate' | 'next_prompt';
   captureBefore?: boolean;
   expected?: SessionModelMutationExpectedV1;
@@ -164,6 +166,25 @@ async function invokeActiveModelTransition(params: Readonly<{
     return { ok: false, status: 'superseded', sessionId: params.sessionTarget.sessionId,
       activeSelection: params.selection, requestedSelection: params.selection, reason: 'model_mutation_owner_changed' };
   }
+  // An unconditional reassertion consumes the runner's published applied fact.
+  // Intent alone is insufficient; conditional mutations still belong to the live owner.
+  const catalog = params.metadata?.sessionModelsV1;
+  const activeFact = SessionActiveModelSelectionV1Schema.safeParse(
+    catalog && typeof catalog === 'object' && 'activeSelectionV1' in catalog
+      ? catalog.activeSelectionV1 : undefined,
+  );
+  if (!params.expected && !params.captureBefore
+    && params.currentSelection.agentTargetKey === params.selection.agentTargetKey
+    && params.currentSelection.providerConnectionId === params.selection.providerConnectionId
+    && params.currentSelection.modelId === params.selection.modelId
+    && activeFact.success
+    && activeFact.data.selection.agentTargetKey === params.selection.agentTargetKey
+    && activeFact.data.selection.providerConnectionId === params.selection.providerConnectionId
+    && activeFact.data.selection.modelId === params.selection.modelId) {
+    return { ok: true, status: 'already_active', sessionId: params.sessionTarget.sessionId,
+      activeSelection: activeFact.data.selection };
+  }
+
   try {
     const result = SessionModelTransitionResultV1Schema.parse(
       await callSessionRpc({
@@ -387,6 +408,8 @@ export async function setSessionModel(params: Readonly<{
         credentials: params.credentials,
         sessionTarget,
         selection: request.selection,
+        currentSelection: request.currentSelection,
+        metadata,
         applyTiming: params.applyTiming,
         captureBefore: params.captureBefore,
         expected: params.expected,
@@ -454,9 +477,13 @@ export async function setSessionModel(params: Readonly<{
           failureCause: MODEL_TRANSITION_OWNER_UNAVAILABLE_CAUSE,
         };
       }
+      const refreshedMetadata = tryDecryptSessionOwnerMetadataView({
+        credentials: params.credentials, rawSession: refreshedTarget.rawSession,
+        accountEncryptionMode: refreshedTarget.accountEncryptionCurrentness.mode,
+      });
       const refreshedRequest = resolveRequestedSelection({
         sessionTarget: refreshedTarget,
-        credentials: params.credentials,
+        metadata: refreshedMetadata,
         modelId,
         hasExplicitProviderConnectionId,
         explicitProviderConnectionId,
@@ -476,6 +503,8 @@ export async function setSessionModel(params: Readonly<{
         credentials: params.credentials,
         sessionTarget: refreshedTarget,
         selection: refreshedRequest.selection,
+        currentSelection: refreshedRequest.currentSelection,
+        metadata: refreshedMetadata,
         applyTiming: params.applyTiming,
         captureBefore: params.captureBefore,
         expected: params.expected,

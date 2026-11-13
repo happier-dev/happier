@@ -12,7 +12,7 @@ import { COPILOT_ACP_RUNTIME_DEFINITION } from '@happier-dev/plugins-copilot/age
 import type { AgentAcpRuntimeDefinition } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime';
 
-function writeFakeAcpAgentScript(params: { dir: string; emptyModelChoices?: boolean; modelConfigEffort?: boolean; wrongConfigModel?: boolean; groupedModelChoices?: boolean; emptySetModelResponse?: boolean }): string {
+function writeFakeAcpAgentScript(params: { dir: string; emptyModelChoices?: boolean; modelConfigEffort?: boolean; wrongConfigModel?: boolean; groupedModelChoices?: boolean; emptySetModelResponse?: boolean; selectorCatalog?: boolean }): string {
   const src = `
     const decoder = new TextDecoder();
     let buf = '';
@@ -56,6 +56,7 @@ function writeFakeAcpAgentScript(params: { dir: string; emptyModelChoices?: bool
         if (method === 'session/new') {
           ok(id, {
             sessionId: 'test-session',
+            ...(${params.selectorCatalog === true} ? { configOptions: [{ id: 'model', name: 'Model', type: 'select', currentValue: 'model-a', options: [{ value: 'model-a', name: 'Model A' }, { value: 'model-c', name: 'Model C' }] }] } : {}),
             models: {
               currentModelId: 'model-a',
               availableModels: [
@@ -151,6 +152,7 @@ function writeFakeAcpAgentScript(params: { dir: string; emptyModelChoices?: bool
               options: [
                 { value: 'model-a', name: 'Model A' },
                 { value: 'model-b', name: 'Model B' },
+                ...(${params.selectorCatalog === true} ? [{ value: 'model-c', name: 'Model C' }] : []),
               ],
             }, ...(${params.modelConfigEffort === true} ? [{
               id: 'reasoning_effort', name: 'Effort', category: 'thought_level', type: 'select',
@@ -194,6 +196,20 @@ function writeFakeAcpAgentScript(params: { dir: string; emptyModelChoices?: bool
 }
 
 describe('AcpBackend session models', () => {
+  it('admits models from the configured selector when legacy models disagree', async () => {
+    await withTempDir('happier-acp-selector-catalog-', async dir => {
+      const script = writeFakeAcpAgentScript({ dir, selectorCatalog: true });
+      const backend = new AcpBackend({ agentName: 'test', cwd: dir, command: process.execPath, args: [script], modelConfigOptionId: 'model' });
+      try {
+        const { sessionId } = await backend.startSession();
+        const initial = backend.getSessionModelState();
+        await expect(backend.setSessionModel(sessionId, 'model-c', undefined, { allowUnlisted: false })).resolves.toBeUndefined();
+        expect(initial?.availableModels.map(model => model.id)).toEqual(['model-a', 'model-c']);
+        expect(initial?.availableModels[0]?.modelOptions).toBeDefined();
+        expect(backend.getSessionModelState()?.currentModelId).toBe('model-c');
+      } finally { await backend.dispose(); }
+    });
+  });
   it('does not acknowledge a config-option model switch to a different returned model', async () => {
     await withTempDir('happier-acp-wrong-config-model-', async (dir) => {
       const script = writeFakeAcpAgentScript({ dir, wrongConfigModel: true });
@@ -484,7 +500,7 @@ describe('AcpBackend session models', () => {
         await backend.setSessionModel(sessionId, 'model-b');
         expect(backend.getSessionModelState()).toEqual({ currentModelId: 'model-b', availableModels });
         expect(events).toContainEqual({
-          type: 'event', name: 'current_model_update', payload: { currentModelId: 'model-b' },
+          type: 'event', name: 'current_model_update', payload: { currentModelId: 'model-b', catalogChanged: false },
         });
         await backend.sendPrompt(sessionId, 'Report the current model');
         await backend.waitForResponseComplete();
@@ -563,7 +579,7 @@ describe('AcpBackend session models', () => {
           event.type === 'event' && event.name === 'session_models_state'
         ))).toHaveLength(1);
         expect(events).toContainEqual({
-          type: 'event', name: 'current_model_update', payload: { currentModelId: 'model-a' },
+          type: 'event', name: 'current_model_update', payload: { currentModelId: 'model-a', catalogChanged: true },
         });
       } finally {
         await backend.dispose();

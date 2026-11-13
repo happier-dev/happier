@@ -90,6 +90,50 @@ describe('setSessionModel', () => {
     updateSessionMetadataWithRetry.mockReset();
   });
 
+  it('settles a reasserted published active model without a runner RPC or metadata write', async () => {
+    const selection = { ...metadata.modelSelectionIntentV1.selection, providerConnectionId: null };
+    const activeMetadata = { ...metadata, modelSelectionIntentV1: { ...metadata.modelSelectionIntentV1, selection }, sessionModelsV1: {
+      v: 1, agentId: 'codex', updatedAt: 20, currentModelId: selection.modelId,
+      availableModels: [], activeSelectionV1: { v: 1, selection, source: 'runtime_apply',
+        runner: { pid: 42, processStartTimeMs: 1 } },
+    } };
+    resolveSessionTransportContext.mockResolvedValue(transport(true, {
+      metadata: JSON.stringify(activeMetadata), metadataLayoutVersion: 0, encryptionMode: 'plain',
+    }));
+    callSessionRpc.mockRejectedValue(new Error('RPC call timeout'));
+    await expect(setSessionModel({ credentials, idOrPrefix: 'sess-1', modelId: selection.modelId }))
+      .resolves.toEqual({ ok: true, status: 'already_active', sessionId: 'sess-1', activeSelection: selection });
+    expect(callSessionRpc).not.toHaveBeenCalled();
+    expect(updateSessionMetadataWithRetry).not.toHaveBeenCalled();
+  });
+
+  it.each(['capture', 'armed', 'provider'] as const)('keeps %s mutations on the active runner path', async variant => {
+    const selection = { ...metadata.modelSelectionIntentV1.selection, providerConnectionId: null };
+    const activeMetadata = { ...metadata, modelSelectionIntentV1: { ...metadata.modelSelectionIntentV1,
+      selection: variant === 'armed' ? { ...selection, modelId: 'armed-model' } : selection },
+      sessionModelsV1: { v: 1, agentId: 'codex', updatedAt: 20, currentModelId: selection.modelId,
+        availableModels: [], activeSelectionV1: { v: 1, selection, source: 'runtime_apply',
+          runner: { pid: 42, processStartTimeMs: 1 } } } };
+    resolveSessionTransportContext.mockResolvedValue(transport(true, {
+      metadata: JSON.stringify(activeMetadata), metadataLayoutVersion: 0, encryptionMode: 'plain',
+    }));
+    callSessionRpc.mockRejectedValue(new Error('RPC call timeout'));
+    await expect(setSessionModel({ credentials, idOrPrefix: 'sess-1', modelId: selection.modelId,
+      ...(variant === 'capture' ? { captureBefore: true } : {}),
+      ...(variant === 'provider' ? { providerConnectionId: 'pc_other' } : {}),
+    })).resolves.toMatchObject({ ok: false, status: 'owner_unavailable' });
+    expect(callSessionRpc).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not treat remembered intent alone as a confirmed active model', async () => {
+    resolveSessionTransportContext.mockResolvedValue(transport(true));
+    callSessionRpc.mockRejectedValue(new Error('RPC call timeout'));
+    await expect(setSessionModel({ credentials, idOrPrefix: 'sess-1',
+      modelId: metadata.modelSelectionIntentV1.selection.modelId, providerConnectionId: 'pc_work' }))
+      .resolves.toMatchObject({ ok: false, status: 'owner_unavailable' });
+    expect(callSessionRpc).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects a request without either model selection input', async () => {
     resolveSessionTransportContext.mockResolvedValue(transport(false));
 
@@ -673,6 +717,32 @@ describe('setSessionModel', () => {
 
     expect(updateSessionMetadataWithRetry).toHaveBeenCalledTimes(1);
     expect(callSessionRpc).not.toHaveBeenCalled();
+  });
+
+  it('routes to the proven active owner after an inactive write conflicts with activation', async () => {
+    resolveSessionTransportContext
+      .mockResolvedValueOnce(transport(false))
+      .mockResolvedValueOnce(transport(true));
+    updateSessionMetadataWithRetry.mockRejectedValue(
+      Object.assign(new Error('Session became active'), {
+        code: 'session_active' as const,
+        retryable: false as const,
+      }),
+    );
+    const requestedSelection = { ...metadata.modelSelectionIntentV1.selection, modelId: 'next-model', providerConnectionId: null };
+    callSessionRpc.mockResolvedValue({ ok: true, status: 'armed', activeSelection: metadata.modelSelectionIntentV1.selection, requestedSelection });
+
+    await expect(setSessionModel({
+      credentials,
+      idOrPrefix: 'sess-1',
+      modelId: 'next-model',
+      providerConnectionId: null,
+    })).resolves.toMatchObject({ ok: true, status: 'armed' });
+
+    expect(updateSessionMetadataWithRetry).toHaveBeenCalledTimes(1);
+    expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'sess-1:session.model.transition',
+    }));
   });
 
   it('does not promote a stale CAS retry over a newer accepted intent', async () => {
