@@ -9,6 +9,17 @@ vi.mock('node:dns/promises', () => ({ lookup: vi.fn() }));
 beforeEach(() => vi.resetAllMocks());
 
 describe('managed guest Home resolution', () => {
+  it('gives a native Docker guest the declared tailnet ingress rather than the controller canonical URL', async () => {
+    const target = resolveHomeTargetFromDescriptor({ authority: 'current_connection', descriptor: {
+      v: 1, homeServerIdentityId: 'srv_home', revision: 4,
+      canonicalServerUrl: 'http://happier-agent-qa-servers-deploy.localhost:3033',
+      endpoints: [{ kind: 'https', url: 'https://nldw3-5-36-33.tailfce179.ts.net:9443' }],
+    } });
+    vi.mocked(lookup).mockResolvedValue([{ address: '100.118.114.5', family: 4 }]);
+    expect(await resolveManagedGuestHome(target)).toEqual({
+      origin: 'https://nldw3-5-36-33.tailfce179.ts.net:9443', addresses: ['100.118.114.5'],
+    });
+  });
   it('uses the controller resolver for the descriptor-selected non-loopback carrier', async () => {
     const target = resolveHomeTargetFromDescriptor({ authority: 'current_connection', descriptor: {
       v: 1, homeServerIdentityId: 'srv_home', revision: 1, canonicalServerUrl: 'https://canonical.example.test',

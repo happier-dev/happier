@@ -1017,6 +1017,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                         && candidate.identity.localId === machine.launch.provider.localId)?.definition;
                     output.guestDiagnostics = await readManagedGuestDiagnostics({ machine,
                         requesterAccountId: requester ?? readAccountIdFromToken(input.credentials.token) ?? undefined,
+                        requestId: retained.requestId,
                         transport: provisioner?.bootstrapTransport,
                         channel: resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label,
                         signal: options.signal,

@@ -29,6 +29,8 @@ import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity
 import { FEATURE_ENV_KEYS } from '@/app/features/catalog/featureEnvSchema';
 import { NpmRegistryProfileActionOutputSchemasV1 } from '@happier-dev/protocol/actions/npmRegistryProfileActionFamily';
 import { resolveExternalActionExecutionMachineAdmissionInTx } from '@/app/auth/externalActionExecutionAuthorization';
+import { serializeMachinePresence } from './machineSerialization';
+import { observeMachineAliveFromSocket } from '@/app/api/socket/machineUpdateHandler';
 
 describe('Machine current access (real SQLite)', () => {
     let harness: LightSqliteHarness;
@@ -54,6 +56,20 @@ describe('Machine current access (real SQLite)', () => {
         await makeShareEligibleForTest(actorAccountId, accountId);
         return inTx(tx => access.setMachineAccessGrantInTx(tx, { actorAccountId, machineId, principal: { kind: 'account', accountId }, level }));
     };
+
+    it('admits a network target published active and refuses the same target after presence goes offline', async () => {
+        const f = await fixture();
+        for (const active of [true, false]) {
+            const row = await db.machine.update({ where: { id: f.machine.id }, data: { active } });
+            expect(serializeMachinePresence(row).active).toBe(active);
+            const result = await inTx(tx => resolveExternalActionExecutionMachineAdmissionInTx(tx, {
+                actorAccountId: f.owner.id, machineId: row.id, actionId: 'machines.reachability.inspect',
+                requireOnline: true, authentication: { authenticationAuthority: 'present_user' },
+            }));
+            expect(result).toMatchObject(active ? { kind: 'admitted', machineId: row.id }
+                : { kind: 'denied', diagnostic: { reason: 'machine_offline' } });
+        }
+    });
 
     it('shares batch facts while preserving operation-specific Manage refusals and requester identity', async () => {
         const f = await fixture();
@@ -136,11 +152,10 @@ describe('Machine current access (real SQLite)', () => {
         }
     });
 
-    it('admits machine-scoped plugin daemon Actions for Manage through authenticated ingress, refusing Can use', async () => {
+    it('admits a connected daemon after the presence owner restores online on reconnect, refusing Can use', async () => {
         const f = await fixture();
         const requester = await account();
         await grant(f.owner.id, f.machine.id, requester.id, 'admin');
-        await db.machine.update({ where: { id: f.machine.id }, data: { active: true } });
         const accountStoredContentCompatibility = evaluateAccountStoredContentCompatibility({ status: 'valid',
             declaration: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION });
         // Only the daemon network boundary is replaced; Home routing, current
@@ -159,6 +174,15 @@ describe('Machine current access (real SQLite)', () => {
                 params: { action: { pluginId: 'happier.machine.crabbox', localId: 'install' }, input: {} } }, reply);
             return reply;
         };
+        expect(await call(f.owner.id)).toHaveBeenCalledWith(expect.objectContaining({ ok: false,
+            errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(emitWithAck).not.toHaveBeenCalled();
+        // Failed infrastructure handshakes never reach this observation. Once
+        // ownership succeeds, connect uses the same presence owner as heartbeats.
+        const publisher = createAuthenticatedFakeSocket({ data: target.data });
+        await observeMachineAliveFromSocket({ userId: f.owner.id, socket: publisher as unknown as Socket,
+            timestamp: Date.now(), continuingBeat: false, isCurrent: async () => true });
+        expect(serializeMachinePresence(await db.machine.findUniqueOrThrow({ where: { id: f.machine.id } })).active).toBe(true);
         expect(await call(f.owner.id)).toHaveBeenCalledWith({ ok: true, result: { installed: true } });
         expect(await call(requester.id)).toHaveBeenCalledWith({ ok: true, result: { installed: true } });
         expect(emitWithAck.mock.calls.at(-1)?.[1]).toMatchObject({ machineAdmission: {

@@ -1393,6 +1393,12 @@ The host still rejects advertised capabilities without their handlers; Open
 does not bypass that registry or fabricate repository visibility for saved
 locators. The canonical clone parser supplies the provider URL-safety defaults.
 
+In unreleased 0.3, failed hosting-repository reads retain the canonical Action
+failure cause through `scm.hostingRepository.get`. Public Profile metadata
+preparation returns that cause instead of replacing an authentication refusal
+with an unavailable-visibility result. Private and unknown visibility keep
+their existing handling; no provider exception prose is added to public metadata.
+
 Where the daemon's incumbent Action Operations observer is available, the
 receiving Open route observes the original attempt once and `outcomeUnknown`
 retains that operation id. The mounted Open controller's Check invokes the
@@ -2212,6 +2218,15 @@ failure for retry, with no automatic payload replay. RunAs authorization is
 enforced by the actual shim launch, without a separate `sudo -l` query or
 privileged sudoers-file comparison.
 
+In 0.3 development, Agent exec requests declare transient launch dependencies in
+`requiredFiles`. The Pi argv owner pairs every extension and tools config with
+that declaration. Before a Unix native identity switch, the selected-material
+owner requires each declared file in that launch’s materialization; otherwise
+it refuses before RunAs or Agent spawn with
+`agent_launch_required_file_unavailable` (`materialization` / `not_materialized`).
+Host-private temporary files are not native material. Ordinary host launches keep
+their existing file lifecycle; this refusal does not copy files or drop tools.
+
 Requester identity and placement are admitted once per operation and carried
 through preparation. Member preparation checks local custody once without
 rereading Machine policy. Prepared native material and workspace roots feed the
@@ -2297,6 +2312,8 @@ tails only after the reported daemon Machine id matches `enrolledMachineId`.
 Ordinary inspect performs no diagnostic read. This path never bootstraps, installs
 or wakes the guest. A missing installed CLI, absent identity, unsupported offline
 SSH transport or an unavailable ambient guest namespace yields typed unavailable.
+Unavailable diagnostics retain the failing phase and inspect request correlation;
+an absent `enrolledMachineId` is reported as `guest_not_enrolled` in `guest_identity`.
 Installer operation phase/failure facts remain separate from installed daemon logs.
 
 Managed enrollment supplies the retained launch name as the guest Machine's

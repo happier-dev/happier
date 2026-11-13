@@ -344,7 +344,8 @@ export const ManagedInspectInputV1Schema = lazyZodSchema(() => z.strictObject({ 
 export const ManagedGuestDiagnosticsV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('collected'), snapshot: z.pick(BugReportMachineDiagnosticsSnapshotSchema,
     { daemonState: true, sessionDiagnostics: true }) }),
-  z.strictObject({ status: z.literal('unavailable'), code: id(), exitCode: z.optional(z.int()) }),
+  z.strictObject({ status: z.literal('unavailable'), code: id(), phase: z.optional(id()), requestId: z.optional(id()),
+    exitCode: z.optional(z.int()) }),
 ]));
 export type ManagedGuestDiagnosticsV1 = z.infer<typeof ManagedGuestDiagnosticsV1Schema>;
 export const ManagedInspectOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema,

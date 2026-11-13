@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedGuestDiagnosticsV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { readManagedGuestDiagnostics } from './guestDiagnostics.js';
 import { ManagedMachineControllerError } from './controllerErrors.js';
 import { SystemTaskExecutionError } from '../../systemTasks/runSystemTask.js';
@@ -24,6 +25,13 @@ const snapshot = {
 };
 
 describe('managed guest diagnostic disclosure', () => {
+    it('names the missing enrollment before native collection and retains the inspect correlation', async () => {
+        const result = await readManagedGuestDiagnostics({ machine: { ...machine, enrolledMachineId: undefined },
+            requesterAccountId: 'owner', requestId: 'inspect-request', transport, channel: 'dev',
+            native: { exec: async () => { throw new Error('Guest must not be contacted'); } } });
+        expect(ManagedGuestDiagnosticsV1Schema.parse(result)).toEqual({ status: 'unavailable', code: 'guest_not_enrolled',
+            phase: 'guest_identity', requestId: 'inspect-request' });
+    });
     it('reads the fixed installed binary in the provider exec HOME without bootstrap, install or wake', async () => {
         const commands: string[] = [];
         const result = await readManagedGuestDiagnostics({ machine, requesterAccountId: 'owner', transport, channel: 'dev',
@@ -39,25 +47,28 @@ describe('managed guest diagnostic disclosure', () => {
         expect(commands[0]).not.toContain('start');
         expect(commands[0]).not.toContain('install');
     });
-    it.each([
-        { requesterAccountId: 'creator', row: machine, code: 'permission_denied' },
-        { requesterAccountId: 'owner', row: { ...machine, enrolledMachineId: undefined }, code: 'admission_unavailable' },
-    ])('does not execute before custody and guest identity are established ($code)', async input => {
-        const result = await readManagedGuestDiagnostics({ machine: input.row, requesterAccountId: input.requesterAccountId,
+    it('does not execute before custody is established', async () => {
+        const result = await readManagedGuestDiagnostics({ machine, requesterAccountId: 'creator',
             transport, channel: 'dev', native: { exec: async () => { throw new Error('Guest must not be contacted'); } } });
-        expect(result).toEqual({ status: 'unavailable', code: input.code });
+        expect(result).toEqual({ status: 'unavailable', code: 'permission_denied', phase: 'guest_custody' });
     });
     it.each(['another-machine', undefined])('withholds logs when the ambient daemon identity is %s', async machineId => {
         const result = await readManagedGuestDiagnostics({ machine, requesterAccountId: 'owner', transport, channel: 'dev',
             native: { exec: async () => ({ status: 0,
                 stdout: JSON.stringify({ ...snapshot, daemonState: { ...snapshot.daemonState, machineId } }), stderr: '' }) } });
-        expect(result).toEqual({ status: 'unavailable', code: machineId ? 'resource_mismatch' : 'admission_unavailable' });
+        expect(result).toEqual({ status: 'unavailable', code: machineId ? 'resource_mismatch' : 'guest_identity_unavailable', phase: 'guest_identity' });
         expect(JSON.stringify(result)).not.toContain('redacted daemon evidence');
     });
     it('reports native command failure without disclosing raw stdout or stderr', async () => {
         const result = await readManagedGuestDiagnostics({ machine, requesterAccountId: 'owner', transport, channel: 'dev',
             native: { exec: async () => ({ status: 127, stdout: 'private stdout', stderr: 'private credential' }) } });
-        expect(result).toEqual({ status: 'unavailable', code: 'remote_command_failed', exitCode: 127 });
+        expect(result).toEqual({ status: 'unavailable', code: 'remote_command_failed', phase: 'guest_collection', exitCode: 127 });
+    });
+    it.each(['not-json', '{}'])('reports invalid collector output without disclosing it (%s)', async stdout => {
+        const result = await readManagedGuestDiagnostics({ machine, requesterAccountId: 'owner', requestId: 'inspect-request',
+            transport, channel: 'dev', native: { exec: async () => ({ status: 0, stdout, stderr: 'private credential' }) } });
+        expect(ManagedGuestDiagnosticsV1Schema.parse(result)).toEqual({ status: 'unavailable', code: 'invalid_action_output',
+            phase: 'guest_output', requestId: 'inspect-request' });
     });
     it.each([
         { error: new ManagedMachineControllerError('credential_unavailable'), code: 'credential_unavailable' },
@@ -66,7 +77,7 @@ describe('managed guest diagnostic disclosure', () => {
     ])('preserves typed native refusal without disclosing exceptions ($code)', async ({ error, code }) => {
         const result = await readManagedGuestDiagnostics({ machine, requesterAccountId: 'owner', transport, channel: 'dev',
             native: { exec: async () => { throw error; } } });
-        expect(result).toEqual({ status: 'unavailable', code });
+        expect(result).toEqual({ status: 'unavailable', code, phase: 'guest_collection' });
         expect(JSON.stringify(result)).not.toContain('private native detail');
     });
 });

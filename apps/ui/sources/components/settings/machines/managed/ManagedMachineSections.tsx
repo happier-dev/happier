@@ -653,8 +653,7 @@ export function ManagedMachineSections(props: SectionProps) {
                 && candidate.installationId === receiptController.installationId), controllerMachines),
         credentialPresentations: credentialPresentation.presentationsByKey }),
         ...(allReceiptActions.length ? { secondary: allReceiptActions } : {}) };
-    const credentialRowKeys = new Set(managedCredentialReceiptTargets(machine.launch).map(target => target.key));
-    const credentialNames = receipt.facts.filter(fact => credentialRowKeys.has(fact.id)).map(fact => fact.value).join(', ');
+    const credentialNames = receipt.facts.filter(fact => fact.id.startsWith('credential:')).map(fact => fact.value).join(', ');
     const nativeEndState = resolveManagedNativeEndState({
         provider: provisionerPresentation.title ?? policyParent?.providerTitle ?? t('common.machine'),
         nativeExpiry: machine.observation?.nativeExpiry,
@@ -833,7 +832,8 @@ export function ManagedMachineSections(props: SectionProps) {
             ...(canMutate && props.binding?.accountId === machine.custodianAccountId ? {
                 reconnect: (event?: GestureResponderEvent) => {
                     // Native failure currently names no account; only a sole launch credential identifies the repair target.
-                    const account = machine.launch.credentials?.length === 1 ? machine.launch.credentials[0].account : undefined;
+                    const credential = machine.launch.credentials?.length === 1 ? machine.launch.credentials[0] : undefined;
+                    const account = credential && 'account' in credential ? credential.account : undefined;
                     const anchor = resolvePressTriggerAnchor(event);
                     fireAndForget(presentConnectSheet({ scope: props.binding?.scope ?? null, service: account?.service, intent: 'link', ...(anchor ? { anchor } : {}),
                         ...(account ? { intent: 'reconnect', account } : {}) }),
@@ -900,7 +900,8 @@ export function ManagedMachineSections(props: SectionProps) {
                 disabled={!props.current || pending !== null} loading={pending === 'machines.managed.inspect' && inspectPurpose === 'logs'} onPress={readGuestLogs} />}>
             {guestDiagnostics?.status === 'unavailable' ? <SurfaceStateCard kind="unavailable" size="line"
                 title={t('common.unavailable')} diagnosticCode={guestDiagnostics.code}
-                diagnosticDetail={guestDiagnostics.exitCode === undefined ? undefined : String(guestDiagnostics.exitCode)} />
+                diagnosticDetail={[guestDiagnostics.phase, guestDiagnostics.requestId, guestDiagnostics.exitCode]
+                    .filter(value => value !== undefined).join(' · ') || undefined} />
                 : guestDiagnostics?.status === 'collected' ? <>
                     {guestDiagnostics.snapshot.daemonState ? <Item title={t('common.version')}
                         subtitle={guestDiagnostics.snapshot.daemonState.startedWithCliVersion} mode="info" showChevron={false} /> : null}

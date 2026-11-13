@@ -62,6 +62,7 @@ export async function executeUiManagedAccountRecovery(params: Omit<UiManagedAcco
     if (params.action !== 'machines.managed.inspect') return { managedId: machine.id };
     if (!('includeGuestDiagnostics' in params.input) || !params.input.includeGuestDiagnostics) return { machine };
     const guestDiagnostics = await readManagedGuestDiagnostics({ machine, requesterAccountId: params.account.accountId,
+        requestId: retained.requestId,
         transport: admitted.provisioner.bootstrapTransport, channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(), signal: params.signal,
         native: { exec: request => {
             const credential = createUiManagedAccountCredential({ account: params.account, home: client.home, signal: params.signal });

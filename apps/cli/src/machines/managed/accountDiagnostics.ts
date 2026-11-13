@@ -15,6 +15,7 @@ export async function readCliManagedAccountGuestDiagnostics(input: Readonly<{
     const provisioner = input.machine.reviewedFacts?.provisioner;
     return readManagedGuestDiagnostics({ machine: input.machine,
         requesterAccountId: input.context.runtimeAccountId ?? readAccountIdFromToken(input.credentials.token) ?? undefined,
+        requestId: input.context.actionRequestId,
         transport: input.machine.controller ? undefined : provisioner?.bootstrapTransport,
         channel: resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label,
         signal: input.signal,
