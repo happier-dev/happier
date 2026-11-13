@@ -403,18 +403,23 @@ test('unreachable remote retirement finalizes local stop and survives a move to 
   assert.equal(await readStackRuntimeStateFile(f.statePath), null);
 });
 
-test('ambiguous SSH loss and reachable retirement failure do not permit local finalization', async t => {
+test('non-security host cleanup failures warn while authentication refusal stays fatal', async t => {
   const f = await fixture(t);
   for (const result of [
     { exitCode: 255, err: 'remote process exited with code 255' },
-    { exitCode: 255, err: 'Permission denied (publickey).' },
+    { exitCode: 255, err: 'Permission denied (publickey).', security: true },
     { exitCode: null, signal: 'SIGTERM', err: '' },
     { exitCode: 1, err: 'session_cleanup_incomplete' },
   ]) {
     const stopped = await stopStackWithEnv(f.input, { runCaptureResultImpl: async () => ({ ok: false, ...result }) });
-    assert.equal(stopped.finalization.finalized, false);
-    assert.equal(stopped.finalization.reason, 'remote_cleanup_incomplete');
-    assert.ok((await readStackRuntimeStateFile(f.statePath)).stopRequest);
+    assert.equal(stopped.finalization.finalized, !result.security);
+    if (result.security) assert.equal(stopped.finalization.reason, 'remote_cleanup_incomplete');
+    else {
+      assert.deepEqual(stopped.errors, []);
+      assert.equal(stopped.warnings[0].target, 'linux1');
+      assert.equal(stopped.warnings[0].retryable, true);
+      assert.equal((await readStackRuntimeStateFile(f.statePath)).remoteTargets.linux1.status, 'retirement-pending');
+    }
   }
 });
 
@@ -485,15 +490,15 @@ test('never-started unreachable target releases local stop but preserves unknown
   assert.deepEqual(stopped.remoteRetirementPending.map(item => item.target), ['linux1']);
 });
 
-test('a retirement transport failure still blocks stop when the fresh probe reaches a surviving remote runtime', async t => {
+test('a surviving remote runtime keeps retry custody without refusing local stop', async t => {
   const f = await fixture(t);
   const stopped = await stopStackWithEnv(f.input, { runCaptureResultImpl: async (_command, args) =>
     String(args.at(-1)).includes('stack stop')
       ? { ok: false, exitCode: 255, err: 'ssh: connect to host 100.104.26.0 port 22: Connection timed out' }
       : { ok: false, exitCode: 1 } });
-  assert.equal(stopped.finalization.finalized, false, 'reachable unretired Sessions retain custody');
-  assert.equal(stopped.finalization.reason, 'remote_cleanup_incomplete');
-  assert.ok((await readStackRuntimeStateFile(f.statePath)).stopRequest);
+  assert.equal(stopped.finalization.finalized, true);
+  assert.equal((await readStackRuntimeStateFile(f.statePath)).remoteTargets.linux1.status, 'retirement-pending');
+  assert.equal(stopped.warnings[0].retryable, true);
 });
 
 test('parent stop retains remote custody on native Session cleanup failure and retries it through the same owner', async t => {
@@ -536,12 +541,12 @@ test('parent stop retains remote custody on native Session cleanup failure and r
   assert.equal(commands.filter(command => command.includes('stack stop')).length, 2);
 });
 
-test('parent stop refuses to forget a recorded remote target removed from configuration', async t => {
+test('missing target configuration keeps retry custody without refusing local stop', async t => {
   const f = await fixture(t);
   await writeFile(join(f.baseDir, 'dev-targets.json'), JSON.stringify({ version: 1, targets: [] }));
   const result = await stopStackWithEnv(f.input, { runCaptureResultImpl: async () => assert.fail('no target transport is configured') });
-  assert.equal(result.finalization.finalized, false);
-  assert.equal((await readStackRuntimeStateFile(f.statePath)).placement.daemon, 'linux1');
+  assert.equal(result.finalization.finalized, true);
+  assert.equal((await readStackRuntimeStateFile(f.statePath)).remoteTargets.linux1.status, 'retirement-pending');
 });
 
 test('parent stop uses the retained native scope before a controlled target reaches readiness', async t => {
@@ -636,4 +641,27 @@ test('remote stop uses an independent SSH transport when a shared master refuses
   } });
   assert.equal(nativeAlive, false);
   assert.equal(result.finalization.finalized, true);
+});
+
+
+test('one failed remote host does not prevent another recorded host cleanup', async t => {
+  const f = await fixture(t);
+  const healthy = { ...f.target, name: 'healthy', ssh: 'test-healthy' };
+  await writeFile(join(f.baseDir, 'dev-targets.json'), JSON.stringify({ version: 1, targets: [f.target, healthy] }));
+  await recordStackRuntimeUpdate(f.statePath, { remoteTargets: { healthy: {
+    services: { daemon: true }, status: 'running', serviceStatus: { daemon: 'running' },
+  } } });
+  let healthyStopped = false;
+  const stopped = await stopStackWithEnv(f.input, { runCaptureResultImpl: async (_command, args) => {
+    if (args.includes('test-linux1')) return { ok: false, exitCode: 255, err: 'remote transport closed after dispatch' };
+    if (String(args.at(-1)).includes('stack stop')) { healthyStopped = true; return { ok: true, exitCode: 0 }; }
+    return { ok: false, exitCode: 1 };
+  } });
+  assert.equal(stopped.finalization.finalized, true);
+  assert.equal(healthyStopped, true);
+  assert.deepEqual(stopped.errors, []);
+  assert.equal(stopped.warnings[0].target, 'linux1');
+  const retained = await readStackRuntimeStateFile(f.statePath);
+  assert.equal(retained.remoteTargets.linux1.status, 'retirement-pending');
+  assert.equal(retained.remoteTargets.healthy, undefined);
 });

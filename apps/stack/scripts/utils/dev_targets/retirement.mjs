@@ -52,11 +52,11 @@ export async function retireStackDevTarget({ target, options, sshArgs = [], env,
   const error = new Error(`[dev-targets] ${target.name} prior Stack retirement failed (code=${String(result?.code ?? 'unknown')})`
     + (result?.err ? `: ${String(result.err).trim()}` : ''));
   error.commandExitCode = result?.code;
-  // Only a recognized connection failure, confirmed by the existing fresh
-  // probe, permits the parent stop to release local custody. Authentication,
-  // ambiguous disconnects and reachable native failures remain fail closed.
-  if ([result, retirementProbe].every(value => value?.code === 255
-    && ['ssh-connect-timeout', 'ssh-connect-unreachable'].includes(resolveDevTargetSshDiagnostic(value)))) {
+  // The transport owner supplies the positive security classification. Stop
+  // can then defer other per-host cleanup without treating ambiguity as security.
+  const diagnostics = [result, retirementProbe].map(resolveDevTargetSshDiagnostic);
+  if (diagnostics.includes('ssh-authentication-failed')) error.reason = 'ssh-authentication-failed';
+  if (diagnostics.every(reason => ['ssh-connect-timeout', 'ssh-connect-unreachable'].includes(reason))) {
     error.code = 'EDEVTARGETUNREACHABLE';
   }
   throw error;

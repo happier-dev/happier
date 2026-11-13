@@ -674,16 +674,14 @@ async function stopStackWithEnvInternal({
           .map(([service]) => [service, preserveDaemon && service === 'daemon' ? (state.serviceStatus?.daemon ?? state.status) : 'stopped'])),
       } } });
     } catch (error) {
-      const itemCleanupIncomplete = error?.code === 'EDEVTARGETRETIREMENTREFUSED'
-        && ['session_cleanup_incomplete', 'browser_cleanup_incomplete', 'remote_cleanup_incomplete'].includes(error.cause?.code);
-      if (error?.code === 'EDEVTARGETUNREACHABLE' || itemCleanupIncomplete) {
-        const message = error instanceof Error ? error.message : String(error);
+      if (error?.reason !== 'ssh-authentication-failed') {
+        const message = redactFailureDiagnostic(error instanceof Error ? error.message : String(error), env);
         deferredRetirements.push({ name, services: state.services, runtimeMode, error: message });
         actions.remoteRetirementPending ??= [];
         actions.remoteRetirementPending.push({ target: name, error: message });
         if (error.actions?.daemonSessionsStopped?.ok === false) {
           for (const warning of sessionCleanupWarnings(error.actions.daemonSessionsStopped, name)) warn(warning);
-        } else warn({ code: 'remote_cleanup_incomplete', target: name, reason: error.cause?.code ?? 'target_unreachable', retryable: true });
+        } else warn({ code: 'remote_cleanup_incomplete', target: name, reason: error.cause?.code ?? (error?.code === 'EDEVTARGETUNREACHABLE' ? 'target_unreachable' : 'target_cleanup_failed'), retryable: true });
         continue;
       }
       actions.errors.push({ step: 'remote-stop', target: name, error: error instanceof Error ? error.message : String(error) });
