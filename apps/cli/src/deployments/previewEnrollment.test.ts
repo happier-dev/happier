@@ -36,6 +36,8 @@ import { GITHUB_FIXTURE_OWNER, GITHUB_FIXTURE_REPOSITORY, GITHUB_FIXTURE_REPOSIT
 import { bindAutomationWorkflowInputs, resolveWorkflowActionFieldBinding } from '@/daemon/workflows/input';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { DeploymentReceiptChangedEventV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { createForegroundPurposeOwnerFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
+import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
 
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -68,7 +70,15 @@ async function fixture(setupRefused = false, statusJourney = false) {
     const saved: ReturnType<typeof WorkflowTriggerSetV1Schema.parse>[] = [];
     const calls: { actionId: string; input: unknown }[] = [];
     const responses: string[] = [];
-    const setupCredential = { accountId: 'account' };
+    const setupAction = contributes.automationEligibleEvents?.find(event =>
+        event.event.automation.source.scmPullRequestLifecycle?.providerKind === 'github')?.setupAction;
+    const purpose = setupAction && readResolvedActionContribution(contributes, setupAction.identity)?.definition.connectedAccountPurposeBindings?.[0]?.purpose;
+    if (!setupAction || !purpose) throw new Error('Expected GitHub setup purpose declaration');
+    const selected = createForegroundPurposeOwnerFixture({
+        consumer: setupAction.identity, purpose, service: GITHUB_CONNECTED_ACCOUNT_SERVICE,
+        accountId: statusJourney ? CONFIGURED_ACCOUNT.accountId : 'account',
+        materializeAccount: async () => { throw new Error('Preparing enrollment must not acquire credentials'); },
+    });
     // Remote Action HTTP is the boundary; real declarations, input schemas and reviewed-child admission remain active.
     app.post<{ Body: { actionId: string; input: unknown } }>('/child', request => {
         const { actionId, input } = request.body;
@@ -79,10 +89,10 @@ async function fixture(setupRefused = false, statusJourney = false) {
             return { ok: true, result: { v: 1, sourceInstanceId: 'preview-receipts', sourceContractVersion: 1,
                 sourceConfig: { ...scope, observingSince: 1 }, displayLabel: environment.environment.id } };
         }
-        if (actionId === 'action.invoke') return setupRefused
+        if (actionId === 'action.invoke') return setupRefused || !readRecord(readRecord(input)?.input)?.credentialRef
             ? { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' }
             : { ok: true, result: { v: 1, sourceInstanceId: 'github:repository:42', sourceContractVersion: 1,
-                sourceConfig: { v: 1, credentialRef: statusJourney ? CONFIGURED_ACCOUNT : { service: GITHUB_CONNECTED_ACCOUNT_SERVICE, accountId: setupCredential.accountId },
+                sourceConfig: { v: 1, credentialRef: readRecord(readRecord(input)?.input)?.credentialRef,
                     repository: statusJourney ? { v: 1, repositoryId: GITHUB_FIXTURE_REPOSITORY_ID,
                         owner: GITHUB_FIXTURE_OWNER, name: GITHUB_FIXTURE_REPOSITORY, nameWithOwner: REPOSITORY_KEY }
                         : { v: 1, repositoryId: '42', owner: 'owner', name: 'app', nameWithOwner: 'owner/app' } }, displayLabel: 'owner/app' } };
@@ -111,14 +121,16 @@ async function fixture(setupRefused = false, statusJourney = false) {
     });
     const enrollment = createPreviewEnrollmentForHost({ serverId, machineId: 'controller',
         readEnvironment: async () => environment,
-        acquirePluginRuntimeRegistryLease: async () => ({ registry: { contributes },
+        acquirePluginRuntimeRegistryLease: async () => ({ registry: { contributes,
+            resolveConnectedAccountPurposeBindingOwner: () => selected.owner },
             resolveCurrentPluginMaterializationRef: pluginId => ({ pluginId, machineId: 'controller', materializationId: 'installed' }),
             release: async () => {} }) });
-    async function save(enabled: boolean | null) {
+    async function save(enabled: boolean | null, afterPrepare?: () => Promise<void>) {
         const input = { environmentId: environment.environment.id,
             patch: { previewTemplate: enabled === null ? null : { ...environment.content.previewTemplate!, enabled } } };
         const plan = await enrollment.prepare(input, {});
         if (!plan || 'ok' in plan) throw new Error('Expected reviewed child declarations');
+        await afterPrepare?.();
         if (enabled === null) delete environment.content.previewTemplate;
         else environment.content.previewTemplate = input.patch.previewTemplate ?? undefined;
         const preparedContext = await plan.prepareExecutionContext({});
@@ -132,7 +144,12 @@ async function fixture(setupRefused = false, statusJourney = false) {
         return DeploymentActionOutputSchemasV1['deployments.environments.update'].parse(await enrollment.completeUpdate(
             { ok: true, environmentId: environment.environment.id, revision: 2 }, { ...input, patch: {} }, context));
     }
-    return { app, calls, responses, saved, environment, enrollment, save, setupCredential };
+    async function selectSetupAccount(accountId: string) {
+        await selected.store.update(current => ({ ...current, bindings: [{ ...selected.binding,
+            target: { kind: 'account', account: { service: GITHUB_CONNECTED_ACCOUNT_SERVICE, accountId } } }] }));
+    }
+    const clearSetupAccount = () => selected.store.update(current => ({ ...current, bindings: [] }));
+    return { app, calls, responses, saved, environment, enrollment, save, selectSetupAccount, clearSetupAccount };
 }
 
 it('leaves a read-only fork eligibility preview without future enrollment effects', async () => {
@@ -148,6 +165,11 @@ it('leaves a read-only fork eligibility preview without future enrollment effect
 it('enrolls from the saved template, reuses its exact trigger, and retains PR-close cleanup when disabled', async () => {
     const f = await fixture();
     try {
+        const prepared = await f.enrollment.prepare({ environmentId: f.environment.environment.id,
+            patch: { previewTemplate: f.environment.content.previewTemplate! } }, {});
+        expect(prepared).toMatchObject({ children: expect.arrayContaining([expect.objectContaining({ role: 'preview.setup',
+            input: { repository: 'owner/app', credentialRef: { service: GITHUB_CONNECTED_ACCOUNT_SERVICE, accountId: 'account' } },
+        })]) });
         const first = await f.save(true);
         expect(first, JSON.stringify({ first, responses: f.responses })).toMatchObject({ ok: true, previewEnrollment: { status: 'enrolled' } });
         expect(await f.save(true)).toMatchObject({ ok: true, previewEnrollment: { status: 'enrolled' } });
@@ -155,13 +177,33 @@ it('enrolls from the saved template, reuses its exact trigger, and retains PR-cl
         expect(f.saved).toHaveLength(2);
         expect(f.saved[0]?.context).toMatchObject({ deploymentPreview: { serverId: 'home', environmentId: f.environment.environment.id } });
         const setup = f.calls.find(call => call.actionId === 'action.invoke');
-        expect(setup?.input).toMatchObject({ input: { repository: 'owner/app' } });
-        expect(JSON.stringify(setup?.input)).not.toContain('credentialRef');
+        expect(setup?.input).toMatchObject({ input: { repository: 'owner/app',
+            credentialRef: { service: GITHUB_CONNECTED_ACCOUNT_SERVICE, accountId: 'account' } } });
         f.saved.push(WorkflowTriggerSetV1Schema.parse({ ...f.saved[0], automationId: '33333333-3333-4333-8333-333333333333',
             context: { ...f.saved[0]?.context, deploymentPreview: { serverId: 'home', environmentId: 'other-environment' } } }));
         expect(await f.save(false)).toMatchObject({ ok: true, previewEnrollment: { status: 'disabled' } });
         expect(f.saved[0]?.enabled).toBe(true);
         expect(f.saved[1]?.enabled).toBe(true);
+    } finally { await f.app.close(); }
+});
+
+it('retains the purpose account selected before review when the default changes before setup', async () => {
+    const f = await fixture();
+    try {
+        expect(await f.save(true, () => f.selectSetupAccount('replacement-account')))
+            .toMatchObject({ ok: true, previewEnrollment: { status: 'enrolled' } });
+        expect(f.calls.find(call => call.actionId === 'action.invoke')?.input)
+            .toMatchObject({ input: { credentialRef: { accountId: 'account' } } });
+    } finally { await f.app.close(); }
+});
+
+it('keeps an available account unselected when the purpose owner has no default', async () => {
+    const f = await fixture();
+    try {
+        await f.clearSetupAccount();
+        expect(await f.save(true)).toMatchObject({ ok: true,
+            previewEnrollment: { status: 'unavailable', errorCode: 'credential_scope_denied' } });
+        expect(f.saved).toEqual([]);
     } finally { await f.app.close(); }
 });
 
@@ -181,7 +223,7 @@ it('enrolls receipt changes into the existing Forge status Action and reuses its
                 deploymentId: { kind: 'input', name: 'payload', path: ['deploymentId'] },
             } }],
         } });
-        f.setupCredential.accountId = 'replacement-account';
+        await f.selectSetupAccount('replacement-account');
         expect(await f.save(true)).toMatchObject({ ok: true, previewEnrollment: { status: 'enrolled' } });
         expect(f.saved).toHaveLength(2);
         expect(status?.target).toMatchObject({ kind: 'inline', definition: { blocks: [{ input: {
@@ -206,7 +248,7 @@ it('preserves an unrelated multi-action Workflow while refreshing the exact stat
                 definition: { ...status.target.definition, blocks: [first, { ...first, id: 'custom-followup' }] } } });
         const retainedTarget = structuredClone(unrelated.target);
         f.saved.unshift(unrelated);
-        f.setupCredential.accountId = 'replacement-account';
+        await f.selectSetupAccount('replacement-account');
         expect(await f.save(true)).toMatchObject({ ok: true, previewEnrollment: { status: 'enrolled' } });
         expect(f.saved).toHaveLength(3);
         expect(unrelated.target).toEqual(retainedTarget);

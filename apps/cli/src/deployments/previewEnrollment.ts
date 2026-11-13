@@ -7,12 +7,16 @@ import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionEx
 import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/event-setup-result';
 import { WorkflowTriggerListResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
-import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { writeInputPath } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { sameScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { z } from 'zod/mini';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
+import { resolveRegistryConnectedAccountActionCredentialPurposeAuthorization } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
 
 type UpdateInput = Pick<DeploymentEnvironmentUpdateInputV1, 'environmentId' | 'mode' | 'patch'>;
 type UpdateSuccess = Extract<z.infer<typeof DeploymentEnvironmentUpdateResultV1Schema>, { ok: true }>;
@@ -74,10 +78,31 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
             const enabledChildren = [...children, { action: 'workflow.trigger.add' as const, role: TRIGGER_ROLE }];
             try {
                 return await withEvents(policy.repository.kind, async (events, lease) => {
+                    const purposeOwner = lease.registry.resolveConnectedAccountPurposeBindingOwner?.();
+                    const setupChildren = [];
+                    for (const event of events) {
+                        let setupInput: Record<string, unknown> = { repository: policy.repository.repository };
+                        const action = readResolvedActionContribution(lease.registry.contributes, event.setupAction.identity);
+                        for (const mapping of action?.definition.connectedAccountPurposeBindings ?? []) {
+                            const authorization = resolveRegistryConnectedAccountActionCredentialPurposeAuthorization({
+                                registry: lease.registry.contributes,
+                                qualifiedActionId: buildQualifiedPluginContributionKey(event.setupAction.identity),
+                                fieldPath: mapping.path, requireSelect: false,
+                            });
+                            if (!authorization || !purposeOwner) continue;
+                            const binding = await purposeOwner.getBinding({ purpose: authorization.purpose,
+                                serviceRefs: authorization.serviceRefs,
+                                ...(context.sessionId ? { sessionId: context.sessionId } : {}),
+                                signal: context.signal ?? new AbortController().signal });
+                            if (binding) setupInput = writeInputPath(setupInput, mapping.path, binding.account);
+                        }
+                        setupChildren.push({ action: event.setupAction.identity, role: SETUP_ROLE,
+                            input: normalizeStrictJsonValue(setupInput) });
+                    }
                     const receiptEvent = events.some(event => event.event.automation.source.scmPullRequestLifecycle?.previewStatusActionRef)
                         ? readReceiptEvent(lease) : undefined;
                     return { children: [
-                        ...events.map(event => ({ action: event.setupAction.identity, role: SETUP_ROLE })),
+                        ...setupChildren,
                         ...(receiptEvent ? [{ action: receiptEvent.setupAction.identity, role: SETUP_ROLE }] : []), ...enabledChildren,
                     ], prepareExecutionContext };
                 }) ?? { children: enabledChildren, prepareExecutionContext };
@@ -108,8 +133,10 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                         if (!source.supportedObservationTransports.includes('checkpointedPull')) return unavailable();
                         const watcher = await (lease.resolveCurrentPluginMaterializationRef ?? lease.registry.resolveCurrentPluginMaterializationRef)?.(event.event.identity.pluginId);
                         if (!watcher || watcher.machineId !== host.machineId) return unavailable('machine_unavailable');
-                        const setup = await invoke({ action: source.setupActionRef, role: SETUP_ROLE,
-                            input: { repository: policy.repository.repository } });
+                        const setupChild = context.hostReviewedChild?.preparedChildren?.find(child =>
+                            child.role === SETUP_ROLE && sameStrictJsonValue(child.action, source.setupActionRef));
+                        if (!setupChild) return unavailable('credential_scope_denied');
+                        const setup = await invoke(setupChild);
                         if (!setup.ok) return refused(setup);
                         const configured = PluginEventAutomationSetupResultV1Schema.parse(setup.result);
                         if (configured.sourceContractVersion !== source.sourceContractVersion
