@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
+import { usePluginUiSurfaceBridge } from '@happier-dev/plugin-ui/advanced';
 
 import { requireReactDOM } from '@/utils/web/reactDomCjs';
 import { areReactNodesStructurallyEqual } from '@/utils/react/areReactNodesStructurallyEqual';
@@ -20,7 +21,9 @@ export function useNativeOverlayPortalNode(params: Readonly<{
     content: React.ReactNode | null;
 }>) {
     const { overlayPortal, portalId, enabled, content } = params;
+    const bridgeSurface = usePluginUiSurfaceBridge();
     const lastContentRef = React.useRef<React.ReactNode | null>(null);
+    const lastBridgeRef = React.useRef(bridgeSurface);
 
     React.useLayoutEffect(() => {
         if (!overlayPortal) return;
@@ -41,13 +44,14 @@ export function useNativeOverlayPortalNode(params: Readonly<{
             return;
         }
 
-        if (areReactNodesStructurallyEqual(lastContentRef.current, content)) {
+        if (lastBridgeRef.current === bridgeSurface && areReactNodesStructurallyEqual(lastContentRef.current, content)) {
             return;
         }
 
+        lastBridgeRef.current = bridgeSurface;
         lastContentRef.current = content;
-        overlayPortal.setPortalNode(portalId, content);
-    }, [content, enabled, overlayPortal, portalId]);
+        overlayPortal.setPortalNode(portalId, bridgeSurface(content));
+    }, [bridgeSurface, content, enabled, overlayPortal, portalId]);
 }
 
 export function tryRenderWebPortal(params: Readonly<{

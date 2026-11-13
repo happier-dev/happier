@@ -8,6 +8,8 @@
  */
 /** Core host geometry, not ordinary plugin author presentation choices. */
 export { HAPPIER_COLLECTION_RAIL_WIDTH_PX } from '../presentation/layout/pageMetrics.js';
+/** Host overlays carry the originating surface values to their native render root. */
+export { usePluginUiSurfaceBridge } from '../components/surfaceBridge.js';
 export { resolveHappierRowTitleMetaPlacement } from '../presentation/layout/pageMetrics.js';
 export {
   PluginUiHostPresentationScope,

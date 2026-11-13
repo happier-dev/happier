@@ -1,4 +1,4 @@
-import { createElement, useCallback, useContext, type Context, type ReactNode } from 'react';
+import { createElement, useCallback, useContext, useMemo, type Context, type ReactNode } from 'react';
 
 import { PLUGIN_UI_DATA_CONTEXT_INTERNAL } from '../data/context.js';
 import { HAPPIER_UI_ENVIRONMENT_CONTEXTS_INTERNAL } from '../environment/context.js';
@@ -32,15 +32,16 @@ const SURFACE_ROOT_CONTEXTS: readonly Context<unknown>[] = [
  */
 export function usePluginUiSurfaceBridge(): (node: ReactNode) => ReactNode {
   // A fixed list, read in a fixed order on every render.
-  const values = SURFACE_ROOT_CONTEXTS.map((context) => {
-    const value = useContext(context);
-    // The host's pane (and its header slot) is its own column: it does not inherit the page's content column.
-    if (context === HAPPIER_PAGE_CHROME_CONTEXT_INTERNAL && value !== null && typeof value === 'object') {
-      const { columnMaxWidthPx: _pageColumn, ...paneChrome } = value as HappierPageChromeInternal;
-      return paneChrome;
-    }
-    return value;
-  });
+  const values = SURFACE_ROOT_CONTEXTS.map((context) => useContext(context));
+  const chromeIndex = SURFACE_ROOT_CONTEXTS.findIndex((context) => context === HAPPIER_PAGE_CHROME_CONTEXT_INTERNAL);
+  const pageChrome = values[chromeIndex];
+  // The host's destination is its own column; keep that projection stable while the source facts are unchanged.
+  const paneChrome = useMemo(() => {
+    if (pageChrome === null || typeof pageChrome !== 'object') return pageChrome;
+    const { columnMaxWidthPx: _pageColumn, ...chrome } = pageChrome as HappierPageChromeInternal;
+    return chrome;
+  }, [pageChrome]);
+  values[chromeIndex] = paneChrome;
   return useCallback(
     (node: ReactNode) => SURFACE_ROOT_CONTEXTS.reduceRight<ReactNode>(
       (child, context, index) => createElement(context.Provider, { value: values[index] }, child),
