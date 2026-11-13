@@ -15,6 +15,11 @@ import { ExternalActionExecutionAuthorizationBindingV1Schema, projectDeploymentP
     createDeploymentCandidatePublicationV1, createDeploymentLinkContentArtifactIdV1,
     createDeploymentEnvironmentContentArtifactIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { auth } from '@/app/auth/auth';
+import type { Server } from 'socket.io';
+import { createExternalActionDaemonDispatcher } from '@/app/api/socket/externalActionDispatcher';
+import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerExternalActionRoutes';
+import { ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions';
+import { ExternalActionHttpErrorSchema, projectExternalActionHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { MachineProvisionerContributionV1Schema, defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV1Schema,
     MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
@@ -99,6 +104,68 @@ describe('reviewed create preparation authority', () => {
             deploymentPreparationAdmission: admission });
         return { owner, actor, source, destination, original, input, admission, binding, machine, key, artifact };
     }
+
+    it.each(['fresh', 'retained'] as const)('reports a changed copy source through the real %s Create root without attempting an effect', async entry => {
+        const f = await fixture();
+        await db.machine.update({ where: { id: f.machine.id }, data: { active: true,
+            operationProtocolCapabilitiesRevision: 1,
+            operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } } } });
+        const envelope = { v: 1 as const, requestId: f.binding.requestId, target: f.binding.target, input: f.input };
+        const authorization = entry === 'retained' ? await auth.mintExternalActionExecutionAuthorization({ ...f.binding,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input: f.input }) : undefined;
+        await db.deploymentEnvironment.update({ where: { id: f.original.id }, data: { revision: { increment: 1 } } });
+        const token = await auth.createToken(f.actor.id, undefined, { kind: 'account', authority: 'present_user' });
+        let forwarded = false;
+        await withAuthenticatedTestApp(app => registerExternalActionRoutes(app, {
+            dispatch: createExternalActionDaemonDispatcher({ io: {} as Server,
+                // The daemon transport is the system boundary; admission and its database are real.
+                forwardRpc: async () => { forwarded = true; throw new Error('Unexpected daemon effect'); } }),
+        }), async app => {
+            const response = await app.inject({ method: 'POST', url: '/v1/actions/deployments.environments.create',
+                headers: { authorization: `Bearer ${token}` }, payload: authorization
+                    ? { v: 1, envelope, machineId: f.machine.id, executionAuthorization: authorization } : envelope });
+            expect(response.statusCode, response.body).toBe(authorization ? 409 : 200);
+            const failure = authorization
+                ? projectExternalActionHttpFailureV1(ExternalActionHttpErrorSchema.parse(response.json()))
+                : ExternalActionResponseEnvelopeV1Schema.parse(response.json()).execution;
+            expect(failure).toMatchObject({
+                ok: false, errorCode: 'source_changed',
+            });
+            expect(forwarded).toBe(false);
+        }, { authentication: 'real' });
+    });
+
+    it.each(['current', 'stale', 'unreadable', 'deleted'] as const)('preserves the %s copy-source admission cause at mint', async state => {
+        const f = await fixture();
+        if (state === 'stale') await db.deploymentEnvironment.update({ where: { id: f.original.id },
+            data: { revision: { increment: 1 } } });
+        if (state === 'deleted') await db.deploymentEnvironment.update({ where: { id: f.original.id }, data: { deletedAt: new Date() } });
+        const input = state === 'unreadable' ? { ...f.input, copyFrom: { ...f.input.copyFrom, environmentId: crypto.randomUUID() } } : f.input;
+        const envelope = { v: 1 as const, requestId: f.binding.requestId, target: f.binding.target, input };
+        const minted = auth.mintExternalActionExecutionAuthorization({ ...f.binding,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(f.binding.actionId, input) }, { input });
+        if (state === 'current') await expect(minted).resolves.toMatchObject({ binding: { actionId: f.binding.actionId } });
+        else await expect(minted).rejects.toMatchObject({ code: state === 'stale' ? 'source_changed' : 'credential_scope_denied' });
+    });
+
+    it('returns the stale source conflict through the public Create authorization HTTP contract', async () => {
+        const f = await fixture();
+        await db.deploymentEnvironment.update({ where: { id: f.original.id }, data: { revision: { increment: 1 } } });
+        const token = await auth.createToken(f.actor.id, undefined, { kind: 'account', authority: 'present_user' });
+        await withAuthenticatedTestApp(registerExternalActionRoutes, async app => {
+            const response = await app.inject({ method: 'POST', url: '/v1/actions/deployments.environments.create/execution-authorization',
+                headers: { authorization: `Bearer ${token}` }, payload: {
+                    v: 1,
+                    envelope: { v: 1, requestId: f.binding.requestId, target: f.binding.target, input: f.input },
+                    machineId: f.machine.id,
+                } });
+            expect(response.statusCode, response.body).toBe(409);
+            expect(projectExternalActionHttpFailureV1(ExternalActionHttpErrorSchema.parse(response.json()))).toMatchObject({
+                ok: false, errorCode: 'source_changed', requestId: f.binding.requestId,
+            });
+        }, { authentication: 'real' });
+    });
 
     it.each(['copy', 'catalog', 'fork', 'repository'] as const)('limits the %s Create candidate read to its original consuming request and input', async kind => {
         const preview = kind === 'fork' ? await previewFixture() : undefined;
@@ -507,7 +574,7 @@ describe('reviewed create preparation authority', () => {
         const otherOwner = { kind: 'team' as const, teamId: teams[1].id };
         await db.teamMembership.create({ data: { teamId: owner.teamId, accountId: f.owner.id, role: 'member' } });
         await db.machine.update({ where: { id: f.machine.id }, data: { accountId: f.owner.id } });
-        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: owner.teamId, accessLevel: 'admin', createdByAccountId: f.owner.id }), machineId: f.machine.id } });
+        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: owner.teamId, accessLevel: 'admin', createdByAccountId: f.owner.id }), accessLevel: 'admin', machineId: f.machine.id } });
         const source = await inTx(tx => createProjectSourceInTx(tx, f.actor.id, { serverId,
             requestKey: crypto.randomUUID(), name: 'Team Link', owner }));
         if (!source.ok) throw new Error(source.error);
@@ -1078,7 +1145,7 @@ describe('reviewed create preparation authority', () => {
         const f = await fixture();
         const team = await db.team.create({ data: { name: 'Admitted preparation Source' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: f.actor.id, role: 'owner' } });
-        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: f.actor.id }), machineId: f.machine.id } });
+        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: f.actor.id }), accessLevel: 'admin', machineId: f.machine.id } });
         const selected = await inTx(tx => createProjectSourceInTx(tx, f.actor.id, { serverId,
             requestKey: crypto.randomUUID(), name: 'Selected team Source', owner: { kind: 'team', teamId: team.id } }));
         if (!selected.ok) throw new Error(selected.error);

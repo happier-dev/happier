@@ -28,6 +28,7 @@ export type ExternalActionHttpErrorCodeV1 = z.infer<typeof ExternalActionHttpErr
 
 const EXTERNAL_ACTION_HTTP_PLACEMENT_ERROR_CODES = [
   'credential_scope_denied',
+  'source_changed',
   'present_user_required',
   'target_required',
   'target_not_local',
@@ -208,6 +209,7 @@ function externalActionHttpErrorStatus(code: ExternalActionHttpErrorCode): 400 |
   if (code === 'internal_error' || UNEXPECTED_ACTION_FAILURE_CODES_V1.some(value => value === code)) return 500;
   if (
     code === 'encrypted_action_unsupported'
+    || code === 'source_changed'
     || code === 'target_not_local'
     || code === 'target_unavailable'
     || code === 'session_input_target_update_required'

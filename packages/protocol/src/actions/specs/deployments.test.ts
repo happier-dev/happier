@@ -12,7 +12,7 @@ import { ApprovalRequestV2Schema, StoredApprovalRequestSchema,
   type ApprovalRequestV2 } from '../../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition, settleApprovalRequestReplayInputs } from '../../approvals/approvalRequestTransition.js';
 import { resolveApprovalExecutor } from '../../approvals/resolveApprovalExecutor.js';
-import { ExternalActionExecutionAuthorizationV1Schema, createDeploymentCandidatePublicationV1 } from '../externalActionApi.js';
+import { ExternalActionExecutionAuthorizationV1Schema, createDeploymentCandidatePublicationV1, projectDeploymentNativeAdmissionV1 } from '../externalActionApi.js';
 import { computeExternalActionRequestEnvelopeDigestV1, isExternalActionAuthorizationBoundToEnvelope,
   signExternalActionApprovalInputV1, verifyExternalActionApprovalInputV1 } from '../externalActionExecutionAuthorization.js';
 
@@ -448,7 +448,8 @@ describe('Deployment Action front door', () => {
       accountEncryptionMode: 'plain', actionId, requestId: envelope.requestId,
       ...(actor === 'session' ? { sessionActionOrigin,
         sessionActionSource: { machineId: target.machineId, installationId: 'controller-installation' } } : {}),
-      requestEnvelopeDigest, target, deploymentChildRoot: true,
+      requestEnvelopeDigest, target, deploymentChildRoot: true, environmentId: originalInput.environmentId,
+      deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(actionId, originalInput),
       deploymentCandidatePublication: createDeploymentCandidatePublicationV1({ accountId: 'requester', serverIdentityId,
         actionId, requestId: envelope.requestId, requestEnvelopeDigest, environmentId: originalInput.environmentId,
         source: { id: 'destination-source', revision: 1 } }),

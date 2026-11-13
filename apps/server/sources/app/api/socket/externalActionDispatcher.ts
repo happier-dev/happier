@@ -75,6 +75,7 @@ export { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 };
 export type ExternalActionPlacementErrorCode =
     | ReturnType<typeof ClientActionRpcFailureCodeV1Schema.parse>
     | "credential_scope_denied"
+    | "source_changed"
     | "target_required"
     | "target_not_local"
     | "target_unavailable"
@@ -199,7 +200,7 @@ interface DispatchPhaseFailure {
     readonly phase: DispatchPhase;
     readonly errorClass: 'TypeError' | 'RangeError' | 'SyntaxError' | 'Error' | 'UnknownError';
     readonly message: 'Unexpected phase failure (details redacted)';
-    readonly credentialScopeDenied: boolean;
+    readonly authorizationRefusalCode: Extract<ApiTokenOperationError['code'], 'credential_scope_denied' | 'source_changed'> | null;
     readonly grantReason: ApiTokenGrantDenialReasonV1 | null;
     readonly databaseErrorCode: ReturnType<typeof readDatabaseErrorCode>;
     /** The mint's own typed refusal that its placement target is gone (retryable), kept over the generic code. */
@@ -243,7 +244,7 @@ function recordDispatchPhaseFailure(
     // Error names, messages, causes and Zod issues can contain Action content,
     // credentials or Account identifiers. Classify builtins without reading them.
     let errorClass: DispatchPhaseFailure['errorClass'] = 'UnknownError';
-    let credentialScopeDenied = false;
+    let authorizationRefusalCode: DispatchPhaseFailure['authorizationRefusalCode'] = null;
     let grantReason: ApiTokenGrantDenialReasonV1 | null = null;
     let databaseErrorCode: DispatchPhaseFailure['databaseErrorCode'] = null;
     let targetUnavailable = false;
@@ -252,8 +253,8 @@ function recordDispatchPhaseFailure(
             : error instanceof RangeError ? 'RangeError'
                 : error instanceof SyntaxError ? 'SyntaxError'
                     : error instanceof Error ? 'Error' : 'UnknownError';
-        if (error instanceof ApiTokenOperationError && error.code === 'credential_scope_denied') {
-            credentialScopeDenied = true;
+        if (error instanceof ApiTokenOperationError && (error.code === 'credential_scope_denied' || error.code === 'source_changed')) {
+            authorizationRefusalCode = error.code;
             grantReason = error.grantReason ?? null;
         }
         targetUnavailable = error instanceof ApiTokenOperationError && error.code === 'target_unavailable';
@@ -264,7 +265,7 @@ function recordDispatchPhaseFailure(
     const failure: DispatchPhaseFailure = {
         kind: 'failed', phase, errorClass,
         message: 'Unexpected phase failure (details redacted)',
-        credentialScopeDenied,
+        authorizationRefusalCode,
         grantReason,
         databaseErrorCode,
         targetUnavailable,
@@ -287,7 +288,7 @@ async function runDispatchPhase<T>(
 }
 
 function projectDispatchPhaseFailureCode(failure: DispatchPhaseFailure): ExternalActionPlacementErrorCode {
-    return failure.databaseErrorCode ?? (failure.phase === 'execution_authorization' && !failure.targetUnavailable
+    return failure.authorizationRefusalCode ?? failure.databaseErrorCode ?? (failure.phase === 'execution_authorization' && !failure.targetUnavailable
         ? 'action_not_admitted' : 'target_unavailable');
 }
 
@@ -1010,7 +1011,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             executionAuthorization ?? await mint()
         ), request.envelope.requestId);
         if (authorization.kind === 'failed') {
-            if (authorization.credentialScopeDenied) {
+            if (authorization.authorizationRefusalCode === 'credential_scope_denied') {
                 return createPlacementError({ code: 'credential_scope_denied', refusalBranch: 'credential_scope_denied',
                     requestId: request.envelope.requestId, machineId, phaseFailure: authorization,
                     ...(authorization.grantReason === null ? {} : { credentialScopeDiagnostic: {

@@ -212,6 +212,8 @@ Provider tenants, permissions, stream framing and retention remain release check
 
 Platform deployment targets expose their declared Git integration and Upload methods through the shared target chooser. The selected method goes to inspection and the existing `deployments.deploy` intent; choosing Upload does not grant provider Git access or permit arbitrary local-folder publishing. Both methods retain the repository Source and reviewed immutable commit. Vercel uploads source for a remote provider build. Cloudflare Workers and Pages prepare output on the controller through their shared pinned container/toolchain owner, without attaching the platform's variable bindings to local Exec.
 
+Create and inspection retain the authored `sourceMethod` in the TargetLink's existing protected provider content. Reopening the Environment reads that selected runtime link with the Environment's Artifact batch. UI and daemon use one resolution rule: an explicit invocation method overrides the recorded link method; links without the optional field retain the legacy Git default. Compact retries retain their already admitted method. Previously created links whose choice was lost are not inferred or backfilled: choose Upload explicitly or link the target again.
+
 The existing `DeploymentTargetRoleResultV1` carries optional `uploadProvenance`: the exact source manifest and a provider build location, or the controller container image, toolchain name/version and prepared-output manifest fingerprint. This evidence lives in the existing receipt's platform observation, displayed by the receipt and its Build logs through one shared presenter. The canonical observation writer preserves the original evidence when subsequent status reads return lifecycle state alone; it creates no upload store or additional receipt. Provider preparation's existing `reviewNotice` discloses the upload build location and Cloudflare pins before execution.
 
 This document records the server implementation behind deployment. Operator recipes and configuration are owned by the published [self-hosting guide](../apps/docs/content/docs/self-hosting/index.mdx), including [Docker and Kubernetes](../apps/docs/content/docs/self-hosting/docker.mdx#kubernetes).
@@ -299,6 +301,11 @@ does not block its removal. Retry consumes the
 retained receipt inventory, including volumes already removed by that operation.
 Older strict-schema daemons reject the new preview or explicit volume operands;
 clients retain the review on that failure and never retry as an implicit deletion.
+
+In 0.3 development, removing an Environment preserves its resource custody. Its
+current Source manager can later use the same teardown Action with the exact
+retained target link and selected volume names, including after Source removal.
+This does not admit Deploy or Restart on the removed Environment.
 
 A native deploy can restrict its operation to an explicit `services` set without
 changing the exact source definition. Preparation discovers images for that set;
@@ -2373,10 +2380,12 @@ and conflicting application connection keys require explicit per-key Replace
 choices before any secret creation.
 
 The private Environment content's optional strict `template` leaf records the
-exact registry pin, applied stored-definition revision/digest and selected
-service/health/data/export/login hints. Compose stays in `definition`, credentials stay
-in `bindings`, and no template catalog or secret-reference map is copied into
-this metadata. P45 owns template semantics at the existing Environment CAS owner;
+exact registry pin, pristine selected `compose`, applied stored-definition
+revision/digest and selected service/health/data/export/login hints. The retained
+Compose precedes binding substitutions, companion and volume choices, and local
+edits; it is the next three-way merge's baseline, not the applied definition.
+Applied Compose stays in `definition`, credentials stay in `bindings`, and no
+template catalog or secret-reference map is copied into this metadata. P45 owns template semantics at the existing Environment CAS owner;
 the ordinary stored-content writer remains the sole Compose writer. Metadata,
 binding and stored-definition changes retain their separate owning admissions.
 Canonical initial creation may include prepared template provenance. For later
@@ -2415,7 +2424,16 @@ template preview/apply flow. The review shows the proposed Compose and public-fi
 diff, preserves hand edits and Saved Secret refs through the pinned three-way
 merge, and saves without deploying. Removed or unchecked sources offer the
 existing source editor and an explicit retry; observing an update never changes
-the running app.
+the running app. New installations retain the selected pristine Compose in that
+existing private provenance, so replacing a mutable catalog entry does not remove
+the merge baseline. Earlier records without it still use their immutable registry
+pin when the original source remains available. If that original descriptor is
+unavailable, update returns `template_source_unavailable` without writes; edited
+Compose and retained applied Artifact revisions cannot reconstruct it. Restore
+the exact original source and retry when available, or install the current
+template as a new Environment and transfer desired edits explicitly. No baseline
+is guessed for an existing installation. Matching unreleased 0.3 readers reload
+together; older strict development readers do not accept the added private field.
 
 In development, an optional closed `deploy: { requestKey }` intent makes catalog
 installation one template Action leaf. Preview discloses that effect. After the

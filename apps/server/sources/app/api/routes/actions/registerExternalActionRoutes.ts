@@ -995,7 +995,7 @@ export function registerExternalActionRoutes(
                 workflowAdmission = installedWorkflow?.workflowAdmission;
             } else if (wrapped.success && wrapped.data.executionAuthorization) {
                 admittedRoot = await readAdmittedRootRelay(app, request, actionId.data, wrapped.data);
-                if (admittedRoot && 'refusalCode' in admittedRoot) {
+                if (admittedRoot && admittedRoot.refusalCode !== undefined) {
                     return sendExternalActionHttpError(reply, admittedRoot.refusalCode, wrapped.data.envelope.requestId);
                 }
                 principal = admittedRoot?.principal ?? null;

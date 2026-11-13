@@ -14,6 +14,7 @@ import {
 import {
   isDeploymentBackupReadActionIdV1,
   DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
+  DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import type { AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
@@ -128,7 +129,7 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
     if (
       !(ingressUpdateRoot || configureRoot
         ? environment.admission.canManage && !environment.row.deletedAt
-        : root.actionId === 'deployments.teardown'
+        : root.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1
         ? canTeardownDeploymentEnvironment(environment.admission, environment.row)
         : canDeployDeploymentEnvironment(
             environment.admission,
