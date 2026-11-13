@@ -1,42 +1,47 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createAccountCursorRawQueryTransactionModel, createPrismaTransactionBoundary } from "@/app/api/testkit/txHarness";
+import { inTxPostgresControlStatementMock } from "@/app/api/testkit/dbMocks";
 
-const mocks = vi.hoisted(() => ({
-    acquireFence: vi.fn(),
-    findFirst: vi.fn(),
-    updateMany: vi.fn(),
-    resolveTarget: vi.fn(),
-    markAccountChanged: vi.fn(async () => 123),
-}));
+// Only the database boundary is replaced: admission, currentness and cursor
+// publication run through their real owners.
+const mocks = vi.hoisted(() => {
+    const findFirst = vi.fn();
+    const updateMany = vi.fn();
+    const machineFindFirst = vi.fn();
+    const accountFindUnique = vi.fn();
+    const accountChange = { upsert: vi.fn(async () => ({})) };
+    const tx = {
+        pluginWebhookDelivery: { findFirst, updateMany },
+        machine: { findFirst: machineFindFirst },
+        account: { findUnique: accountFindUnique, update: vi.fn(async () => ({ seq: 123 })) },
+        accountChange,
+    };
+    return { tx, findFirst, updateMany, machineFindFirst, accountFindUnique, accountChange };
+});
 
-vi.mock("@/storage/inTx", () => ({
-    inTx: async (fn: (tx: unknown) => Promise<unknown>) => await fn({
-        pluginWebhookDelivery: {
-            findFirst: mocks.findFirst,
-            updateMany: mocks.updateMany,
-        },
-    }),
-}));
-vi.mock("@/storage/prisma", () => ({
-    getActivePrismaRuntime: () => ({ DbNull: null }),
-}));
-vi.mock("@/storage/db", () => ({ db: { pluginWebhookDelivery: {} } }));
-vi.mock("@/app/encryption/accountEncryptionTransition", () => ({
-    acquireAccountEncryptionTransitionFenceInTx: mocks.acquireFence,
-}));
-vi.mock("@/app/plugins/availability/operations", () => ({
-    resolveCurrentClaimablePluginMachineMaterializationTx: mocks.resolveTarget,
-}));
-vi.mock("@/app/serverIdentity/serverIdentity", () => ({
-    getOrCreateServerIdentityId: vi.fn(async () => "server-identity-1"),
-}));
-vi.mock("./accountChange", () => ({
-    markPluginWebhookAccountChangedInTxV1: mocks.markAccountChanged,
+// Match the database fixture's Prisma driver sentinels without initializing a server DB.
+vi.mock("@/storage/prisma", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/storage/prisma")>();
+    return { ...actual, getActivePrismaRuntime: () => actual.prismaRuntime };
+});
+
+vi.mock("@/storage/db", () => ({
+    db: {
+        pluginWebhookDelivery: mocks.tx.pluginWebhookDelivery,
+        simpleCache: { findUnique: async () => ({ value: "srv_webhook_currentness_fixture" }) },
+        $transaction: createPrismaTransactionBoundary(() => ({
+            ...inTxPostgresControlStatementMock, ...mocks.tx,
+            $queryRawUnsafe: createAccountCursorRawQueryTransactionModel(mocks.tx),
+        })),
+    },
+    isPrismaErrorCode: (error: unknown, code: string) => typeof error === "object" && error !== null && "code" in error && error.code === code,
 }));
 
 import {
     completePluginWebhookDeliveryV1,
     failPluginWebhookDeliveryV1,
     renewPluginWebhookDeliveryV1,
+    PLUGIN_WEBHOOK_LEASE_MS_V1,
 } from "./claimStore";
 
 const TARGET = {
@@ -53,18 +58,18 @@ const NOW = new Date("2026-08-10T00:00:00.000Z");
 describe("plugin webhook settlement target currentness", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.acquireFence.mockResolvedValue({
-            status: "ready",
-            account: { version: 1, currentness: { encryptionMode: "plain" } },
+        mocks.accountFindUnique.mockResolvedValue({
+            seq: 1, publicKey: null, encryptionMode: "plain", contentPublicKey: null,
+            contentPublicKeySig: null, settings: null, settingsVersion: 0,
         });
         mocks.updateMany.mockResolvedValue({ count: 1 });
-        mocks.resolveTarget.mockResolvedValue({ kind: "notCurrent" });
+        mocks.machineFindFirst.mockResolvedValue(null);
     });
 
-    it("loses renew authority after the frozen target is no longer current", async () => {
+    it.each([false, true])("renews only an already-started attempt after target currentness is lost (started=%s)", async (started) => {
         mocks.findFirst.mockResolvedValue({
             firstClaimAt: new Date(NOW.getTime() - 1_000),
-            executionStartedAt: new Date(NOW.getTime() - 500),
+            executionStartedAt: started ? new Date(NOW.getTime() - 500) : null,
             leaseExpiresAt: new Date(NOW.getTime() + 60_000),
             endpointId: "endpoint-1",
             endpointRevision: 1,
@@ -90,10 +95,19 @@ describe("plugin webhook settlement target currentness", () => {
             lease: LEASE,
             transition: "renew",
             now: NOW,
-        })).resolves.toEqual({ kind: "leaseLost" });
+        })).resolves.toEqual(started
+            ? { kind: "renewed", revision: LEASE.revision + 1, expiresAtMs: NOW.getTime() + PLUGIN_WEBHOOK_LEASE_MS_V1 }
+            : { kind: "leaseLost" });
 
-        expect(mocks.resolveTarget).toHaveBeenCalledTimes(1);
-        expect(mocks.updateMany).not.toHaveBeenCalled();
+        // Grant model APPROVED (2026-11-12): admitted work finishes; new work
+        // must still have current authority before its first effect.
+        if (started) {
+            expect(mocks.machineFindFirst).not.toHaveBeenCalled();
+            expect(mocks.updateMany).toHaveBeenCalledTimes(1);
+        } else {
+            expect(mocks.machineFindFirst).toHaveBeenCalledTimes(1);
+            expect(mocks.updateMany).not.toHaveBeenCalled();
+        }
     });
 
     it("settles an already-started attempt under its exact unexpired lease after currentness is lost", async () => {
@@ -121,7 +135,7 @@ describe("plugin webhook settlement target currentness", () => {
             now: NOW,
         })).resolves.toEqual({ kind: "settled", state: "queued" });
 
-        expect(mocks.resolveTarget).not.toHaveBeenCalled();
+        expect(mocks.machineFindFirst).not.toHaveBeenCalled();
         expect(mocks.updateMany).toHaveBeenCalledTimes(2);
     });
 
@@ -158,8 +172,8 @@ describe("plugin webhook settlement target currentness", () => {
         }));
     });
 
-    it("settles an already-started attempt while an Account encryption transition fence is unavailable", async () => {
-        mocks.acquireFence.mockResolvedValue({ status: "unavailable" });
+    it("settles an already-started attempt while the Account row is unavailable", async () => {
+        mocks.accountFindUnique.mockResolvedValue(null);
         mocks.findFirst.mockResolvedValue({ attemptCount: 1 });
 
         await expect(completePluginWebhookDeliveryV1({
@@ -180,7 +194,7 @@ describe("plugin webhook settlement target currentness", () => {
             now: NOW,
         })).resolves.toEqual({ kind: "settled", state: "queued" });
 
-        expect(mocks.acquireFence).not.toHaveBeenCalled();
+        expect(mocks.accountFindUnique).not.toHaveBeenCalled();
         expect(mocks.updateMany).toHaveBeenCalledTimes(2);
     });
 
@@ -258,6 +272,6 @@ describe("plugin webhook settlement target currentness", () => {
             retryDelayMs: 5_000,
             now: NOW,
         })).resolves.toEqual({ kind: "leaseLost" });
-        expect(mocks.markAccountChanged).not.toHaveBeenCalled();
+        expect(mocks.accountChange.upsert).not.toHaveBeenCalled();
     });
 });
