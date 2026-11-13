@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { isRecord } from '@happier-dev/protocol/common/records';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createPlatformFailureNoticeFixture } from './platformFailureNotices.testkit';
 import { createPlatformFailureNotices } from './platformFailureNotices';
@@ -9,14 +10,14 @@ describe('generic receipt outcomes through the private C1 owner', () => {
     it('opens provisioned failure and updates the same item from a succeeded receipt with private provider evidence', async () => {
         const f = createPlatformFailureNoticeFixture();
         expect(await f.consume()).toMatchObject({ kind: 'consumed', changed: true });
-        const header = () => decodePlainArtifactStoredContent([...f.rows.values()][0]!.header);
+        const header = () => decodePlainArtifactStoredContent(String([...f.rows.values()][0]!.header));
         expect(header()).toMatchObject({ type: 'blocked', source: { kind: 'host', topic: 'service_health',
             subject: { kind: 'platformTarget', environmentId: 'environment-staging', targetLinkId: 'target-link' } } });
         await f.consume(f.observation('failed', 150));
         expect(f.rows.size).toBe(1);
         await f.consume(f.observation('succeeded', 200));
         expect(header()).toMatchObject({ type: 'update', healthPhase: 'recovered', resolved: false, title: 'Staging: deployment succeeded' });
-        const body = decodePlainArtifactStoredContent([...f.rows.values()][0]!.body);
+        const body = decodePlainArtifactStoredContent(String([...f.rows.values()][0]!.body));
         expect(body).toMatchObject({ body: expect.stringContaining('provider-deployment-200') });
         expect(body).toMatchObject({ body: expect.stringContaining('https://provider.example/deployment') });
         expect(body).toMatchObject({ body: expect.stringContaining('provider-log') });
@@ -69,6 +70,7 @@ describe('generic receipt outcomes through the private C1 owner', () => {
     it('rejects payload routing outside the enrolled link before any notice write', async () => {
         const f = createPlatformFailureNoticeFixture();
         const event = f.observation('failed', 100);
+        if (!isRecord(event.payload)) throw new Error('Expected an object receipt payload');
         await expect(f.consume({ ...event, payload: { ...event.payload, targetLinkId: 'foreign-link' } }))
             .rejects.toMatchObject({ code: 'target_mismatch' });
         expect(f.writes).not.toHaveBeenCalled();
@@ -80,13 +82,14 @@ describe('generic receipt outcomes through the private C1 owner', () => {
             targetLinks: value.targetLinks.map(row => ({ ...row, targetLink: { ...row.targetLink, state: 'configured' } })) }));
         const event = f.observation('failed', 100);
         await f.consume(event);
-        expect(decodePlainArtifactStoredContent([...f.rows.values()][0]!.header)).toMatchObject({ type: 'update', healthPhase: 'open' });
+        expect(decodePlainArtifactStoredContent(String([...f.rows.values()][0]!.header))).toMatchObject({ type: 'update', healthPhase: 'open' });
     });
 
     it('rejects a different Event and a malformed closed failure payload', async () => {
         const f = createPlatformFailureNoticeFixture();
         const consume = createPlatformFailureNotices(f.host);
         const event = f.observation('failed', 100);
+        if (!isRecord(event.payload)) throw new Error('Expected an object receipt payload');
         await expect(consume({ caller: f.caller, definition: f.definition, signal: new AbortController().signal,
             observation: { ...event, eventRef: { ...event.eventRef, localId: 'different-event' } } }))
             .rejects.toMatchObject({ code: 'target_mismatch' });

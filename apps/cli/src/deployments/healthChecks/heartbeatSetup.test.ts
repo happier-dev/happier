@@ -61,6 +61,8 @@ describe('explicit saved heartbeat enrollment', () => {
             config: { host: 'web.example', port: 443 }, periodMs: 1000, consecutiveFailuresBeforeAlerting: 1 }] };
         let sourceReads = 0;
         let configured = true;
+        let observer: { machineId: string; machineInstallationId: string; pluginId: string; materializationId: string } | null = {
+            machineId: 'remote-observer', machineInstallationId: 'remote-installation', pluginId: caller.pluginId, materializationId: 'installed' };
         const host = createSavedHealthChecksHost({ serverId: 'profile-home', homeServerIdentityId: 'profile-home',
             resolveAdoptedDefinitionSet() { throw new Error('Preview must not scan adopted sources'); },
             readObserver: () => null, openDomainArtifact: async () => null,
@@ -68,8 +70,7 @@ describe('explicit saved heartbeat enrollment', () => {
             readSavedSource: (id, signal) => readSavedHealthCheckSourceForHost({ sourceInstanceId: id, signal }, {
                 async list() { sourceReads++; return { sets: [], healthSources: configured ? [{ sourceInstanceId,
                     revision: 'saved-revision', enabled: true, source,
-                    observer: { machineId: 'remote-observer', machineInstallationId: 'remote-installation',
-                        pluginId: caller.pluginId, materializationId: 'installed' },
+                    observer,
                     automationId: 'saved-health', triggerId: '11111111-1111-4111-8111-111111111111' }] : [] }; },
             }),
         });
@@ -88,6 +89,11 @@ describe('explicit saved heartbeat enrollment', () => {
             expect(sourceReads).toBe(1);
             expect(await kit.invokeAction('health/setup', { v: 1, mode: 'preview', subject,
                 alerts: { channels: [], phases: ['open'] } })).not.toHaveProperty('testContext');
+            // A saved source whose observer retired tests from the current caller instead.
+            observer = null;
+            expect(await kit.invokeAction('health/setup', { v: 1, mode: 'preview', subject, alerts })).toMatchObject({
+                testContext: { serverId: 'profile-home', machineId: 'observer', sourceInstanceId, expectedSourceRevision: 'saved-revision' },
+            });
             configured = false;
             expect(await kit.invokeAction('health/setup', { v: 1, mode: 'preview', subject, alerts })).not.toHaveProperty('testContext');
         } finally { await kit.dispose(); }

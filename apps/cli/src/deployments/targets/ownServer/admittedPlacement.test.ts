@@ -40,6 +40,7 @@ it('settles an admitted rollout on captured Machines after the next placement ch
         readEnvironment: async () => structuredClone(environment),
         readReceipt: async ({ deploymentId }) => structuredClone(deploymentId === 'uniform' ? uniform : receipt),
         async writeTransition(input) {
+            if (input.content.platform) throw new Error('The own-server fixture admits only own-server receipt content');
             receipt.content = input.content;
             receipt.deployment = { ...receipt.deployment, revision: receipt.deployment.revision + 1, state: input.state };
             return { ok: true, environmentId: environment.environment.id, revision: environment.environment.revision,

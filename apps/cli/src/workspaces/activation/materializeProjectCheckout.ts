@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { ScmRepositoryCloneInputSchema, ScmRepositoryContainedSubdirV1Schema } from '@happier-dev/protocol/scm/repositoryClone';
 import { ScmCommitOidSchema } from '@happier-dev/protocol/scm/commitPublication';
+import type { ScmBranchCheckoutResponse } from '@happier-dev/protocol/scm/branches';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginError } from '@happier-dev/cli-common/plugins/errors';
 import { readScmHostingRepositoryIdentity, type ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
@@ -138,7 +139,7 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
       const checkout = await runScmRoute({
         request: { cwd: rootPath, name: input.ref, strategy: 'bring_changes' as const },
         workingDirectory: rootPath, registry: input.registry, signal: input.signal,
-        onNonRepository: () => notRepositoryResponse(),
+        onNonRepository: () => notRepositoryResponse<ScmBranchCheckoutResponse>(),
         runWithBackend: ({ context, selection }) => selection.backend.workspaceIntegration?.checkoutRef
           ? selection.backend.workspaceIntegration.checkoutRef({ context, ref: input.ref!,
             ...(input.signal ? { signal: input.signal } : {}) })
@@ -149,7 +150,7 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
       if (!checkout.success) {
         const code = checkout.errorCode ?? 'ref_unavailable';
         // Only the SCM owner's terminal result establishes a known refusal.
-        if (checkout.outcome?.kind !== 'failed') return refused(code, checkout.error);
+        if (!('outcome' in checkout) || checkout.outcome?.kind !== 'failed') return refused(code, checkout.error);
         const failure = Object.assign(new Error(checkout.error ?? code), { code });
         throw new PluginError({ code, message: failure.message,
           failureCause: projectActionFailureCauseV1(failure, 'project_open.checkout_ref') });

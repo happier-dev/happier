@@ -29,7 +29,7 @@ it.each([undefined, ['machine-b']])('prepares exactly the selected fleet members
             return { contentArtifactId: 'fleet-teardown-content', contentHeaderVersion: 1, contentBodyVersion: 1 };
         },
     });
-    const prepared = await teardown.prepare({ input: { serverId: 'home', environmentId: environment.environment.id,
+    const prepared = await teardown.prepare({ readWorkflowInvocation: async () => { throw new Error('This teardown must not read a Workflow invocation'); }, input: { serverId: 'home', environmentId: environment.environment.id,
         targetLinkId: link.id, reason: 'manual', requestKey: 'fleet-teardown', ...(machines ? { machines } : {}) }, context: {} });
     expect(prepared, JSON.stringify(prepared)).toHaveProperty('input');
     if (!('input' in prepared) || !candidate) throw new Error('Expected admitted fleet review');

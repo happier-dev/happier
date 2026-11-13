@@ -18,6 +18,12 @@ import { readDeploymentTargetV1 } from './targets/deploymentTargetCatalog';
 
 export { PLATFORM_FAILURE_SETUP_ROLE } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 export const PLATFORM_FAILURE_ENROLL_ROLE = 'platform-failure.enroll';
+/** Enrollment reads only receipt Events and the caller's current materialization from the lease. */
+type PlatformFailureEnrollmentLease = Readonly<{
+    registry: Pick<PluginRuntimeRegistryLease['registry'], 'contributes' | 'resolveCurrentPluginMaterializationRef'>;
+    resolveCurrentPluginMaterializationRef?: PluginRuntimeRegistryLease['resolveCurrentPluginMaterializationRef'];
+    release(): Promise<void>;
+}>;
 type EnrollmentStep = 'lease_acquire' | 'event_resolve' | 'lease_release' | 'environment_read'
     | 'controller_unavailable' | 'reviewed_child_unavailable' | 'watcher_materialization_resolve'
     | 'watcher_materialization_unavailable' | 'credential_principal_unavailable' | 'transport_unavailable'
@@ -99,10 +105,10 @@ export async function enrollPlatformFailureSource(input: Readonly<{
 /** The generic link owner enrolls receipt Events through the existing reviewed Action executor. */
 export function createPlatformFailureEnrollmentForHost(host: Readonly<{
     serverId: string; machineId: string;
-    acquirePluginRuntimeRegistryLease?(): Promise<PluginRuntimeRegistryLease>;
+    acquirePluginRuntimeRegistryLease?(): Promise<PlatformFailureEnrollmentLease>;
     readEnvironment(input: Readonly<{ environmentId: string; context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;
 }>) {
-    async function withEvents<T>(source: DeploymentTargetV1['source'], run: (events: readonly ResolvedAutomationEligibleEvent[], lease: PluginRuntimeRegistryLease) => Promise<T>) {
+    async function withEvents<T>(source: DeploymentTargetV1['source'], run: (events: readonly ResolvedAutomationEligibleEvent[], lease: PlatformFailureEnrollmentLease) => Promise<T>) {
         if (source.kind !== 'plugin' || !host.acquirePluginRuntimeRegistryLease) return null;
         const lease = await atStep('lease_acquire', () => host.acquirePluginRuntimeRegistryLease!());
         try {

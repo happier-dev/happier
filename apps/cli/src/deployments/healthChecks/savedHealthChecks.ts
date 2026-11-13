@@ -177,7 +177,7 @@ export function createSavedHealthChecksHost(input: Readonly<{
                         sourceConfig.alerts = { channels: channels ?? [], phases: ['open', 'recovered'] };
                     }
                     signal.throwIfAborted();
-                    const machineId = environment?.environment.controllerMachineId ?? retained?.observer.machineId ?? caller.machineId;
+                    const machineId = environment?.environment.controllerMachineId ?? retained?.observer?.machineId ?? caller.machineId;
                     const testContext = retained && machineId && retained.source.alerts !== undefined
                         && createCanonicalJsonSigningInput(sourceConfig.alerts) === createCanonicalJsonSigningInput(retained.source.alerts)
                         ? { serverId: input.serverId, machineId, sourceInstanceId: retained.sourceInstanceId, expectedSourceRevision: retained.revision } : undefined;

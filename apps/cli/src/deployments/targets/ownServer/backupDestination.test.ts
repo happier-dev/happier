@@ -16,7 +16,7 @@ import { plugin } from '../../../../../../packages/plugins/backup-destinations/s
 import { createTargetActionInvocationRegistry } from '@/plugins/runtime/invocation/targetActionRegistry';
 import { createUnavailablePluginServicesFactory } from '@/plugins/runtime/invocation/services/factory';
 import { createTargetActionHostBindingResolver } from '@/plugins/runtime/hostAccess/resolve';
-import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createAuthoredAdmittedPluginRuntimeFixture, requireDaemonEntrypoint } from '@/plugins/testkit/admittedRuntime';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
@@ -54,7 +54,7 @@ it.each([['plain', 's3', false, 'none'], ['e2ee', 's3', false, 'none'], ['plain'
     'prepares an unsaved %s %s destination on its controller (requester %s, runtime %s)', async (mode, destination, requester, runtimeMachine) => {
     const runtime = await createAuthoredAdmittedPluginRuntimeFixture({
         plugins: [{ manifest: plugin.manifest,
-            files: { [plugin.manifest.entrypoints.daemon]: 'export function activate() {}', 'package.json': '{"type":"module"}' },
+            files: { [requireDaemonEntrypoint(plugin.manifest)]: 'export function activate() {}', 'package.json': '{"type":"module"}' },
             instantiateCommittedModule: () => ({ activate: plugin.activate }) }],
         async resolveContributes(happyHomeDir) {
             return createResolvedContributionRegistry(projectLoadedPluginContributes({
@@ -220,7 +220,7 @@ it.each(['first-party', 'external'] as const)('prepares selected sources through
     const manifest = normalizePluginManifestV2(definition.manifest);
     const runtime = await createAuthoredAdmittedPluginRuntimeFixture({
         plugins: [{ manifest: definition.manifest,
-            files: { [definition.manifest.entrypoints.daemon]: 'export function activate() {}', 'package.json': '{"type":"module"}' },
+            files: { [requireDaemonEntrypoint(definition.manifest)]: 'export function activate() {}', 'package.json': '{"type":"module"}' },
             instantiateCommittedModule: () => ({ activate: definition.activate }) }],
         async resolveContributes(happyHomeDir) {
             return createResolvedContributionRegistry(projectLoadedPluginContributes({

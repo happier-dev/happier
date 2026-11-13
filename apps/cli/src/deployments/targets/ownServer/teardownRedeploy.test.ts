@@ -70,10 +70,11 @@ it('deploys after native teardown and preserves a later activation failure witho
                 return structuredClone({ environment: environment.environment, deployment: receipts.get(deploymentId)!.deployment, link });
             },
             async writeTransition(input) {
-                const receipt = receipts.get(input.deploymentId)!;
-                expect(input.expectedRevision).toBe(receipt.deployment.revision);
-                receipt.content = DeploymentOwnServerContentV1Schema.parse(input.content);
-                receipt.deployment = { ...receipt.deployment, state: input.state, revision: receipt.deployment.revision + 1 };
+                const current = receipts.get(input.deploymentId)!;
+                expect(input.expectedRevision).toBe(current.deployment.revision);
+                const receipt = { ...current, content: DeploymentOwnServerContentV1Schema.parse(input.content),
+                    deployment: { ...current.deployment, state: input.state, revision: current.deployment.revision + 1 } };
+                receipts.set(input.deploymentId, receipt);
                 // Mirror the server's successful signed transition at the
                 // persistence boundary, including teardown pointer removal.
                 if (input.teardownProof || input.state === 'succeeded' || input.state === 'running_unverified') {
@@ -163,20 +164,22 @@ it('deploys after native teardown and preserves a later activation failure witho
             if (unhealthy) await docker.failImageHealth(fresh.image.configDigest);
             const before = phases.length;
             const result = await target.execute(fresh.request);
-            expect(result, JSON.stringify({ result, failure: fresh.receipt.content.failure }))
+            // writeTransition persists a new receipt object; read the stored one.
+            const persisted = receipts.get(fresh.receipt.deployment.id)!;
+            expect(result, JSON.stringify({ result, failure: persisted.content.failure }))
                 .toMatchObject(unhealthy
                     ? { ok: false, errorCode: 'native_failed', details: { failure: { code: 'native_failed', phase: 'activate' } } }
                     : { ok: true, state: 'succeeded' });
             expect(phases.slice(before)).toContain('activate');
             expect(phases.slice(before)).not.toContain('restore');
             if (unhealthy) {
-                expect(fresh.receipt.deployment.state).toBe('failed');
-                expect(fresh.receipt.content.failure).toEqual({ code: 'native_failed', phase: 'activate',
+                expect(persisted.deployment.state).toBe('failed');
+                expect(persisted.content.failure).toEqual({ code: 'native_failed', phase: 'activate',
                     requiredFact: 'deploymentActionResult', remedy: expect.stringMatching(/\S/),
                     failureCause: { phase: 'deployment.failure', errorClass: 'Error', errorCode: 'native_failed', httpStatus: null } });
                 expect(await docker.readRunningImageConfig('app')).toBeNull();
             } else {
-                expect(fresh.receipt.content.failure).toBeUndefined();
+                expect(persisted.content.failure).toBeUndefined();
                 expect(link.activeDeploymentId).toBe('v2');
                 expect(await docker.readRunningImageConfig('app')).toBe(fresh.image.configDigest);
             }

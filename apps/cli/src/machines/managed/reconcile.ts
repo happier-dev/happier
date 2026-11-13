@@ -429,11 +429,13 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
                             await io.beforeNativeEffect();
                         }
                         if (params.action !== 'deployments.backups.restore' && params.action !== MANAGED_RESIZE_ACTION_ID_V1 && (role === 'power' || role === 'destroy')
-                            && params.options.context?.externalActionExecutionAuthorization?.binding.workflowActionOrigin
-                            && !await params.client.isOriginCurrent()) {
+                            && params.options.context?.externalActionExecutionAuthorization?.binding.workflowActionOrigin) {
+                            // A Session target carries no row client whose origin could be rechecked;
+                            // it keeps the admission refusal this path has always settled to.
+                            if (!('client' in params)) throw new ManagedMachineControllerError('admission_unavailable');
                             // Final guest confirmation awaits independently of
                             // the managed row. Recheck the FIN source, not that row.
-                            throw new ManagedMachineControllerError('intent_changed');
+                            if (!await params.client.isOriginCurrent()) throw new ManagedMachineControllerError('intent_changed');
                         }
                     } catch (error) {
                         rowCurrent = false;

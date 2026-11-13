@@ -42,7 +42,7 @@ describe('project worker memory admission through the vitals sampler', () => {
           memory: { reported: true, totalBytes: 100, availableBytes, usedBytes: 100 - availableBytes, pressure: { level: 'calm', source: 'events' } },
           disk: { reported: false, reason: 'unavailable' }, network: { reported: false, reason: 'unavailable' },
         },
-        minuteCounters: { monotonicMs: input.monotonicMs },
+        minuteCounters: { monotonicMs: input.monotonicMs, cpu: null, network: null },
       };
     } };
     const historyStore = await createMinuteHistoryStore({ directory, nowMs: () => Date.now() });
@@ -51,7 +51,7 @@ describe('project worker memory admission through the vitals sampler', () => {
       onTick: () => { void admission?.notifyChanged(); } });
     const source = createProjectWorkerMemorySource(() => sampler);
     admission = createProjectWorkerAdmission({ machineId: 'machine', admissionDrain: createDaemonAdmissionDrain(),
-      readPolicy: async () => ({ status: 'ready', policy: { accepting: true, runAtMost: null }, revision: 1, source: 'stored' }),
+      readPolicy: async () => ({ status: 'ready', policy: { accepting: true, runAtMost: null }, metadataVersion: 1, source: 'stored' }),
       ...source });
     await sampler.start();
     const advance = async (ms: number) => {

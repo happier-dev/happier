@@ -1206,11 +1206,12 @@ export async function executeScmActionOperation(
             request = { ...scopedRequest, pullRequestDraft: scopedRequest.pullRequestDraft ?? {}, outputs: ['summary'] };
         }
     }
-    const result = params.actionId === 'scm.diffSummary.generate' || params.actionId === 'scm.diffSummary.draftPullRequest'
+    const localActionId = params.actionId;
+    const result = localActionId === 'scm.diffSummary.generate' || localActionId === 'scm.diffSummary.draftPullRequest'
         ? await params.executeDiffSummary?.({ request })
         : await runWithScmHostingActionExecutor(params.executeHostingProviderAction, () => runLocalScmAction({
             ...params,
-            actionId: params.actionId,
+            actionId: localActionId,
             input: request,
         }));
     if (result === undefined) {

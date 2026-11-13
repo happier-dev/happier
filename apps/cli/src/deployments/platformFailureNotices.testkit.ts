@@ -12,6 +12,7 @@ import { createPlainAccountArtifactHttpBoundary } from '@/api/artifacts/accountA
 import { createPlatformFailureNotices } from './platformFailureNotices';
 import { PLUGIN_MANIFEST } from '../../../../packages/plugins/machine-services/src/manifest';
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 
 export function createPlatformFailureNoticeFixture(_withEnrollment = false, withCreate = false) {
     const pluginId = 'example.deploy';
@@ -51,7 +52,7 @@ export function createPlatformFailureNoticeFixture(_withEnrollment = false, with
             targetLinkId: 'target-link', credentialPrincipal, periodMs: 300000, observingSince: 1 },
         observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: caller }, filter: null, maximumObservationAgeMs: null });
     const definitionFor = (state: 'failed' | 'succeeded') => ({ ...definition,
-        triggerId: state, sourceInstanceId: `platform:link:${state}`, eventRef: DEPLOYMENT_RECEIPT_EVENT_REFS_V1[state] });
+        triggerId: AutomationTriggerIdSchema.parse(state), sourceInstanceId: `platform:link:${state}`, eventRef: DEPLOYMENT_RECEIPT_EVENT_REFS_V1[state] });
     const receiptStates = new Map<string, 'failed' | 'succeeded'>();
     const observation = (state: 'failed' | 'succeeded', observedAtMs: number) => {
         receiptStates.set(`deployment-${observedAtMs}`, state);

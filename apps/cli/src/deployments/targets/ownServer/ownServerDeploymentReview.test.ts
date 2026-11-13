@@ -50,7 +50,7 @@ describe('own-server deployment review reference changes', () => {
             [{ ...changedAddress, source: { ...address.source, export: 'other-database' } }]]) {
             expect(projectOwnServerDeploymentReview({ ...input, referenceAddresses })).not.toHaveProperty('referenceChanges');
         }
-        receipt.content.ownServer!.referenceAddresses.push({ ...address, address: 'postgres://100.64.0.7:45432' });
+        receipt.content.ownServer!.referenceAddresses!.push({ ...address, address: 'postgres://100.64.0.7:45432' });
         expect(projectOwnServerDeploymentReview(input)).not.toHaveProperty('referenceChanges');
         delete receipt.content.ownServer!.referenceAddresses;
         expect(projectOwnServerDeploymentReview(input)).not.toHaveProperty('referenceChanges');

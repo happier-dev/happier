@@ -104,8 +104,12 @@ describe('endpoint Machine read costs', () => {
       accountId: 'owner', serverId: 'home', accountEncryptionMode: 'plain', isCurrent: async () => true,
       projectAccountRowCipher: createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) }),
       readArtifact: async () => null,
-      resolveMachineContentEncryptionContext: row => resolvePublishedMachineEncryptionContext({
-        credentials, machineId: row.id, expectedAccountMode: 'plain', publishedDataEncryptionKey: row.dataEncryptionKey }),
+      resolveMachineContentEncryptionContext: row => {
+        const context = resolvePublishedMachineEncryptionContext({
+          credentials, machineId: row.id, expectedAccountMode: 'plain', publishedDataEncryptionKey: row.dataEncryptionKey });
+        return context.encryptionMode === 'plain' ? { encryptionMode: 'plain' as const }
+          : { ...context, encryptionMode: 'e2ee' as const };
+      },
     } satisfies ExternalActionRequesterAccountProjectionV1 });
     Object.defineProperty(authorization, 'requesterHttpProjection', { value: {
       accountId: 'owner', serverId: 'home', serverIdentityId: 'home', accountEncryptionMode: 'plain',
@@ -1155,13 +1159,14 @@ describe('current child storage at the Sync authority', () => {
         return { status: 200, data: { machines } };
       }
       if (role === 'requester' && url.endsWith('/execution-authorization')) {
-        const body = { envelope: ExternalActionRequestEnvelopeSchema.parse(Reflect.get(raw, 'envelope')) };
+        const body = { envelope: ExternalActionRequestEnvelopeSchema.parse(raw !== null && typeof raw === 'object' ? Reflect.get(raw, 'envelope') : undefined) };
         return { status: 200, data: { v: 1, token: 'managed-home-root', binding: {
           accountId: 'requester', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
           serverIdentityId: homeId, custodianAccountId: 'account', machineId: 'machine-a', installationId: 'parent-installation',
           actionId: 'machines.managed.inspect', requestId: body.envelope.requestId, target: body.envelope.target,
           requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.envelope),
-          managedAdmission: projectExternalActionManagedAdmissionV1('machines.managed.inspect', body.envelope.input) } } };
+          managedAdmission: projectExternalActionManagedAdmissionV1('machines.managed.inspect',
+            'input' in body.envelope ? body.envelope.input : undefined) } } };
       }
       if (role === 'requester' && url.endsWith('/machines.managed.inspect')) {
         const body = raw as { envelope: { requestId: string } };

@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { readHomeRequestBody } from './homeRequestBody.testkit';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -69,9 +70,10 @@ describe('provider link preparation through the installed Action host', () => {
                 requests.push(path);
                 if (request.method === 'GET') return { status: 200, data: { ok: true, environment: current, targetLinks: [] } };
                 if (path !== '/v1/deployments/targets/list') throw new Error('Duplicate preparation reached association');
-                expect(request.data.scope).toEqual(owner);
-                return { status: 200, data: { ok: true, items: request.data.cursor ? [{ environment: existing, targetLink: link }] : [],
-                    coverage: comparison === 'partial' ? 'partial' : 'complete', nextCursor: request.data.cursor ? null : 'next-page' } };
+                const body = readHomeRequestBody(request.data);
+                expect(body.scope).toEqual(owner);
+                return { status: 200, data: { ok: true, items: body.cursor ? [{ environment: existing, targetLink: link }] : [],
+                    coverage: comparison === 'partial' ? 'partial' : 'complete', nextCursor: body.cursor ? null : 'next-page' } };
             });
             const runtime = createOwnServerDeploymentRuntimeForHost({ credentials, serverId: 'home', serverHttpBaseUrl: 'https://link.test',
                 machineId: 'controller', resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),

@@ -60,7 +60,7 @@ export async function readWorkspaceSyncWorkerTargetSnapshot(input: Parameters<ty
   const snapshot = await readWorkspaceSyncWorkerRouteSnapshot(input);
   const source = resolveWorkspaceRefV1(snapshot.workspaceRefs, { serverId: input.serverId, id: input.sourceWorkspaceRefId });
   const endpoint = source.kind === 'resolved'
-    ? resolveWorkspaceSyncEndpoint({ ...snapshot, serverId: input.serverId, workspace: source.ref }) : null;
+    ? resolveWorkspaceSyncEndpoint({ ...snapshot, workspace: source.ref }) : null;
   const component = endpoint?.ok ? deriveWorkspaceSyncTopology({ ...snapshot, serverId: input.serverId }).sets.find(set =>
     set.relationships.some(relationship => relationship.alphaWorkspaceRefId === endpoint.endpoint.id
       || relationship.betaWorkspaceRefId === endpoint.endpoint.id)) : undefined;

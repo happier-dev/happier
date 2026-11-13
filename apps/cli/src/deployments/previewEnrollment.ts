@@ -33,7 +33,15 @@ const refused = (result: Extract<ActionExecuteResult, { ok: false }>): Deploymen
     status: 'unavailable', errorCode: result.errorCode, ...(result.failureCause ? { failureCause: result.failureCause } : {}),
 });
 
-function readReceiptEvent(lease: PluginRuntimeRegistryLease) {
+/** Preview enrollment reads Events, setup Actions, the purpose-binding owner and current materializations from the lease. */
+type PreviewEnrollmentLease = Readonly<{
+    registry: Pick<PluginRuntimeRegistryLease['registry'], 'contributes' | 'resolveConnectedAccountPurposeBindingOwner'
+        | 'resolveCurrentPluginMaterializationRef'>;
+    resolveCurrentPluginMaterializationRef?: PluginRuntimeRegistryLease['resolveCurrentPluginMaterializationRef'];
+    release(): Promise<void>;
+}>;
+
+function readReceiptEvent(lease: PreviewEnrollmentLease) {
     return lease.registry.contributes.automationEligibleEvents?.find(item =>
         item.event.identity.pluginId === DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1.pluginId
         && item.event.identity.localId === DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1.localId);
@@ -42,10 +50,10 @@ function readReceiptEvent(lease: PluginRuntimeRegistryLease) {
 /** The existing Account Event owner retains the source; no deployment-local watcher or trigger-id store. */
 export function createPreviewEnrollmentForHost(host: Readonly<{
     serverId: string; machineId: string;
-    acquirePluginRuntimeRegistryLease?(): Promise<PluginRuntimeRegistryLease>;
+    acquirePluginRuntimeRegistryLease?(): Promise<PreviewEnrollmentLease>;
     readEnvironment(input: Readonly<{ environmentId: string; context: ActionExecutorContext }>): Promise<Pick<DeploymentEnvironmentDetailV1, 'environment' | 'content'>>;
 }>) {
-    async function withEvents<T>(kind: string, run: (events: NonNullable<PluginRuntimeRegistryLease['registry']['contributes']['automationEligibleEvents']>, lease: PluginRuntimeRegistryLease) => Promise<T>) {
+    async function withEvents<T>(kind: string, run: (events: NonNullable<PluginRuntimeRegistryLease['registry']['contributes']['automationEligibleEvents']>, lease: PreviewEnrollmentLease) => Promise<T>) {
         if (!host.acquirePluginRuntimeRegistryLease) return null;
         const lease = await host.acquirePluginRuntimeRegistryLease();
         try {
@@ -98,7 +106,6 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                             if (!authorization || !purposeOwner) continue;
                             const binding = await purposeOwner.getBinding({ purpose: authorization.purpose,
                                 serviceRefs: authorization.serviceRefs,
-                                ...(context.sessionId ? { sessionId: context.sessionId } : {}),
                                 signal: context.signal ?? new AbortController().signal });
                             if (binding) setupInput = writeInputPath(setupInput, mapping.path, binding.account);
                         }

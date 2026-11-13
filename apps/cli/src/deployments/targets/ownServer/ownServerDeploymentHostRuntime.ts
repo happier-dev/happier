@@ -104,7 +104,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
         sha?: string;
         stageContent(sourceIntent: DeploymentSourceIntentV1): Promise<string>;
     }>), snapshot: Readonly<{ environment: DeploymentEnvironmentDetailV1; content?: DeploymentOwnServerContentV1;
-        retainedSourceIntent?: DeploymentOwnServerContentV1['sourceIntent'];
+        retainedSourceIntent?: DeploymentOwnServerContentV1['sourceIntent'] | null;
         deployment?: DeploymentReceiptHeaderV1;
         readReferenceEnvironment?: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readEnvironment'];
         readPreviewDomain?: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readPreviewDomain'] }>): Promise<OwnServerDeploymentRuntimeAcquisition & Readonly<{
@@ -474,10 +474,12 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 } });
                 source = await port.materialize({ environmentId: environment.environment.id, deploymentId: 'definition' }, { signal });
                 native = createOwnServerNativeRuntime({ cwd: source.rootPath, signal, isCurrent: () => !released });
-                const compose = intent.kind === 'stored' ? intent : intent.compose;
+                const compose = intent.kind === 'repository' ? intent.compose : { path: 'compose.yaml', ...intent };
+                // Keeps the pre-existing uncoded failure for a Compose-less source; a coded refusal needs its own decision.
+                if (!compose) throw new TypeError('Definition review requires a Compose source');
                 project = createNativeComposeLifecycle({ kind: 'environmentDefinition', phase: 'build',
                     exec: native.exec, io: native.nativeIo, settleNative: native.settleNative, source,
-                    sourceKind: intent.kind, files: [intent.kind === 'stored' ? 'compose.yaml' : intent.compose.path],
+                    sourceKind: intent.kind, files: [compose.path],
                     profiles: compose.profiles, services: compose.services });
                 const review = await project.reviewDefinition({ signal });
                 const choices: import('@happier-dev/deployment-protocol').DeploymentBackupSourceV1[] = [];

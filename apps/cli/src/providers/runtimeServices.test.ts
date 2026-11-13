@@ -42,6 +42,9 @@ function createMachineServices(): RuntimeProviderOperationsProducer['machineServ
     async readSourceModelCatalogs() {
       throw new Error('Public Provider operations must not read a private source catalog');
     },
+    async prepareTeamCredentialNativeSource() {
+      throw new Error('Public Provider operations must not prepare a private native source');
+    },
     refreshUsage: vi.fn(async () => ({ status: 'success' as const, sources: [{ sourceId: 'credits', status: 'not_configured' as const }] })),
     prepareProfileMigrationSource: vi.fn(async () => { throw new Error('Unexpected Profile migration source RPC'); }),
     probe: vi.fn(async () => ({
@@ -188,7 +191,7 @@ describe('runtime Provider operation production boundary', () => {
     vi.mocked(machineServices.probe).mockResolvedValue({ status: 'error', error });
     const operations = createRuntimeProviderOperationsProducer({ machineId: 'machine-a', machineServices,
       featureGate: providersEnabledFeatureGate }).bind(currentBinding().binding);
-    await expect(operations.connections.mutate({ action: 'createContribution', connectionId: 'pc_key',
+    await expect(operations.connections.mutate({ action: 'createContribution', connectionId: ProviderConnectionIdSchema.parse('pc_key'),
       contributionKey: connection.contributionKey!, displayName: null, savedSecretId: 'ss_key', enable: true,
       authoringReview: { candidateId: null, fingerprint: 'authoring-review:v1:test', revision: 0 },
     })).resolves.toMatchObject({ status: 'success', created: true, connection: { connectionId: 'pc_key', authorizationError: error } });

@@ -181,7 +181,8 @@ async function prepareReviewedRunnerPluginAcquisition(input: Readonly<{
   const builtInSource = BUILT_IN_REGISTRY_SOURCES_V1.find(source => source.id === reviewed.source.id);
   if (reviewed.source.kind === 'user'
     ? deriveMarketplaceSourceId(reviewed.source.sourceUrl) !== reviewed.source.id
-    : !builtInSource || registryMarketplaceSourceV1(builtInSource).kind !== reviewed.source.kind || builtInSource.url !== reviewed.source.sourceUrl) {
+    // Package-content built-ins have no URL and cannot bind a reviewed sourceUrl.
+    : !builtInSource || !('url' in builtInSource) || registryMarketplaceSourceV1(builtInSource).kind !== reviewed.source.kind || builtInSource.url !== reviewed.source.sourceUrl) {
     throw new Error('runner_reviewed_plugin_source_unbound');
   }
   const registryProfileId = reviewed.source.kind === 'community-npm' ? undefined : input.registryProfileId;

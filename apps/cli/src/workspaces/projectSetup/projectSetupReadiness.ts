@@ -39,7 +39,8 @@ export async function inspectProjectSetupFromRuntime(input: Readonly<{
         const association = await phase('workspace', () => resolveProjectSetupAcceptedWorkspace({ address: input.workspace,
             ...projectRuntimeAccountRowsInput(runtime), serverId: runtime.serverId,
             serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal }));
-        const manifest = (await phase('manifest', () => readProjectManifest({ root: association.workspace.rootPath }))).document?.manifest;
+        const manifestDocument = (await phase('manifest', () => readProjectManifest({ root: association.workspace.rootPath }))).document;
+        const manifest = manifestDocument?.status === 'valid' ? manifestDocument.manifest : undefined;
         const { environmentBindings, secretEnvironment } = await phase('requester_environment', () => resolveProjectRequesterSecretInputs(runtime, {
             project: association.project, requirements: manifest?.environmentVariables ?? [],
         }, signal));

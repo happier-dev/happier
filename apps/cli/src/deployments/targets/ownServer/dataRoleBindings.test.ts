@@ -139,6 +139,18 @@ describe('read-role binding producer', () => {
         expect(openMachineSecretGrant({ grant, ...installation, installationPrivateSeed: keys.secretKey.slice(0, 32) }))
             .toEqual({ kind: 'secret', value: 'fixture-private-role-password' });
     });
+    it('refuses a child job whose patch still holds a pending person choice before reading its Environment', async () => {
+        const { owner, request, grant, jobs, keys, use } = setup();
+        await (await owner.prepare(request)).complete([grant]);
+        const sent = jobs[0]!;
+        if (sent.kind !== 'dataRole' || !('set' in sent.input)) throw new Error('Expected a data-role patch job');
+        vi.spyOn(identityStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
+            installationId: 'controller-installation', publicKey: Buffer.from(keys.publicKey).toString('base64url'),
+            privateKey: Buffer.from(keys.secretKey).toString('base64url'), createdAt: 1 });
+        const pending = { ...use, source: { kind: 'secret' as const, ref: 'person_selects' as const } };
+        await expect(owner.executeChild({ ...sent, machineId: 'controller', installationId: 'controller-installation',
+            input: { ...sent.input, set: [pending] } }, {})).rejects.toMatchObject({ code: 'client_required' });
+    });
     it('refuses an absent exact recipient grant before sending a child', async () => {
         const { owner, request, jobs } = setup();
         const prepared = await owner.prepare(request);

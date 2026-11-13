@@ -178,6 +178,7 @@ describe('comparison discard through the SCM Action executor', () => {
       async waitForTurnCompletion() {},
       subscribeRuntimeEvents: () => () => {},
       async cancelTurn() {},
+      async steerInFlightTurn() {},
       readSessionIdentity: () => ({ sessionId: 'native-review-thread' }),
       async updateSessionRuntimeConfig() {},
       async resetOrDisposeRuntime() {},

@@ -49,7 +49,7 @@ export function createStorageDockerForHost(host: Parameters<typeof createStorage
                 try {
                     await launch.recheckInputs?.();
                     engineId = (await readNativeComposeEngine({ io: native.nativeIo, command: launch.command,
-                        prefix: launch.args, cwd: launch.cwd, env: launch.env, signal })).id;
+                        prefix: launch.args, cwd: launch.cwd ?? host.happyHomeDir, env: launch.env, signal })).id;
                     inventory = diskUsage.parse(await readDockerEngineDiskUsage(launch, launch.args, signal));
                 } finally { await launch.release(); }
                 const images = inventory.Images ?? [];

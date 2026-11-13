@@ -170,7 +170,7 @@ describe('admitted builder receipt production', () => {
         await withBuilder(async ({ host, request, environment, nativeRequests }) => {
             environment.environment.revision++;
             if (changed === 'definition') {
-                if (environment.content.definition.kind !== 'repository') throw new Error('Repository fixture required');
+                if (environment.content.definition.kind !== 'repository' || !environment.content.definition.compose) throw new Error('Repository compose fixture required');
                 environment.content.definition.compose.path = 'changed-compose.yaml';
             } else if (changed === 'binding') {
                 environment.content.bindings.push({ purpose: 'variable', phase: 'build', name: 'NEW_INPUT',

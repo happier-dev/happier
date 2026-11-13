@@ -20,12 +20,13 @@ import { readDeploymentDomainArtifactV1, getDeploymentTargetLinkLineageV1,
     type DeploymentDomainContentV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
 import type { StoredCredentials } from '@/persistence';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { HostReviewedChildrenDomainPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ArtifactRequestAuthorizationHeaders, createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { prepareCloudflareDomainForHost, disableCloudflareDomainForHost, cloudflareDomainConnectorForTarget } from './cloudflareDomainPreparation';
-import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionExecuteFailure, readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
@@ -123,7 +124,7 @@ async function* readEnvironmentDomainsForHost(environmentId: string, context: Ac
     for (;;) {
         const result = await host.storage('deployments.domains.list', { serverId: host.serverId,
             environmentId, ...(cursor ? { cursor } : {}) }, context);
-        if ('errorCode' in result) throw Object.assign(new Error(result.error), { code: result.errorCode, cause: result });
+        if (isActionExecuteFailure(result)) throw Object.assign(new Error(result.error), { code: result.errorCode, cause: result });
         const page = DeploymentActionOutputSchemasV1['deployments.domains.list'].parse(result);
         if (!page.ok) throw Object.assign(new Error(page.error), { code: page.error, cause: page });
         for (const domain of page.domains) if (domain.deletedAtMs === undefined) yield domain;
@@ -132,8 +133,10 @@ async function* readEnvironmentDomainsForHost(environmentId: string, context: Ac
     }
 }
 
+/** Root inputs may omit their link or request; an unmatched link refuses and the
+ * reviewed child input parse refuses a missing request at their own owners. */
 type DomainMembershipInput = Readonly<{
-    environmentId: string; targetLinkId: string; requestKey: string; machines?: readonly string[];
+    environmentId: string; targetLinkId?: string; requestKey?: string; machines?: readonly string[];
 }>;
 
 /** Membership changes demand the existing Domain Add owner, whose own review
@@ -142,7 +145,7 @@ export async function prepareOwnServerMembershipDomainReviewedChildren(
     input: DomainMembershipInput, context: ActionExecutorContext,
     host: DomainDiscoveryHost & Readonly<{ serverId: string; storage: NonNullable<ActionExecutorDeps['deploymentAction']>;
         open(id: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null> }>,
-): ReturnType<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>> {
+): Promise<HostReviewedChildrenDomainPreparationV1> {
     const environment = await host.readEnvironment({ environmentId: input.environmentId, context });
     const link = environment.targetLinks.find(item => item.targetLink.id === input.targetLinkId)?.targetLink;
     if (!link) return failure('target_mismatch');
@@ -172,7 +175,7 @@ export async function prepareOwnServerTeardownDomainReviewedChildren(
     host: DomainDiscoveryHost & Readonly<{ serverId: string; storage: NonNullable<ActionExecutorDeps['deploymentAction']>;
         prepareProviderDomain?: NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>;
         open(id: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null> }>,
-): ReturnType<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>> {
+): Promise<HostReviewedChildrenDomainPreparationV1> {
     const input = request.input;
     if (input.machines) {
         const environment = await host.readEnvironment({ environmentId: input.environmentId, context: request.context });
@@ -190,7 +193,9 @@ export async function prepareOwnServerTeardownDomainReviewedChildren(
         if (domain.provider && !host.prepareProviderDomain) return failure('unsupported_action');
         const plan = domain.provider ? await host.prepareProviderDomain!(removal)
             : await prepareOwnServerDomainReviewedChildren(removal, host);
-        if (plan && 'errorCode' in plan) return plan;
+        if (isActionExecuteFailure(plan)) return plan;
+        // Keeps the pre-existing uncoded failure when a provider settles instead of planning.
+        if (plan && !('children' in plan)) throw new TypeError('Provider Domain removal returned no child plan');
         if (plan) children.push(...plan.children);
     }
     return children.length ? { children } : null;
@@ -201,7 +206,7 @@ export async function prepareOwnServerDomainReviewedChildren(
     request: Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0],
     host: DomainDiscoveryHost & Readonly<{ storage: NonNullable<ActionExecutorDeps['deploymentAction']>;
         open(id: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null> }>,
-): ReturnType<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>> {
+): Promise<HostReviewedChildrenDomainPreparationV1> {
     const actionId = request.actionId;
     if (!isDeploymentDomainAddActionIdV1(actionId) && !isDeploymentDomainRemoveActionIdV1(actionId)) return null;
     const input = DeploymentActionInputSchemasV1[actionId].parse(request.input);
@@ -215,7 +220,7 @@ export async function prepareOwnServerDomainReviewedChildren(
         else {
             const loaded = await host.storage('deployments.domains.get', { serverId: input.serverId,
                 environmentId: input.environmentId, domainId: input.domainId }, request.context);
-            if ('errorCode' in loaded) return loaded;
+            if (isActionExecuteFailure(loaded)) return loaded;
             const parsed = DeploymentActionOutputSchemasV1['deployments.domains.get'].parse(loaded);
             if (!parsed.ok) return failure(parsed.error);
             reference = parsed.domain;
@@ -467,7 +472,7 @@ export function createOwnServerDomainActions(host: Readonly<{
                 contentBodyVersion: domain.contentBodyVersion,
                 requestKey: createHash('sha256').update(JSON.stringify([input.requestKey, domain.id])).digest('hex'),
                 membershipDeploymentId: input.deploymentId, membershipMachines }, context);
-            if ('errorCode' in result) return result;
+            if (isActionExecuteFailure(result)) return result;
             const settled = DeploymentActionOutputSchemasV1['deployments.domains.add'].safeParse(result);
             if (!settled.success) return deploymentOutputValidationFailure('deployments.domains.add', undefined, settled.error);
             if (!settled.data.ok) return failure(settled.data.error);
@@ -509,8 +514,10 @@ export function createOwnServerDomainActions(host: Readonly<{
                     result = projectDeploymentFailure(context.signal?.aborted ? 'cancelled' : 'native_route_unavailable', error,
                         'deployment.teardown.removeDomain');
                 }
-                if (result.ok) continue;
-                const diagnostic = 'errorCode' in result ? result : failure(result.error);
+                if ('ok' in result && result.ok) continue;
+                // An approval hold is not a settled removal; it has no public error of its own.
+                const diagnostic = isActionExecuteFailure(result) ? result
+                    : failure('error' in result && typeof result.error === 'string' ? result.error : 'invalid_action_output');
                 const recovery = projectDeploymentFailureRecoveryV1(isRecord(diagnostic.details) ? diagnostic.details : {});
                 return { ...diagnostic, details: { environmentId, domainId: domain.id,
                     ...(hostname ? { domainHostname: hostname } : {}), step: 'removeDomain', partial: true,

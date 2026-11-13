@@ -2,6 +2,7 @@ import { afterAll, afterEach, describe, expect, it, onTestFinished, vi } from 'v
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod/mini';
 import axios from 'axios';
 import { readFile, rm, writeFile } from 'node:fs/promises';
@@ -309,7 +310,7 @@ describe('SCM Action execution at the Git backend', () => {
     await server.connect(serverTransport);
     await client.connect(clientTransport);
     const execute = async (id: string, input: unknown): Promise<unknown> => {
-      const result = await callMcpToolWithResolvedTimeout({ client, toolName: 'action_execute', args: { actionId: id, input } });
+      const result = CallToolResultSchema.parse(await callMcpToolWithResolvedTimeout({ client, toolName: 'action_execute', args: { actionId: id, input } }));
       const content = result.content.find(item => item.type === 'text');
       if (!content || content.type !== 'text') throw new Error('Missing MCP Action result');
       const value: unknown = JSON.parse(content.text);

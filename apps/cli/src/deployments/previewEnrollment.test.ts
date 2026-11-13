@@ -184,8 +184,8 @@ it.each([
         const prepared = await f.enrollment.prepare({ environmentId: f.environment.environment.id,
             patch: { previewTemplate: f.environment.content.previewTemplate! } }, { externalActionExecutionAuthorization });
         if (!prepared || 'ok' in prepared) throw new Error('Expected reviewed child declarations');
-        const setup = prepared.children.find(child => child.role === 'preview.setup' && child.input);
-        expect(setup?.input).toEqual({ repository: 'owner/app',
+        const setupInput = prepared.children.flatMap(child => child.role === 'preview.setup' && 'input' in child && child.input ? [child.input] : [])[0];
+        expect(setupInput).toEqual({ repository: 'owner/app',
             ...(expectedCredentialRef ? { credentialRef: expectedCredentialRef } : {}) });
         if (!expectedCredentialRef) expect(JSON.stringify(prepared.children)).not.toContain('machine-owner-github');
     } finally { await f.app.close(); }

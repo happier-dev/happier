@@ -123,7 +123,7 @@ it('replaces static membership with one exact current account observation across
   expect(namespaced.groups.flatMap(group => group.rows).map(row => ({ ref: row.ref, id: row.descriptor.id }))).toEqual([
     { ref: { agentTargetKey: request.agentTargetKey, providerConnectionId: null, modelId: 'vendor/source-model' }, id: 'source-model' },
   ]);
-  const kiloPurpose = KILO_MANIFEST.contributes.agents[0]?.connectedAccounts?.find(purpose => purpose.purpose === 'openai-codex-model-request');
+  const kiloPurpose = KILO_MANIFEST.contributes.agents?.[0]?.connectedAccounts?.find(purpose => purpose.purpose === 'openai-codex-model-request');
   if (!kiloPurpose) throw new Error('Missing declared Kilo subscription purpose');
   const kiloTarget = 'agent:happier.agent.kilo/kilo';
   const kilo = await projectConnectedAccountCatalog({ ...input,

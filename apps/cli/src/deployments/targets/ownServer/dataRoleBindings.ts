@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
-import { applyEnvironmentSecretBindingsPatchV1,
+import { applyEnvironmentSecretBindingsPatchV1, isSettledEnvironmentSecretBindingV1,
     type ActionExecutorContext, type DeploymentChildRpcV1 } from '@happier-dev/protocol';
 import { DeploymentDataRoleChildRpcV1Schema } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -33,9 +33,11 @@ export function createOwnServerDataRoleBindingsForHost(host: OwnServerDataServic
         if (job.machineId !== host.machineId || identity?.installationId !== job.installationId) return refuse('target_mismatch');
         let environment = preparedEnvironment;
         if (!environment) {
+            const settledSet = 'set' in job.input ? job.input.set.filter(isSettledEnvironmentSecretBindingV1) : [];
+            if ('set' in job.input && settledSet.length !== job.input.set.length) return refuse('client_required');
             const current = await host.readEnvironment({ environmentId: job.input.environmentId, targetLinkId: job.targetLinkId, context });
             const candidate = 'set' in job.input ? { ok: true as const, content: { ...current.content,
-                bindings: applyEnvironmentSecretBindingsPatchV1(current.content.bindings, { set: job.input.set, remove: job.input.remove }) } }
+                bindings: applyEnvironmentSecretBindingsPatchV1(current.content.bindings, { set: settledSet, remove: job.input.remove }) } }
                 : readDeploymentEnvironmentArtifactV1(job.input, await host.open(job.input.contentArtifactId, context));
             if (!candidate.ok) return refuse(candidate.error);
             environment = { ...current, content: candidate.content };
@@ -62,7 +64,7 @@ export function createOwnServerDataRoleBindingsForHost(host: OwnServerDataServic
     const prepare: PrepareDataRoleBindingsForHost = async request => {
         const { input, environment, content, previousContent, context, runtimeInstallations } = request;
         const roles = content.bindings.filter(isServiceRole);
-        const selected = 'set' in input ? input.set.filter(isServiceRole)
+        const selected = 'set' in input ? input.set.filter(isSettledEnvironmentSecretBindingV1).filter(isServiceRole)
             : roles.filter(use => !previousContent.bindings.some(previous => isDeepStrictEqual(previous, use)));
         const link = environment.targetLinks.find(row => row.id === environment.environment.runtimeTargetLinkId);
         if (selected.length && (!link || link.targetKind !== 'ownServer' || !link.activeDeploymentId || !runtimeInstallations.length)) return refuse('service_unavailable');

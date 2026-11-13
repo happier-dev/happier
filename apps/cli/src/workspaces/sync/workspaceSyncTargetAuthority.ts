@@ -6,6 +6,7 @@ import type { WorkspaceSyncChildMachineFacts } from '@happier-dev/protocol/works
 import { readWorkspaceSyncSourceAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { resolveWorkspaceWriteActionAdmissionV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { assertResolvedHomeTargetIdentity, HomeTargetResolutionError, type ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
@@ -357,8 +358,10 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
         effectActionId: input.effectActionId, signal: input.signal });
     // Observations use the requester's Machine read port. Physical effects
     // still consume the signed Sync SOURCE facts below.
-    const readOnly = input.authorization && input.purpose !== 'physical_sync'
-      && getActionSpec(input.effectActionId ?? input.authorization.binding.actionId).sideEffectClass === 'read';
+    const effectActionId = input.authorization
+      ? ActionIdSchema.safeParse(input.effectActionId ?? input.authorization.binding.actionId) : null;
+    const readOnly = input.purpose !== 'physical_sync' && effectActionId?.success === true
+      && getActionSpec(effectActionId.data).sideEffectClass === 'read';
     const facts: WorkspaceSyncChildMachineFacts[] = [];
     const owned = input.controllerOwnedChild;
     const ownerAccountId = input.credentials ? readAccountIdFromToken(input.credentials.token) : null;
@@ -591,7 +594,7 @@ function assertResultOk(value: unknown): asserts value is { ok: true; released: 
 
 /** Resolves the single workspace ref for an id or fails closed. */
 function resolveWorkspaceRef(
-  snapshot: ActiveProjectAccountRowsSnapshot | null,
+  snapshot: Pick<ActiveProjectAccountRowsSnapshot, 'workspaceRefs'> | null,
   workspaceRefId: string,
   serverId: string,
 ): WorkspaceRefV1 {
@@ -1120,6 +1123,7 @@ export function createWorkspaceSyncTargetAuthority(
     snapshot: Pick<ActiveProjectAccountRowsSnapshot, 'workspaceRefs' | 'relationships'> | null = getSnapshot()) => {
     const { parsed, relationship, removal, workerCopy } = parseCommittedCopy(request);
     if (!bootstrap) throw authorityError('target_bootstrap_required', 'Workspace copy custody is unavailable');
+    if (!snapshot) throw authorityError('peer_unavailable', 'Workspace sync endpoint is unavailable', 'endpoint_unavailable');
     const endpointRole = relationship.alphaWorkspaceRefId === removal.workspaceRefId ? 'alpha'
       : relationship.betaWorkspaceRefId === removal.workspaceRefId ? 'beta' : null;
     if (!endpointRole) throw authorityError('bootstrap_definition_conflict', 'Workspace is not a reviewed relationship endpoint');

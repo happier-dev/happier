@@ -233,7 +233,7 @@ export async function readProjectSetupNamespaceRefusal(input: Pick<ProjectSetupP
         purpose: 'child_namespace', ...input.requester, credentials: input.requester.credentials,
         machineIds: [input.workspace.machineId], signal: input.signal });
     const child = children[0];
-    return children.length !== 1 || !child || !isManagedDevcontainerChildProjectionCurrentV1({ homeId: input.workspace.serverId,
+    return children.length !== 1 || !child || !child.managedMachine || !isManagedDevcontainerChildProjectionCurrentV1({ homeId: input.workspace.serverId,
         machineId: input.workspace.machineId, projection: child.projection, managedMachine: child.managedMachine })
         || resolveWorkspaceRefV1([input.workspace], { serverId: input.workspace.serverId,
             machineId: input.workspace.machineId, rootPath: child.projection.observation.workspaceFolder }).kind !== 'resolved'

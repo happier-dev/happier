@@ -9,7 +9,7 @@ import { createDeploymentChildExecutionProofV1, decodeDeploymentChildExecutionV1
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { RpcHandler } from '@/api/rpc/types';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { isJsonObject, projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 import { resolveAdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createDeploymentChildRequesterHarness } from '@/testkit/backends/deploymentChildRequesterHarness';
@@ -256,7 +256,7 @@ describe('installed deployment child ingress', () => {
                 callerInputAuthorization: prepared.authorization,
                 originalActionEnvelope: fixture.envelope, workspaceSyncSourceExecution: fixture.packet,
                 machineAdmission: { actorAccountId: 'bob', custodianAccountId, machineId: 'receiver',
-                    installationId: fixture.installed.installationId, role: 'role' in scenario ? scenario.role : 'use' as const, encryptionMode: 'plain' as const },
+                    installationId: fixture.installed.installationId, role: ('role' in scenario ? scenario.role : undefined) ?? ('use' as const), encryptionMode: 'plain' as const },
                 verifyMachineAdmissionCurrent: async () => true };
             const execute = () => {
                 if (create || kind !== 'prepare') return handler(job, ingress);
@@ -274,7 +274,7 @@ describe('installed deployment child ingress', () => {
                             throw Object.assign(new Error('Native acquisition boundary reached'), { code: 'sentinel_native_reached' });
                         } } });
                 const parentInput = projectNativeJsonValueForTransport(rootInput);
-                if (!parentInput || typeof parentInput !== 'object' || Array.isArray(parentInput))
+                if (!isJsonObject(parentInput))
                     throw new Error('Environment creation object fixture required');
                 return invokeHostReviewedChildV1({ parent: { actionId: 'deployments.environments.create', input: parentInput },
                     context, receivingAdmission: ingress.machineAdmission,

@@ -18,7 +18,8 @@ import { readDeploymentDomainInventoryForHost } from './targets/ownServer/domain
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
 type Storage = NonNullable<ActionExecutorDeps['deploymentAction']>;
 type Open = Parameters<typeof readDeploymentEnvironmentArtifactV1>[1];
-type Environment = Awaited<ReturnType<typeof readDeploymentEnvironmentForHost>>;
+/** Admission reads only the Environment header and content, from either detail projection. */
+type Environment = Pick<Awaited<ReturnType<typeof readDeploymentEnvironmentForHost>>, 'environment' | 'content'>;
 
 /** The existing reviewed-child issuer is the sole authority to prepare fork code. */
 export async function admitForkPreviewDeploymentForHost(input: Readonly<{

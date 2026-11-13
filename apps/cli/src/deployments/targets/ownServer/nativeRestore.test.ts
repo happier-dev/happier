@@ -373,7 +373,7 @@ describe('native restore adapter', () => {
                             if (mode === 'copySafetyFailure') await expect(prepare).rejects.toMatchObject({ code: 'backup_failed' });
                             else {
                                 const prepared = await prepare;
-                                expect(prepared.repository.repository).toBe('s3:https://fixture.invalid/backup');
+                                expect(prepared.repository?.repository).toBe('s3:https://fixture.invalid/backup');
                                 expect(prepared.safetyBackup).toMatchObject({ kind: 'verified', manifests: [{ environmentId: destination.environmentId }] });
                             }
                             const events = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));

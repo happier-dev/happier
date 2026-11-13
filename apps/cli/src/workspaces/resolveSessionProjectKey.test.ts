@@ -35,7 +35,7 @@ it('checks a legacy Project marker against the accepted exact-directory ref inst
 });
 it('resolves a directory-only Session through its exact Account checkout', async () => {
   readRows();
-  const metadata = buildCommittedLaunchMetadata({ directory: '/repo', options: { directory: '/repo', machineId: 'machine', memoryEnabled: true } });
+  const metadata = buildCommittedLaunchMetadata({ directory: '/repo', options: { machineId: 'machine', memoryEnabled: true } });
   expect(metadata).not.toHaveProperty('workspaceId');
   expect(metadata).not.toHaveProperty('projectId');
   await expect(resolveSessionProjectKey({ ...input, metadata })).resolves.toMatchObject({

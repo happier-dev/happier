@@ -330,7 +330,7 @@ describe('finite target admission and real reservation custody', () => {
     const started: string[] = [];
     const finishers: Array<() => void> = [];
     const admission = createProjectWorkerAdmission({ machineId: scope.machineId, admissionDrain: createDaemonAdmissionDrain(),
-      readPolicy: async () => ({ status: 'ready', policy: { accepting: true, runAtMost: null }, revision: 1, source: 'stored' }),
+      readPolicy: async () => ({ status: 'ready', policy: { accepting: true, runAtMost: null }, metadataVersion: 1, source: 'stored' }),
       readMemory: () => ({ totalBytes: 100, availableBytes: 100 }),
       holdMemoryDemand: () => { holds.acquired++; return { readFresh: () => fresh, release: () => { holds.released++; } }; } });
     const execute = (operationId: string, signal: AbortSignal, bytes: number) => admission.execute({

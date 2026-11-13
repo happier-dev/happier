@@ -17,7 +17,7 @@ import { createPluginInvocationLifetime } from '../../plugins/runtime/invocation
 import { prepareProjectNativeToolchain } from './prepareProjectNativeToolchain.ts';
 import * as processTreeBoundary from '../../processes/terminate/terminateProcessTree.ts';
 import type { ProjectNativeToolchainInput } from './prepareProjectNativeToolchain.ts';
-import type { ActivationTarget } from '../../plugins/runtime/lifecycle/activation/targets.ts';
+import { deriveActivationTargetRegistrationRights, type ActivationTarget } from '../../plugins/runtime/lifecycle/activation/targets.ts';
 import { produceProjectLaunchEnvironmentForHost } from '../../plugins/runtime/invocation/services/exec.ts';
 
 // Source conformance through the real admitted lifecycle, not installed-Pixi
@@ -64,7 +64,9 @@ test.each(['ready', 'environmentOnly', 'environmentOnlyWrapper', 'ordinaryFailed
   const targets = [{ provenance: 'first_party', source: { kind: 'bundled' }, pluginId: pixiAdapter.pluginId,
     manifestPath: '/virtual/pixi/plugin.json', daemonEntryPath: '/virtual/pixi/daemon.mjs',
     sourceSpec: { kind: 'package', locator: '@acme/pixi', trustPolicy: 'local_trusted', installPolicy: 'copy' },
-    activationEvents: [], manifest: ingested.manifest }] satisfies readonly ActivationTarget[];
+    activationEvents: [], manifest: ingested.manifest,
+    registrationRights: deriveActivationTargetRegistrationRights({ manifest: ingested.manifest }),
+    inactiveRoleBackgroundServiceIds: new Set<string>() }] satisfies readonly ActivationTarget[];
   const registry = await activatePluginRuntimeRegistry({
     contributes: createResolvedContributionRegistry({ activationTargets: targets }),
     occurrenceIdsByPluginId: new Map([[pixiAdapter.pluginId, createPluginRuntimeOccurrenceId(pixiAdapter.pluginId)]]), generation: 1,

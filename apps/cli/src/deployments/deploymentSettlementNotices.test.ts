@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { randomBytes } from 'node:crypto';
 import { x25519 } from '@noble/curves/ed25519';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -29,7 +30,7 @@ describe('settlement notice admission and arrival cost', () => {
     const credentials = { token: 'header.eyJzdWIiOiJvd25lciJ9.signature', encryption: null };
     const environmentId = 'production';
     const eventRef = HEALTH_CHECK_EVENT_REFS_V1.failed;
-    const triggerId = '11111111-1111-4111-8111-111111111111';
+    const triggerId = AutomationTriggerIdSchema.parse('11111111-1111-4111-8111-111111111111');
     const binding = { v: 1 as const, automationId: 'saved-health', triggerId, triggerRevision: 0,
       triggerKind: 'pluginEvent' as const, eventRef, sourceSelectorId: 'c79a9957-537c-4f21-a08d-289245801c05' };
     const source = AutomationDefinitionDetailSchema.parse({ id: binding.automationId, name: 'Saved health',
@@ -149,7 +150,7 @@ describe('settlement notice admission and arrival cost', () => {
 
     environment.environment.protection = 'production';
     link.activeDeploymentId = undefined;
-    for (const delivery of [{ kind: 'available', alerts: { channels: [] } }, { kind: 'paused' }] as const) {
+    for (const delivery of [{ kind: 'available' as const, alerts: { channels: [], phases: ['open' as const, 'recovered' as const] } }, { kind: 'paused' as const }]) {
       rows.clear(); push.mockClear();
       await publish(request, admitted, { environment: structuredClone(environment), receipt: structuredClone(receipt) }, delivery);
       expect(rows.size, 'a saved Off or paused source retains the committed Inbox notice').toBe(1);
@@ -183,7 +184,7 @@ describe('settlement notice admission and arrival cost', () => {
         },
         onSettled: (outcome, configRevision) => publishBackup({ environment, targetLinkId: link.id,
           operationId: `backup-${terminal}`, check: 'run', outcome, configRevision,
-          delivery: { kind: 'available', alerts: { channels: [] } } }),
+          delivery: { kind: 'available', alerts: { channels: [], phases: ['open', 'recovered'] } } }),
       });
       await expect(backup).rejects.toMatchObject({ code: terminal });
       if (terminal === 'cancelled') {

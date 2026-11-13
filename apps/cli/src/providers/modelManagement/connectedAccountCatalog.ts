@@ -146,7 +146,8 @@ export async function readConnectedAccountModelCatalog(input: Omit<ConnectedAcco
           // same source-only projection used by the picker through its admitted port.
           const projection = await input.readModelProjection({ machineId: input.request.machineId,
             agentTargetKey: input.request.agentTargetKey, connectedAccountTarget: target,
-            application, sourceCatalog: true, refreshPolicy: input.request.refreshPolicy,
+            // `application` was projected from this same request key.
+            application: { ...application, agentTargetKey: input.request.agentTargetKey }, sourceCatalog: true, refreshPolicy: input.request.refreshPolicy,
             forceRefresh: input.request.forceRefresh }, signal);
           if (projection.status === 'error') return { groups: [], error: projection.error, isCurrent: async () => !signal.aborted };
           const group = projection.groups.find(group => group.connectionId === connectionId && group.catalogObserved);

@@ -140,7 +140,7 @@ it.each(['empty', 'unavailable', 'other-target-deployed'] as const)(
             async findReceipt() { return null; },
             async createCandidate() { throw new Error('No content is required'); },
         });
-        const prepared = await teardown.prepare({ input: { serverId: 'home', environmentId: environment.environment.id,
+        const prepared = await teardown.prepare({ readWorkflowInvocation: async () => { throw new Error('This teardown must not read a Workflow invocation'); }, input: { serverId: 'home', environmentId: environment.environment.id,
             targetLinkId: 'target-link', requestKey: 'remove-empty', reason: 'manual', removeEnvironment: true, volumes: [] }, context: {} });
         if (history === 'empty') expect(prepared).toMatchObject({ input: { nothingDeployed: true, removeEnvironment: true } });
         else expect(prepared).toMatchObject({ ok: false });
@@ -195,13 +195,13 @@ it.skipIf(process.platform === 'win32').each(['local-native', 'remote-already-ab
         const settings = await persistence.readSettings();
         vi.spyOn(persistence, 'readSettings').mockResolvedValue({ ...settings, servers: { home: {
             id: 'home', name: 'Home', serverUrl: 'https://teardown-home.test', webappUrl: 'https://teardown-home.test',
-            createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
+            createdAt: 1, updatedAt: 1, homeConnectionDescriptorAuthority: 'exact',
             homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: 'srv_teardown_home',
                 canonicalServerUrl: 'https://teardown-home.test', revision: 1,
                 endpoints: [{ kind: 'https', url: 'https://teardown-home.test' }] }),
         }, 'other-home': {
             id: 'other-home', name: 'Other Home', serverUrl: 'https://other-teardown-home.test', webappUrl: 'https://other-teardown-home.test',
-            createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
+            createdAt: 1, updatedAt: 1, homeConnectionDescriptorAuthority: 'exact',
             homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: 'srv_other_teardown_home',
                 canonicalServerUrl: 'https://other-teardown-home.test', revision: 1,
                 endpoints: [{ kind: 'https', url: 'https://other-teardown-home.test' }] }),
@@ -361,7 +361,7 @@ it.skipIf(process.platform === 'win32').each(['local-native', 'remote-already-ab
                     volumes: [{ name: 'app_data', machineId: 'machine-a' }, { name: 'app_logs', machineId: 'machine-a' }] });
                 expect(await docker!.readVolumeNames()).toEqual(['app_data', 'app_logs', 'foreign_data']);
                 expect(await docker!.readNetworkIds()).toEqual(['owned-network', 'foreign-network']);
-                const prepared = await teardown.prepare({ input: { serverId: 'home', environmentId: environment.environment.id,
+                const prepared = await teardown.prepare({ readWorkflowInvocation: async () => { throw new Error('This teardown must not read a Workflow invocation'); }, input: { serverId: 'home', environmentId: environment.environment.id,
                     targetLinkId: link.id, reason: 'manual', requestKey: receipt.deployment.requestKey,
                     volumes: [{ name: 'app_data', disposition: 'delete', confirmation: 'app_data' },
                         { name: 'app_logs', disposition: 'keep' }] }, context: {} });

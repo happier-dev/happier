@@ -119,7 +119,7 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
             expect(vi.mocked(childProcess.spawn).mock.calls.filter(([, args]) => args?.includes('disk-measure')).length).toBe(initialWalks);
             const checked = (await service.categoryList('caches', { actor })).items.find(item => item.path === cache)!;
             const reviewed = (await service.itemsCheck([{ itemId: checked.itemId, path: cache }], { actor })).items[0];
-            const moved = await service.trashMove({ machineId: 'machine', items: [{ ref: reviewed.ref, expect: reviewed.expect }] }, { actor });
+            const moved = await service.trashMove({ machineId: 'machine', items: [{ ref: reviewed.ref, expect: reviewed.expect, claimedVerdict: reviewed.verdict }] }, { actor });
             expect(moved.outcomes).toMatchObject([{ status: 'moved' }]);
             publications = 0;
             await mkdir(cache);
@@ -165,7 +165,7 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
                 const ref = { itemId: path, path };
                 const review = await service.itemsCheck([ref], { actor });
                 expect(review.items[0], path).toMatchObject({ verdict: 'forbidden' });
-                const checked = { ref: review.items[0].ref, expect: review.items[0].expect };
+                const checked = { ref: review.items[0].ref, expect: review.items[0].expect, claimedVerdict: review.items[0].verdict };
                 expect((await service.deleteNow({ machineId: 'machine', items: [checked] }, { actor })).outcomes)
                     .toMatchObject([{ status: 'refused' }]);
                 expect((await service.trashMove({ machineId: 'machine', items: [checked] }, { actor })).outcomes)
@@ -175,7 +175,8 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
             expect(await readFile(join(shared, 'sentinel'), 'utf8')).toBe('shared-data');
             const ordinaryReview = await service.itemsCheck([{ itemId: ordinary, path: ordinary }], { actor });
             expect(ordinaryReview.items[0].verdict).toBe('caution');
-            const checked = { ref: ordinaryReview.items[0].ref, expect: ordinaryReview.items[0].expect };
+            const checked = { ref: ordinaryReview.items[0].ref, expect: ordinaryReview.items[0].expect,
+                claimedVerdict: ordinaryReview.items[0].verdict };
             const moved = await service.trashMove({ machineId: 'machine', items: [checked] }, { actor });
             expect(moved.outcomes).toMatchObject([{ status: 'moved' }]);
             await expect(lstat(ordinary)).rejects.toMatchObject({ code: 'ENOENT' });

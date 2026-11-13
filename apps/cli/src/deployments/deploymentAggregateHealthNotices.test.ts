@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { randomBytes } from 'node:crypto';
 import { x25519 } from '@noble/curves/ed25519';
 import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1,
@@ -94,7 +95,7 @@ describe('P40 aggregate to one C1 Environment health condition', () => {
         const savedRecovery = mode === 'plain' && protection === 'nonProduction';
         if (savedOff || savedRecovery) {
             const eventRef = HEALTH_CHECK_EVENT_REFS_V1.failed;
-            const triggerId = '11111111-1111-4111-8111-111111111111';
+            const triggerId = AutomationTriggerIdSchema.parse('11111111-1111-4111-8111-111111111111');
             const binding = { v: 1 as const, automationId: 'saved-health', triggerId, triggerRevision: 0,
                 triggerKind: 'pluginEvent' as const, eventRef, sourceSelectorId: 'c79a9957-537c-4f21-a08d-289245801c05' };
             saveAlerts = (alerts, enabled = true) => { savedSource = AutomationDefinitionDetailSchema.parse({ id: binding.automationId, name: 'Saved health',
@@ -150,7 +151,7 @@ describe('P40 aggregate to one C1 Environment health condition', () => {
         const sourceSubscription = broker.subscribeHost({
             target: { eventId: HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1, scope: { kind: 'account' } },
             isCurrent: () => true,
-            listener: event => { if (event.payload.definitionsChanged !== false) assembly.invalidateSourceDefinitions(); },
+            listener: event => { if (!('definitionsChanged' in event.payload) || event.payload.definitionsChanged !== false) assembly.invalidateSourceDefinitions(); },
         });
         const invalidateSource = () => broker.publishHostEventEnvelope({
             eventId: HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1,

@@ -82,6 +82,7 @@ describe('installed Environment secret launch reader', () => {
             materialization: { kind: 'dataRole', expectedRevision: 3, deploymentId: 'deployment', service: 'postgres' } }]);
         expect(admitted.grants).toEqual([]);
         await admitted.assertCurrent();
+        if (!admitted.release) throw new Error('Expected a releasable launch admission');
         admitted.release();
         await expect(admitted.assertCurrent()).rejects.toMatchObject({ code: 'secret_missing' });
     });
@@ -133,6 +134,7 @@ describe('installed Environment secret launch reader', () => {
             machineId: 'machine', installationId: 'installation',
             materialization: { kind: 'dataRole', expectedRevision: 3, targetLinkId: 'link' } }]);
         expect(admitted.grants).toEqual([]);
+        if (!admitted.release) throw new Error('Expected a releasable launch admission');
         admitted.release();
     });
 

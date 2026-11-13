@@ -75,7 +75,7 @@ describe('Happier storage category catalog', () => {
             return actual.lstat(...args);
         });
         try {
-            const snapshot = await createStorageCategoryCatalog({ ...f, readRecordings: () => [
+            const snapshot = await createStorageCategoryCatalog({ ...f, readRecordings: async () => [
                 { recordingId: 'denied', path: denied, active: false },
                 { recordingId: 'readable', path: readable, active: false },
             ] }).discoverSnapshot();

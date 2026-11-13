@@ -50,7 +50,7 @@ describe('Workflow data creation result projection', () => {
         // produces the result and the real paired Action validates teardown.
         const branch = { id: 'branch-preview', project_id: 'project-A', parent_id: 'branch-main', name: 'Preview 17',
             current_state: 'ready', default: false, protected: false };
-        const requests: { method: string; pathname: string; body?: unknown }[] = [];
+        const requests: { method?: string; pathname: string; body?: unknown }[] = [];
         const kit = await createPluginTestkit({ manifest: neon.manifest, module: neon, services: {
             http: createPluginHttpFixture({ async request(request) {
                 const pathname = new URL(request.url).pathname;

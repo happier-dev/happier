@@ -230,7 +230,7 @@ describe('one due-time storage maintenance owner with real retained files', () =
         availability = status; await policy.reload();
         await expect(service.summary({ actor })).rejects.toMatchObject({ code: 'policy_unavailable' });
         await expect(service.itemsCheck([{ itemId: item.itemId, path: item.path }], { actor })).rejects.toMatchObject({ code: 'policy_unavailable' });
-        const items = reviewed.items.map(item => ({ ref: item.ref, expect: item.expect }));
+        const items = reviewed.items.map(item => ({ ref: item.ref, expect: item.expect, claimedVerdict: item.verdict }));
         await expect(service.trashMove({ machineId: 'machine', items }, { actor })).rejects.toMatchObject({ code: 'policy_unavailable' });
         await expect(service.deleteNow({ machineId: 'machine', items }, { actor })).rejects.toMatchObject({ code: 'policy_unavailable' });
         await expect(service.trashRestore({ machineId: 'machine', entryIds: [retained.entryId] }, { actor })).resolves.toMatchObject({

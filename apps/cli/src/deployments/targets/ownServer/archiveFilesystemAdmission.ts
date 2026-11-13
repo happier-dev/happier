@@ -25,7 +25,7 @@ export async function readDeploymentArchiveRpcAdmission(context: Pick<RpcHandler
     const routing = root.deploymentChildRouting;
     const effect = readDeploymentArchiveRpcEffectV1(method);
     if (!authority || !admission || !routing || !effect || !proof.archiveOrigin || !context.verifyMachineAdmissionCurrent
-        || routing.kind === 'prepare' || routing.kind === 'review' || routing.kind === 'domain' || routing.kind === 'domainDiscover'
+        || routing.kind === 'dataRole' || routing.kind === 'snapshot' || routing.kind === 'domainDns' || routing.kind === 'prepare' || routing.kind === 'review' || routing.kind === 'domain' || routing.kind === 'domainDiscover'
         || routing.kind === 'member' && routing.phase === 'cleanup'
         || packet.method !== `${admission.machineId}:${method}` || packet.externalActionExecution.effectActionId !== effect
         || root.authorization.token !== authority.token || !sameStrictJsonValue(root.authorization.binding, authority.binding)

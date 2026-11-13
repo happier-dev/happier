@@ -797,9 +797,10 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
 
         await assertCanContinue?.();
 
-        targetMaterialization = params.retainedTargetFile
+        const retainedMaterialization = params.retainedTargetFile
             ? await beginWorkspaceTargetMaterializationRetainingFile({ targetPath, retained: params.retainedTargetFile })
-            : await beginWorkspaceTargetMaterialization({
+            : undefined;
+        targetMaterialization = retainedMaterialization ?? await beginWorkspaceTargetMaterialization({
             targetPath,
             pinnedTargetParent: params.pinnedTargetParent,
             backupDirectoryPrefix: params.naming.backupDirectoryPrefix,
@@ -814,7 +815,7 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
             scmRegistry: params.registry,
             prepareEntryAccess: params.prepareEntryAccess,
             pinnedRoot,
-            ...('existingTarget' in targetMaterialization ? { existingTarget: targetMaterialization.existingTarget } : {}),
+            ...(retainedMaterialization ? { existingTarget: retainedMaterialization.existingTarget } : {}),
         });
         await targetMaterialization.custody.bindPromotedTarget();
 

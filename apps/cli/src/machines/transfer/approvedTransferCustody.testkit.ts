@@ -4,13 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import axios from 'axios';
 import { expect, vi } from 'vitest';
-import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationV1Schema, ExternalActionServerPrincipalV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema, ExternalActionServerPrincipalV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ProjectSourcesListOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { ExternalActionRequesterInvocationV1Schema, sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { MachineInstallationProofV1Schema, verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { MachineInstallationProofPayloadV1Schema, MachineInstallationProofV1Schema, verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2, ActionOperationGetV1ResponseSchema, ActionOperationListV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
@@ -169,9 +169,9 @@ export async function setup(approvalRequired: boolean, providerDownload = false,
       const admission = SocketRpcMachineAdmissionContextV1Schema.parse(rpcAdmission.context);
       const proof = MachineInstallationProofV1Schema.parse(proofInput);
       const ok = admission.actorAccountId === 'bob' && admission.custodianAccountId === 'alice'
-        && verifyMachineInstallationProof({ publicKey: installation.publicKey, proof, payload: {
+        && verifyMachineInstallationProof({ publicKey: installation.publicKey, proof, payload: MachineInstallationProofPayloadV1Schema.parse({
           version: 1, accountId: 'alice', machineId: 'machine', installationId: installation.installationId, rpcAdmission,
-        } });
+        }) });
       return { status: ok ? 200 : 403, data: ok ? { v: 1, ok: true } : { error: 'access_denied' } };
     }
     if (path.endsWith('/execution-authorization/verify')) {
@@ -237,7 +237,7 @@ export async function setup(approvalRequired: boolean, providerDownload = false,
       await writeStoredCredentialsForServerId(homeId, credentials);
       await readOrCreateInstallationIdentity();
       machine = new ApiMachineClient(credentials.token, { id: 'machine', encryptionMode: 'plain', encryptionKey: new Uint8Array(32),
-        encryptionVariant: 'legacy', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 }, undefined,
+        encryptionVariant: 'legacy' as const, metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 }, undefined,
       { directPeerServerLifecycle: lifecycle });
     },
     startup: { ...(providerDownload || providerPlugin ? { pluginRuntimeController: pluginReloadController } : {}),
@@ -245,7 +245,7 @@ export async function setup(approvalRequired: boolean, providerDownload = false,
   });
   const installation = installed.installation!;
   const ingress = installed.runtime.externalActionIngressOwner!;
-  machine.setRPCHandlers({ spawnSession: async () => ({ type: 'error', errorMessage: 'Unexpected launch' }),
+  machine.setRPCHandlers({ spawnSession: async () => ({ type: 'error', errorCode: 'SPAWN_FAILED', errorMessage: 'Unexpected launch' }),
     stopSession: async () => false, requestShutdown: () => {}, directTransferExport: {
       prepareExportSession: async request => {
         if (request.t !== 'workspace_file_download_v1') throw new Error('Unexpected non-file export');
@@ -259,7 +259,7 @@ export async function setup(approvalRequired: boolean, providerDownload = false,
   const invoke = async (actionId: 'daemon.filesystem.download' | 'approval.request.decide' | 'action.invoke', input: unknown, requestId: string, rpc = false,
     actorAccountId = 'bob', surface: 'ui' | 'agent' = 'ui', presentUserConfirmation?: ActionExecutorContext['presentUserConfirmation']) => {
     const target = { kind: 'machine' as const, machineId: 'machine' };
-    const envelope = { v: 1 as const, requestId, target, input };
+    const envelope = ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId, target, input });
     const authority = surface === 'agent' ? 'account_automation' as const : 'present_user' as const;
     const authentication = { kind: surface === 'agent' ? 'terminal' as const : 'account' as const, tokenEpoch: 0 };
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: transferRootToken(actorAccountId, actionId, requestId), binding: {
@@ -267,7 +267,8 @@ export async function setup(approvalRequired: boolean, providerDownload = false,
       installationId: installation.installationId, serverIdentityId: homeId, actionId, requestId,
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target } });
     const boxed = sealExternalActionRequesterAccountContextV1({ authorization, purpose: { kind: 'external_action' },
-      invocation: { caller: { kind: 'host' }, surface, authority, ...(presentUserConfirmation ? { presentUserConfirmation } : {}) },
+      invocation: ExternalActionRequesterInvocationV1Schema.parse({ caller: { kind: 'host' }, surface, authority,
+        ...(presentUserConfirmation ? { presentUserConfirmation } : {}) }),
       installationPublicKey: decodeBase64(installation.publicKey, 'base64url'),
       credentials: { token: token(actorAccountId, surface === 'agent') }, randomBytes: length => new Uint8Array(randomBytes(length)) });
     if (rpc) {
@@ -294,13 +295,15 @@ export async function setup(approvalRequired: boolean, providerDownload = false,
         return failure.success ? failure.data : { ok: true as const, result };
       } finally { await prepared.dispose(); }
     }
-    const outcome = await executeExternalAction({ actionId, envelope, surface, signal: cancellation.signal,
+    // Terminal (agent) requests arrive through CLI ingress; the sealed invocation keeps its own surface.
+    const outcome = await executeExternalAction({ actionId, envelope, surface: surface === 'agent' ? 'cli' : 'ui', signal: cancellation.signal,
       principal: ExternalActionServerPrincipalV1Schema.parse({ accountId: actorAccountId, authentication, authority }),
       currentMachineId: 'machine', currentServerId: homeId, currentServerHttpBaseUrl: endpoint, currentInstallationId: installation.installationId,
       executionAuthorization: boxed, externalActionMachineRequestPrivateKey: decodeBase64(installation.privateKey, 'base64url'),
       verifyExecutionAuthorization: async () => true, prepareRequesterAccountContext: ingress.prepareRequesterAccountContext,
       resolveTarget: ingress.resolveTarget, resolveEncryption: ingress.resolveEncryption, executor: ingress.executor });
     if (outcome.kind !== 'response') throw new Error(`Unexpected ingress result: ${JSON.stringify(outcome)}`);
+    if (outcome.response.v !== 1) throw new Error('Unexpected encrypted ingress response');
     return outcome.response.execution;
   };
   let uiConfirmations = 0;

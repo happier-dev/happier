@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import { isRecord } from '@happier-dev/protocol/common/records';
 import { createPlatformFailureEnrollmentForHost } from './platformFailureEnrollment';
 import { createPlatformFailureNoticeFixture } from './platformFailureNotices.testkit';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
@@ -38,6 +39,7 @@ it.each([
         }
         const authored = WorkflowTriggerAddRequestV1Schema.parse(input).trigger;
         if (authored.kind !== 'pluginEvent' || 'triggerDefinitionEnvelope' in authored) throw new Error('Expected authored Event');
+        if (!isRecord(authored.sourceConfig)) throw new Error('Expected an object source config');
         const definition = { v: 1, sourceInstanceId: authored.sourceInstanceId,
             sourceConfig: retained ? { ...authored.sourceConfig, periodMs: 600000 } : authored.sourceConfig,
             displayLabel: authored.displayLabel, filter: retained ? { v: 1, all: [{ op: 'eq', field: '/operation', value: 'deploy' }] } : authored.filter,

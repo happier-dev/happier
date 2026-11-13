@@ -64,6 +64,7 @@ async function runtimeRegistry(
       uiRenderersV2: Object.freeze([]),
       uiTranslationsV2: Object.freeze([]),
       activationTargets: Object.freeze([]),
+      backupDestinations: Object.freeze([]),
       catalogEntriesById: Object.freeze({}),
       agentDefinitionsById: new Map(),
       voiceProviders: Object.freeze([]),
@@ -155,7 +156,7 @@ describe('runtime Provider connection composition', () => {
               getAccountSettingsSnapshot: operationContext.readSnapshot, savedSecretOperationContext: operationContext,
               isAccountCurrent: () => operationContext.isCurrent(),
             }), resolveRegistry: async () => registry, resolveAddresses: async () => ['1.1.1.1'],
-          }).describeConnections(request.input);
+          }).describeConnections({ ...request.input, machineId: request.input.machineId ?? 'machine-a' });
         },
         // The raw worker RPC refuses private custodian catalog reads. The
         // admitted requester carrier must reach the real local Provider owner.
@@ -227,7 +228,7 @@ describe('runtime Provider connection composition', () => {
     await expect(services.service.bindSecret({ action: 'bindSecret', machineId: 'machine-a',
       connectionId: 'pc_fresh_secret', credentialSlotId: 'apiKey', savedSecretId: ref, scope: 'machine',
     })).resolves.toMatchObject({ status: 'success', credential: { boundMachineIds: ['machine-a'] } });
-    expect(catalog.secretBindingsByConnectionId.pc_fresh_secret?.byMachineId['machine-a']?.apiKey).toBe(ref);
+    expect(catalog.secretBindingsByConnectionId[ProviderConnectionIdSchema.parse('pc_fresh_secret')]?.byMachineId?.['machine-a']?.apiKey).toBe(ref);
     expect(materialReads).toBe(1);
     expect(post).toHaveBeenCalledOnce();
     materialAvailable = false;

@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { AutomationOccurrenceKeyV1Schema } from '@happier-dev/protocol/automations/automationOccurrenceKeyV1';
 import axios from 'axios';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -132,6 +135,7 @@ import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentBackupV1 } from '@happier-dev/deployment-protocol';
 
 afterEach(() => {
     // Each fixture owns a different checkout, not a mutation of the preceding
@@ -180,6 +184,7 @@ function fixture(state: 'queued' | 'succeeded' | 'outcome_unknown' = 'queued', a
         async writeTransition(input) {
             transitions++;
             if (!allowTransitions) throw new Error('Unexpected storage mutation');
+            if (input.content.platform) throw new Error('The own-server fixture admits only own-server receipt content');
             receipt.content = input.content;
             receipt.deployment = { ...receipt.deployment, revision: receipt.deployment.revision + 1, state: input.state };
             return { ok: true, environmentId: input.environmentId, revision: environment.environment.revision,
@@ -198,6 +203,19 @@ function fixture(state: 'queued' | 'succeeded' | 'outcome_unknown' = 'queued', a
     };
     return { target: createOwnServerDeploymentTargetForHost(host), request, environment, receipt,
         effects: () => ({ runtimeAcquisitions, transitions }), receiptReads: () => receiptReads };
+}
+
+
+/** Backup assertions read the configured arm; a `notNeeded` fixture cannot carry a repository prefix. */
+function configuredBackupPrefix(backup: DeploymentEnvironmentBackupV1 | undefined): string {
+    if (!backup || 'notNeeded' in backup) throw new Error('Expected a configured backup fixture');
+    return backup.ownership.prefix;
+}
+/** The configuration contract carries the mounted destination plugin's occurrence; a fixture without it is broken. */
+function requireBackupDestinationOccurrenceId(registry: Readonly<{ readPluginOccurrenceId(pluginId: string): string | null }>): string {
+    const occurrenceId = registry.readPluginOccurrenceId('happier.backup.destinations');
+    if (!occurrenceId) throw new Error('backup destination plugin occurrence is not mounted');
+    return occurrenceId;
 }
 
 describe('own-server target at the Action host boundary', () => {
@@ -846,6 +864,7 @@ describe('own-server target at the Action host boundary', () => {
                 }
                 // Home persists serialized bytes, not the sender's object.
                 // Later boundary mutations must not rewrite its expected CAS.
+                if (input.content.platform) throw new Error('The own-server fixture admits only own-server receipt content');
                 receipt.content = structuredClone(input.content);
                 if (previewCopy) {
                     // Use the incumbent revision writer, including private provenance.
@@ -877,10 +896,11 @@ describe('own-server target at the Action host boundary', () => {
                     if (scenario === 'adopted_generation_admission_changed') await docker.seedComposeGeneration('preexisting-compose-project');
                     if (scenario === 'member_source_environment' && !definitionEditedAfterAdmission) {
                         definitionEditedAfterAdmission = true;
-                        if (environment.content.definition.kind !== 'repository') throw new Error('Repository fixture required');
+                        const definition = environment.content.definition;
+                        if (definition.kind !== 'repository' || !definition.compose) throw new Error('Repository compose fixture required');
                         environment.environment.revision++;
-                        environment.content.definition = { ...environment.content.definition,
-                            compose: { ...environment.content.definition.compose, path: 'changed-compose.yaml' } };
+                        environment.content.definition = { ...definition,
+                            compose: { ...definition.compose, path: 'changed-compose.yaml' } };
                     }
                 }
                 if ((runtimeRead || scenario === 'runtime_stage' || previewCopy)
@@ -1028,6 +1048,7 @@ describe('own-server target at the Action host boundary', () => {
                     open: id => artifacts.read(id, { prepareRecipients: false, includeSharedAudience: false }),
                     async assertCurrent(context) { context.signal?.throwIfAborted(); },
                     async domainNative() { throw new Error('Unexpected Domain execution'); },
+                    async teardown() { throw new Error('Unexpected teardown execution'); },
                     async prepareCandidate() { throw new Error('Unexpected candidate preparation'); } });
                 if (scenario === 'promote_archive_custody') {
                     receipt.content.ownServer.approvedInputBasis.runtimeProjections = [{
@@ -1173,7 +1194,7 @@ describe('own-server target at the Action host boundary', () => {
                         definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` }, data: {
                         engine: 'postgres', service: 'app', logicalBackup: { adapter: 'postgres-v1', database: 'DB_NAME' } } },
                     backup: { configRevision: 1, destinationRef: { pluginId: 'happier.backup.destinations', localId: retainedBackupTransport ?? 's3' },
-                        occurrenceId: mounted.registry.readPluginOccurrenceId('happier.backup.destinations'),
+                        occurrenceId: requireBackupDestinationOccurrenceId(mounted.registry),
                         config: retainedBackupTransport === 'local' ? { path: join(root, 'retained-backup') }
                             : retainedBackupTransport === 'sftp' ? { host: 'receiver', username: 'archive', path: '/recovery',
                                 hostKey: 'receiver ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJXmQhNPw7NtvqN7BA5pjk3OmlG6GgD2uXfMWLNa7z5h' }
@@ -1240,7 +1261,7 @@ describe('own-server target at the Action host boundary', () => {
                             actionsSettingsProvider: { getActionsSettings: () => actionsSettings },
                             resolveEnvironmentApprovalScope: storage.resolveEnvironmentApprovalScope,
                             ...nativeActions, runActionOperation: runBackupOperation })
-                        : createActionExecutor({ ...createUnavailableActionTransportDeps(), ...storage, serverId: 'home', machineId: 'machine-a',
+                        : createActionExecutor({ ...createUnavailableActionTransportDeps(), ...storage,
                             ...nativeActions, runActionOperation: runBackupOperation });
                     const actionContext = { ...sourceContext, surface: 'ui' as const, actionCaller: { kind: 'host' as const },
                         serverId: 'home', runtimeAccountId: accountId, signal: caller.signal, actionsSettings };
@@ -1357,7 +1378,7 @@ describe('own-server target at the Action host boundary', () => {
                             .find(call => call.args[0] === 'create' && call.args.includes('config'));
                         expect(restoredRepositoryRead).toBeDefined();
                         assertTransport(restoredRepositoryRead!.args);
-                        const historicalCapture = captured.restoreCaptures[0];
+                        const historicalCapture = captured.restoreCaptures?.[0];
                         if (!historicalCapture || historicalCapture.sourceFormat !== 'postgresCustom') throw new Error('Expected retained dump capture');
                         // A retained Home receipt is the storage boundary for backups made
                         // before destination ownership prefixes reached the native locator.
@@ -1399,8 +1420,8 @@ describe('own-server target at the Action host boundary', () => {
                         const scheduled = await coordinator.run({ runId: 'nightly-after-environment-edit', ...savedNightly,
                             executionTarget: { kind: 'detached_run' },
                             authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
-                            automationCause: { kind: 'trigger', triggerId: 'nightly-backup', triggerRevision: 1,
-                                triggerKind: 'schedule', occurrenceKey: 'A'.repeat(43), occurredAt: 2,
+                            automationCause: { kind: 'trigger', triggerId: AutomationTriggerIdSchema.parse('nightly-backup'), triggerRevision: 1,
+                                triggerKind: 'schedule', occurrenceKey: AutomationOccurrenceKeyV1Schema.parse('A'.repeat(43)), occurredAt: 2,
                                 evidence: { scheduledFor: 2 } },
                             signal: caller.signal });
                         expect(scheduled, JSON.stringify({ scheduled, invocations: store.list().map(({ blockId, lifecycle, result }) =>
@@ -1667,7 +1688,7 @@ describe('own-server target at the Action host boundary', () => {
                     .toMatchObject(scenario === 'candidate_backup_configured_failure'
                         ? { ok: false, errorCode: 'deployment_failed' } : { ok: true, state: 'running' });
                 expect(receipt.content.ownServer?.preMigrationBackup).toMatchObject({ target: { database },
-                    repository: { repository: `s3:https://fixture.invalid/backup/${environment.content.backup!.ownership.prefix}` } });
+                    repository: { repository: `s3:https://fixture.invalid/backup/${configuredBackupPrefix(environment.content.backup)}` } });
                 expect(receipt.content.steps).toContainEqual(expect.objectContaining({ id: 'own-server-migration',
                     state: scenario === 'candidate_backup_configured_failure' ? 'failed' : 'succeeded' }));
                 const events = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n').filter(Boolean)
@@ -1798,7 +1819,7 @@ describe('own-server target at the Action host boundary', () => {
                         tags: ['happier', `env:${captureEnvironment.environment.id}`, 'kind:dump', 'src:database'] } },
                     sourceFormat: 'postgresCustom' as const, target: { service: 'app', adapter: 'postgres-v1' as const, database },
                     configuration: { configRevision: 1, destinationRef: { pluginId: 'happier.backup.destinations', localId: 's3' },
-                        occurrenceId: mounted.registry.readPluginOccurrenceId('happier.backup.destinations'), config: { endpoint: 'https://fixture.invalid', bucket: 'backup', prefix: '',
+                        occurrenceId: requireBackupDestinationOccurrenceId(mounted.registry), config: { endpoint: 'https://fixture.invalid', bucket: 'backup', prefix: '',
                             region: 'us-east-1', addressing: 'path' },
                         credentialBindings: roles.map(role => ({ purpose: 'backupDestination' as const, configKey: 'destination' as const, role })),
                         sources: [{ kind: 'dump' as const, sourceId: 'database', service: 'app', consistency: 'logical' as const }],
@@ -1887,7 +1908,7 @@ describe('own-server target at the Action host boundary', () => {
                         header: createDeploymentReceiptArtifactHeaderV1('Recorded source capture', capturedContent),
                         body: JSON.stringify(capturedContent) });
                     if (!opened.ok) throw new Error(opened.error);
-                    recoveryCapture.content = opened.content;
+                    recoveryCapture = { ...recoveryCapture, content: DeploymentOwnServerContentV1Schema.parse(opened.content) };
                     expect(recoveryCapture.content.ownServer?.preMigrationBackup).toEqual(recordedCapture);
                     promotionSource.content.backup = { ...recordedCapture.configuration, configRevision: 2,
                         config: { ...recordedCapture.configuration.config, endpoint: 'https://changed.invalid', bucket: 'changed' } };
@@ -1901,7 +1922,7 @@ describe('own-server target at the Action host boundary', () => {
                         } });
                         const selected = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await registry.execute('registries.items.read', {
                             sourceId: 'apps', kind: 'app', itemId: 'postgresql' })).item;
-                        if (selected.payload.kind !== 'app') throw new Error('Expected bundled PostgreSQL');
+                        if (selected.payload.kind !== 'app' || selected.payload.state !== 'ready') throw new Error('Expected bundled PostgreSQL');
                         const template = structuredClone(promotionSource);
                         template.environment.id = 'preview-template';
                         template.environment.purpose = 'standard';
@@ -1928,7 +1949,7 @@ describe('own-server target at the Action host boundary', () => {
                                 destinationBackup: { prefix: 'previews',
                                     configuration: { ...backupConfiguration,
                                         destinationRef: { pluginId: 'happier.backup.destinations', localId: 's3' },
-                                        occurrenceId: mounted.registry.readPluginOccurrenceId('happier.backup.destinations'),
+                                        occurrenceId: requireBackupDestinationOccurrenceId(mounted.registry),
                                         config: { endpoint: 'https://fixture.invalid', bucket: 'destination-safety', prefix: '' },
                                         sources: [{ kind: 'dump' as const, sourceId: 'destination-database', service: 'database', consistency: 'logical' as const }] },
                                     bindings: environment.content.bindings.filter(binding => binding.purpose === 'backupDestination') },
@@ -2192,7 +2213,7 @@ describe('own-server target at the Action host boundary', () => {
                                 readBackupOperations: (input, context) => operations.readDeploymentBackupOperations({ target: input, context }),
                                 runActionOperation: runCopyOperation });
                             const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
-                                serverId: 'home', machineId: 'machine-a', runActionOperation: runCopyOperation });
+                                runActionOperation: runCopyOperation });
                             const actionContext = { ...sourceContext, surface: 'ui' as const, actionCaller: { kind: 'host' as const },
                                 machineAdmission: { ...sourceContext.machineAdmission, role: 'manage' as const },
                                 serverId: 'home', runtimeAccountId: accountId, signal: caller.signal, executionRunWorkflowRunId: 'preview-copy-run',
@@ -2249,7 +2270,7 @@ describe('own-server target at the Action host boundary', () => {
                                     resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
                                 });
                                 const sourceExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
-                                    serverId: 'home', machineId: 'machine-a', workflowAction: async request => {
+                                    workflowAction: async request => {
                                         if (request.actionId !== 'workflow.run.invocations.list') throw new Error('Unexpected preview Run write');
                                         return workflowReads.execute({ actionId: request.actionId,
                                             input: WorkflowActionInputSchemasV1[request.actionId].parse(request.input), context: request.context });
@@ -2298,7 +2319,7 @@ describe('own-server target at the Action host boundary', () => {
                                             return { contentArtifactId: id,
                                                 contentHeaderVersion: 1, contentBodyVersion: 1 };
                                         } });
-                                    const prepared = await teardown.prepare({ input: closeInput, context: actionContext });
+                                    const prepared = await teardown.prepare({ readWorkflowInvocation: async () => { throw new Error('This teardown must not read a Workflow invocation'); }, input: closeInput, context: actionContext });
                                     expect(prepared, JSON.stringify(prepared)).not.toHaveProperty('errorCode');
                                     if ('input' in prepared && 'nothingDeployed' in prepared.input) {
                                         expect(nativeReceipts.filter(saved => saved.deployment.environmentId === environment.environment.id)).toEqual([]);
@@ -2335,7 +2356,7 @@ describe('own-server target at the Action host boundary', () => {
                             if (scenario !== 'public_preview_configure_failure')
                                 await boundary.setRepositoryMissing('s3:https://fixture.invalid/destination-safety');
                             if (scenario === 'public_preview_configure_failure') await boundary.setRepositoryConfigExitCode(12);
-                            const created = await executor.execute(create.actionId, await operands(create),
+                            const created = await executor.execute(ActionIdSchema.parse(create.actionId), await operands(create),
                                 { ...actionContext, actionRequestId: 'native-preview-create' });
                             // The exact PR repository owns both services. Catalog selection
                             // supplies fresh bindings and metadata without another Compose source.
@@ -2366,7 +2387,7 @@ describe('own-server target at the Action host boundary', () => {
                                 const companionInput = await operands(companion);
                                 expect(companionInput).toMatchObject({ purpose: 'standard', protection: 'nonProduction',
                                     previewCompanionOfEnvironmentId: mainEnvironmentId });
-                                const companionCreated = await executor.execute(companion.actionId, companionInput,
+                                const companionCreated = await executor.execute(ActionIdSchema.parse(companion.actionId), companionInput,
                                     { ...actionContext, actionRequestId: 'native-preview-companion-create' });
                                 const boundaryFailures = await readHomeBoundaryFailures();
                                 const companionDiagnostic = JSON.stringify({ result: companionCreated,
@@ -2433,7 +2454,9 @@ describe('own-server target at the Action host boundary', () => {
                                     nativeCommands: (await docker.readInvocations()).slice(-8).map(call => ({ command: call.args[0],
                                         operation: call.args[0] === 'compose' ? ['config', 'create', 'up', 'start'].find(value => call.args.includes(value))
                                             : call.args[1] })) }));
+                                if (!('input' in prepared)) throw new Error('Expected prepared deploy input');
                                 const deployInput = DeploymentActionInputSchemasV1['deployments.deploy'].parse(prepared.input);
+                                if (!('contentArtifactId' in deployInput)) throw new Error('Expected admitted deploy input');
                                 receipt.content = DeploymentOwnServerContentV1Schema.parse(readContent(deployInput.contentArtifactId));
                                 receipt.deployment = { ...receipt.deployment, id: deploymentId, actionOperationId: `${deploymentId}-operation`,
                                     contentArtifactId: deployInput.contentArtifactId, contentHeaderVersion: deployInput.contentHeaderVersion,
@@ -2463,7 +2486,7 @@ describe('own-server target at the Action host boundary', () => {
                             expect(execFileSync(process.execPath, [docker.executablePath, 'ps', '--filter',
                                 'label=com.docker.compose.service=app'], { encoding: 'utf8' }).trim()).toBe('');
                             const currentAction = block('preview-data-current');
-                            const current = await executor.execute(currentAction.actionId, await operands(currentAction),
+                            const current = await executor.execute(ActionIdSchema.parse(currentAction.actionId), await operands(currentAction),
                                 { ...actionContext, actionRequestId: 'native-preview-current' });
                             expect(current, JSON.stringify(current)).toMatchObject({ ok: true });
                             if (!current.ok) throw new Error('Expected the public current Environment reader');
@@ -2486,7 +2509,7 @@ describe('own-server target at the Action host boundary', () => {
                                 },
                                 readBackupOperations: (target, context) => operations.readDeploymentBackupOperations({ target, context }),
                                 readPreparation: (operationId, context) => operations.readRestorePreparation({ operationId, context }) });
-                            const restoreExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), serverId: 'home', machineId: 'machine-a',
+                            const restoreExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
                                 resolveEnvironmentApprovalScope: deps.resolveEnvironmentApprovalScope,
                                 deploymentRestore: restore, runActionOperation: runCopyOperation });
                             const prepareCopy = block('preview-copy-0-prepare');
@@ -2495,7 +2518,7 @@ describe('own-server target at the Action host boundary', () => {
                                 targetLinkId: promotionSource.targetLinks[0]!.targetLink.id } });
                             expect(restoreInput.destination).toEqual({ kind: 'database', service: 'database', database: 'app' });
                             phase('preview-copy-prepare');
-                            const preparation = await restoreExecutor.execute(prepareCopy.actionId, restoreInput,
+                            const preparation = await restoreExecutor.execute(ActionIdSchema.parse(prepareCopy.actionId), restoreInput,
                                 { ...actionContext, actionRequestId: 'native-preview-copy-prepare' });
                             const restoreEvents = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n').filter(Boolean)
                                 .map(line => JSON.parse(line) as { kind: string; argv?: string[]; fixtureCode?: string });
@@ -2513,7 +2536,7 @@ describe('own-server target at the Action host boundary', () => {
                             }
                             const confirm = block('preview-copy-0-confirm');
                             phase('preview-copy-confirm');
-                            const restored = await restoreExecutor.execute(confirm.actionId, await operands(confirm),
+                            const restored = await restoreExecutor.execute(ActionIdSchema.parse(confirm.actionId), await operands(confirm),
                                 { ...actionContext, actionRequestId: 'native-preview-copy-confirm' });
                             expect(restored, JSON.stringify(restored)).toMatchObject({ ok: true });
                             if (!restored.ok) throw new Error('Expected typed native restore result');
@@ -2526,7 +2549,7 @@ describe('own-server target at the Action host boundary', () => {
                             let connectionInvocation: ReturnType<typeof makeInvocation> | undefined;
                             if (previewCompanion) {
                                 const connectCurrent = block('preview-data-connect-current');
-                                const currentMain = await executor.execute(connectCurrent.actionId, await operands(connectCurrent),
+                                const currentMain = await executor.execute(ActionIdSchema.parse(connectCurrent.actionId), await operands(connectCurrent),
                                     { ...actionContext, actionRequestId: 'native-preview-connect-current' });
                                 expect(currentMain, JSON.stringify(currentMain)).toMatchObject({ ok: true });
                                 if (!currentMain.ok) throw new Error('Expected current main revision before companion connection');
@@ -2534,7 +2557,7 @@ describe('own-server target at the Action host boundary', () => {
                                 const connect = block('preview-data-connect');
                                 const connectInput = await operands(connect);
                                 selectChild(connectInput.environmentId);
-                                const connected = await executor.execute(connect.actionId, connectInput,
+                                const connected = await executor.execute(ActionIdSchema.parse(connect.actionId), connectInput,
                                     { ...actionContext, actionRequestId: 'native-preview-connect' });
                                 if (scenario === 'public_preview_companion_connect_failure') {
                                     expect(connected, JSON.stringify(connected)).toMatchObject({ ok: false, errorCode: 'deployment_conflict' });
@@ -2634,7 +2657,7 @@ describe('own-server target at the Action host boundary', () => {
                     const storage = createCliDeploymentActionDeps({ serverHttpBaseUrl, admitAccount: async () => null,
                         resolveRequestHeaders: async () => ({ Authorization: `Bearer ${token}` }),
                         async dispatchReceipt() { throw new Error('Copy must not allocate a deployment receipt'); } });
-                    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), serverId: 'home', machineId: 'machine-a',
+                    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
                         resolveEnvironmentApprovalScope: storage.resolveEnvironmentApprovalScope,
                         deploymentRestore, runActionOperation: value => operations.runActionOperation(value) });
                     const actionContext = { ...sourceContext, surface: 'ui' as const, actionCaller: { kind: 'host' as const },
@@ -2673,7 +2696,7 @@ describe('own-server target at the Action host boundary', () => {
                     environment.content = DeploymentEnvironmentContentV1Schema.parse({ ...environment.content,
                         backup: { ...recordedCapture.configuration,
                             destinationRef: { pluginId: 'happier.backup.destinations', localId: 's3' },
-                            occurrenceId: mounted.registry.readPluginOccurrenceId('happier.backup.destinations'),
+                            occurrenceId: requireBackupDestinationOccurrenceId(mounted.registry),
                             config: { endpoint: 'https://fixture.invalid', bucket: 'destination-safety', prefix: '' },
                             sources: [{ kind: 'dump', sourceId: 'destination-database', service: 'app', consistency: 'logical' }],
                             ownership: { environmentId: environment.environment.id, prefix: environment.environment.id } } });
@@ -2704,7 +2727,7 @@ describe('own-server target at the Action host boundary', () => {
                             expect(event.argv).toContain(recordedCapture.repository.repository);
                             expect(event.argv).not.toContain('backup');
                         }
-                        const destinationRepository = `s3:https://fixture.invalid/destination-safety/${environment.content.backup!.ownership.prefix}`;
+                        const destinationRepository = `s3:https://fixture.invalid/destination-safety/${configuredBackupPrefix(environment.content.backup)}`;
                         const destinationWrites = events.filter(event => event.kind === 'restic'
                             && event.argv?.includes(destinationRepository) && event.argv.includes('backup'));
                         expect(destinationWrites).toHaveLength(1);
@@ -2774,7 +2797,7 @@ describe('own-server target at the Action host boundary', () => {
                         const query = createDeploymentDataQueryActionForHost({ ...host, credentials, serverHttpBaseUrl,
                             async assertCurrent() { caller.signal.throwIfAborted(); } });
                         const drillExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...machine,
-                            serverId: 'home', machineId: 'machine-a', resolveEnvironmentApprovalScope: storage.resolveEnvironmentApprovalScope,
+                            resolveEnvironmentApprovalScope: storage.resolveEnvironmentApprovalScope,
                             deploymentRestore, deploymentBackupAction: backup,
                             deploymentAction: async (actionId, input, context) => {
                                 if (actionId !== 'deployments.data.query') throw new Error('Drill must not create or deploy an Environment');
@@ -2791,7 +2814,7 @@ describe('own-server target at the Action host boundary', () => {
                         const grantsBefore = structuredClone({ runtimeGrants, copySourceGrants });
                         const definition = createRestoreDrillWorkflowV1();
                         const inputs = { backupTarget, restoreSource: restoreInput.source,
-                            drillTarget: { ...restoreInput, deploymentId: pointer }, restoreDestination: restoreInput.destination,
+                            drillTarget: { ...restoreInput, ...(pointer ? { deploymentId: pointer } : {}) }, restoreDestination: restoreInput.destination,
                             verificationLevel: 'manifestReadBack', dataCheck: { service: 'app', sql: 'SELECT COUNT(*) AS restored_rows FROM recovered_fixture', params: {} } };
                         expect(environment.environment.id).not.toBe(promotionSource.environment.id);
                         const currentVerification = await completedNativeAction(operations, await drillExecutor.execute('deployments.backups.verify', {
@@ -2816,8 +2839,8 @@ describe('own-server target at the Action host boundary', () => {
                                         snapshotId: 'b'.repeat(64) } } : inputs,
                                     executionTarget: { kind: 'detached_run' },
                                     authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
-                                    automationCause: { kind: 'trigger', triggerId: 'restore-drill', triggerRevision: 1,
-                                        triggerKind: 'schedule', occurrenceKey: String(iteration).repeat(43), occurredAt: iteration + 2,
+                                    automationCause: { kind: 'trigger', triggerId: AutomationTriggerIdSchema.parse('restore-drill'), triggerRevision: 1,
+                                        triggerKind: 'schedule', occurrenceKey: AutomationOccurrenceKeyV1Schema.parse(createHash('sha256').update(String(iteration)).digest('base64url')), occurredAt: iteration + 2,
                                         evidence: { scheduledFor: iteration + 2 } }, signal: caller.signal });
                                 phase(`drill-iteration-${iteration}-settled`);
                                 const diagnostics = { invocations: store.list().map(row => ({
@@ -3003,7 +3026,7 @@ describe('own-server target at the Action host boundary', () => {
                         const storage = createCliDeploymentActionDeps({ serverHttpBaseUrl, admitAccount: async () => null,
                             resolveRequestHeaders: async () => ({ Authorization: `Bearer ${token}` }),
                             async dispatchReceipt() { throw new Error('Upload restore must not allocate a deployment receipt'); } });
-                        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), serverId: 'home', machineId: 'machine-a',
+                        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
                             resolveEnvironmentApprovalScope: storage.resolveEnvironmentApprovalScope,
                             deploymentRestore: restore, prepareDeploymentRestore: restore.prepare,
                             runActionOperation: runRestoreOperation });
@@ -3067,7 +3090,7 @@ describe('own-server target at the Action host boundary', () => {
                     async dispatchReceipt() { throw new Error('Standalone restore must not allocate a deployment receipt'); } });
                 let approvalRequests = 0;
                 let latestRestoreApproval: unknown;
-                const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), serverId: 'home', machineId: 'machine-a',
+                const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
                     resolveEnvironmentApprovalScope: storage.resolveEnvironmentApprovalScope,
                     // Approval persistence is an external storage boundary.
                     approvalsCreate: async input => { latestRestoreApproval = input;
@@ -3769,11 +3792,13 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                         open: id => artifacts.read(id, { prepareRecipients: false, includeSharedAudience: false }),
                         async assertCurrent(context) { context.signal?.throwIfAborted(); },
                         async domainNative() { throw new Error('Member dispatch must not enter Domain execution'); },
+                        async teardown() { throw new Error('Member dispatch must not enter teardown'); },
                         async prepareCandidate() { throw new Error('Member dispatch must not author another candidate'); } });
                     const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'member', actionId: request.actionId,
                         input: request.input, machineId: member.machineId, installationId: member.installationId,
                         phase: member.phase, selectedDeploymentId: member.selectedDeploymentId,
                         deploymentId: receipt.deployment.id, actionOperationId: receipt.deployment.actionOperationId });
+                    if (job.kind !== 'member') throw new Error('Expected a member child job');
                     const nativeBeforeRefusals = (await docker.readInvocations()).length;
                     expect(await child({ ...job, actionOperationId: 'another-operation' }, request.context))
                         .toMatchObject({ ok: false, errorCode: 'operation_unavailable' });
@@ -3792,7 +3817,8 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                     expect(native.some(call => call.args.some(arg => ['up', 'stop', 'down'].includes(arg)))).toBe(false);
                     return;
                 }
-                expect(result, JSON.stringify({ code: result.ok ? 'none' : result.errorCode,
+                // The child RPC result is untyped across job kinds; the diagnostic carries it whole.
+                expect(result, JSON.stringify({ result,
                     config: native.filter(call => call.args.includes('config')).length,
                     launches: native.length })).toMatchObject({ ok: true, state: 'running' });
                 if (scenario === 'member_cost') {
@@ -4045,7 +4071,7 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                 }
                 await docker.emitRuntimeLogFromEnvironment('app', 'DEPLOY_PASSWORD');
                 const logs = await deps.deploymentAction('deployments.logs.read', { ...input, kind: 'runtime' }, {});
-                expect(logs, JSON.stringify('errorCode' in logs ? { errorCode: logs.errorCode } : { ok: logs.ok }))
+                expect(logs, JSON.stringify('errorCode' in logs ? { errorCode: logs.errorCode } : { ok: 'ok' in logs ? logs.ok : undefined }))
                     .toMatchObject({ ok: true, kind: 'runtime', logs: { kind: 'page' } });
                 expect(JSON.stringify(logs)).toContain('PORT=3000');
                 expect(JSON.stringify(logs)).not.toContain('review-secret-value-sentinel');
@@ -4111,7 +4137,8 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                 if (typeof storedHeader !== 'string') throw new Error('Expected stored artifact header bytes');
                 return AccountNoticeArtifactHeaderV1Schema.parse(decodePlainArtifactStoredContent(storedHeader));
             };
-            const subject = remoteController ? service.identity : { kind: 'environment' as const,
+            if (remoteController && !service.identity) throw new Error('A remote Environment service carries its deployment identity');
+            const subject = remoteController && service.identity ? service.identity : { kind: 'environment' as const,
                 environmentId: environment.environment.id, targetLinkId: environment.environment.runtimeTargetLinkId,
                 condition: 'health' as const };
             const artifactId = [...stored.keys()].find(id => {

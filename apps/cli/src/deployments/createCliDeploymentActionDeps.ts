@@ -1,3 +1,4 @@
+import { isRecord } from '@happier-dev/protocol/common/records';
 import { type DeploymentBindingSavedSecretRevisionV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
@@ -323,6 +324,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       if (actionId === 'deployments.cancel') body = { ...transportInput, kind: 'cancel' };
       if ((actionId === 'deployments.environments.create' || actionId === 'deployments.environments.update')
         && creationReview?.templateBindingCaptures?.length) {
+        if (!isRecord(body)) throw new TypeError('Home Environment mutation body must be an object');
         body = { ...body, referencedSavedSecretRevisions: creationReview.templateBindingCaptures };
       }
       if (actionId === 'deployments.deploy' || actionId === 'deployments.rollback' || actionId === 'deployments.promote'
@@ -385,7 +387,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       }
       if (providerVariables && 'ok' in parsed.data && !parsed.data.ok && 'error' in parsed.data)
         return withProviderEffect(failure(parsed.data.error));
-      if (actionId === 'deployments.environments.update' && parsed.data.ok && preparedUpdateArtifact)
+      if (actionId === 'deployments.environments.update' && 'ok' in parsed.data && parsed.data.ok && preparedUpdateArtifact)
         return { ...parsed.data, preparedArtifact: preparedUpdateArtifact };
       return actionId === 'deployments.bindings.set' && 'ok' in parsed.data && parsed.data.ok && preparedBindingArtifact
         ? { ...parsed.data, preparedArtifact: preparedBindingArtifact,

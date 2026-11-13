@@ -49,7 +49,7 @@ it.each([undefined, 'host', 'port'] as const)('uses the current source member na
             });
             referenceEnvironment.targetLinks[0]!.targetLink.activeDeploymentId = 'previous-uniform-generation';
             await expect(resolve()).resolves.toBe(component === 'host' ? '100.64.0.7' : component === 'port' ? '25432' : 'postgres://100.64.0.7:25432');
-            referenceEnvironment.targetLinks[0]!.targetLink.activeDeploymentId = null;
+            delete referenceEnvironment.targetLinks[0]!.targetLink.activeDeploymentId;
             await expect(resolve()).resolves.toBe(component === 'host' ? '100.64.0.7' : component === 'port' ? '25432' : 'postgres://100.64.0.7:25432');
         } finally { await lease.release(); }
     }, { buildReference: true });

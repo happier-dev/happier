@@ -7,7 +7,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
-import { StrictJsonValueSchema, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { isJsonObject, StrictJsonValueSchema, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { prepareWorkflowRunDataKeyV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
 import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
@@ -36,7 +36,7 @@ export function createPullRequestPreviewEnvironmentContent(request: Readonly<{
     acceptedInputs: Readonly<Record<string, JsonValue>>;
 }>): DeploymentEnvironmentContentV1 {
     const pr = request.acceptedInputs.pullRequest;
-    if (!pr || typeof pr !== 'object' || Array.isArray(pr)) throw new Error('accepted_pr_required');
+    if (!isJsonObject(pr)) throw new Error('accepted_pr_required');
     if (!request.input.preview) throw new Error('preview_relation_required');
     if (request.baseContent.definition.kind !== 'repository' || typeof pr.headSha !== 'string')
         throw new Error('repository_preview_required');
@@ -177,7 +177,7 @@ export async function createPullRequestPreviewDataCreationJourneyFixture(options
                 throw new Error('preview_environment_creation_failed');
             return { ok: true, result: StrictJsonValueSchema.parse(environmentResult) };
         });
-        if (!result.ok) throw new Error(result.errorCode);
+        if (!result.ok) throw new Error('errorCode' in result ? result.errorCode : 'reviewed_child_failed');
         await storage.execute({ operation: 'invocations.fact', runId, invocationId: environmentInvocationId, invocationAttempt: '0',
             expectedContentRevision: '1', expectedLifecycle: 'admitting', lifecycle: 'completed',
             contentEnvelope: sealEnvironment({ ...environmentProgress, execution: createExecution, result: result.result }) });
@@ -191,7 +191,7 @@ export async function createPullRequestPreviewDataCreationJourneyFixture(options
         wrongActor: await readAdmission(input, { ...context, runtimeAccountId: 'other-account' }),
         wrongInvocation: await readAdmission(input, { ...context, actionRequestId: `${runId}/unrelated-invocation/0` }),
     };
-    const requests: { method: string; pathname: string; body: unknown }[] = [];
+    const requests: { method?: string; pathname: string; body: unknown }[] = [];
     const kit = await createPluginTestkit({ manifest: supabase.manifest, module: supabase, services: {
         http: createPluginHttpFixture({ async request(request) {
             requests.push({ method: request.method, pathname: new URL(request.url).pathname,
@@ -211,7 +211,7 @@ export async function createPullRequestPreviewDataCreationJourneyFixture(options
             return { ok: true, result: await kit.invokeAction('branches-create', input,
                 { ...(issued.signal ? { signal: issued.signal } : {}) }) };
         });
-        if (!executed.ok) throw new Error(executed.errorCode);
+        if (!executed.ok) throw new Error('errorCode' in executed ? executed.errorCode : 'reviewed_child_failed');
         const capture = prepareWorkflowDataCreationResultCapture(qualified, options.contributes);
         const captured = capture?.(executed.result);
         if (captured === undefined && options.createOutcome !== 'outcome_unknown') throw new Error('preview_data_creation_capture_required');

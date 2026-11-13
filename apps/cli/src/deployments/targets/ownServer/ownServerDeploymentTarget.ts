@@ -1,5 +1,5 @@
 import type { DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import type { DeploymentRestoreResultV1 } from '@happier-dev/deployments';
+import type { DeploymentRestoreDestinationV1, DeploymentRestoreResultV1 } from '@happier-dev/deployments';
 import type { DeploymentBackupManifestV1 as BackupManifestV1, DeploymentPreMigrationBackupV1,
     DeploymentBackupRestoreCaptureV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -144,7 +144,7 @@ export type OwnServerDeploymentRuntime = Readonly<{
         environment: DeploymentEnvironmentDetailV1;
         content: DeploymentOwnServerContentV1;
         /** Selected by the retained-serving source owner for a joining deployment. */
-        retainedSourceIntent?: DeploymentOwnServerContentV1['sourceIntent'];
+        retainedSourceIntent?: DeploymentOwnServerContentV1['sourceIntent'] | null;
         readReferenceEnvironment?: OwnServerDeploymentTargetHostInput['readEnvironment'];
         readPreviewDomain?: OwnServerDeploymentTargetHostInput['readPreviewDomain'];
         /** Absent only while reviewing a candidate before receipt acceptance. */
@@ -243,7 +243,7 @@ export type OwnServerRestoreRequestForHost = Readonly<{
     upload?: import('@/transfers/targets/deploymentRestoreUpload').AdmittedDeploymentRestoreUpload;
     /** Prepare lends the admitted native tuple; selector bytes never enter public evidence. */
     reviewNativeSnapshot?(input: Readonly<{
-        destination: OwnServerRestorePreparationForHost['prepared']['destination'];
+        destination: DeploymentRestoreDestinationV1;
         selection: Readonly<{ prefix: readonly string[]; env: Readonly<Record<string, string>> }>;
     }>): Promise<void>;
 }>;

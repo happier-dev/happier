@@ -1,3 +1,4 @@
+import { isRecord } from '@happier-dev/protocol/common/records';
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { request as httpRequest } from 'node:http';
@@ -252,7 +253,7 @@ lines.close(); process.stdin.destroy();\n`);
     const executeNativeRole: NativeRoleExecution = async (role, body, context) => {
             observed.nativePhase = role;
             if (role !== 'exec') return;
-            if (!body || typeof body !== 'object' || Array.isArray(body) || !Array.isArray(body.argv)) throw new Error('Missing native guest command');
+            if (!isRecord(body) || !Array.isArray(body.argv)) throw new Error('Missing native guest command');
             const command = body.argv[2];
             if (typeof command !== 'string') throw new Error('Invalid native guest command');
             observed.nativePhase = command.includes('effect-internal') ? 'bootstrap-effects'
@@ -268,6 +269,7 @@ lines.close(); process.stdin.destroy();\n`);
             else if (command.includes('version_path')) stdout = 'current=\nprevious=\n';
             else if (command.includes('effect-internal')) {
                 const frame = MachineEffectInternalRequestSchema.parse(JSON.parse(stdin.trim()));
+                if (frame.mode === 'check' && !('steps' in frame)) throw new Error('Unexpected firewall check frame');
                 const result = frame.mode === 'check'
                     ? { status: 'checked', plan: await machineSetup.checkMachineSetupEffectPlan({ basis: frame.basis, steps: frame.steps, backend }) }
                     : await machineSetup.applyMachineSetupEffectPlans({ ...frame, backend });
@@ -404,7 +406,7 @@ lines.close(); process.stdin.destroy();\n`);
         try { await expect.poll(async () => {
             const current = operations.store.get(operationScope, operationId!);
             if (!current) { observed.operation = { state: 'not_found' }; return false; }
-            observed.operation = { state: current.state, phase: current.progress?.phase,
+            observed.operation = { state: current.state, phase: current.progress?.kind === 'phase' ? current.progress.phase : undefined,
                 prompt: current.domainRef?.kind === 'managedMachine' ? current.domainRef.bootstrapTask?.prompt?.kind : undefined };
             if (current.state === 'failed' || current.state === 'succeeded') {
                 observed.terminal = current;

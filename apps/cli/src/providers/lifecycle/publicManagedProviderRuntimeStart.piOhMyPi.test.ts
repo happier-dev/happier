@@ -49,10 +49,11 @@ describe('Muse managed source to native configurations', () => {
         role: 'default', displayName: 'Muse gateway', displayNameMode: 'automatic',
         revision: 0, createdAt: 1, updatedAt: 1 }] },
       registry: { providersByContributionKey: new Map([[contributionKey, contribution]]) },
+      dnsEvidenceByEndpointUrl: new Map(),
     });
     if (resolved.status !== 'resolved') throw new Error(`Managed source resolution failed: ${resolved.status}${'reason' in resolved ? `/${resolved.reason}` : ''}`);
     const facts = resolveProviderSourceFacts(resolved.record);
-    const requirements = agent.manifest.contributes.agents[0]?.providerRequirements;
+    const requirements = agent.manifest.contributes.agents?.[0]?.providerRequirements;
     if (!requirements) throw new Error('Public Agent requirements missing');
     const admission = resolveProviderBindingCompatibilityWithFingerprintV1({
       agentTargetKey: `${agent.manifest.id}/${agent.id}`, adapterVersion: adapter.adapterVersion,

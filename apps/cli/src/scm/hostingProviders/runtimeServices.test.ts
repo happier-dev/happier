@@ -28,7 +28,7 @@ import { readCurrentHostingProviderRuntimeServices, runWithHostingProviderRuntim
 type RuntimeServicesInput = Parameters<typeof createHostScmHostingProviderRuntimeServices>[0];
 
 it('refuses an unmapped Azure Team selection before native effects while preserving personal operations', async () => {
-  const descriptor = AZURE_PLUGIN_MANIFEST.contributes.scmHostingProviders[0]!;
+  const descriptor = (AZURE_PLUGIN_MANIFEST.contributes.scmHostingProviders ?? [])[0]!;
   const providerId = `${AZURE_PLUGIN_MANIFEST.id}/${descriptor.id}`;
   const purpose = { consumer: { pluginId: AZURE_PLUGIN_MANIFEST.id, localId: descriptor.id }, purpose: 'authentication' };
   let durable: QualifiedConnectedAccountPurposeBindingsV1 = { v: 1, bindings: [], teamResourceSelections: [{
@@ -41,12 +41,13 @@ it('refuses an unmapped Azure Team selection before native effects while preserv
     resolveTarget: async () => null,
     assertTargetAccountMaterializable: async () => undefined,
     materializeAccount: async () => { throw new Error('Azure native operation must not open an Account credential'); },
+    projectTargetAccounts: async () => { throw new Error('Unexpected target account projection'); },
   });
   const services = createHostScmHostingProviderRuntimeServices({
     contributes: {
       scmHostingProviders: [{ id: descriptor.id, provenance: 'external', source: { kind: 'path' }, pluginId: AZURE_PLUGIN_MANIFEST.id,
         definition: ScmHostingProviderContributionSchema.parse(descriptor) }],
-      connectedAccountDescriptors: AZURE_PLUGIN_MANIFEST.contributes.connectedAccountDescriptors.map(definition => ({
+      connectedAccountDescriptors: (AZURE_PLUGIN_MANIFEST.contributes.connectedAccountDescriptors ?? []).map(definition => ({
         provenance: 'external' as const, source: { kind: 'path' as const }, pluginId: AZURE_PLUGIN_MANIFEST.id,
         definition: PluginConnectedAccountDescriptorContributionV2Schema.parse(definition),
       })),
@@ -60,7 +61,7 @@ it('refuses an unmapped Azure Team selection before native effects while preserv
   selectionReads = 0;
   const list = registry.getPullRequests(providerId)!.listPullRequests;
   const input = { provider: { id: providerId, kind: 'azure-devops', displayName: 'Azure DevOps',
-      baseUrl: 'https://dev.azure.com/team', nameWithOwner: 'team/project/repository' }, head: 'feature',
+      baseUrl: 'https://dev.azure.com/team', nameWithOwner: 'team/project/repository', urlSafety: { allowedSchemes: ['https:'] } }, head: 'feature',
     runtimeServices: { executeCommand: async () => { nativeEffects += 1; return { ok: true, stdout: '[]', stderr: '', exitCode: 0 }; } } } as const;
   await expect(list(input)).rejects.toMatchObject({ code: 'plugin_connected_account_team_resource_unavailable' });
   expect(nativeEffects).toBe(0);

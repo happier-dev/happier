@@ -172,8 +172,8 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
     const payload = await createCliPayloadFixture();
     const oldHome = process.env.HAPPIER_HOME_DIR;
     await mkdir(join(directory, 'servers', homeId), { recursive: true });
-    const homeDescriptor = { v: 1, homeServerIdentityId: homeId, canonicalServerUrl: 'https://home.example', revision: 1,
-        endpoints: [{ kind: 'https', url: 'https://home.example' }] };
+    const homeDescriptor = { v: 1 as const, homeServerIdentityId: homeId, canonicalServerUrl: 'https://home.example', revision: 1,
+        endpoints: [{ kind: 'https' as const, url: 'https://home.example' }] };
     await writeFile(join(directory, 'settings.json'), JSON.stringify({ schemaVersion: 5, onboardingCompleted: true, activeServerId: homeId,
         servers: { [homeId]: { id: homeId, name: 'Home', serverUrl: 'https://home.example', webappUrl: 'https://home.example',
             homeConnectionDescriptor: homeDescriptor, createdAt: 1, updatedAt: 1, lastUsedAt: 1 } } }));
@@ -194,8 +194,10 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
     const applied = new Set<string>();
     const remoteStages: string[] = [];
     const backend: machineSetup.MachineSetupBackend = {
-        observe: async step => ({ stepId: step.id, status: applied.has(step.id) ? 'satisfied' : 'drifted',
-            facts: step.kind === 'user' ? { present: true, uid: 1001 } : {} }),
+        observe: async step => {
+            const facts: Record<string, boolean | number> = step.kind === 'user' ? { present: true, uid: 1001 } : {};
+            return { stepId: step.id, status: applied.has(step.id) ? 'satisfied' : 'drifted', facts };
+        },
         apply: async step => { applied.add(step.id); },
     };
     sshBoundary.run.mockImplementation(async request => {
@@ -213,6 +215,7 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
         else if (command.includes('mktemp -d /tmp/happier-bootstrap-upload.')) stdout = '/tmp/happier-bootstrap-upload.fixture\n';
         else if (command.includes('effect-internal')) {
             const frame = MachineEffectInternalRequestSchema.parse(JSON.parse(String(request.input).trim()));
+            if (frame.mode === 'check' && !('steps' in frame)) throw new Error('Unexpected firewall check frame');
             const result = frame.mode === 'check'
                 ? { status: 'checked', plan: await machineSetup.checkMachineSetupEffectPlan({ basis: frame.basis, steps: frame.steps, backend }) }
                 : await machineSetup.applyMachineSetupEffectPlans({ ...frame, backend });
@@ -285,7 +288,7 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
             if (path.endsWith('/execution-authorization')) return { status: 200, data: admitted };
             const result = await executeExternalAction({ actionId, envelope,
                 executionAuthorization: carrier.success && carrier.data.executionAuthorization ? carrier.data.executionAuthorization : admitted,
-                principal: { accountId, authority: 'present_user', authentication: { kind: 'terminal', tokenEpoch: 2 } },
+                principal: { accountId, authority: 'account_automation', authentication: { kind: 'terminal', tokenEpoch: 2 } },
                 currentMachineId: guestRow.id, currentAccountId: accountId, currentServerId: homeId, currentServerHttpBaseUrl: 'https://home.example',
                 machineAdmission: SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: accountId,
                     custodianAccountId: accountId, machineId: guestRow.id, installationId: guestRow.installationId,
@@ -300,7 +303,7 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
                     serverHttpBaseUrl: 'https://home.example', ownCredentials: credentials,
                     isCurrent: async () => !request.signal?.aborted, createExecutor: () => guest.executor }),
             });
-            guestResults.push(result.kind === 'response' ? result.response.execution : result);
+            guestResults.push(result.kind === 'response' && result.response.v === 1 ? result.response.execution : result);
             if (result.kind !== 'response') throw new Error(`Guest receiver refused: ${result.kind}`);
             return { status: 200, data: result.response };
         }

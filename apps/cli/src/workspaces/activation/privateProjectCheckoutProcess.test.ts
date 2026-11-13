@@ -108,8 +108,7 @@ it.skipIf(process.platform !== 'linux').each(['empty', 'same_machine', 'local_gi
     const pluginFixture = seed ? await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } }) : null;
     if (pluginFixture) Object.assign(nativeInput, await prepareWorkspaceCheckoutEffect({ request: nativeInput.effect.request,
       workspaceRefId: nativeInput.prepared.workspaceRefId, workspaceRoot, registry: pluginFixture.registry }));
-    if (mode === 'remote_git') sourceRegistry = await createWorkspaceEffectScmRegistry(nativeInput.effect,
-      { signal: new AbortController().signal, onEffectsIssued() {} });
+    if (mode === 'remote_git') sourceRegistry = await createWorkspaceEffectScmRegistry(nativeInput.effect, {});
     await expect(startPrivateProjectSyncProcess({ ...nativeInput, launch: { ...nativeInput.launch,
       agentIsolation: { read: () => ({ enabled: true, status: { kind: 'applying', phase: 'runtime_replacement' }, workspaceRoots: [workspaceRoot] }) },
     } })).rejects.toMatchObject({ code: 'agent_isolation_unavailable', execLaunch: 'notStarted' });
