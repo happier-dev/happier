@@ -562,7 +562,7 @@ describe('web glass material', () => {
         const rgb = (value: string) => Color(value).rgb().array().slice(0, 3) as unknown as [number, number, number];
         const toneOf = (backdrop: [number, number, number]) => { const l = Color.rgb(backdrop).luminosity(); return { dark: l, light: l, focus: l }; };
         const { resolveGlassReadingCoatOpacity } = await import('./glassMaterial');
-        const throughReadingCoat = (theme: typeof darkTheme, picture: readonly number[]) => {
+        const throughReadingCoat = (theme: typeof darkTheme | typeof lightTheme, picture: readonly number[]) => {
             const coat = resolveGlassReadingCoatOpacity({ glassSurfaceMaterials: glassPresetMaterials('auto') }, { atmosphereBehind: 'wallpaper' }, theme.dark);
             const page = rgb(theme.colors.surface.base);
             return picture.map((value, channel) => page[channel]! * coat + value * (1 - coat));

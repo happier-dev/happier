@@ -4,6 +4,7 @@ import renderer from 'react-test-renderer';
 import type { TextProps } from 'react-native';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createLayoutChangeEvent } from '@/dev/testkit/fixtures/nativeEventFixtures';
 import { codeViewListRef, installCodeViewCommonModuleMocks } from './codeViewTestHelpers';
 import type { CodeLinePressEvent } from './CodeLineRow';
 
@@ -111,7 +112,7 @@ describe('CodeLinesView (web)', () => {
             phone.append(target);
             await renderer.act(async () => row.props.onLayout());
             expect(target.scrollIntoView).toHaveBeenCalledTimes(1);
-            await renderer.act(async () => screen.tree.root.findByType(VirtualizedList).props.onContentSizeChange(390, 15_000));
+            await renderer.act(async () => screen.tree.root.findByType(VirtualizedList).props.onContentSizeChange?.(390, 15_000));
             expect(target.scrollIntoView).toHaveBeenCalledTimes(1);
         } finally { await screen.unmount(); phone.remove(); }
     });
@@ -150,7 +151,7 @@ describe('CodeLinesView (web)', () => {
             target.id = row.props.nativeID;
             const layout = async () => renderer.act(async () => {
                 const list = screen.tree.root.findByType(VirtualizedList);
-                if (scenario === 'viewport') list.props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 794 } } });
+                if (scenario === 'viewport') list.props.onLayout?.(createLayoutChangeEvent({ x: 0, y: 0, width: 400, height: 794 }));
                 else if (scenario === 'content') list.props.onContentSizeChange?.(400, extent);
                 else for (const observer of [...observers]) if (observer.nodes.has(content)) {
                     observer.callback([], observer as unknown as ResizeObserver);
@@ -200,7 +201,7 @@ describe('CodeLinesView (web)', () => {
             expect(scroller.scrollTop).toBe(0);
             measured = true;
             await renderer.act(async () => {
-                if (measurement === 'viewport') list().props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 473 } } });
+                if (measurement === 'viewport') list().props.onLayout?.(createLayoutChangeEvent({ x: 0, y: 0, width: 400, height: 473 }));
                 else list().props.onContentSizeChange?.(400, 3590);
             });
             expect(scroller.scrollTop).toBeGreaterThan(0);
@@ -215,7 +216,7 @@ describe('CodeLinesView (web)', () => {
             expect(target.style.scrollMarginTop).toBe('');
             scroller.scrollTop = 100;
             await screen.update(<CodeLinesViewCore lines={[...lines]} scrollToLineId="f:150" />);
-            await renderer.act(async () => { list().props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 473 } } }); list().props.onContentSizeChange?.(400, 3590); });
+            await renderer.act(async () => { list().props.onLayout?.(createLayoutChangeEvent({ x: 0, y: 0, width: 400, height: 473 })); list().props.onContentSizeChange?.(400, 3590); });
             expect(scroller.scrollTop).toBe(100);
             expect(land).toHaveBeenCalledTimes(1);
         } finally { await screen.unmount(); scroller.remove(); }

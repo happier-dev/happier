@@ -175,7 +175,7 @@ describe('phone production tab carry', () => {
         vi.stubGlobal('ImageData', class { constructor(public data: Uint8ClampedArray, public width: number, public height: number) {} });
         storage.setState({ profileScope: scope });
         storage.getState().applySessions([createSessionFixture({ id: 'session', serverId: scope.serverId,
-            metadata: { path: '/repo', machineId: 'machine', flavor: 'codex', bot: { kind: 'bot' } } as ReturnType<typeof createSessionFixture>['metadata'] })]);
+            metadata: { path: '/repo', host: 'host', machineId: 'machine', flavor: 'codex', bot: { kind: 'bot' } } })]);
         const screen = await renderScreen(<WorkspaceNavigationProvider value={harness().workspace}><PhoneOpenTabsRail /></WorkspaceNavigationProvider>,
             { createNodeMock: node => node.type === 'canvas' ? { getContext: () => ({ putImageData() {} }) } : null });
         expect(screen.findByType(SessionBotFace).props.facts).toMatchObject({ seed: 'session' });

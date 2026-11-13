@@ -50,11 +50,12 @@ it.each(['invoke', 'observe'] as const)('settles refused Account action %s while
     let port: ReturnType<typeof useCurrentUiContextVoiceToolPort> = null;
     function Probe() { port = useCurrentUiContextVoiceToolPort(); return null; }
     const reader = { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} };
+    const serverId = lifetime.scope.serverId;
     function Shell() {
         const defaults = useAppShellPluginUiProjection();
         return <AppShellPluginUiProjectionValueProvider declarationReady value={{ ...defaults,
             pluginUiProjection: installed.projection, phase: 'current', hasEstablishingMembers: true,
-            clientExecutableActivation: { status: 'ready' }, accountLifetime: lifetime, serverId: lifetime.scope.serverId,
+            clientExecutableActivation: { status: 'ready' }, accountLifetime: lifetime, serverId,
         }}><CurrentUiContextBridge publisher={null} reader={reader}><Probe /></CurrentUiContextBridge></AppShellPluginUiProjectionValueProvider>;
     }
     const screen = await renderScreen(<Shell />);

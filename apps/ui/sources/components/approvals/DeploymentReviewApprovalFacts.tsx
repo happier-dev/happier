@@ -341,7 +341,7 @@ function MachineRisks(props: Readonly<{ machine: ReviewMachine; name: string | n
           { code: change.name }, ' · ',
           t(change.phase === 'build' ? 'projects.deployments.phaseBuild' : 'projects.deployments.phaseRuntime'), ' · ',
           // The path the resolver observed for a Happier network address; a native-network address has none.
-          ...(change.route ? [t(REFERENCE_ROUTE_LABEL[change.route.observedPath]), ' · '] : []),
+          ...(change.route?.kind === 'iroh' ? [t(REFERENCE_ROUTE_LABEL[change.route.observedPath]), ' · '] : []),
           t('projects.deployments.editors.referenceAddressChanged'),
         ]),
         // The service leads, as the lab reads it: "worker · Can control Docker on the host".

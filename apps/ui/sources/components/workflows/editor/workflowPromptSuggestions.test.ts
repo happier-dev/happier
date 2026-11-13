@@ -22,6 +22,8 @@ describe('workflow prompt picker', () => {
         expect(statesFor([step, previous])?.get('workflowInput:0')).toBe('unavailable');
         expect(statesFor([step])?.get('workflowInput:0')).toBe('removed');
     });
+    /** Only a reference mention carries an open ref; skill and vendor mentions do not. */
+    const refOf = (input: Readonly<object> | undefined) => input && 'ref' in input ? input.ref : undefined;
     it('binds a prior result on selection and reuses the same binding for another token', async () => {
         const previous: WorkflowStep = { kind: 'step', id: 'analyze', name: 'Analysis',
             document: { text: 'Analyze', references: [], attachments: [] }, input: [], result: { kind: 'text' } };
@@ -29,7 +31,7 @@ describe('workflow prompt picker', () => {
         const draft = createWorkflowEditorDraft({ draftId: 'tokens', blocks: [previous, step] });
         const change = vi.fn();
         const suggestions = createWorkflowPromptSuggestions({ draft, step, query: '@', onChangeInput: change });
-        const result = suggestions.find(row => row.structuredInput?.ref === 'workflowInput:0');
+        const result = suggestions.find(row => refOf(row.structuredInput) === 'workflowInput:0');
         expect(result?.label).toContain('Analysis');
         expect(result?.structuredInput?.kind).toBe('happier.workflowInput');
         expect(change).not.toHaveBeenCalled();
@@ -38,7 +40,7 @@ describe('workflow prompt picker', () => {
         expect(change).toHaveBeenCalledWith([binding]);
         change.mockClear();
         const existing = createWorkflowPromptSuggestions({ draft, step: { ...step, input: [binding] }, query: '@analysis', onChangeInput: change });
-        expect(existing[0]?.structuredInput?.ref).toBe('workflowInput:0');
+        expect(refOf(existing[0]?.structuredInput)).toBe('workflowInput:0');
         await existing[0]?.selectionEffect?.();
         expect(change).not.toHaveBeenCalled();
     });

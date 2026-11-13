@@ -34,8 +34,10 @@ describe('useHoverPreviewPopover', () => {
         const screen = await renderScreen(<Owner />);
         try {
             expect(hover!.popoverLayer).toBeUndefined();
+            const hoverProps = hover?.hoverProps;
+            if (!hoverProps) throw new Error('Expected pointer hover props while enabled');
             await act(async () => {
-                hover!.hoverProps.onPointerEnter();
+                hoverProps.onPointerEnter();
                 await new Promise((resolve) => setTimeout(resolve, motionTokens.overlay.popover.hoverOpenDelayMs + 50));
             });
             expect(hover!.mode).toBe('preview');

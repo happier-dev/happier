@@ -65,7 +65,7 @@ describe('resolveApprovalRequestTitle', () => {
         }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
             enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } };
         const spec = getActionSpec('machines.managed.acquire');
-        for (const [status, args] of [['pending', actionArgs], ['executed', projectApprovalReviewInput(spec, actionArgs)]] as const) {
+        for (const [status, args] of [['open', actionArgs], ['executed', projectApprovalReviewInput(spec, actionArgs)]] as const) {
             const title = resolveApprovalRequestTitle({ storedTitle: null, actionId: spec.id, actionArgs: args, status, subject: 'This Home' }).title;
             expect(title).toContain('Build box');
             expect(title).not.toContain('This Home');

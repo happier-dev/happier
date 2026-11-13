@@ -2904,7 +2904,7 @@ describe('workflow editor body', () => {
         const harness = await loadHarness();
         const props = {
             draft: buildDraft(harness), onChange: () => {}, description: 'Review before publishing',
-            composerScope: MACHINE_COMPOSER_SCOPE,
+            composerScope: MACHINE_COMPOSER_SCOPE, machineName: 'Mac Studio',
             onChangeDescription: () => {}, selectedBlockId: null, onSelectBlock: () => {},
             onCustomizeBlock: () => {}, view: 'steps' as const, onChangeView: () => {}, onRunNow: () => {},
         };

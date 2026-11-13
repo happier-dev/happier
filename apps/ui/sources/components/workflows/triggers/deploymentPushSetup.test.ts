@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { WorkflowTriggerAddRequestV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { buildDeploymentPushFilter, buildDeploymentPushRequest } from './deploymentPushSetup';
 
 const config = {
@@ -15,7 +16,7 @@ const trigger = { kind: 'pluginEvent' as const, enabled: true,
 
 describe('Environment push setup', () => {
   it('clears a saved branch while retaining its path filter and excluding trigger identity', () => {
-    expect(buildDeploymentPushFilter('  ', { triggerId: 'retained', branch: 'main', paths: ['apps/web/**'] }))
+    expect(buildDeploymentPushFilter('  ', { triggerId: AutomationTriggerIdSchema.parse('retained'), branch: 'main', paths: ['apps/web/**'] }))
       .toEqual({ paths: ['apps/web/**'] });
   });
   it('binds the destination while leaving SHA and request identity to the admitted event', () => {

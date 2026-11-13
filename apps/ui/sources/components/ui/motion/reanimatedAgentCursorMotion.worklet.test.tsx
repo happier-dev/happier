@@ -17,9 +17,11 @@ const appRequire = createRequire(import.meta.url);
 it('reports only a finished cursor fade after its callback crosses to the UI runtime', async () => {
     const filename = fileURLToPath(new URL('./reanimatedAgentCursorMotion.tsx', import.meta.url));
     const appRoot = resolve(dirname(filename), '../../../..');
+    // Metro's caller fields beyond Babel's typed core are read by babel-preset-expo (platform/engine/isDev).
+    const metroCaller = { name: 'metro', platform: 'ios', engine: 'hermes', isDev: true, supportsStaticESM: false };
     const compiled = transformSync(readFileSync(filename, 'utf8'), {
         filename, cwd: appRoot, babelrc: false, configFile: join(appRoot, 'babel.config.js'),
-        caller: { name: 'metro', platform: 'ios', engine: 'hermes', isDev: true, supportsStaticESM: false },
+        caller: metroCaller,
         plugins: [appRequire.resolve('@babel/plugin-transform-modules-commonjs')],
     });
     if (!compiled?.code) throw new Error('Could not compile the agent cursor motion');

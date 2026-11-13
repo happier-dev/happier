@@ -98,7 +98,7 @@ describe('workflow trigger draft', () => {
         draft = editWorkflowTriggerDraft(draft, { kind: 'add', clientId: 'c1', trigger: { ...schedule('0 7 * * *'), enabled: true } });
 
         const rows = projectWorkflowTriggerRows(set, draft);
-        expect(rows.map((row) => [row.kind, row.enabled, row.schedule?.schedule.scheduleExpr])).toEqual([
+        expect(rows.map((row) => [row.kind, row.enabled, row.schedule && row.schedule.schedule.kind !== 'once' ? row.schedule.schedule.scheduleExpr : undefined])).toEqual([
             ['saved', false, '0 3 * * *'],
             ['new', true, '0 7 * * *'],
         ]);

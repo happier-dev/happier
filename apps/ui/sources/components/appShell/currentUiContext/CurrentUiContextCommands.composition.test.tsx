@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
 import { type DiscussionOpenedSummaryV1 } from '@happier-dev/protocol/discussions/actions';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
@@ -359,7 +360,7 @@ describe('mounted current-context descendant commands', () => {
             local = useCurrentUiContextLocalCommands([
                 { key: 'read', title: 'Read draft', invoke: () => ({ ok: true, result: { name: value } }) },
                 { key: 'patch', title: 'Patch draft', invoke: input => {
-                    if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.name !== 'string') return false;
+                    if (!isJsonObject(input) || typeof input.name !== 'string') return false;
                     value = input.name;
                     return { ok: true, result: { name: value } };
                 } },

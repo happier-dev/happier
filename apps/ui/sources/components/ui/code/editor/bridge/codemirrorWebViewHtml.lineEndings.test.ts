@@ -54,7 +54,7 @@ function bootBridge(onMessage?: (raw: string) => void) {
     });
     const html = buildCodeMirrorWebViewHtml({
         theme: {
-            backgroundColor: '#000', textColor: '#fff', dividerColor: '#333', lineNumberColor: '#777',
+            backgroundColor: '#000', widgetBackgroundColor: '#000', stickyBackgroundColor: '#000', textColor: '#fff', dividerColor: '#333', lineNumberColor: '#777',
             activeLineColor: '#111', selectionColor: '#555', isDark: true, changeAddedColor: '#32d74b', changeDeletedColor: '#8e8e93',
             syntax: {
                 defaultColor: '#fff', keywordColor: '#fff', stringColor: '#fff', commentColor: '#777',

@@ -8,6 +8,7 @@ import {
 import {
     type ApprovalRequest,
     type ApprovalRequestV2,
+    isHistoricalPublishApprovalRequestV2,
 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
@@ -376,7 +377,7 @@ describe('createHomeActionApprovalContinuation', () => {
             expect(catalog.backends).toEqual([]);
             if (admission !== 'current') {
                 const request = StoredApprovalRequestSchema.parse(storedRequest);
-                if (request.v !== 2) throw new Error('Expected a current approval origin');
+                if (request.v !== 2 || isHistoricalPublishApprovalRequestV2(request)) throw new Error('Expected a current approval origin');
                 persist({ ...request, executionOriginV1: { ...request.executionOriginV1,
                     ...(admission === 'account_changed' ? { accountId: 'another-account' } : { serverId: 'another-home' }),
                 } });

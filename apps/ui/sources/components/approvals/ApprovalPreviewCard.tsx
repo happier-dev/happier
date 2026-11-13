@@ -61,7 +61,7 @@ function readMachineSetupRecipeTargets(request?: ApprovalSummaryInput) {
 /** The same change groups the Setup tab's review shows (P-M6), so an agent's setup reads the same everywhere. */
 function MachineSetupRecipePreview(props: Readonly<{ request?: ApprovalSummaryInput; serverId: string | null }>) {
     const targets = readMachineSetupRecipeTargets(props.request);
-    const machines = useMachineListForServer(targets.length > 0 ? props.serverId : null);
+    const machines = useMachineListForServer(props.serverId ?? '', targets.length > 0 && props.serverId !== null);
     const nameOf = React.useCallback((machineId: string) =>
         getMachineDisplayName(machines?.find(machine => machine.id === machineId)) ?? t('common.unknown'), [machines]);
     const groups = groupMachineSetupChanges(targets);

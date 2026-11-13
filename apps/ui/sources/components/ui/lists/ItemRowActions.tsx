@@ -124,7 +124,7 @@ function CurrentContextItemRowActions(props: ItemRowActionsContentProps) {
     const commands = useCurrentUiContextLocalCommands(props.actions.length ? [{ key, title: props.title,
         invoke: value => props.overflow.setOpen(typeof value === 'boolean' ? value : !props.overflow.open) }] : [], { unbound: 'local' });
     return <ItemRowActionsContent {...props} overflow={{ open: props.overflow.open,
-        setOpen: next => { void commands.invoke(key, next); } }} />;
+        setOpen: next => { void commands.invoke(key, typeof next === 'function' ? next(props.overflow.open) : next); } }} />;
 }
 
 function ItemRowActionsContent(props: ItemRowActionsContentProps) {

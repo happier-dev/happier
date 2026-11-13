@@ -48,7 +48,7 @@ function subject() {
     [buildDiscussionRequesterApprovalArtifact({})],
     { serverId: 'server-1', discussionId: 'discussion-1' },
   );
-  if (!entry) throw new Error('Expected the requester approval');
+  if (!entry?.subject) throw new Error('Expected the requester approval subject');
   return entry.subject;
 }
 

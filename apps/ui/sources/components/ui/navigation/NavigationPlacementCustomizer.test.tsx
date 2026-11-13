@@ -219,6 +219,7 @@ describe('navigation placement customization', () => {
             const binding = screen.root.findByType(EntityFlatReorderList).props.binding;
             const admission = binding.resolve('changes', { anchorId: 'overview', placement: 'before' });
             expect(admission.status).toBe('allowed');
+            if (admission.status !== 'allowed') throw new Error('Expected an allowed reorder');
             await act(async () => { expect(await binding.execute(admission.effect)).toEqual({ status: 'applied' }); });
             expect(saved()?.orderedIds.slice(0, 2)).toEqual(['changes', 'overview']);
             expect(saved()?.placements.code).toBe('hidden');

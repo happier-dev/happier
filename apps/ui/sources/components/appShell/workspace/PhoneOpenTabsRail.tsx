@@ -17,7 +17,7 @@ import { t } from '@/text';
 import { Modal } from '@/modal';
 import { hrefForDestinationRef, resolveCurrentAppDestination, useDestinationInstanceTitles } from '../destinations/compactAppDestinationCatalog';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
-import { useOptionalWorkspaceNavigation } from './WorkspaceNavigationContext';
+import { useOptionalWorkspaceNavigation, type WorkspacePhoneControls } from './WorkspaceNavigationContext';
 import { usePhoneWorkspaceTabs, type PhoneWorkspaceTab } from './usePhoneWorkspaceTabs';
 import { resolveWorkspaceDestinationEntityItem } from './workspaceEntitySource';
 
@@ -204,7 +204,7 @@ export const PhoneOpenTabsRail = React.memo(function PhoneOpenTabsRail() {
  */
 const PhoneSplitPager = React.memo(function PhoneSplitPager(props: Readonly<{
     tab: PhoneWorkspaceTab;
-    catalog: NonNullable<NonNullable<ReturnType<typeof useOptionalWorkspaceNavigation>>['phone']>['catalog'];
+    catalog: WorkspacePhoneControls['catalog'];
     onShowPane: (paneId: string) => void;
 }>) {
     const { theme } = useUnistyles();

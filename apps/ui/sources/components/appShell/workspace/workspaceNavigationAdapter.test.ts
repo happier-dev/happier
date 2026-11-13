@@ -106,18 +106,24 @@ function harness(
   };
 }
 
+/** The rail column of the current section; only a built-in destination stands beside a column. */
+function sectionColumn(h: ReturnType<typeof harness>) {
+  const destination = resolveCurrentAppDestination(h.catalog, h.adapter.sectionPathname!);
+  return destination?.kind === 'builtin' ? destination.column : undefined;
+}
+
 describe('workspace navigation adapter', () => {
   it('keeps an ordinary Workflow item in Settings while explicit Workflow navigation changes section', () => {
     const h = harness();
     h.adapter.openHref('/settings/roles', { section: true });
     const settingsTab = h.active().id;
-    expect(resolveCurrentAppDestination(h.catalog, h.adapter.sectionPathname!)?.column).toBe('settings');
+    expect(sectionColumn(h)).toBe('settings');
     expect(h.adapter.openHref('/workflows/definition-1', { mode: 'newTab' })).toBe(true);
     expect(h.active().target.kind).toBe('workflow');
-    expect(resolveCurrentAppDestination(h.catalog, h.adapter.sectionPathname!)?.column).toBe('settings');
+    expect(sectionColumn(h)).toBe('settings');
     expect(h.state().tabs[settingsTab]?.target.kind).toBe('settings');
     h.adapter.openHref('/workflows/settings', { section: true });
-    expect(resolveCurrentAppDestination(h.catalog, h.adapter.sectionPathname!)?.column).toBe('workflows');
+    expect(sectionColumn(h)).toBe('workflows');
   });
   it('replaces the retained current tab for ordinary opens and focuses an already open destination', () => {
     const h = harness();

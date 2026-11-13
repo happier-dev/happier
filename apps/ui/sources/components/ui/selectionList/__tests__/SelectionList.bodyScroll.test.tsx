@@ -89,12 +89,12 @@ describe('SelectionList non-virtualized body scroll wrapper (R9 blocker 1)', () 
             id: 'teams', label: 'Teams', openStep: { id: 'teams', sections: [{ kind: 'static', id: 'teams', options: makeOptions(5) }] },
         }] }] };
         const screen = await renderScreen(<SelectionList {...defaultProps(root)} />);
-        await act(async () => screen.find(node => node.type === 'ScrollView' && node.props.testID === 'sl:bodyScroll').props.onScroll({ nativeEvent: {
+        await act(async () => screen.find(node => String(node.type) === 'ScrollView' && node.props.testID === 'sl:bodyScroll').props.onScroll({ nativeEvent: {
             contentOffset: { x: 0, y: 600 }, layoutMeasurement: { width: 300, height: 200 }, contentSize: { width: 300, height: 900 },
         } }));
-        expect(screen.find(node => node.type === 'ScrollView' && node.props.testID === 'sl:bodyScroll').props.testScrollOffset).toBe(600);
-        await act(async () => screen.findByTestId('sl:root:option:teams').props.onPress());
-        expect(screen.find(node => node.type === 'ScrollView' && node.props.testID === 'sl:bodyScroll').props.testScrollOffset).toBe(0);
+        expect(screen.find(node => String(node.type) === 'ScrollView' && node.props.testID === 'sl:bodyScroll').props.testScrollOffset).toBe(600);
+        await screen.pressByTestIdAsync('sl:root:option:teams');
+        expect(screen.find(node => String(node.type) === 'ScrollView' && node.props.testID === 'sl:bodyScroll').props.testScrollOffset).toBe(0);
     });
 
     it('wraps non-virtualized rows in a ScrollView so all rows remain reachable', async () => {

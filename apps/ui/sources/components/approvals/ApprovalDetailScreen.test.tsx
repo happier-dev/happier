@@ -292,7 +292,7 @@ async function createBuiltInApprovalArtifact(
 ) {
   await prepareApprovalFixture();
   if (input.actionId === 'computer.input' || input.actionId === 'computer.capture') await prepareComputerAgentFixture();
-  let sourceContext: Pick<ActionExecutorContext, 'defaultSessionId' | 'defaultSessionMachineId'> = {};
+  let sourceContext: Pick<Parameters<typeof createAgentApprovalRequest>[0], 'defaultSessionId' | 'defaultSessionMachineId'> = {};
   if (input.sourceSessionId) {
     const { readDisplayMachineIdForSession } = await import('@/sync/ops/sessionMachineTarget');
     const sourceSession = storage.getState().sessions[input.sourceSessionId];
@@ -1144,7 +1144,8 @@ describe('ApprovalDetailScreen', () => {
     if (!envelope) throw new Error('Expected the Plain Artifact codec');
     const quote = 'join the early shift';
     const start = before.indexOf(quote);
-    const passage = captureDocPassageV1({ ref: { kind: 'doc', artifactId: 'doc-private', serverId: account.serverId }, revision,
+    const docRef = { kind: 'doc' as const, artifactId: 'doc-private', serverId: account.serverId };
+    const passage = captureDocPassageV1({ ref: docRef, revision,
       source: before, range: { start, end: start + quote.length } });
     currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'doc.edit.propose', summary: 'Propose a document edit',
       actionArgs: {
@@ -1167,8 +1168,8 @@ describe('ApprovalDetailScreen', () => {
     const network = answerDiscussionThreadForTests(homes, account.serverId, { accountId: 'account-1', loseCreate: false, loseFirstRejoin: false });
     const client = createDiscussionClient({ scope: { serverId: account.serverId, accountId: 'account-1' }, availability: 'available' });
     const created = await client.create({ title: 'Opening hours',
-      creationLocalId: deriveDocCommentDiscussionCreationLocalIdV1({ ref: passage.ref, localId: 'opening-root' }), messageLocalId: 'opening-root',
-      anchor: { kind: 'doc', doc: { ref: passage.ref, revision } }, replyTarget: { kind: 'doc_passage', doc: { ref: passage.ref, revision } },
+      creationLocalId: deriveDocCommentDiscussionCreationLocalIdV1({ ref: docRef, localId: 'opening-root' }), messageLocalId: 'opening-root',
+      anchor: { kind: 'doc', doc: { ref: docRef, revision } }, replyTarget: { kind: 'doc_passage', doc: { ref: docRef, revision } },
       content: { kind: 'doc_passage_comment', passage, content: { v: 1, parts: [{ t: 'text', text: 'Make this warmer.' }] } } });
     expect(created, JSON.stringify(created)).toMatchObject({ kind: 'succeeded' });
     const thread = network.stored()!;
@@ -1957,7 +1958,9 @@ describe('ApprovalDetailScreen', () => {
         return { status: decision === 'approve' ? 'executed' : 'rejected' };
       },
     });
-    await account.publishMachines(account.serverId, [createMachineFixture({ ...boundary.machine,
+    // The wire row's capabilities are unparsed (`unknown`); this boundary publishes none.
+    const { operationProtocolCapabilities: _unparsedCapabilities, ...boundaryRow } = boundary.machine;
+    await account.publishMachines(account.serverId, [createMachineFixture({ ...boundaryRow,
       metadata: createMachineFixture().metadata, daemonState: null })]);
     const request = TargetActionApprovalRequestV1Schema.parse(JSON.parse(currentArtifact.body));
     const settled = TargetActionApprovalRequestV1Schema.parse({ ...request,
@@ -2480,8 +2483,9 @@ describe('ApprovalDetailScreen', () => {
     await screen.pressByTestIdAsync('approvals.approve');
 
     expect(artifactReads('target-artifact-1').length).toBeGreaterThan(1);
-    const receipt = storage.getState().artifacts['target-artifact-1'];
-    expect(JSON.parse(receipt!.body!)).toMatchObject({ ...JSON.parse(authoritative.body), status: 'failed', updatedAtMs: expect.any(Number),
+    const receiptBody = storage.getState().artifacts['target-artifact-1']?.body;
+    if (typeof receiptBody !== 'string') throw new Error('Expected the inline receipt body');
+    expect(JSON.parse(receiptBody)).toMatchObject({ ...JSON.parse(authoritative.body), status: 'failed', updatedAtMs: expect.any(Number),
       execution: { ok: false, effectAttempted: false, errorCode: 'approval_origin_unavailable',
         details: { reason: 'live_invocation_unavailable' } } });
     expect(screen.findByTestId('approvals.approve')).toBeNull();
@@ -3481,7 +3485,7 @@ describe('ApprovalDetailScreen', () => {
       ownServer: { rollout: 'recreate' as const, autoRestorePreviousRelease: true },
       target: { engine: 'native' as const, requiresAwakeComputerAndDockerDesktop: false, domains: 'notDetermined' as const },
     };
-    currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'deployments.deploy', explicitRequest: true, summary: 'Deploy Production API', actionArgs,
+    currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'deployments.deploy', summary: 'Deploy Production API', actionArgs,
       preview: { actionId: 'deployments.deploy', actionArgs, summary: 'Deploy Production API',
         deploymentReview: { ...machineReview, runtimeMachines: [{ machineId: 'machine-target', review: machineReview }] } } });
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
@@ -3526,7 +3530,7 @@ describe('ApprovalDetailScreen', () => {
     const hostReviewedChildren = { children: ['acquire', 'bootstrap', 'inspect', 'destroy', 'exec', 'putFile', 'reconcile', 'cleanup'].map(role => ({
       action: { pluginId: 'happier.machine.lima', localId: role === 'putFile' ? 'put-file' : role }, role,
     })) };
-    currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'machines.managed.acquire', explicitRequest: true,
+    currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'machines.managed.acquire',
       summary: 'Create managed machine', actionArgs, preview: { actionId: 'machines.managed.acquire', actionArgs, hostReviewedChildren } });
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
     const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
@@ -3546,7 +3550,7 @@ describe('ApprovalDetailScreen', () => {
       enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } };
     const hostReviewedChildren = { children: ['acquire', 'bootstrap', 'inspect'].map(role => ({
       action: { pluginId: 'happier.machine.lima', localId: role }, role })) };
-    currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'machines.managed.acquire', explicitRequest: true,
+    currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'machines.managed.acquire',
       summary: 'Create managed machine', actionArgs, preview: { actionId: 'machines.managed.acquire', actionArgs, hostReviewedChildren } });
     const created = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
     const createdText = readRenderedText(created);
@@ -3561,7 +3565,7 @@ describe('ApprovalDetailScreen', () => {
       { action: { pluginId: 'acme.compose', localId: 'deploy' }, role: 'deploy', input: { machineId: 'machine-2' } },
       { action: { pluginId: 'acme.compose', localId: 'observe' }, role: 'observe', input: { machineId: 'machine-2' } },
     ] };
-    currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'deployments.deploy', explicitRequest: true, summary: 'Deploy Production API',
+    currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'deployments.deploy', summary: 'Deploy Production API',
       actionArgs: deployArgs, preview: { actionId: 'deployments.deploy', actionArgs: deployArgs, summary: 'Deploy Production API', hostReviewedChildren: sameMachine } });
     const deployed = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
     const deployedText = readRenderedText(deployed);
@@ -3581,7 +3585,7 @@ describe('ApprovalDetailScreen', () => {
       { action: { pluginId: 'acme.compose', localId: 'deploy' }, role: 'deploy', input: { machineId: 'machine-2' } },
       { action: { pluginId: 'acme.compose', localId: 'observe' }, role: 'observe', input: { v: 1 } },
     ] };
-    currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'deployments.deploy', explicitRequest: true, summary: 'Deploy Production API', actionArgs,
+    currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'deployments.deploy', summary: 'Deploy Production API', actionArgs,
       preview: { actionId: 'deployments.deploy', actionArgs, summary: 'Deploy Production API', hostReviewedChildren } });
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
     const { t } = await import('@/text');
@@ -3602,7 +3606,7 @@ describe('ApprovalDetailScreen', () => {
     expect(order.indexOf('approvals.included-steps')).toBeGreaterThan(-1);
     expect(order.indexOf('approvals.included-steps')).toBeLessThan(order.indexOf('approvals.approve'));
 
-    currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'deployments.deploy', explicitRequest: true, summary: 'Deploy Production API', actionArgs,
+    currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'deployments.deploy', summary: 'Deploy Production API', actionArgs,
       preview: { actionId: 'deployments.deploy', actionArgs, summary: 'Deploy Production API' } });
     const none = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
     expect(none.findHostByTestId('approvals.included-steps')).toBeNull();
@@ -3627,7 +3631,7 @@ describe('ApprovalDetailScreen', () => {
     ] };
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
     const { t } = await import('@/text');
-    currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'deployments.deploy', explicitRequest: true, summary: 'Deploy Production API', actionArgs,
+    currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'deployments.deploy', summary: 'Deploy Production API', actionArgs,
       preview: { actionId: 'deployments.deploy', actionArgs, summary: 'Deploy Production API', hostReviewedChildren,
         deploymentReview: { ...machineReview, runtimeMachines: [{ machineId: 'machine-target', review: machineReview }] } } });
     const reviewed = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
@@ -3639,7 +3643,7 @@ describe('ApprovalDetailScreen', () => {
     expect(factValue(reviewed.findHostByTestId('approvals.included-steps.rows.row:step.2'))).toBe(t('approvals.machineNotKnown'));
     expect(readRenderedText(reviewed)).not.toContain('machine-this-home-lacks');
 
-    currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'deployments.deploy', explicitRequest: true, summary: 'Deploy Production API', actionArgs,
+    currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'deployments.deploy', summary: 'Deploy Production API', actionArgs,
       preview: { actionId: 'deployments.deploy', actionArgs, summary: 'Deploy Production API', hostReviewedChildren } });
     const unreviewed = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
     // With no reviewed Machine either, the page says the request decides it instead of hiding the step.
@@ -3651,7 +3655,7 @@ describe('ApprovalDetailScreen', () => {
     await prepareApprovalFixture();
     const actionArgs = { serverId: account.serverId, environmentId: 'env-api', expectedRevision: 3, requestKey: 'deploy-key-2',
       targetLinkId: 'link-api', expectedTargetLinkRevision: 2, contentArtifactId: 'content-api', contentHeaderVersion: 1, contentBodyVersion: 1 };
-    currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'deployments.deploy', explicitRequest: true, summary: 'Deploy Production API', actionArgs,
+    currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'deployments.deploy', summary: 'Deploy Production API', actionArgs,
       preview: { actionId: 'deployments.deploy', actionArgs, summary: 'Deploy Production API' } });
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
     const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
@@ -3665,7 +3669,6 @@ describe('ApprovalDetailScreen', () => {
     await prepareApprovalFixture();
     currentArtifact = await createBuiltInApprovalArtifact({
       actionId: 'projects.script.run',
-      explicitRequest: true,
       summary: 'Run the tests',
       actionArgs: {
         workspace: { serverId: account.serverId, machineId: 'machine-target', workspaceId: 'tidewater-checkout', rootPath: '/home/happier/tidewater' },

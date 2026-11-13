@@ -34,8 +34,10 @@ import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/s
 import { AccountNoticeInvestigationBoundary } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { createWorkflowAccountRunActionOwner, getActionSpec, actionSpecToActionDefinitionV1, type WorkflowAccountRunActionDeps } from '@happier-dev/protocol/actions';
-import { WorkflowRunGetResultV1Schema, type WorkflowInvocationGetResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import { WorkflowRunGetResultV1Schema, type WorkflowInvocationGetResultV1, type WorkflowRunGetResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { WorkflowRunRecipientCensusResponseV1Schema} from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { type RoleArtifactV1} from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
 import { ModalProvider } from '@/modal';
 import { getStorage } from '@/sync/domains/state/storageStore';
@@ -1134,10 +1136,8 @@ describe('WorkflowRunScreen', () => {
             roleSelection: { defaultEngine: { agentTargetKey: 'agent:happier.agent.test/test' },
                 availableAgentTargetKeys: ['agent:happier.agent.test/test'] },
             effects: { resolveTargetAvailability: async () => true,
-                readActionContract: async actionId => {
-                    const contract = actionSpecToActionDefinitionV1(getActionSpec(actionId));
-                    return { inputSchema: contract.inputSchema, outputSchema: contract.outputSchema ?? {} };
-                },
+                readActionContract: async actionId => freezeWorkflowActionContractV1(
+                    actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(actionId)))),
                 readWorkflowDefinition: async () => ({ definition, sourceKey: 'builtin:open-a-pull-request', version: 1 }) },
             context: { ...ACCEPTED_CONTEXT, source, inputs: nested ? {} : { base: 'main', title: 'Ship the change' },
                 authorization: { principal: { kind: 'host' } } } });

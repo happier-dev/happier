@@ -481,7 +481,7 @@ describe('the notch paint', () => {
 describe('Elements over a picture solve against the reading coat they stand on', () => {
     type Rgb = [number, number, number];
     const rgb = (value: string) => Color(value).rgb().array().slice(0, 3) as Rgb;
-    const luminance = (value: Rgb) => Color.rgb(value).luminosity();
+    const luminance = (value: Readonly<Rgb>) => Color.rgb([...value]).luminosity();
     const grey = (l: number): Rgb => {
         const value = 255 * (l <= 0.0031308 ? l * 12.92 : 1.055 * l ** (1 / 2.4) - 0.055);
         return [value, value, value];

@@ -11,6 +11,8 @@ function createCodeMirrorWebViewTheme(
     const { syntax: syntaxOverrides, ...rootOverrides } = overrides ?? {};
     return {
         backgroundColor: '#000',
+        widgetBackgroundColor: '#000',
+        stickyBackgroundColor: '#000',
         textColor: '#fff',
         dividerColor: '#333',
         lineNumberColor: '#777',

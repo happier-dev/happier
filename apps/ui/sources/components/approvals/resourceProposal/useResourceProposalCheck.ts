@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { isHistoricalPublishApprovalRequestV2, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { PileApplyResultV1, TrashEntryV1 } from '@happier-dev/protocol/storage/storageV1';
 
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -531,7 +531,7 @@ export function useResourceProposalCheck(
     const input = buildResourceProposalNarrowedInput(model, selectedRows.map((row) => ({ ...row, selected: true })));
     if (!input) return false;
     const outcome = await runResourceProposalFromUi(model, input, serverId,
-      keys && localRunRef.current === null && artifactId && approval.v === 2 && approval.status === 'executed'
+      keys && localRunRef.current === null && artifactId && approval.v === 2 && !isHistoricalPublishApprovalRequestV2(approval) && approval.status === 'executed'
         ? { artifactId, approval } : undefined);
     if (!outcome) return false;
     if (keys && localRunRef.current === null) {

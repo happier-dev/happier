@@ -5,7 +5,8 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
-import { mergeNavigationSurfacePlacements, StoredNavigationSurfacePlacementsV1Schema } from '@/sync/domains/settings/mobileSurfacePinning';
+import { StoredNavigationSurfacePlacementsV1Schema } from '@/sync/domains/settings/mobileSurfacePinning';
+import { navigationPlacementStorageBinding } from '@/components/settings/appearance/navigationPlacementSettingBinding';
 import { useNavigationSurfacePlacement } from './useNavigationSurfacePlacement';
 
 const initial = storage.getState();
@@ -23,10 +24,11 @@ it('keeps a Session desktop subscriber idle for Machine phone edits and unrelate
     }
     await renderScreen(<SessionDesktop />);
     const mounted = renders;
-    await act(async () => storage.setState(state => ({ localSettings: { ...state.localSettings,
-        navigationSurfacePlacementsV1: mergeNavigationSurfacePlacements(state.localSettings.navigationSurfacePlacementsV1,
-            { detailPages: { machine: { phone: { items: { orderedIds: [], placements: {} } } } } }),
-    } })));
+    // The canonical local-settings writer merges the Machine phone edit (unchanged surfaces keep their identity).
+    const patch = navigationPlacementStorageBinding.parse({ detailPages: { machine: { phone: { items: { orderedIds: [], placements: {} } } } } });
+    if (!patch.success) throw new Error('Expected a valid Machine phone placement');
+    await act(async () => navigationPlacementStorageBinding.commit(storage.getState().localSettings, patch.value,
+        delta => storage.getState().applyLocalSettings(delta, { persist: false })));
     await act(async () => storage.setState(state => ({ sessions: { ...state.sessions,
         unrelated: createSessionFixture({ id: 'unrelated', serverId: 'other-home' }),
     } })));

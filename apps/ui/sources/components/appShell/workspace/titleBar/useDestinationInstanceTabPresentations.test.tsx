@@ -116,7 +116,7 @@ describe('workspace session tab presentation', () => {
     });
 
     it('leads a Bot tab with its face from the row it already holds, stable across unrelated row writes', async () => {
-        const metadata = { path: '/repo', bot: { kind: 'bot' }, botFace: { style: 'planet', body: 'crab', palette: 'moss' } };
+        const metadata = { path: '/repo', bot: { kind: 'bot' as const }, botFace: { style: 'planet' as const, body: 'crab' as const, palette: 'moss' as const } };
         seed({ metadata });
         const hook = await renderHook(() => useDestinationInstanceTabPresentations(entries));
         const mark = hook.getCurrent().get('tab')?.mark as { props: { facts: { seed: string; face: unknown } } } | undefined;

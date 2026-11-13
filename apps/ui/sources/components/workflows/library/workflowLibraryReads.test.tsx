@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
+import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { PluginUiScrollActivityProvider, type PluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
 import { createNearViewportTracker, isSpanNearViewport } from '@/components/widgets/nearViewport';
 import { t } from '@/text';
@@ -19,7 +20,7 @@ import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protoco
 import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { deriveArtifactCoarseKindV1, deriveArtifactKindV1, deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { decodeBase64 } from '@/encryption/base64';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
 import { WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1, WorkflowRunListRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
@@ -138,7 +139,7 @@ it('lists a fired Once Run while its accepted snapshot is pending, then opens in
         everyMs: null, timezone: 'UTC' }, remainingOccurrences: 0 };
     const pending = createWorkflowRunSummaryFixture({ id: 'fired-once', ownerAccountId: accountId,
         state: 'claimed', workflowCustodyState: 'pending', origin: { kind: 'automation', automationId: 'once',
-            cause: { kind: 'trigger', triggerId: 'once-trigger', triggerRevision: 0, triggerKind: 'schedule',
+            cause: { kind: 'trigger', triggerId: AutomationTriggerIdSchema.parse('once-trigger'), triggerRevision: 0, triggerKind: 'schedule',
                 occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId: 'once-trigger', evidence: { v: 1, kind: 'schedule', scheduledFor: 1 } }),
                 occurredAt: 1, evidence: { scheduledFor: 1 } } } });
     home.answer(serverId, route, { body: { runs: [pending], acceptedEnvelopesByRunId: {},
@@ -1516,7 +1517,7 @@ describe('Workflow Run windows through real Account storage', () => {
         const template = boundary.read(definitionId)!;
         const artifactIds = Array.from({ length: 300 }, (_, index) => `00000000-0000-4000-8000-${String(1000 + index).padStart(12, '0')}`);
         for (const id of artifactIds) boundary.replaceStoredRow({ ...template, id,
-            kind: deriveArtifactStoredKindV1({ kind: 'document' }),
+            kind: deriveArtifactCoarseKindV1({ kind: 'document' }), kindHint: deriveArtifactKindV1({ kind: 'document' }).kindHint,
             header: encodePlainArtifactStoredContent({ kind: 'document' }),
         });
         const selected = { ...run('selected-run'), sourceArtifactId: definitionId };

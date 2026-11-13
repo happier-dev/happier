@@ -118,7 +118,7 @@ describe('Activity arrival cost', () => {
             invocation: { ...gate, opened: { index: gate, parentRevision: 3,
                 progress: { kind: 'happier.workflow-progress.v1', blockKind: 'if',
                     invocationPath: { blockId: 'gate', scope: [] }, attempt: '0', logicalInvocationRecordId: gate.id,
-                    container: { kind: 'if', selected: 'then' } } } }, parentRevision: 3 }); });
+                    container: { kind: 'if', selected: 'then', nextBlockOrdinal: '0' } } } }, parentRevision: 3 }); });
         expect(screen.findByTestId('workflow-invocations-row-hold-0')?.findAll(node => (
             node.props.children === 'Resolved branch step'
         )).length).toBeGreaterThan(0);

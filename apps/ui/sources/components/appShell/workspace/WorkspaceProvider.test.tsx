@@ -273,9 +273,9 @@ async function installDelayedDraftRecordBoundary() {
     const browserRecords = {
         list: async () => new Map(records),
         read: async (key: string) => records.get(key),
-        updateMany: async (keys: readonly string[], update: (current: ReadonlyMap<string, string | undefined>) => {
-            values: ReadonlyMap<string, string | undefined>; result: void;
-        }) => {
+        updateMany: async <T,>(keys: readonly string[], update: (current: ReadonlyMap<string, string | undefined>) => {
+            values: ReadonlyMap<string, string | undefined>; result: T;
+        }): Promise<T> => {
             await pendingCommit;
             const next = update(new Map(keys.map((key) => [key, records.get(key)])));
             for (const [key, value] of next.values) {

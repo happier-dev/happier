@@ -109,7 +109,7 @@ describe('SelectionTiles', () => {
       grid.props.onLayout({ nativeEvent: { layout: { width: 338, height: 0, x: 0, y: 0 } } });
     });
     const frame = screen.root.findAll((node) => node.props.pointerEvents === 'none'
-      && node.findAll((child) => child.type === 'Preview' && child.props.kind === 'dark').length > 0)[0]!;
+      && node.findAll((child) => String(child.type) === 'Preview' && child.props.kind === 'dark').length > 0)[0]!;
     const style = StyleSheet.flatten(frame.props.style);
     // Native layout derives a width from aspectRatio once a min height wins, pushing the preview past its tile
     // and the screen edge; the frame's height is decided from the measured column instead.

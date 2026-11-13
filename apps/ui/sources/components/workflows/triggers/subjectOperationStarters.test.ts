@@ -7,7 +7,7 @@ import { buildSubjectOperationStarter } from './subjectTriggerStarters';
 
 describe('subject operation starters', () => {
     const subject = { kind: 'environment' as const, environmentId: 'env', machineId: 'machine' };
-    const context = { subject, deploymentEnvironment: { serverId: 'home', environmentId: 'env' }, controllerMachineId: 'machine' };
+    const context = { subject, deploymentEnvironment: { serverId: 'home', projectSourceId: 'source', environmentId: 'env' }, controllerMachineId: 'machine' };
     it('seeds failure and recovery from the event owners without configuring or admitting work', () => {
         const failed = buildSubjectOperationStarter('deploymentFailed', context);
         const recovered = buildSubjectOperationStarter('healthRecovered', context);

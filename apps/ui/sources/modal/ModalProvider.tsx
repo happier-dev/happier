@@ -35,7 +35,8 @@ export const useModalContentId = () => useContext(ModalContentIdContext);
 
 type ModalProviderProps = Readonly<{
     active?: boolean;
-    children: React.ReactNode;
+    /** Optional: a bare host (no wrapped tree) presents dialogs opened through the global `Modal` API. */
+    children?: React.ReactNode;
 }>;
 
 type ModalHostEntry = ModalConfig & Readonly<{

@@ -53,7 +53,7 @@ describe('Popover phone presentation', () => {
                         onRequestClose={() => setOpen(false)}>
                         {({ requestClose }) => <RoundButton testID="select-profile" title="Profile" onPress={() => {
                             selected();
-                            requestClose();
+                            requestClose('selection');
                         }} />}
                     </Popover>
                 </View>

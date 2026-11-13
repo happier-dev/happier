@@ -78,13 +78,13 @@ describe('OperationsOutcomeGroup', () => {
     const { screen, onOpenReceipt } = await mount();
     expect(screen.findByType(MarkdownView).props.markdown).toBe(full);
 
-    await act(async () => { screen.findByTestId('o.finding.link.operation.cmd-1').props.onPress(); });
+    await screen.pressByTestIdAsync('o.finding.link.operation.cmd-1');
     expect(show.mock.calls[0]?.[0]).toMatchObject({ props: { serverId: 'srv', operationId: 'cmd-1' } });
 
-    await act(async () => { screen.findByTestId('o.proposal.link.approval.appr-1').props.onPress(); });
+    await screen.pressByTestIdAsync('o.proposal.link.approval.appr-1');
     expect(routerMock.push?.mock.calls[0]?.[0]).toBe('/inbox/approvals/appr-1?serverId=srv');
 
-    await act(async () => { screen.findByTestId('o.applied').props.onPress(); });
+    await screen.pressByTestIdAsync('o.applied');
     expect(onOpenReceipt).toHaveBeenCalledWith('env', 'new');
   });
 
@@ -96,10 +96,10 @@ describe('OperationsOutcomeGroup', () => {
     vi.stubGlobal('open', open);
     const { screen } = await mount();
     await homes.setActionPolicy(serverId, 'links.openExternal', 'ui', 'off');
-    await act(async () => { await screen.findByTestId('o.proposal').props.onPress(); });
+    await screen.pressByTestIdAsync('o.proposal');
     expect(open).not.toHaveBeenCalled();
     await homes.setActionPolicy(serverId, 'links.openExternal', 'ui', 'allowed');
-    await act(async () => { await screen.findByTestId('o.proposal').props.onPress(); });
+    await screen.pressByTestIdAsync('o.proposal');
     expect(open).toHaveBeenCalledWith('https://example.test/pr/12', '_blank', 'noopener,noreferrer');
     vi.unstubAllGlobals();
   });

@@ -290,8 +290,9 @@ describe('Account Workflow Library and settings', () => {
         const recipe = rows[0]!.executionRecipe;
         if (!recipe || !('workflow' in recipe) || recipe.workflow.t !== 'plain') throw new Error('Expected plain Workflow');
         expect(rows[0]!.triggers).toMatchObject([{ kind: 'schedule' }]);
-        expect(recipe.workflow.v.executionTarget).toEqual({ kind: 'detached_run' });
-        expect(recipe.workflow.v.inlineDefinition?.blocks).toEqual(target.kind === 'inline' ? target.definition.blocks : []);
+        const stored = AutomationStoredWorkflowDefinitionV2Schema.parse(recipe.workflow.v);
+        expect(stored.executionTarget).toEqual({ kind: 'detached_run' });
+        expect(stored.inlineDefinition?.blocks).toEqual(target.kind === 'inline' ? target.definition.blocks : []);
         expect(home.requests.some(request => request.path.includes('/sessions') && request.method === 'POST')).toBe(false);
     });
 

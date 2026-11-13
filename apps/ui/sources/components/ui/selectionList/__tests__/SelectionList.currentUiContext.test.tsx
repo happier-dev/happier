@@ -117,7 +117,7 @@ describe('SelectionList mounted commands', () => {
             useCurrentUiContextLocalCommands(open ? [{ key: 'close', title: 'Close checkout', description: 'popup.close', invoke: () => setOpen(false) }] : [],
                 { foregroundOverlay: true });
             return <>
-                <SelectionList currentUiContextCommandScope="inline" rootStep={step} onSelect={() => {}} />
+                <SelectionList currentUiContextCommandScope="inline" rootStep={step} onSelect={() => {}} onRequestClose={() => {}} />
                 <AgentInputSelectionListPopover open={open} anchorRef={anchorRef} currentUiContextCommandScope="popup.list"
                     rootStep={step} onSelect={id => selected.push(id)} onRequestClose={() => setOpen(false)} />
             </>;

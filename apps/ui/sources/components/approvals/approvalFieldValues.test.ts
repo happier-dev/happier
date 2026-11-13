@@ -19,7 +19,7 @@ it('does not repeat a retained installation title through its historical preview
 });
 
 it('reads a ceiling request as binary memory, available room and the consequence, keeping raw bytes technical', () => {
-    const input = { actionId: 'machines.guard.sessionCeiling.set',
+    const input = { actionId: 'machines.guard.sessionCeiling.set' as const,
         actionArgs: { machineId: 'machine', sessionId: 'session', bytes: 1073741824 },
         context: { formatDataBytes: formatHappierDataBytes,
             machineMemory: { machineId: 'machine', availableBytes: 2 ** 31, totalBytes: 2 ** 33 } } };

@@ -295,7 +295,7 @@ describe('Triage/GitHub projection and Voice Action source corridors', () => {
     const windowStore = createTriageListWindowStore({
       readEntries: async (input) => await listTriageEntries(input, {
         sourceInstances: collections.collections.sourceInstances,
-        readAdmittedSources: async () => [admittedSource],
+        readSourceSnapshot: async () => ({ contributions: [admittedSource] }),
         executeScan: async (_operation, scanInput) => await scanGithubTriageSource(
           scanInput,
           githubTransport.context,

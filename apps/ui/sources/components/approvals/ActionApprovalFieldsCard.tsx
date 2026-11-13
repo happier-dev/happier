@@ -282,7 +282,7 @@ function literalApprovalValue(row: ApprovalValueRow): string {
 function ApprovalValueItem(props: Readonly<{
     row: Extract<HappierApprovalFieldRow<ApprovalValueSource>, { kind: 'value' }>;
     columns: boolean;
-    extras: ApprovalFieldExtras;
+    extras: ApprovalFieldRow;
     testID?: string;
 }>) {
     const { row, columns, extras } = props;

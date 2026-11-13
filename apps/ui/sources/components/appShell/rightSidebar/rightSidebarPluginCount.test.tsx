@@ -14,7 +14,7 @@ import { parkPluginResourceWatchUntilAbort } from '@/dev/testkit/harness/pluginR
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { PluginContextualResourceStoreProvider } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { createPluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';
-import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
+import { isPluginUiDestinationSurfacePlacementProjection, normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
 import { mergeInstalledPluginUiProjections, unionPluginUiProjections } from '@/sync/domains/plugins/ui/projectionUnion';
 import { resolveRightSidebarPluginTabs } from './rightSidebarPluginTabs';
 import { PluginRightSidebarCountsState, resolvePluginRightSidebarCountBinding, type PluginRightSidebarCountDescriptor,
@@ -73,7 +73,7 @@ it('reads Project counts from the selected Machine without replacing the Account
     const entries = projectPluginPortableUiDeclarationsV1(manifest);
     const account = createPluginAccountAvailabilityReader({ scope: lifetime.scope,
         snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] },
-        hostBundledUi: [{ pluginId, pluginVersion: manifest.version, displayName: manifest.displayName,
+        hostBundledUi: [{ pluginId, pluginVersion: manifest.version, displayName: 'Project counts',
             packageName: '@acme/project-counts', normalizedManifest: manifest, artifactGraphs: [], entriesById: entries }],
     }).readAccountUiProjection();
     if (!account) throw new Error('Expected an admitted Account renderer');
@@ -95,7 +95,7 @@ it('reads Project counts from the selected Machine without replacing the Account
     const projection = mergeInstalledPluginUiProjections([account], union);
     const placementId = `surfacePlacement:${pluginId}:issues`;
     const placement = projection?.surfacePlacementsById[placementId];
-    if (!placement) throw new Error('Expected the composed Project page');
+    if (!placement || !isPluginUiDestinationSurfacePlacementProjection(placement)) throw new Error('Expected the composed Project page');
     expect(placement.occurrenceId).toBe(account.surfacePlacementsById[placementId]?.occurrenceId);
     expect(placement.occurrenceId).not.toBe(occurrenceId);
     const descriptor: PluginRightSidebarCountDescriptor = { tab: { placement,
@@ -123,7 +123,9 @@ it('reads Project counts from the selected Machine without replacing the Account
             machineId: 'machine-1', serverId: lifetime.scope.serverId, serverIdentityId: executionOrigin.serverIdentityId,
             phase: 'current', interactionEnabled: true, projection: machineProjection('selected-machine:43'),
         }], new Map([[pluginId, executionOrigin]])).pluginUiProjection)!;
-        currentDescriptor = { ...descriptor, tab: { ...descriptor.tab, placement: replacement.surfacePlacementsById[placementId]! },
+        const replacementPlacement = replacement.surfacePlacementsById[placementId];
+        if (!replacementPlacement || !isPluginUiDestinationSurfacePlacementProjection(replacementPlacement)) throw new Error('Expected the replacement Project page');
+        currentDescriptor = { ...descriptor, tab: { ...descriptor.tab, placement: replacementPlacement },
             runtime: { ...descriptor.runtime, pluginUiProjection: replacement } };
         expect(resolvePluginRightSidebarCountBinding(currentDescriptor)).toMatchObject({ expectedCallerOccurrenceId: 'selected-machine:43' });
         await screen.update(view());

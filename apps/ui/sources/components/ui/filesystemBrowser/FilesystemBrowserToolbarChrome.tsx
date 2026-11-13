@@ -9,6 +9,7 @@ import { FileBrowserToolbar, FileBrowserToolbarIconButton } from './FileBrowserT
 import { resolveFilesystemBrowserToolbarState, type FilesystemBrowserToolbarAction } from './filesystemBrowserToolbarState';
 import { Icon } from '@/components/ui/icons/Icon';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 
 export type { FilesystemBrowserToolbarAction } from './filesystemBrowserToolbarState';
 
@@ -74,7 +75,7 @@ export function FilesystemBrowserToolbarChrome(props: FilesystemBrowserToolbarCh
         description: JSON.stringify({ control: `${scope}.overflow`, input: { open: 'boolean' } }),
         invoke: input => {
             if (input === undefined) return { ok: true, result: { open: overflowOpen } };
-            if (input === null || typeof input !== 'object' || Array.isArray(input) || typeof input.open !== 'boolean') return false;
+            if (!isJsonObject(input) || typeof input.open !== 'boolean') return false;
             setOverflowOpen(input.open); return true;
         },
     }], { foregroundOverlay: true, contextKey: scope });

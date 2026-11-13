@@ -20,11 +20,12 @@ import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolve
 import { useHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import type { EntityDropOutcomeV1 } from '@/components/ui/treeDragDrop/entityDragDropTypes';
+import type { EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
 import { entityReorderOutcome } from '@/components/ui/treeDragDrop/entityReorderOutcome';
 
 import { CollectionSpaceSwipeZone, useCollectionSpaceSwipeTrack } from './CollectionSpaceSwipeZone';
 import { renderCollectionSpacesStripTabs, useCollectionSpacesStripEdgeMask } from './CollectionSpacesStrip';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 
 type StripHost = NonNullable<PluginUiPresentationHost['collectionSpacesStrip']>;
 type ReorderInput = Parameters<NonNullable<StripHost['useReorder']>>[0];
@@ -73,7 +74,7 @@ export function createPluginFlatReorderBinding(input: Readonly<{
     getSourceId: (item) => {
       if (item.kind !== 'plugin' || item.contribution.pluginId !== pluginId || item.contribution.localId !== localId) return null;
       const reference = item.reference;
-      return reference !== null && typeof reference === 'object' && !Array.isArray(reference) && typeof reference.id === 'string' ? reference.id : null;
+      return isJsonObject(reference) && typeof reference.id === 'string' ? reference.id : null;
     },
     resolve: (sourceId, position) => {
       const moved = resolveAnchoredListMoveV1(ids, sourceId, position);

@@ -49,11 +49,11 @@ async function measureBottomChrome(width: number, pillWidth: number) {
               testID: 'plus',
               style: { flex: 1 },
             }),
+            children: React.createElement(View, {
+              testID: 'tabs',
+              style: { width: pillWidth, height: 36 },
+            }),
           },
-          React.createElement(View, {
-            testID: 'tabs',
-            style: { width: pillWidth, height: 36 },
-          }),
         ),
       ),
     );

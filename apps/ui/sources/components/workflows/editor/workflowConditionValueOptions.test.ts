@@ -11,7 +11,7 @@ const step = (id: string): WorkflowStep => ({ kind: 'step', id, name: id,
 describe('workflow prompt reference scope', () => {
     it('offers prior results and inputs while explaining later and sibling-lane results', () => {
         const draft = { ...createWorkflowEditorDraft({ draftId: 'scope', name: 'Release', blocks: [
-            step('gather'), { kind: 'parallel' as const, id: 'lanes', branches: [
+            step('gather'), { kind: 'parallel' as const, id: 'lanes', failurePolicy: 'fail_stop' as const, branches: [
                 { id: 'docs', blocks: [step('write'), step('publish')] },
                 { id: 'tests', blocks: [step('test')] },
             ] }, step('ship'),

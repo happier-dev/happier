@@ -113,7 +113,7 @@ function EngineMount(
   const { publish, handle } = props;
   React.useLayoutEffect(() => {
     publish(handle);
-    return () => publish(null);
+    return () => { publish(null); };
   }, [handle, publish]);
   return null;
 }

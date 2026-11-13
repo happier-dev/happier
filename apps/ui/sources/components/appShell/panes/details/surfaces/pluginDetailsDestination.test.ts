@@ -28,7 +28,7 @@ import {
 } from '@/sync/domains/plugins/ui/projection';
 import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 import { readPluginSurfaceHostApiErrorPayload } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
-import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
+import { PluginUiSurfaceContextV1Schema } from '@happier-dev/protocol/plugins/ui/surfaceContext';
 import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces';
 import { createPluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
@@ -1245,7 +1245,8 @@ describe('a launched Details tab settling its mount', () => {
         binding?.createMountedHostApiHandlers?.({ isCurrent }).handlers;
     const settleOn = (handlers: ReturnType<typeof mountHandlers>, payload: unknown) => handlers?.settleEphemeralInput?.({
         version: 1, requestId: 'settle-1', method: 'settleEphemeralInput',
-        surface: createPluginSurfaceContextFixture(), payload: payload as never });
+        surface: PluginUiSurfaceContextV1Schema.parse({ pluginId: 'com.acme.fixture', contributionId: 'surface', surfaceId: 'surface',
+            platform: 'web', channel: 'development' }), payload: payload as never });
     const settle = (binding: BoundPluginSurfaceBinding | undefined, isCurrent: () => boolean, payload: unknown) =>
         settleOn(mountHandlers(binding, isCurrent), payload);
 

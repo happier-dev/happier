@@ -22,7 +22,7 @@ describe('approval Session references during recording privacy', () => {
             accountId: 'alice', serverIdentityId: 'srv_private_reference' });
         const id = 'private-session-identity';
         const session = buildSessionListRenderableFromSession(createSessionFixture({ id, serverId: home,
-            metadata: { name: 'Private review', path: '/private/review', machineId: 'private-machine' } }));
+            metadata: { name: 'Private review', path: '/private/review', host: 'private-host', machineId: 'private-machine' } }));
         storage.setState({ sessionListRowsByServerId: { [home]: { [id]: session } } });
         storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [home]: ['private'] } });
         storage.getState().setSessionTagAssignmentsOptimistic(home, id, ['private']);

@@ -118,7 +118,7 @@ vi.mock('react-native', async () => {
   const Pressable = ReactRuntime.forwardRef<React.ComponentRef<typeof native.Pressable>, React.ComponentProps<typeof native.Pressable>>((props, ref) => {
     const counter = ReactRuntime.useMemo(() => {
       const counter = createRenderCommitCounter();
-      if (props.testID) selectionCosts.set(props.testID, counter);
+      if (typeof props.testID === 'string' && props.testID) selectionCosts.set(props.testID, counter);
       return counter;
     }, [props.testID]);
     useRenderCommitCounter(counter);
@@ -3065,7 +3065,7 @@ describe('WorkflowRunContent', () => {
     const screen = await renderContent({
       definition: createWorkflowDefinitionFixture({ blocks: [{
         kind: 'if', id: 'choice', when: WORKFLOW_CONDITION_UNSET,
-        then: [{ kind: 'wait', id: 'check', document: { text: 'Check', references: [], attachments: [] } }],
+        then: [{ kind: 'wait', id: 'check', document: { text: 'Check', references: [], attachments: [] } }], otherwise: [],
       }] }),
       invocations: [invocation], invocationProgressById: new Map([[invocation.id, progress]]),
     });
@@ -3299,6 +3299,20 @@ describe('WorkflowRunContent', () => {
       .toBe('workflows.recovery.unconfirmedStop');
     await lastScreen!.pressByTestIdAsync('workflow-run-recovery-run-again');
     expect(onRunAgain).toHaveBeenCalledOnce();
+    // A real preparation refusal can carry target_unavailable before any input was admitted.
+    // Its exact recovery owner must not be contradicted by an uncertain-stop explanation.
+    expect(await render({
+      run: createWorkflowRunSummaryFixture({ state: 'interrupted' }),
+      onCancel: vi.fn(),
+      invocations: [createWorkflowInvocationIndexFixture({ id: 'inv-1', lifecycle: 'needs_attention' })],
+      selectedInvocationRecoveryAvailability: {
+        reattach: { kind: 'unavailable', reason: 'execution_not_admitted' },
+        retry: { kind: 'unavailable', reason: 'invocation_not_recoverable' },
+        continueSameConversation: { kind: 'unavailable', reason: 'recovery_not_prepared' },
+        continueFreshAgent: { kind: 'unavailable', reason: 'recovery_not_prepared' },
+        restoreWorkspace: { kind: 'unavailable', reason: 'workspace_unavailable' },
+      },
+    })).toBe('workflows.recovery.noChoices workflows.recovery.nextStop');
   });
 
   it('heads an uncertain step with its effects and an unexplained failed step with cause not recorded', async () => {
@@ -3476,15 +3490,15 @@ describe('WorkflowRunContent', () => {
     // Admission can park the root before a leaf exists. Its retained storage
     // cause must still explain the interrupted Run without selecting a step.
     const root = createWorkflowInvocationIndexFixture({ id: 'root-storage', parentRecordId: null, lifecycle: 'needs_attention' });
-    const rootProgress = { ...progress, blockKind: 'root' as const, invocationPath: { blockId: '$root', scope: [] },
+    const rootProgress = WorkflowProgressEnvelopeV1Schema.parse({ ...progress, blockKind: 'root', invocationPath: { blockId: '$root', scope: [] },
       logicalInvocationRecordId: root.id, reason: { code: 'storage_unavailable',
         message: 'Workflow storage is temporarily unavailable (database_transaction_timeout).',
-        failureCause: { phase: 'workflow.storage.invocations.admit', errorClass: 'Error', errorCode: 'database_transaction_timeout', httpStatus: 503 } } };
+        failureCause: { phase: 'workflow.storage.invocations.admit', errorClass: 'Error', errorCode: 'database_transaction_timeout', httpStatus: 503 } } });
     const beforePrepare = await renderContent({ run: createWorkflowRunSummaryFixture({ state: 'interrupted' }),
       invocations: [root], selectedInvocationId: null, invocationProgressById: new Map([[root.id, rootProgress]]),
       firstFailedInvocationId: null, firstFailedInvocationResolution: 'resolved' });
     expect(beforePrepare.findByTestId('workflow-run-failure-reason')?.props.children).toContain('session.startFailure.cause.database_transaction_timeout');
-    expect(beforePrepare.getTextContent()).not.toContain(rootProgress.reason.message);
+    expect(beforePrepare.getTextContent()).not.toContain('Workflow storage is temporarily unavailable (database_transaction_timeout).');
     await beforePrepare.unmount();
 
     // A step that finished says nothing about an older failure reason.

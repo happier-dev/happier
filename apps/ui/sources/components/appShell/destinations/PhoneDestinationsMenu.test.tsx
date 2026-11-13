@@ -17,6 +17,7 @@ import { InboxSummaryProvider } from '@/hooks/inbox/useInboxSummary';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
 import { NavigationSurfacePlacementsV1Schema, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationPlacementItem } from '@/components/ui/navigation/NavigationPlacementCustomizer';
 
 const routeState = vi.hoisted(() => ({ push: vi.fn(), pathname: '/' }));
 const openUniversalSearch = vi.hoisted(() => vi.fn());
@@ -457,7 +458,10 @@ describe('PhoneDestinationsMenu', () => {
         onTestFinished(() => { show.mockRestore(); });
         await select(menu, 'phone-launcher-customize');
         await vi.waitFor(() => expect(show).toHaveBeenCalled());
-        const customizable = (show.mock.calls.at(-1)?.[0] as { props: { items: readonly { id: string; title: string; defaultPlacement?: string }[] } }).props.items;
+        const { NavigationPlacementCustomizer } = await import('@/components/ui/navigation/NavigationPlacementCustomizer');
+        const shown = show.mock.calls.at(-1)?.[0];
+        expect(shown?.component).toBe(NavigationPlacementCustomizer);
+        const customizable: readonly NavigationPlacementItem[] = shown?.props?.items ?? [];
         const ids = customizable.map(item => item.id);
         expect(customizable.filter(item => item.id.startsWith('bot:'))).toEqual([
             expect.objectContaining({ id: botId('gardener'), title: 'Gardener', defaultPlacement: 'hidden' }),

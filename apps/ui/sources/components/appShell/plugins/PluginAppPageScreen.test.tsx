@@ -1073,8 +1073,8 @@ describe('plugin app page host route (EU-5b)', () => {
 
     it('delivers the original prepared composer once after the retained page is hidden for Review', async () => {
         const { act } = await import('react-test-renderer');
-        const { createActionOperationStore } = await import('../../../../../cli/src/actions/operations/actionOperationStore');
-        const { createActionOperationRunner } = await import('../../../../../cli/src/actions/operations/actionOperationRunner');
+        const { createActionOperationStore } = await import('../../../../../cli/src/daemon/actionOperations/actionOperationStore');
+        const { createActionOperationRunner } = await import('../../../../../cli/src/daemon/actionOperations/actionOperationRunner');
         const { ACTION_OPERATION_RPC_METHODS_V2 } = await import('@happier-dev/protocol/actions/operations/v1');
         const { DaemonPluginStructuredMessageActionExecuteRequestSchema } = await import('@happier-dev/protocol/plugins/actions/daemonInvocationV1');
         const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');

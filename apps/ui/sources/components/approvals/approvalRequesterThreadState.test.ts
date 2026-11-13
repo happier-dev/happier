@@ -73,7 +73,7 @@ describe('resolveApprovalRequesterThreadState', () => {
         expect(resolveApprovalRequesterThreadState(entry.parsed, null)).toEqual({
             kind: 'done', decidingAccountId: 'bob', operationCredentialUses: [personalCredentialUse],
         });
-        expect(entry.subject.executionAccountId).toBe('alice');
+        expect(entry.subject?.executionAccountId).toBe('alice');
         if (entry.parsed.family !== 'built_in' || entry.parsed.request.v !== 2) throw new Error('Expected the current built-in request');
         expect(entry.parsed.request.executionOriginV1.actionRequestAttributionV1).toEqual({
             requestRef: 'bob-input', requester: { serverId: 'server-1', accountId: 'bob' },

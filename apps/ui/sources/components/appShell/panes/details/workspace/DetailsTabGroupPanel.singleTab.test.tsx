@@ -109,7 +109,7 @@ describe('DetailsTabGroupPanel with one tab (lab session-D)', () => {
       group={group([tab('draft', 'Resource'), tab('other', 'Other resource')])} testIds={testIds}
       renderTabContent={entry => entry.key === 'draft' ? <Detail /> : <View />} />);
     const { act } = await import('react-test-renderer');
-    const titles = () => screen.root.findByType(DocumentTabStrip).props.tabs.map((entry: DetailsTabState) => entry.title);
+    const titles = () => screen.root.findByType(DocumentTabStrip).props.tabs.map(entry => entry.title);
     try {
       expect(publish).toBeTypeOf('function');
       await act(async () => publish?.('New task'));

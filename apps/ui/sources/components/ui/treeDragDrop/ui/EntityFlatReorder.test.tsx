@@ -48,7 +48,7 @@ it('moves a public plugin row through the incumbent host and reports refusal wit
         // The provider observation still says a,b,c. Opening another chooser must keep the accepted order.
         expect(order()).toEqual(['a', 'c', 'b']);
         const carryKey = (key: string) => act(async () => {
-            screen.root.findAllByType(EntityDragGripTrigger).find(grip => grip.props.accessibilityLabel.includes('#3'))!.props.onKeyDown({
+            screen.root.findAllByType(EntityDragGripTrigger).find(grip => grip.props.accessibilityLabel.includes('#3'))!.props.onKeyDown?.({
                 key, preventDefault() {}, stopPropagation() {},
             });
         });
