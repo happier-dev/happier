@@ -5,6 +5,7 @@ import type { ActionExecutorContext } from './types.js';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1, verifyExternalActionApprovalInputV1 } from '../externalActionExecutionAuthorization.js';
 import { buildApprovalExecutionOriginV1, isPresentUserApprovalDecisionForOrigin } from './approvalOrigins.js';
 import { projectDeploymentPreparationAdmissionV1 } from '../../deployments/deploymentPreparationAdmissionV1.js';
+import { buildMachineSetupTargetApplyInput } from '../../machines/managed/actionsV1.js';
 
 it.each([
   { surface: 'voice', authority: 'present_user', expectedSurface: 'voice' },
@@ -144,10 +145,14 @@ describe('reviewed native root approval origin', () => {
       const target = { kind: 'machine' as const, machineId: 'machine' };
       const envelope = { v: 1 as const, requestId: 'setup-request', target, input: actionId === 'action.operations.cancel'
         ? { serverId: 'home', machineId: 'machine', operationId: 'retained-operation' }
-        : { homeId: 'home', machineId: 'machine' } };
+        : actionId === 'machines.setup.apply'
+          ? buildMachineSetupTargetApplyInput({ homeId: 'home', machineId: 'machine', desiredRevision: 0,
+            recipePlans: [], sources: [{ kind: 'direct', setup: {} }] })
+          : { homeId: 'home', machineId: 'machine' } };
       const binding = { serverIdentityId: 'home', accountId: 'account', authentication: { kind: 'account' as const, tokenEpoch: 0 },
         accountEncryptionMode: 'plain' as const, machineId: 'machine', actionId, requestId: envelope.requestId, custodianAccountId: 'account',
-        installationId: 'installation', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target };
+        installationId: 'installation', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target,
+        deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, envelope.input) };
       const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
         serverId: 'home', runtimeAccountId: 'account', actionRequestId: envelope.requestId, originalActionEnvelope: envelope,
         externalActionExecutionAuthorization: { v: 1, token: 'verified-at-ingress', binding }, externalActionTarget: target,
