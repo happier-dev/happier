@@ -36,22 +36,22 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         if (kind === "Artifact") {
             const artifact = await db.artifact.create({ data: { id: randomUUID(), accountId: owner.id,
                 header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array() } });
-            await db.artifactAccountGrant.create({ data: { artifactId: artifact.id, accountId: recipient.id,
+            await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: artifact.id, accountId: recipient.id,
                 accessLevel: "view", createdByAccountId: owner.id } });
         } else if (kind === "Discussion") {
             const discussion = await db.discussion.create({ data: { ownerAccountId: owner.id, encryptionMode: "plain",
                 dataEncryptionKey: new Uint8Array(), titleContent: { t: "plain", v: "Title" },
                 creationLocalId: randomUUID(), creationEqualityEvidenceV1: {}, lastMessageAt: new Date() } });
-            await db.discussionAccountGrant.create({ data: { discussionId: discussion.id, accountId: recipient.id,
+            await db.discussionGrant.create({ data: { principalKind: 'account' as const, discussionId: discussion.id, accountId: recipient.id,
                 accessLevel: "view", createdByAccountId: owner.id } });
         } else if (kind === "Machine") {
             const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: "{}" } });
-            await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: recipient.id,
+            await db.machineGrant.create({ data: { principalKind: 'account' as const, machineId: machine.id, accountId: recipient.id,
                 accessLevel: "view", createdByAccountId: owner.id } });
         } else if (kind === "Task") {
             const task = await db.userKVStore.create({ data: { accountId: owner.id, key: `todo.${randomUUID()}`,
                 value: new TextEncoder().encode(JSON.stringify({ t: "plain", v: { title: "Shared task" } })) } });
-            await db.taskAccountGrant.create({ data: { taskId: task.id, accountId: recipient.id,
+            await db.taskGrant.create({ data: { principalKind: 'account' as const, taskId: task.id, accountId: recipient.id,
                 accessLevel: "view", createdByAccountId: owner.id } });
         } else {
             const run = await db.automationRun.create({ data: { accountId: owner.id, originKind: "direct", causeKind: null,

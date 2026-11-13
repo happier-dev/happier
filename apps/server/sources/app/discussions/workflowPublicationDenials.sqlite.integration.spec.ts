@@ -49,7 +49,7 @@ it.each([
     if (branch === 'context' || branch === 'read_only') {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         await db.discussion.update({ where: { id: discussionId }, data: { ownerAccountId: owner.id } });
-        if (branch === 'read_only') await db.discussionAccountGrant.create({ data: {
+        if (branch === 'read_only') await db.discussionGrant.create({ data: { principalKind: 'account' as const,
             discussionId, accountId: input.actorAccountId, accessLevel: 'view', createdByAccountId: owner.id,
         } });
     }

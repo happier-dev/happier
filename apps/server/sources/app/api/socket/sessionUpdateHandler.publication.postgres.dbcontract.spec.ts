@@ -343,7 +343,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('C
         const f = await fixture();
         const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
         await db.machine.update({ where: { id: f.machine.id }, data: { accountId: custodian.id } });
-        await db.machineAccountGrant.create({ data: { machineId: f.machine.id, accountId: f.owner.id,
+        await db.machineGrant.create({ data: { principalKind: 'account' as const, machineId: f.machine.id, accountId: f.owner.id,
             accessLevel: 'view', createdByAccountId: custodian.id } });
         await expect(resolveSessionScopedSocketBinding({ userId: f.owner.id, sessionId: f.session.id, machineId: f.machine.id }))
             .resolves.toMatchObject({ ok: true });

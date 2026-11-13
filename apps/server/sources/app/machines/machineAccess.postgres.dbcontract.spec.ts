@@ -111,7 +111,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         const artifact = await db.artifact.create({ data: { id: randomUUID(), accountId: owner.id,
             header: new TextEncoder().encode('opaque header'), body: new TextEncoder().encode('opaque body'),
             dataEncryptionKey: new Uint8Array(wrap(owner.contentPublicKey!)) } });
-        await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id,
+        await db.artifactGrant.create({ data: { principalKind: 'team' as const, artifactId: artifact.id, teamId: team.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         const actor = { actorAccountId: owner.id, artifactId: artifact.id };
         const census = await inTx(tx => readArtifactRecipientCensusInTx(tx, actor));

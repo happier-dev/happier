@@ -126,7 +126,7 @@ describe("Discussion grant service (SQLite)", () => {
         expect(await createDiscussion({ actorAccountId: owner.id, authentication, request: sharedRequest }))
             .toEqual({ ok: false, error: 'discussion_content_unavailable' });
         expect(await db.discussion.count({ where: { createdByAccountId: owner.id } })).toBe(1);
-        expect(await db.discussionAccountGrant.count({ where: { discussion: { createdByAccountId: owner.id } } })).toBe(0);
+        expect(await db.discussionGrant.count({ where: { principalKind: 'account', discussion: { createdByAccountId: owner.id } } })).toBe(0);
         expect(await db.discussionParticipant.count({ where: { discussion: { createdByAccountId: owner.id } } })).toBe(1);
         expect(await db.discussionMessage.count({ where: { discussion: { createdByAccountId: owner.id } } })).toBe(1);
         const prepared = await createDiscussion({ actorAccountId: owner.id, authentication, request: { ...sharedRequest,

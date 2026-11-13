@@ -369,7 +369,7 @@ describe("auth (API tokens)", () => {
                     body: decodeBase64(encodePlainArtifactStoredContent({})),
                     dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
                 if (!created.ok) throw new Error(created.error);
-                await db.artifactTeamGrant.create({ data: { artifactId: created.artifact.id, teamId: team.id,
+                await db.artifactGrant.create({ data: { principalKind: 'team' as const, artifactId: created.artifact.id, teamId: team.id,
                     accessLevel: "admin", createdByAccountId: creator.id } });
                 return { contentArtifactId: created.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
             };

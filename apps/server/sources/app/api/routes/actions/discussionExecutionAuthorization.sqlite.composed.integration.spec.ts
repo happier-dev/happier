@@ -399,7 +399,7 @@ describe('signed Account Discussion HTTP admission', () => {
                 headers: { authorization: `Bearer ${f.presentUserToken}` } });
             expect(direct.statusCode, direct.body).toBe(200);
             expect(direct.body).toContain(privateText);
-            if (artifactId) await db.artifactAccountGrant.create({ data: { artifactId, accountId: bob.id,
+            if (artifactId) await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId, accountId: bob.id,
                 accessLevel: 'view', createdByAccountId: f.account.id } });
             if (sourceSessionId) await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: sourceSessionId,
                 createdByAccountId: f.account.id, accountId: bob.id, accessLevel: 'view' } });

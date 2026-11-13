@@ -71,7 +71,7 @@ describe('Artifact inventory through PostgreSQL wire protocol', () => {
         };
         expect(await read(reader.id)).toEqual({ ok: false, error: 'artifact_not_found' });
         expect(await read(owner.id)).toMatchObject({ ok: true, artifact: { id: artifact.id, access: 'owner', publicAudience: 'none' } });
-        await db.artifactAccountGrant.create({ data: { artifactId: artifact.id, accountId: reader.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: artifact.id, accountId: reader.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         expect(await read(reader.id)).toMatchObject({ ok: true, artifact: { body: artifact.body, access: 'view' } });
         await db.account.update({ where: { id: owner.id }, data: { encryptionMode: 'e2ee' } });
@@ -117,7 +117,7 @@ describe('Artifact inventory through PostgreSQL wire protocol', () => {
                 admittedSource: admission, readers });
         };
         expect(await capturedReaders()).toEqual([]);
-        await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id,
+        await db.artifactGrant.create({ data: { principalKind: 'team' as const, artifactId: artifact.id, teamId: team.id,
             accessLevel: 'admin', createdByAccountId: owner.id } });
         expect(await capturedReaders()).toEqual(readers);
         const pageEnv = snapshotEnv();
@@ -140,7 +140,7 @@ describe('Artifact inventory through PostgreSQL wire protocol', () => {
             expect(await page()).toMatchObject({ ok: true, coverage: 'complete',
                 items: [{ environment: { id: environment.id } }], artifacts: [{ id: artifact.id }] });
             expect.soft(dataStatements(), 'embedded Home page includes all Source and Artifact admission').toHaveLength(1);
-            await client.artifactTeamGrant.update({ where: { artifactId_teamId: { artifactId: artifact.id, teamId: team.id } },
+            await client.artifactGrant.update({ where: { principalKind: 'team', artifactId_teamId: { artifactId: artifact.id, teamId: team.id } },
                 data: { accessLevel: 'edit' } });
             statements.length = 0;
             expect(await page()).toMatchObject({ ok: true, coverage: 'partial', items: [], artifacts: [] });
@@ -169,11 +169,11 @@ describe('Artifact inventory through PostgreSQL wire protocol', () => {
             body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ value: 'fixture' })),
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER), headerVersion: 1, bodyVersion: 1,
         } })));
-        await db.artifactTeamGrant.create({ data: { artifactId: teamArtifact.id, teamId: team.id,
+        await db.artifactGrant.create({ data: { principalKind: 'team' as const, artifactId: teamArtifact.id, teamId: team.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
-        await db.artifactGroupGrant.create({ data: { artifactId: groupArtifact.id, teamGroupId: group.id,
+        await db.artifactGrant.create({ data: { principalKind: 'group' as const, artifactId: groupArtifact.id, teamGroupId: group.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
-        await db.artifactAccountGrant.create({ data: { artifactId: directArtifact.id, accountId: guest.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: directArtifact.id, accountId: guest.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         const artifactIds = [teamArtifact.id, groupArtifact.id, directArtifact.id];
         for (const [accountId, expectedIds] of [[guest.id, [groupArtifact.id, directArtifact.id]], [member.id, [teamArtifact.id]]] as const) {
@@ -194,9 +194,9 @@ describe('Artifact inventory through PostgreSQL wire protocol', () => {
             expect.soft(new Set(capturedIds), `captured audience for ${accountId}`).toEqual(new Set(expectedIds));
             const arms = resourceGrantArmWheres(accountId);
             const [accountRows, teamRows, groupRows] = await Promise.all([
-                db.artifactAccountGrant.findMany({ where: { artifactId: { in: artifactIds }, ...arms.account }, select: { artifactId: true } }),
-                db.artifactTeamGrant.findMany({ where: { artifactId: { in: artifactIds }, ...arms.team }, select: { artifactId: true } }),
-                db.artifactGroupGrant.findMany({ where: { artifactId: { in: artifactIds }, ...arms.group }, select: { artifactId: true } }),
+                db.artifactGrant.findMany({ where: { principalKind: 'account', artifactId: { in: artifactIds }, ...arms.account }, select: { artifactId: true } }),
+                db.artifactGrant.findMany({ where: { principalKind: 'team', artifactId: { in: artifactIds }, ...arms.team }, select: { artifactId: true } }),
+                db.artifactGrant.findMany({ where: { principalKind: 'group', artifactId: { in: artifactIds }, ...arms.group }, select: { artifactId: true } }),
             ]);
             expect.soft(new Set([...accountRows, ...teamRows, ...groupRows].map(row => row.artifactId)),
                 `Prisma grant audience for ${accountId}`).toEqual(new Set(expectedIds));
@@ -475,16 +475,16 @@ describe('Artifact inventory through PostgreSQL wire protocol', () => {
             body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ value: 'fixture' })),
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER), headerVersion: 1, bodyVersion: 1,
         } })));
-        await db.artifactAccountGrant.create({ data: { artifactId: artifacts[0].id, accountId: reader.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: artifacts[0].id, accountId: reader.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         const team = await db.team.create({ data: { name: 'Inventory Team' } });
         const member = await db.teamMembership.create({ data: { teamId: team.id, accountId: reader.id, role: 'member' } });
         const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Inventory Group', nameKey: randomUUID() } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id,
             teamMembershipId: member.id, nativeContribution: true } });
-        await db.artifactTeamGrant.create({ data: { artifactId: artifacts[1].id, teamId: team.id,
+        await db.artifactGrant.create({ data: { principalKind: 'team' as const, artifactId: artifacts[1].id, teamId: team.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
-        await db.artifactGroupGrant.create({ data: { artifactId: artifacts[2].id, teamGroupId: group.id,
+        await db.artifactGrant.create({ data: { principalKind: 'group' as const, artifactId: artifacts[2].id, teamGroupId: group.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         await withAuthenticatedTestApp(artifactsRoutes, async app => {
             const selectedIds = [...artifacts.map(row => row.id), ...Array.from({ length: 34997 }, (_, index) => `missing-${index}`)];
@@ -520,7 +520,7 @@ describe('Artifact inventory through PostgreSQL wire protocol', () => {
             expect((await read()).items).toMatchObject([{ id: artifacts[0].id, access: 'view' }]);
             expect(await readBatch()).toMatchObject([{ ok: true, artifact: { access: 'view' } },
                 { ok: false, error: 'artifact_not_found' }, { ok: false, error: 'artifact_not_found' }]);
-            await db.artifactAccountGrant.deleteMany({ where: { accountId: reader.id } });
+            await db.artifactGrant.deleteMany({ where: { principalKind: 'account', accountId: reader.id } });
             expect((await read()).items).toEqual([]);
             expect(await readBatch()).toMatchObject(artifacts.map(() => ({ ok: false, error: 'artifact_not_found' })));
         });

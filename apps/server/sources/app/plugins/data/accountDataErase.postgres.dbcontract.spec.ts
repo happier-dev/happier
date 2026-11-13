@@ -250,7 +250,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
                         id: `machine-${suffix}`, accountId: shape === 'owned-machine' ? accountId : ownerId, metadata: '{}',
                     } });
                     machineId = machine.id;
-                    await db.machineAccountGrant.create({ data: { machineId, accountId: recipientId,
+                    await db.machineGrant.create({ data: { principalKind: 'account' as const, machineId, accountId: recipientId,
                         createdByAccountId: accountId, accessLevel: 'view' } });
                 } else if (shape === 'authored-session') {
                     const session = await db.session.create({ data: {
@@ -268,9 +268,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
                         titleContent: { t: 'plain', v: 'Retained discussion' }, lastMessageAt: new Date(),
                     } });
                     discussionId = discussion.id;
-                    await db.discussionAccountGrant.create({ data: { discussionId, accountId: recipientId,
+                    await db.discussionGrant.create({ data: { principalKind: 'account' as const, discussionId, accountId: recipientId,
                         createdByAccountId: accountId, accessLevel: 'view' } });
-                    if (shape === 'foreign-discussion') await db.discussionAccountGrant.create({ data: {
+                    if (shape === 'foreign-discussion') await db.discussionGrant.create({ data: { principalKind: 'account' as const,
                         discussionId, accountId, createdByAccountId: ownerId, accessLevel: 'edit',
                     } });
                 }
@@ -279,7 +279,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
                 if (machineId) {
                     expect(await db.machine.findUnique({ where: { id: machineId }, select: { accountId: true } }))
                         .toEqual(shape === 'owned-machine' ? null : { accountId: ownerId });
-                    expect(await db.machineAccountGrant.count({ where: { machineId } })).toBe(0);
+                    expect(await db.machineGrant.count({ where: { principalKind: 'account', machineId } })).toBe(0);
                 } else if (sessionId) {
                     expect(await db.session.findUniqueOrThrow({ where: { id: sessionId }, select: { accountId: true } }))
                         .toEqual({ accountId: ownerId });
@@ -292,7 +292,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
                 } else {
                     expect(await db.discussion.findUniqueOrThrow({ where: { id: discussionId }, select: { ownerAccountId: true } }))
                         .toEqual({ ownerAccountId: ownerId });
-                    expect(await db.discussionAccountGrant.findMany({ where: { discussionId },
+                    expect(await db.discussionGrant.findMany({ where: { principalKind: 'account', discussionId },
                         select: { accountId: true, createdByAccountId: true, accessLevel: true } }))
                         .toEqual([{ accountId: recipientId, createdByAccountId: ownerId, accessLevel: 'view' }]);
                 }
@@ -333,7 +333,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
             ownerAccountId: erasedAccountId, encryptionMode: 'plain', dataEncryptionKey: new Uint8Array(),
             creationLocalId: fixtureId, creationEqualityEvidenceV1: {},
             titleContent: { t: 'plain', v: 'Shared before retirement' }, lastMessageAt: new Date(),
-            accountGrants: { create: { accountId: ownerAccountId, createdByAccountId: erasedAccountId, accessLevel: 'view' } },
+            grants: { create: { principalKind: 'account', accountId: ownerAccountId, createdByAccountId: erasedAccountId, accessLevel: 'view' } },
         } }) : null;
         const authorAccountId = shape === 'received-session' ? erasedAccountId : ownerAccountId;
         const localId = randomUUID();

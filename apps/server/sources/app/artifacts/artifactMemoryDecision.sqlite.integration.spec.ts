@@ -101,7 +101,7 @@ describe('Memory decision source disclosure at the Artifact HTTP boundary', () =
         const reader = await db.account.create({ data: { encryptionMode: 'plain' } });
         const original = await source(owner.id);
         const memory = await artifact(owner.id);
-        await db.artifactAccountGrant.create({ data: { artifactId: memory.id, accountId: reader.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: memory.id, accountId: reader.id, accessLevel: 'view', createdByAccountId: owner.id } });
         await withAuthenticatedTestApp(artifactsRoutes, async app => {
             const write = () => app.inject({ method: 'POST', url: `/v1/artifacts/${memory.id}/memory-decision`, headers: { ...protocolHeaders, 'x-test-user-id': owner.id },
                 payload: { body: plain({ body: 'decision' }), expectedBodyVersion: 1, memoryDecisionSource: original.ref } });
@@ -136,7 +136,7 @@ describe('Memory decision source disclosure at the Artifact HTTP boundary', () =
         if (!sourceDoc.ok) throw new Error(sourceDoc.error);
         const doc = { ref: { kind: 'doc' as const, serverId: 'test-home', artifactId: sourceDoc.artifact.id },
             revision: { headerVersion: sourceDoc.artifact.headerVersion, bodyVersion: sourceDoc.artifact.bodyVersion } };
-        for (const accountId of [owner.id, reader.id]) await db.artifactAccountGrant.create({ data: {
+        for (const accountId of [owner.id, reader.id]) await db.artifactGrant.create({ data: { principalKind: 'account' as const,
             artifactId: doc.ref.artifactId, accountId, accessLevel: 'view', createdByAccountId: docOwner.id,
         } });
         const created = await createDiscussion({ actorAccountId: owner.id, authentication, request: {
@@ -183,7 +183,7 @@ describe('Memory decision source disclosure at the Artifact HTTP boundary', () =
             expect(unanchored.statusCode, unanchored.body).toBe(200);
             expect(await db.artifact.findUnique({ where: { id: unanchoredId }, select: { bodyVersion: true } })).toEqual({ bodyVersion: 1 });
 
-            await db.artifactAccountGrant.create({ data: { artifactId: memory.id, accountId: reader.id, accessLevel: 'edit', createdByAccountId: owner.id } });
+            await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: memory.id, accountId: reader.id, accessLevel: 'edit', createdByAccountId: owner.id } });
             const update = (actorAccountId: string, ref = memoryDecisionSource, expectedBodyVersion = 1) => app.inject({ method: 'POST', url: `/v1/artifacts/${memory.id}/memory-decision`,
                 headers: { ...protocolHeaders, 'x-test-user-id': actorAccountId },
                 payload: { body: plain({ body: 'decision' }), expectedBodyVersion, memoryDecisionSource: ref } });
@@ -194,7 +194,7 @@ describe('Memory decision source disclosure at the Artifact HTTP boundary', () =
             expect(await inviteDiscussionParticipant({ actorAccountId: owner.id, discussionId, authentication,
                 request: { participant: { kind: 'account', accountId: reader.id } } })).toMatchObject({ ok: true });
             // The saver still reads the Doc; only the other Memory/Discussion member loses its source grant.
-            await db.artifactAccountGrant.delete({ where: { artifactId_accountId: { artifactId: doc.ref.artifactId, accountId: reader.id } } });
+            await db.artifactGrant.delete({ where: { principalKind: 'account', artifactId_accountId: { artifactId: doc.ref.artifactId, accountId: reader.id } } });
             const beforeDenied = await db.artifact.findUniqueOrThrow({ where: { id: memory.id } });
             for (const ref of [memoryDecisionSource, inheritedSource]) {
                 const docDenied = await update(owner.id, ref);
@@ -202,7 +202,7 @@ describe('Memory decision source disclosure at the Artifact HTTP boundary', () =
                 expect(docDenied.json()).toEqual({ error: 'memory_decision_disclosure_denied' });
                 expect(await db.artifact.findUniqueOrThrow({ where: { id: memory.id } })).toEqual(beforeDenied);
             }
-            await db.artifactAccountGrant.create({ data: { artifactId: doc.ref.artifactId, accountId: reader.id,
+            await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: doc.ref.artifactId, accountId: reader.id,
                 accessLevel: 'view', createdByAccountId: docOwner.id } });
             const shared = await update(reader.id);
             expect(shared.statusCode, shared.body).toBe(200);
@@ -210,7 +210,7 @@ describe('Memory decision source disclosure at the Artifact HTTP boundary', () =
             const inherited = await update(owner.id, inheritedSource, 2);
             expect(inherited.statusCode, inherited.body).toBe(200);
             expect(await db.artifact.findUnique({ where: { id: memory.id }, select: { bodyVersion: true } })).toEqual({ bodyVersion: 3 });
-            await db.artifactAccountGrant.delete({ where: { artifactId_accountId: { artifactId: doc.ref.artifactId, accountId: owner.id } } });
+            await db.artifactGrant.delete({ where: { principalKind: 'account', artifactId_accountId: { artifactId: doc.ref.artifactId, accountId: owner.id } } });
             const sourceRevokedId = randomUUID();
             const sourceRevoked = await app.inject({ method: 'POST', url: memoryDecisionCreateUrl,
                 headers: { ...protocolHeaders, 'x-test-user-id': owner.id }, payload: { id: sourceRevokedId,
@@ -253,7 +253,7 @@ describe('Memory decision source disclosure at the Artifact HTTP boundary', () =
         const reader = await db.account.create({ data: { encryptionMode: 'plain' } });
         const original = await source(owner.id);
         const memory = await artifact(owner.id);
-        await db.artifactAccountGrant.create({ data: { artifactId: memory.id, accountId: reader.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: memory.id, accountId: reader.id, accessLevel: 'view', createdByAccountId: owner.id } });
         const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
         const socket = Object.assign(createAuthenticatedFakeSocket(), { handshake: { auth: { token } }, disconnect: vi.fn() });
         artifactUpdateHandler(owner.id, socket as unknown as Socket);

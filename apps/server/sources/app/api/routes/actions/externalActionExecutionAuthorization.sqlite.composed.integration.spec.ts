@@ -414,7 +414,7 @@ describe("external Action execution authorization", () => {
             keyRecipientAccountId = recipient.id;
             // Seed the publication's audience grant with the historical receipt below;
             // ordinary Artifact grant mutation cannot change a receipt's audience.
-            await db.artifactAccountGrant.create({ data: { artifactId: receiptArtifact.artifact.id,
+            await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: receiptArtifact.artifact.id,
                 accountId: recipient.id, accessLevel: 'view', createdByAccountId: fixture.account.id } });
             expect(await db.artifactKeyEnvelope.count({ where: { artifactId: receiptArtifact.artifact.id,
                 recipientAccountId: recipient.id } })).toBe(0);
@@ -626,7 +626,7 @@ describe("external Action execution authorization", () => {
             const update = { body: encodePlainArtifactStoredContent({ body: '{"candidate":2}' }), expectedBodyVersion: 1 };
             if (scenario === 'audience') {
                 const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
-                await db.artifactAccountGrant.create({ data: { artifactId: scope.contentArtifactId, accountId: outsider.id,
+                await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: scope.contentArtifactId, accountId: outsider.id,
                     accessLevel: 'view', createdByAccountId: fixture.account.id } });
                 const foreign = await send('POST', path, update);
                 expect(foreign.statusCode).toBe(403);
@@ -775,7 +775,7 @@ describe("external Action execution authorization", () => {
                 accessLevel: ownerKind === 'team' ? 'admin' as const : 'view' as const };
             // Creation publishes the admitted Environment audience without a
             // caller read of the existing Environment or a follow-up grant write.
-            expect(await db.artifactTeamGrant.findUnique({ where: { artifactId_teamId: {
+            expect(await db.artifactGrant.findUnique({ where: { principalKind: 'team', artifactId_teamId: {
                 artifactId: scope.contentArtifactId, teamId: team.id,
             } } })).toMatchObject({ accessLevel: grant.accessLevel });
             expect((await send('PUT', `${path}/access/grants`, { ...grant, principal: { kind: 'team', teamId: wrongTeam.id } })).statusCode).toBe(401);
@@ -822,12 +822,12 @@ describe("external Action execution authorization", () => {
             if (ownerKind === 'account') {
                 // A private candidate left by an earlier preparation is repaired
                 // by its next admitted write, before publishing replacement bytes.
-                await db.artifactTeamGrant.delete({ where: { artifactId_teamId: {
+                await db.artifactGrant.delete({ where: { principalKind: 'team', artifactId_teamId: {
                     artifactId: scope.contentArtifactId, teamId: team.id,
                 } } });
             }
             expect((await send('POST', path, { body: await seal({ body: '{"prepared":true}' }), expectedBodyVersion: 1 })).statusCode).toBe(200);
-            expect(await db.artifactTeamGrant.findUnique({ where: { artifactId_teamId: {
+            expect(await db.artifactGrant.findUnique({ where: { principalKind: 'team', artifactId_teamId: {
                 artifactId: scope.contentArtifactId, teamId: team.id,
             } } })).toMatchObject({ accessLevel: grant.accessLevel });
             const link = targetArtifact ? await db.deploymentTargetLink.findFirstOrThrow({ where: { environmentId: environment.environmentId,
@@ -889,10 +889,10 @@ describe("external Action execution authorization", () => {
                         kind: 'v1:other:deployment-receipt.v1',
                         header: encodeBase64(await sealSessionDataKeyBundleV0({ kind: 'deployment-receipt.v1', title: 'Use redeploy' }, contentKey)),
                         body: encodeBase64(await sealSessionDataKeyBundleV0({ body: '{}' }, contentKey)), dataEncryptionKey: recipientEnvelope })).statusCode).toBe(200);
-                    expect(await db.artifactAccountGrant.findUnique({ where: { artifactId_accountId: {
+                    expect(await db.artifactGrant.findUnique({ where: { principalKind: 'account', artifactId_accountId: {
                         artifactId: candidateId, accountId: fixture.account.id,
                     } } })).toMatchObject({ accessLevel: 'admin' });
-                    expect(await db.artifactTeamGrant.findUnique({ where: { artifactId_teamId: {
+                    expect(await db.artifactGrant.findUnique({ where: { principalKind: 'team', artifactId_teamId: {
                         artifactId: candidateId, teamId: team.id,
                     } } })).toMatchObject({ accessLevel: 'view' });
                     expect((await recipientSend('PUT', `/v1/artifacts/${candidateId}/access/grants`, {

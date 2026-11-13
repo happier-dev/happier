@@ -1050,7 +1050,7 @@ describe('finite managed wake original Action authority (real storage)', () => {
             machineId: test.guest.id, actionId: sessionInput ? SESSION_SPAWN_NEW_ACTION_ID_V1 : 'projects.script.run', requestId: test.requestId,
             ...(sessionInput ? { machineRuntimeDemand: 'required' as const } : {}),
             requestEnvelopeDigest: 'd'.repeat(43), target: { kind: 'machine', machineId: test.guest.id } });
-        if (disposition === 'wrong-requester') await db.machineAccountGrant.deleteMany({ where: {
+        if (disposition === 'wrong-requester') await db.machineGrant.deleteMany({ where: { principalKind: 'account',
             machineId: { in: [test.guest.id, test.controller.id] }, accountId: requester.id,
         } });
         if (disposition === 'no-manage') await inTx(tx => setMachineAccessGrantInTx(tx, {
@@ -1390,7 +1390,7 @@ describe('finite managed wake original Action authority (real storage)', () => {
         const test = await setup();
         const keys = tweetnacl.box.keyPair();
         const requester = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding(keys.publicKey) } });
-        await db.machineAccountGrant.createMany({ data: [test.controller, test.guest].map(machine => ({
+        await db.machineGrant.createMany({ data: [test.controller, test.guest].map(machine => ({ principalKind: 'account' as const,
             machineId: machine.id, accountId: requester.id, accessLevel: 'admin' as const, createdByAccountId: test.account.id,
         })) });
         const origin = await auth.mintExternalActionExecutionAuthorization({ accountId: requester.id,

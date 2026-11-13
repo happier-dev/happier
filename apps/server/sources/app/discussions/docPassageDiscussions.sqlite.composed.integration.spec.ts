@@ -61,7 +61,7 @@ describe('Doc passage Discussions through the canonical writer and client codec 
 
     it('projects only active matching Doc roots through the scoped list and preserves explicit source unavailability', async () => {
         const { owner, reader, doc, request } = await fixture();
-        await db.artifactAccountGrant.create({ data: { artifactId: doc.ref.artifactId, accountId: reader.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: doc.ref.artifactId, accountId: reader.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         const create = async (anchorDoc = doc) => {
             const result = await createDiscussion({ authentication, actorAccountId: owner.id, request: {
@@ -86,7 +86,7 @@ describe('Doc passage Discussions through the canonical writer and client codec 
         if (!other.ok) throw new Error(other.error);
         const otherDoc = { ref: { ...doc.ref, artifactId: other.artifact.id },
             revision: { headerVersion: other.artifact.headerVersion, bodyVersion: other.artifact.bodyVersion } };
-        await db.artifactAccountGrant.create({ data: { artifactId: other.artifact.id, accountId: reader.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: other.artifact.id, accountId: reader.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         const later = await postDiscussionMessage({ authentication, actorAccountId: owner.id, discussionId: first.discussion.id,
             request: DiscussionPostRequestV1Schema.parse({ localId: randomUUID(), content: { t: 'plain', v: {
@@ -94,7 +94,7 @@ describe('Doc passage Discussions through the canonical writer and client codec 
                 content: text('PRIVATE_LATER_CONTENT'),
             } }, replyTarget: { kind: 'doc_passage', doc: otherDoc }, mentionedAccountIds: [] }) });
         if (!later.ok) throw new Error(later.error);
-        await db.artifactAccountGrant.delete({ where: { artifactId_accountId: { artifactId: other.artifact.id, accountId: reader.id } } });
+        await db.artifactGrant.delete({ where: { principalKind: 'account', artifactId_accountId: { artifactId: other.artifact.id, accountId: reader.id } } });
         const app = Fastify().withTypeProvider<ZodTypeProvider>();
         app.setValidatorCompiler(validatorCompiler);
         app.setSerializerCompiler(serializerCompiler);
@@ -149,7 +149,7 @@ describe('Doc passage Discussions through the canonical writer and client codec 
             const next = await app.inject({ method: 'GET', url: `/v1/discussions?${scope}&limit=1&cursor=${encodeURIComponent(page.json().nextCursor)}` });
             expect(new Set([...page.json().discussions, ...next.json().discussions].map((row: { id: string }) => row.id)))
                 .toEqual(new Set([first.discussion.id, second.discussion.id]));
-            await db.artifactAccountGrant.delete({ where: { artifactId_accountId: { artifactId: doc.ref.artifactId, accountId: reader.id } } });
+            await db.artifactGrant.delete({ where: { principalKind: 'account', artifactId_accountId: { artifactId: doc.ref.artifactId, accountId: reader.id } } });
             const unavailable = await app.inject({ method: 'GET', url: `/v1/discussions?${scope}` });
             expect(unavailable.statusCode).toBe(200);
             expect(unavailable.json().discussions).toHaveLength(2);
@@ -172,7 +172,7 @@ describe('Doc passage Discussions through the canonical writer and client codec 
         const { owner, reader, doc, passage } = await fixture();
         const colleague = await db.account.create({ data: { encryptionMode: 'plain' } });
         if (kind === 'account') {
-            await db.artifactAccountGrant.createMany({ data: [reader.id, colleague.id].map(accountId => ({
+            await db.artifactGrant.createMany({ data: [reader.id, colleague.id].map(accountId => ({ principalKind: 'account' as const,
                 artifactId: doc.ref.artifactId, accountId, accessLevel: 'view', createdByAccountId: owner.id,
             })) });
         } else {
@@ -180,7 +180,7 @@ describe('Doc passage Discussions through the canonical writer and client codec 
             await db.teamMembership.createMany({ data: [owner.id, reader.id, colleague.id].map(accountId => ({
                 teamId: team.id, accountId, role: accountId === owner.id ? 'owner' : 'member',
             })) });
-            await db.artifactTeamGrant.create({ data: { artifactId: doc.ref.artifactId, teamId: team.id,
+            await db.artifactGrant.create({ data: { principalKind: 'team' as const, artifactId: doc.ref.artifactId, teamId: team.id,
                 accessLevel: 'view', createdByAccountId: owner.id } });
         }
         // Use the same public Doc action's child intent as the inline composer, with no chosen invitees.
@@ -259,8 +259,8 @@ describe('Doc passage Discussions through the canonical writer and client codec 
         const anchor = { kind: 'doc', doc };
         expect(DiscussionSummaryV1Schema.parse(created.value.discussion)).toMatchObject({ anchor });
         expect(await getDiscussion({ authentication, actorAccountId: reader.id, discussionId })).toMatchObject({ ok: false });
-        expect(await db.artifactAccountGrant.count({ where: { artifactId: doc.ref.artifactId } })).toBe(0);
-        expect(await db.discussionAccountGrant.count({ where: { discussionId } })).toBe(0);
+        expect(await db.artifactGrant.count({ where: { principalKind: 'account', artifactId: doc.ref.artifactId } })).toBe(0);
+        expect(await db.discussionGrant.count({ where: { principalKind: 'account', discussionId } })).toBe(0);
         await db.artifact.delete({ where: { id: doc.ref.artifactId } });
         const opened = await getDiscussion({ authentication, actorAccountId: owner.id, discussionId });
         expect(opened).toMatchObject({ ok: true, value: { discussion: { id: discussionId, anchor } } });
@@ -319,7 +319,7 @@ describe('Doc passage Discussions through the canonical writer and client codec 
 
     it.each(['first comment', 'reply'] as const)('admits a Doc reader’s invited Session in the %s before its proposal, without self-invitation', async entry => {
         const { owner, reader, doc, passage, request } = await fixture();
-        await db.artifactAccountGrant.create({ data: { artifactId: doc.ref.artifactId, accountId: reader.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: doc.ref.artifactId, accountId: reader.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         const session = await db.session.create({ data: { accountId: reader.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
         const content = { v: 1, parts: [{ t: 'mention', participant: { kind: 'session', sessionId: session.id } },
@@ -397,7 +397,7 @@ describe('Doc passage Discussions through the canonical writer and client codec 
 
     it.each(['root', 'proposal', 'reply'] as const)('withholds latest %s content from list/get summaries after Doc revocation', async latest => {
         const { owner, reader, doc, passage, request } = await fixture();
-        await db.artifactAccountGrant.create({ data: { artifactId: doc.ref.artifactId,
+        await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: doc.ref.artifactId,
             accountId: reader.id, accessLevel: 'view', createdByAccountId: owner.id } });
         const created = await createDiscussion({ authentication, actorAccountId: owner.id,
             request: { ...request, participants: [{ kind: 'account', accountId: reader.id }] } });
@@ -417,7 +417,7 @@ describe('Doc passage Discussions through the canonical writer and client codec 
         expect(admitted).toMatchObject({ ok: true });
         expect(JSON.stringify(admitted)).toContain('again');
         expect(await listDiscussions({ authentication, actorAccountId: reader.id })).toMatchObject({ ok: true });
-        await db.artifactAccountGrant.delete({ where: { artifactId_accountId: { artifactId: doc.ref.artifactId, accountId: reader.id } } });
+        await db.artifactGrant.delete({ where: { principalKind: 'account', artifactId_accountId: { artifactId: doc.ref.artifactId, accountId: reader.id } } });
         const deniedGet = await getDiscussion(read);
         const deniedList = await listDiscussions({ authentication, actorAccountId: reader.id });
         expect(deniedGet).toMatchObject({ ok: true });
@@ -431,7 +431,7 @@ describe('Doc passage Discussions through the canonical writer and client codec 
 
     it('withholds quoted roots, inherited replies and retry acknowledgements after source revocation', async () => {
         const { owner, reader, doc, request } = await fixture();
-        await db.artifactAccountGrant.create({ data: { artifactId: doc.ref.artifactId,
+        await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: doc.ref.artifactId,
             accountId: reader.id, accessLevel: 'view', createdByAccountId: owner.id } });
         const created = await createDiscussion({ authentication, actorAccountId: owner.id,
             request: { ...request, participants: [{ kind: 'account', accountId: reader.id }] } });
@@ -442,7 +442,7 @@ describe('Doc passage Discussions through the canonical writer and client codec 
             request: { localId: randomUUID(), content: { t: 'plain', v: text('Context inherited from the root') }, mentionedAccountIds: [],
                 replyTarget: { kind: 'message', messageId: created.value.firstMessage.id } } });
         expect(committedReply).toMatchObject({ ok: true });
-        await db.artifactAccountGrant.delete({ where: { artifactId_accountId: { artifactId: doc.ref.artifactId, accountId: reader.id } } });
+        await db.artifactGrant.delete({ where: { principalKind: 'account', artifactId_accountId: { artifactId: doc.ref.artifactId, accountId: reader.id } } });
         const deniedRead = await readDiscussionMessages({ authentication, actorAccountId: reader.id, discussionId });
         expect(deniedRead).toMatchObject({ ok: true, value: { messages: [], hasMoreOlder: false } });
         expect(JSON.stringify(deniedRead)).not.toContain('again');
@@ -465,7 +465,7 @@ describe('Doc passage Discussions through the canonical writer and client codec 
 
     it.each(['revoke', 'delete'] as const)('pages independent chat past unavailable Doc roots and inherited replies after source %s', async change => {
         const { owner, reader, doc, request } = await fixture();
-        await db.artifactAccountGrant.create({ data: { artifactId: doc.ref.artifactId,
+        await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: doc.ref.artifactId,
             accountId: reader.id, accessLevel: 'view', createdByAccountId: owner.id } });
         const created = await createDiscussion({ authentication, actorAccountId: owner.id, request: {
             ...request, participants: [{ kind: 'account', accountId: reader.id }],
@@ -488,7 +488,7 @@ describe('Doc passage Discussions through the canonical writer and client codec 
         expect(await readDiscussionMessages(read)).toMatchObject({ ok: true, value: { messages: [
             { seq: 1 }, { seq: 2 }, { seq: 3 }, { seq: 4 },
         ] } });
-        if (change === 'revoke') await db.artifactAccountGrant.delete({ where: {
+        if (change === 'revoke') await db.artifactGrant.delete({ where: { principalKind: 'account',
             artifactId_accountId: { artifactId: doc.ref.artifactId, accountId: reader.id },
         } });
         else await db.artifact.delete({ where: { id: doc.ref.artifactId } });
@@ -533,7 +533,7 @@ describe('Doc passage Discussions through the canonical writer and client codec 
         const envelope = (dataKey: Uint8Array) => new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey,
             recipientPublicKey: recipientKeys.publicKey, randomBytes: tweetnacl.randomBytes }));
         const recipientFingerprint = computeContentPublicKeyFingerprint(recipientKeys.publicKey);
-        await db.artifactAccountGrant.create({ data: { artifactId: doc.ref.artifactId, accountId: recipient.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: doc.ref.artifactId, accountId: recipient.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         await db.artifactKeyEnvelope.create({ data: { artifactId: doc.ref.artifactId, recipientAccountId: recipient.id,
             encryptedDataKey: envelope(docKey), recipientContentPublicKeyFingerprint: recipientFingerprint } });

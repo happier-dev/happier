@@ -1699,7 +1699,7 @@ describe("plugin collection UI query route", () => {
         expect((await write(taskRef, "shared", null, projection("shared", "original"))).status).toBe("updated");
         expect((await write(taskRef, "private-source", null, projection("private-source", "private-occupied"))).status).toBe("updated");
         const source = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId: owner, collectionId: "tasks", rowId: "shared" } });
-        await db.pluginCollectionAccountGrant.create({ data: { rowDbId: source.id, accountId: recipient,
+        await db.pluginCollectionGrant.create({ data: { principalKind: 'account' as const, rowDbId: source.id, accountId: recipient,
             accessLevel: "edit", createdByAccountId: owner } });
         await withPluginDataApp(async app => {
             const put = (target: string, expectedRevision = 1) => app.inject({ method: "POST", url: "/v1/plugins/data/sharing/put",
@@ -1737,7 +1737,7 @@ describe("plugin collection UI query route", () => {
             writerContext: { schemaVersion: ref.schemaVersion, contractDigest: ref.contractDigest }, operations: [{ kind: "put", rowId: "shared",
                 expectedRevision: "absent", expectedAbsenceEpoch: 0, content: { t: "plain", v: {} }, projection: projection("host-original") }] } })).status).toBe("updated");
         const source = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId: owner, rowId: "shared" } });
-        await db.pluginCollectionAccountGrant.create({ data: { rowDbId: source.id, accountId: recipient,
+        await db.pluginCollectionGrant.create({ data: { principalKind: 'account' as const, rowDbId: source.id, accountId: recipient,
             accessLevel: "edit", createdByAccountId: owner } });
         await withPluginDataApp(async app => {
             for (const machineId of ["host-private", "host-missing", "host-original"]) {
@@ -1758,7 +1758,7 @@ describe("plugin collection UI query route", () => {
         ] });
         await createAccount({ id: recipient, mode: "plain", seq: 0 });
         const row = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId: owner, rowId: "budget-row" } });
-        await db.pluginCollectionAccountGrant.create({ data: { rowDbId: row.id, accountId: recipient, accessLevel: "edit", createdByAccountId: owner } });
+        await db.pluginCollectionGrant.create({ data: { principalKind: 'account' as const, rowDbId: row.id, accountId: recipient, accessLevel: "edit", createdByAccountId: owner } });
         await withPluginDataApp(async app => {
             const request = { ownerAccountId: owner, pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, rowId: row.rowId,
                 writerContext: ref, expectedRevision: 1, content: { t: "plain", v: { privateNote: "Allowed after policy recovery" } },
@@ -7046,7 +7046,7 @@ describe("plugin collection UI query route", () => {
             await put("projects", projectRef, "project-a", { id: "project-a", title: "Project A" });
             await put("tasks", taskRef, "task-a", { id: "task-a", title: "Task A", "project-id": "project-a" });
             const dependent = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId, collectionId: "tasks", rowId: "task-a" } });
-            await db.pluginCollectionAccountGrant.create({ data: { rowDbId: dependent.id, accountId: recipient,
+            await db.pluginCollectionGrant.create({ data: { principalKind: 'account' as const, rowDbId: dependent.id, accountId: recipient,
                 accessLevel: "view", createdByAccountId: accountId } });
             const removed = await app.inject({ method: "POST", url: "/v1/plugins/data/mutate", headers,
                 payload: { pluginId: NULLIFY_RELATION_COLLECTION_MANIFEST.id, collectionId: "projects",

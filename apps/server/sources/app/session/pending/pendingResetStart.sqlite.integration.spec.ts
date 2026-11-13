@@ -116,7 +116,7 @@ describe('Pending reset start custody (real SQLite)', () => {
         expect(await updatePendingRequestedAction({ ...f.params, requestedAction: held })).toMatchObject({ ok: true });
         const custodian = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         await db.machine.update({ where: { id: f.machine.id }, data: { accountId: custodian.id } });
-        await db.machineAccountGrant.create({ data: { machineId: f.machine.id, accountId: f.params.actorUserId, accessLevel: 'view', createdByAccountId: custodian.id } });
+        await db.machineGrant.create({ data: { principalKind: 'account' as const, machineId: f.machine.id, accountId: f.params.actorUserId, accessLevel: 'view', createdByAccountId: custodian.id } });
         expect(await enqueuePendingMessage({ ...f.params, localId: randomUUID(), targetMachineId: f.machine.id,
             requestedAction: { v: 1, kind: 'enqueue' }, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'ordinary shared Machine input' } } } }))
             .toMatchObject({ ok: true });

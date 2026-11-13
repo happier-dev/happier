@@ -138,7 +138,7 @@ describe("ordinary authenticated Follow context admission", () => {
             source: resource, destination: { kind: 'session', sessionId: differentRuntime.id },
         }));
         expect(await inviteOtherRuntime()).toEqual({ ok: false, reason: 'destination_runtime_not_allowed' });
-        await db.artifactAccountGrant.create({ data: {
+        await db.artifactGrant.create({ data: { principalKind: 'account' as const,
             artifactId: resourceRow.id, accountId: reader.id, accessLevel: 'view', createdByAccountId: owner.id,
         } });
         expect(await inviteOtherRuntime()).toEqual({ ok: true });
@@ -151,7 +151,7 @@ describe("ordinary authenticated Follow context admission", () => {
         }))).toEqual({ ok: false, reason: 'configurer_not_allowed' });
         await grant(destination, reader.id, 'view');
         expect(await invite()).toEqual({ ok: true });
-        await db.artifactAccountGrant.deleteMany({ where: { artifactId: resourceRow.id, accountId: reader.id } });
+        await db.artifactGrant.deleteMany({ where: { principalKind: 'account', artifactId: resourceRow.id, accountId: reader.id } });
         expect(await invite()).toEqual({ ok: false, reason: 'destination_audience_broader' });
         expect(await inviteOtherRuntime()).toEqual({ ok: false, reason: 'destination_runtime_not_allowed' });
         await db.artifact.delete({ where: { id: resourceRow.id } });

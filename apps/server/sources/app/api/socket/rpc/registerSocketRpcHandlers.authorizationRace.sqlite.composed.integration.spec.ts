@@ -96,7 +96,7 @@ describe("Session RPC final access admission on SQLite", () => {
             installationId: randomUUID(), metadata: encodePlainMachineStoredContent({ host: 'run-worker', platform: 'linux',
                 happyCliVersion: 'test', homeDir: '/worker', happyHomeDir: '/worker/.happier' }),
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
-        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: guest.id,
+        await db.machineGrant.create({ data: { principalKind: 'account' as const, machineId: machine.id, accountId: guest.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         const directory = await mkdtemp(join(tmpdir(), 'happier-run-route-'));
         vi.stubEnv('HAPPIER_HOME_DIR', directory);
@@ -191,7 +191,7 @@ describe("Session RPC final access admission on SQLite", () => {
             installationId: randomUUID(), metadata: encodePlainMachineStoredContent({ host: 'private-worker', platform: 'linux',
                 happyCliVersion: 'test', homeDir: '/worker', happyHomeDir: '/worker/.happier' }),
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
-        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: guest.id,
+        await db.machineGrant.create({ data: { principalKind: 'account' as const, machineId: machine.id, accountId: guest.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         const token = await createAccountTokenForTests(guest.id, { kind: 'account', authority: 'present_user' });
         const caller = Object.assign(createAuthenticatedFakeSocket({ id: 'refused-run-client', data: {
@@ -226,7 +226,7 @@ describe("Session RPC final access admission on SQLite", () => {
                 happyCliVersion: 'test', homeDir: '/worker', happyHomeDir: '/worker/.happier' }) : 'encrypted-metadata',
             dataEncryptionKey: mode === 'plain' ? decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')
                 : sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: ownerKeys.publicKey, randomBytes: tweetnacl.randomBytes }) } });
-        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: actor.id,
+        await db.machineGrant.create({ data: { principalKind: 'account' as const, machineId: machine.id, accountId: actor.id,
             accessLevel: 'admin', createdByAccountId: owner.id } });
         if (mode === 'e2ee') {
             const census = await inTx(tx => readMachineRecipientCensusInTx(tx, { actorAccountId: owner.id, machineId: machine.id }));
@@ -304,9 +304,9 @@ describe("Session RPC final access admission on SQLite", () => {
         target.data.verifiedMachineInstallationId = randomUUID();
         expect(await execute()).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
         target.data.verifiedMachineInstallationId = machine.installationId;
-        await db.machineAccountGrant.update({ where: { machineId_accountId: { machineId: machine.id, accountId: actor.id } }, data: { accessLevel: 'view' } });
+        await db.machineGrant.update({ where: { principalKind: 'account', machineId_accountId: { machineId: machine.id, accountId: actor.id } }, data: { accessLevel: 'view' } });
         expect(await execute()).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });
-        await db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: machine.id, accountId: actor.id } } });
+        await db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: machine.id, accountId: actor.id } } });
         expect(await execute()).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });
         expect(received).toHaveLength(1);
         expect(approvals).toHaveLength(1);
@@ -321,9 +321,9 @@ describe("Session RPC final access admission on SQLite", () => {
             installationId: randomUUID(), metadata: encodePlainMachineStoredContent({ host: 'sign-in-worker',
                 platform: 'linux', happyCliVersion: 'test', homeDir: '/worker', happyHomeDir: '/worker/.happier' }),
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
-        await db.machineAccountGrant.createMany({ data: [
-            { machineId: machine.id, accountId: guest.id, accessLevel: 'view', createdByAccountId: owner.id },
-            { machineId: machine.id, accountId: manager.id, accessLevel: 'admin', createdByAccountId: owner.id },
+        await db.machineGrant.createMany({ data: [
+            { principalKind: 'account' as const, machineId: machine.id, accountId: guest.id, accessLevel: 'view', createdByAccountId: owner.id },
+            { principalKind: 'account' as const, machineId: machine.id, accountId: manager.id, accessLevel: 'admin', createdByAccountId: owner.id },
         ] });
         const method = `${machine.id}:${AGENT_SIGN_IN_STATUS_RPC_METHOD}`;
         // Only Socket.IO is substituted: token issuance, grant reads, admission
@@ -648,7 +648,7 @@ describe("Session RPC final access admission on SQLite", () => {
             installationId: randomUUID(), installationPublicKey: tweetnacl.sign.keyPair().publicKey,
             metadata: encodePlainMachineStoredContent({ host: 'shared', platform: 'linux', happyCliVersion: 'test', homeDir: '/shared', happyHomeDir: '/shared/.happier' }),
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
-        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: actor.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.machineGrant.create({ data: { principalKind: 'account' as const, machineId: machine.id, accountId: actor.id, accessLevel: 'view', createdByAccountId: owner.id } });
         const store = createActionOperationStore();
         const scope = { accountId: actor.id, machineId: machine.id };
         for (const accountId of [owner.id, stranger.id]) store.create({ operationId: accountId, actionId: 'projects.script.run',
@@ -689,7 +689,7 @@ describe("Session RPC final access admission on SQLite", () => {
             expect(await call('own-script')).toHaveBeenCalledWith({ ok: true, result: { kind: 'requested' } });
             expect(cancelled).toBe(true);
             await runner.waitForTerminal(scope, 'own-script');
-            await db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: machine.id, accountId: actor.id } } });
+            await db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: machine.id, accountId: actor.id } } });
             effect.mockClear();
             expect(await call('own-script')).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
             expect(effect).not.toHaveBeenCalled();
@@ -731,7 +731,7 @@ describe("Session RPC final access admission on SQLite", () => {
             active: true, installationId, installationPublicKey: tweetnacl.sign.keyPair().publicKey,
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
         const grant = { machineId: machine.id, accountId: actor.id, accessLevel: "view", createdByAccountId: owner.id };
-        await db.machineAccountGrant.create({ data: grant });
+        await db.machineGrant.create({ data: { ...grant, principalKind: 'account' as const } });
         const method = `${machine.id}:${RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS}`;
         const effect = vi.fn(async () => ({ status: "ready" }));
         const target = { id: "custodian-machine-daemon", data: { clientType: "machine-scoped", userId: owner.id,
@@ -760,22 +760,22 @@ describe("Session RPC final access admission on SQLite", () => {
                 installationId, role: "use", encryptionMode: "plain" },
         }));
         effect.mockClear();
-        duringDiscovery = () => db.machineAccountGrant.delete({ where: { machineId_accountId: {
+        duringDiscovery = () => db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: {
             machineId: machine.id, accountId: actor.id,
         } } }).then(() => undefined);
         expect(await call()).toHaveBeenCalledWith({ ok: true, result: { status: "ready" } });
         expect(await call()).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
         expect(effect).toHaveBeenCalledOnce();
         effect.mockClear();
-        await db.machineAccountGrant.create({ data: grant });
-        duringLatestTarget = () => db.machineAccountGrant.delete({ where: { machineId_accountId: {
+        await db.machineGrant.create({ data: { ...grant, principalKind: 'account' as const } });
+        duringLatestTarget = () => db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: {
             machineId: machine.id, accountId: actor.id,
         } } }).then(() => undefined);
         expect(await call()).toHaveBeenCalledWith({ ok: true, result: { status: "ready" } });
         expect(await call()).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
         expect(effect).toHaveBeenCalledOnce();
         effect.mockClear();
-        await db.machineAccountGrant.create({ data: grant });
+        await db.machineGrant.create({ data: { ...grant, principalKind: 'account' as const } });
         // A different receiving installation is a different target, rather than
         // a reason to re-evaluate the admitted actor's grant.
         duringDiscovery = async () => { target.data.verifiedMachineInstallationId = randomUUID(); };
@@ -816,7 +816,7 @@ describe("Session RPC final access admission on SQLite", () => {
                 machineAdmission: expect.objectContaining({ actorAccountId: owner.id, custodianAccountId: owner.id }),
             }));
             effect.mockClear();
-            duringDiscovery = () => db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: actor.id,
+            duringDiscovery = () => db.machineGrant.create({ data: { principalKind: 'account' as const, machineId: machine.id, accountId: actor.id,
                 accessLevel: 'view', createdByAccountId: owner.id } }).then(() => undefined);
             expect(await dispatchMachineAccessLossCustody(input)).toEqual({ kind: 'settled' });
             expect(effect).toHaveBeenCalledOnce();
@@ -830,7 +830,7 @@ describe("Session RPC final access admission on SQLite", () => {
                 params: { v: 1, subjectAccountId: actor.id, remainingRole: 'use' },
             }));
             effect.mockClear();
-            await db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: machine.id, accountId: actor.id } } });
+            await db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: machine.id, accountId: actor.id } } });
             duringDiscovery = () => db.machine.update({ where: { id: machine.id }, data: { installationId: randomUUID() } }).then(() => undefined);
             expect(await dispatchMachineAccessLossCustody(input)).toEqual({ kind: 'settled' });
             expect(effect).toHaveBeenCalledOnce();
@@ -852,12 +852,12 @@ describe("Session RPC final access admission on SQLite", () => {
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
         const history = await db.session.create({ data: { accountId: actor.id, tag: randomUUID(),
             metadata: JSON.stringify({ t: 'plain', v: { retained: true } }), encryptionMode: 'plain' } });
-        for (const accountId of [actor.id, survivor.id]) await db.machineAccountGrant.create({ data: {
+        for (const accountId of [actor.id, survivor.id]) await db.machineGrant.create({ data: { principalKind: 'account' as const,
             machineId: machine.id, accountId, accessLevel: 'view', createdByAccountId: owner.id,
         } });
         const team = await db.team.create({ data: { name: `Independent ${randomUUID()}` } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: survivor.id, role: 'member' } });
-        await db.machineTeamGrant.create({ data: { machineId: machine.id, teamId: team.id,
+        await db.machineGrant.create({ data: { principalKind: 'team' as const, machineId: machine.id, teamId: team.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         const method = `${machine.id}:${RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS}`;
         let online = false;
@@ -901,7 +901,7 @@ describe("Session RPC final access admission on SQLite", () => {
             };
             expect(await call()).toHaveBeenCalledWith({ ok: true, result: { status: 'ready' } });
             effect.mockClear();
-            await db.machineTeamGrant.delete({ where: { machineId_teamId: { machineId: machine.id, teamId: team.id } } });
+            await db.machineGrant.delete({ where: { principalKind: 'team', machineId_teamId: { machineId: machine.id, teamId: team.id } } });
             expect(await call()).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
             expect(effect).not.toHaveBeenCalled();
         } finally { eventRouter.clearIo(); }

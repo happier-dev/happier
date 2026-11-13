@@ -211,11 +211,11 @@ it('starts an encrypted Wait through the recording HTTP transport in two storage
 
             const source = await db.artifact.create({ data: { id: randomUUID(), accountId: foreign.id,
                 header: randomBytes(32), body: randomBytes(32), dataEncryptionKey: randomBytes(32) } });
-            await db.artifactAccountGrant.create({ data: { artifactId: source.id, accountId: account.id,
+            await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: source.id, accountId: account.id,
                 accessLevel: 'view', createdByAccountId: foreign.id } });
             const changedSourceRunId = randomUUID();
             requests.length = 0;
-            beforeAdmit = async () => { await db.artifactAccountGrant.deleteMany({ where: { artifactId: source.id, accountId: account.id } }); };
+            beforeAdmit = async () => { await db.artifactGrant.deleteMany({ where: { principalKind: 'account', artifactId: source.id, accountId: account.id } }); };
             await expect(owner.execute({ ...start, input: { ...start.input, runId: changedSourceRunId,
                 source: { ...start.input.source, sourceArtifactId: source.id } } })).rejects.toBeDefined();
             expect(requests).toEqual(['get', 'admit']);
@@ -225,11 +225,11 @@ it('starts an encrypted Wait through the recording HTTP transport in two storage
             await db.teamMembership.create({ data: { teamId: team.id, accountId: account.id, role: 'owner' } });
             const teamSource = await db.artifact.create({ data: { id: randomUUID(), accountId: account.id,
                 header: randomBytes(32), body: randomBytes(32), dataEncryptionKey: randomBytes(32) } });
-            await db.artifactTeamGrant.create({ data: { artifactId: teamSource.id, teamId: team.id,
+            await db.artifactGrant.create({ data: { principalKind: 'team' as const, artifactId: teamSource.id, teamId: team.id,
                 accessLevel: 'view', createdByAccountId: account.id } });
             const changedTeamRunId = randomUUID();
             requests.length = 0;
-            beforeAdmit = async () => { await db.artifactTeamGrant.deleteMany({ where: { artifactId: teamSource.id, teamId: team.id } }); };
+            beforeAdmit = async () => { await db.artifactGrant.deleteMany({ where: { principalKind: 'team', artifactId: teamSource.id, teamId: team.id } }); };
             await expect(owner.execute({ ...start, input: { ...start.input, runId: changedTeamRunId,
                 source: { ...start.input.source, sourceArtifactId: teamSource.id, visibleTeamId: team.id } } })).rejects.toBeDefined();
             expect(requests).toEqual(['get', 'admit']);

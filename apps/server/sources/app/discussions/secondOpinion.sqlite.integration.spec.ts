@@ -482,7 +482,7 @@ describe('Second opinion source admission (SQLite)', () => {
         const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
         expect(await inviteDiscussionParticipant({ authentication, actorAccountId: owner.id, discussionId,
             request: { participant: { kind: 'account', accountId: outsider.id } } })).toMatchObject({ ok: false });
-        expect(await db.discussionAccountGrant.count({ where: { discussionId, accountId: outsider.id } })).toBe(0);
+        expect(await db.discussionGrant.count({ where: { principalKind: 'account', discussionId, accountId: outsider.id } })).toBe(0);
         expect(await deleteOwnedSession({ sessionId: source.id, ownerAccountId: owner.id, reason: 'user_request' }))
             .toEqual({ ok: true });
         expect(await readDiscussionMessages({ authentication, actorAccountId: reader.id, discussionId }))

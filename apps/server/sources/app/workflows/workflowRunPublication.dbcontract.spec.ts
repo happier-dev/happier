@@ -116,7 +116,7 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")("Workflow 
                 header: new Uint8Array(privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: "workflow-definition.v1" }))),
                 body: new Uint8Array(privacyKit.decodeBase64(encodePlainArtifactStoredContent({}))),
                 dataEncryptionKey: new Uint8Array(privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)) } });
-            await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id, accessLevel: "view", createdByAccountId: owner.id } });
+            await db.artifactGrant.create({ data: { principalKind: 'team' as const, artifactId: artifact.id, teamId: team.id, accessLevel: "view", createdByAccountId: owner.id } });
             const run = await db.automationRun.create({ data: { id: randomUUID(), accountId: owner.id, originKind: "direct", causeKind: null,
                 originSessionId: session.id, originDeliveryAckRevision: 0, sourceArtifactId: artifact.id, visibleTeamId: team.id,
                 state: "queued", workflowCustodyState: "pending", workflowAcceptedSnapshotEnvelope: "{}",

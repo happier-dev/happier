@@ -43,7 +43,7 @@ describe("Workflow Run live Team access (real SQLite)", () => {
             header: new Uint8Array(privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: "workflow-definition.v1" }))),
             body: new Uint8Array(privacyKit.decodeBase64(encodePlainArtifactStoredContent({}))),
             dataEncryptionKey: new Uint8Array(privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)) } });
-        await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id, accessLevel: "view", createdByAccountId: owner.id } });
+        await db.artifactGrant.create({ data: { principalKind: 'team' as const, artifactId: artifact.id, teamId: team.id, accessLevel: "view", createdByAccountId: owner.id } });
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id, installationId: crypto.randomUUID(),
             metadata: encodePlainMachineStoredContent({ host: 'workflow-test', platform: 'linux', happyCliVersion: 'test',
                 homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }), metadataVersion: 1,
@@ -103,7 +103,7 @@ describe("Workflow Run live Team access (real SQLite)", () => {
                 const owner = await read(f.owner.id);
                 expect(owner.statusCode, owner.body).toBe(200);
                 expect(owner.json().messages).toEqual([expect.objectContaining({ localId: f.runId })]);
-                await db.discussionAccountGrant.create({ data: { discussionId, accountId: f.viewer.id,
+                await db.discussionGrant.create({ data: { principalKind: 'account' as const, discussionId, accountId: f.viewer.id,
                     accessLevel: 'view', createdByAccountId: f.owner.id } });
                 const member = await read(f.viewer.id);
                 expect(member.statusCode, member.body).toBe(200);
@@ -220,7 +220,7 @@ describe("Workflow Run live Team access (real SQLite)", () => {
             data: { answerPolicy: 'when_addressed' } });
         const foreign = await db.session.create({ data: { accountId: f.viewer.id, tag: crypto.randomUUID(),
             encryptionMode: 'plain', metadata: '{}' } });
-        await db.discussionAccountGrant.create({ data: { discussionId, accountId: f.viewer.id, accessLevel: 'view',
+        await db.discussionGrant.create({ data: { principalKind: 'account' as const, discussionId, accountId: f.viewer.id, accessLevel: 'view',
             createdByAccountId: f.owner.id } });
         await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: foreign.id, createdByAccountId: f.viewer.id,
             accountId: f.owner.id, accessLevel: 'edit' } });
@@ -369,7 +369,7 @@ describe("Workflow Run live Team access (real SQLite)", () => {
             expect(lockedFull.keyCensusByRunId[f.runId].callerDataEncryptionKey).toBeNull();
             expect(lockedFull.acceptedEnvelopesByRunId[f.runId]).toBeNull();
             expect(await owner.execute({ actionId: "workflow.run.summaries", input: statusRequest, context: {} })).toEqual(expectedStatus);
-            await db.artifactTeamGrant.deleteMany({ where: { artifactId: f.artifact.id, teamId: f.team.id } });
+            await db.artifactGrant.deleteMany({ where: { principalKind: 'team', artifactId: f.artifact.id, teamId: f.team.id } });
             expect(await owner.execute({ actionId: "workflow.run.list", input: request, context: {} }))
                 .toMatchObject({ projection: "membership", runs: [], metadataByRunId: {} });
             expect(await owner.execute({ actionId: "workflow.run.summaries", input: statusRequest, context: {} })).toEqual({
@@ -389,8 +389,7 @@ describe("Workflow Run live Team access (real SQLite)", () => {
         // Observe real provider IO without depending on diagnostic log levels.
         const reads: string[] = [];
         const stop = observeSqliteRequests({ before: request => {
-            if (request.model && ["TeamMembership", "Artifact", "ArtifactTeamGrant", "ArtifactAccountGrant",
-                "ArtifactGroupGrant", "TeamGroupMembership"].includes(request.model)
+            if (request.model && ["TeamMembership", "Artifact", "ArtifactGrant", "TeamGroupMembership"].includes(request.model)
                 && request.action.startsWith("find")) reads.push(`${request.model}.${request.action}`);
         } });
         const authorityReads = () => [...reads].sort();
@@ -419,7 +418,7 @@ describe("Workflow Run live Team access (real SQLite)", () => {
         await db.teamMembership.createMany({ data: [f.viewer.id, late.id].map(accountId => ({
             teamId: otherTeam.id, accountId, role: "member",
         })) });
-        await db.artifactTeamGrant.create({ data: { artifactId: f.artifact.id, teamId: otherTeam.id,
+        await db.artifactGrant.create({ data: { principalKind: 'team' as const, artifactId: f.artifact.id, teamId: otherTeam.id,
             accessLevel: "view", createdByAccountId: f.owner.id } });
         const otherSource = await db.artifact.create({ data: { id: crypto.randomUUID(), accountId: f.owner.id,
             header: f.artifact.header, body: f.artifact.body, dataEncryptionKey: f.artifact.dataEncryptionKey } });
@@ -449,14 +448,14 @@ describe("Workflow Run live Team access (real SQLite)", () => {
 
     it("removing the frozen Team grant revokes a Team Run even when the caller retains a personal document grant", async () => {
         const f = await fixture();
-        await db.artifactAccountGrant.create({ data: { artifactId: f.artifact.id, accountId: f.viewer.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: f.artifact.id, accountId: f.viewer.id,
             accessLevel: "edit", createdByAccountId: f.owner.id } });
         const otherTeam = await db.team.create({ data: { name: "Another workflow audience" } });
         await db.teamMembership.create({ data: { teamId: otherTeam.id, accountId: f.viewer.id, role: "member" } });
-        await db.artifactTeamGrant.create({ data: { artifactId: f.artifact.id, teamId: otherTeam.id,
+        await db.artifactGrant.create({ data: { principalKind: 'team' as const, artifactId: f.artifact.id, teamId: otherTeam.id,
             accessLevel: "edit", createdByAccountId: f.owner.id } });
         expect((await getWorkflowRun({ accountId: f.viewer.id, runId: f.runId })).keyCensus.access).toBe("edit");
-        await db.artifactTeamGrant.deleteMany({ where: { artifactId: f.artifact.id, teamId: f.team.id } });
+        await db.artifactGrant.deleteMany({ where: { principalKind: 'team', artifactId: f.artifact.id, teamId: f.team.id } });
         await expect(getWorkflowRun({ accountId: f.viewer.id, runId: f.runId })).rejects.toMatchObject({ code: "run_not_found" });
         expect((await listWorkflowRuns({ accountId: f.viewer.id, sourceArtifactId: f.artifact.id,
             pageByteLimit: 1_000_000 })).runs).toEqual([]);
@@ -474,7 +473,7 @@ describe("Workflow Run live Team access (real SQLite)", () => {
     it("personal workflow grants cannot reveal starter-private Runs", async () => {
         const f = await fixture();
         await db.automationRun.update({ where: { id: f.runId }, data: { visibleTeamId: null } });
-        await db.artifactAccountGrant.create({ data: { artifactId: f.artifact.id, accountId: f.viewer.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: f.artifact.id, accountId: f.viewer.id,
             accessLevel: "edit", createdByAccountId: f.owner.id } });
         await expect(getWorkflowRun({ accountId: f.viewer.id, runId: f.runId })).rejects.toMatchObject({ code: "run_not_found" });
         for (const filter of [{}, { sourceArtifactId: f.artifact.id }, { runIds: [f.runId] }]) {
@@ -507,7 +506,7 @@ describe("Workflow Run live Team access (real SQLite)", () => {
         await db.teamMembership.update({ where: { id: f.membership.id }, data: { status: "suspended" } });
         expect((await listWorkflowRuns({ accountId: f.viewer.id, runId: f.runId, pageByteLimit: 1_000_000 })).runs).toEqual([]);
         await db.teamMembership.update({ where: { id: f.membership.id }, data: { status: "active" } });
-        await db.artifactTeamGrant.deleteMany({ where: { artifactId: f.artifact.id, teamId: f.team.id } });
+        await db.artifactGrant.deleteMany({ where: { principalKind: 'team', artifactId: f.artifact.id, teamId: f.team.id } });
         for (const filter of filters) {
             expect((await listWorkflowRuns({ accountId: f.viewer.id, ...filter, pageByteLimit: 1_000_000 })).runs).toEqual([]);
         }
@@ -532,7 +531,7 @@ describe("Workflow Run live Team access (real SQLite)", () => {
         await db.automationRun.delete({ where: { id: f.runId } });
         const secondTeam = await db.team.create({ data: { name: "Second workflow audience" } });
         await db.teamMembership.create({ data: { teamId: secondTeam.id, accountId: f.owner.id, role: "member" } });
-        await db.artifactTeamGrant.create({ data: { artifactId: f.artifact.id, teamId: secondTeam.id,
+        await db.artifactGrant.create({ data: { principalKind: 'team' as const, artifactId: f.artifact.id, teamId: secondTeam.id,
             accessLevel: "view", createdByAccountId: f.owner.id } });
         input.accountCurrentness.version = (await db.account.findUniqueOrThrow({ where: { id: f.owner.id }, select: { seq: true } })).seq;
         await expect(admitWorkflowRun(input)).rejects.toMatchObject({ code: "visible_team_not_granted" });
@@ -547,7 +546,7 @@ describe("Workflow Run live Team access (real SQLite)", () => {
     it("admission refuses a forged non-member Team despite a direct Artifact grant", async () => {
         const f = await fixture();
         const outsider = await db.account.create({ data: { encryptionMode: "plain" } });
-        await db.artifactAccountGrant.create({ data: { artifactId: f.artifact.id, accountId: outsider.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: f.artifact.id, accountId: outsider.id,
             accessLevel: "view", createdByAccountId: f.owner.id } });
         await expect(inTx(tx => resolveWorkflowRunAdmissionVisibilityInTx(tx, {
             actorAccountId: outsider.id, sourceArtifactId: f.artifact.id, visibleTeamId: f.team.id,
@@ -601,7 +600,7 @@ describe("Workflow Run live Team access (real SQLite)", () => {
         await db.teamMembership.create({ data: { teamId: f.team.id, accountId: f.owner.id, role: "member" } });
         await db.automationRun.delete({ where: { id: f.runId } });
         const otherTeam = await db.team.create({ data: { name: "Another trigger audience" } });
-        await db.artifactTeamGrant.create({ data: { artifactId: f.artifact.id, teamId: otherTeam.id,
+        await db.artifactGrant.create({ data: { principalKind: 'team' as const, artifactId: f.artifact.id, teamId: otherTeam.id,
             accessLevel: "view", createdByAccountId: f.owner.id } });
         const automation = await db.automation.create({ data: { accountId: f.owner.id, name: "Team workflow trigger",
             targetType: null, templateCiphertext: "{}" } });

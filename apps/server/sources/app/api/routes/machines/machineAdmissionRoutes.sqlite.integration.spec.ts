@@ -105,7 +105,7 @@ describe('Machine receiver current admission on SQLite', () => {
             installationId: randomUUID(), installationPublicKey: new Uint8Array(key.publicKey),
         } });
         const grant = { machineId: machine.id, accountId: actor.id, accessLevel: 'view' as const, createdByAccountId: custodian.id };
-        await db.machineAccountGrant.create({ data: grant });
+        await db.machineGrant.create({ data: { ...grant, principalKind: 'account' as const } });
         const context = { actorAccountId: actor.id, custodianAccountId: custodian.id, machineId: machine.id,
             installationId: machine.installationId!, role: 'use' as const, encryptionMode: 'plain' as const };
         const method = `${machine.id}:${RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS}`;
@@ -132,7 +132,7 @@ describe('Machine receiver current admission on SQLite', () => {
                 installationId: context.installationId, accountId: custodian.id,
                 rpcAdmission: { context: privilegedContext, method: privilegedMethod } }, privateKey: key.secretKey });
             expect((await verify({ v: 1, context: privilegedContext, method: privilegedMethod, proof: privilegedProof })).statusCode).toBe(403);
-            await db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: machine.id, accountId: actor.id } } });
+            await db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: machine.id, accountId: actor.id } } });
             expect((await verify(body)).statusCode).toBe(403);
             const custodyContext = { ...context, actorAccountId: custodian.id, role: 'manage' as const };
             const custodyMethod = `${machine.id}:${RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS}`;
@@ -149,7 +149,7 @@ describe('Machine receiver current admission on SQLite', () => {
             expect((await verify(censusBody, stranger.id)).statusCode).toBe(403);
             expect((await verify(custodyBody)).statusCode).toBe(200);
             expect((await verify({ ...custodyBody, custodySubjectAccountId: stranger.id })).statusCode).toBe(403);
-            await db.machineAccountGrant.create({ data: grant });
+            await db.machineGrant.create({ data: { ...grant, principalKind: 'account' as const } });
             expect((await verify(custodyBody)).statusCode).toBe(403);
             await db.machine.update({ where: { id: machine.id }, data: { installationId: randomUUID() } });
             expect((await verify(body)).statusCode).toBe(403);
@@ -173,7 +173,7 @@ describe('Machine receiver current admission on SQLite', () => {
         } });
         const parent = await createMachine(parentKey);
         const child = await createMachine(childKey, requesterOwned ? actor.id : custodian.id);
-        if (!requesterOwned) await db.machineAccountGrant.create({ data: { machineId: child.id, accountId: actor.id,
+        if (!requesterOwned) await db.machineGrant.create({ data: { principalKind: 'account' as const, machineId: child.id, accountId: actor.id,
             accessLevel: 'view', createdByAccountId: custodian.id } });
         expect(await resolveMachineAdmission({ actorAccountId: actor.id, machineId: parent.id })).toMatchObject({ kind: 'denied' });
         const admitted = await resolveMachineAdmission({ actorAccountId: actor.id, machineId: child.id, requiredRole: 'use' });
@@ -285,7 +285,7 @@ describe('Machine receiver current admission on SQLite', () => {
             await db.managedMachine.update({ where: { id: row.id }, data: { controllerInstallationId: randomUUID() } });
             expect((await verify(body)).statusCode).toBe(403);
             await db.managedMachine.update({ where: { id: row.id }, data: { controllerInstallationId: parent.installationId! } });
-            await db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: child.id, accountId: actor.id } } });
+            await db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: child.id, accountId: actor.id } } });
             expect((await verify(body)).statusCode).toBe(403);
             const releaseRouting = { ...routing, phase: 'abort' as const };
             expect((await verify({ ...body, workspaceSyncSourceRouting: releaseRouting,
@@ -317,7 +317,7 @@ describe('Machine receiver current admission on SQLite', () => {
             await db.managedMachine.update({ where: { id: row.id }, data: { controllerInstallationId: randomUUID() } });
             expect((await verify(body)).statusCode).toBe(403);
             await db.managedMachine.update({ where: { id: row.id }, data: { controllerInstallationId: parent.installationId! } });
-            await db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: child.id, accountId: actor.id } } });
+            await db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: child.id, accountId: actor.id } } });
             expect((await verify(body)).statusCode).toBe(403);
         } finally { await app.close(); }
     });

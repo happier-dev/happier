@@ -58,8 +58,8 @@ async function fixture(layout: 0 | 1 = 1, active = false) {
         agentState: layout === 1 ? null : "legacy-agent",
         agentStateVersion: 8,
     } });
-    await db.sessionShare.create({ data: {
-        sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: viewer.id,
+    await db.sessionGrant.create({ data: { principalKind: 'account',
+        sessionId: session.id, createdByAccountId: owner.id, accountId: viewer.id,
         accessLevel: "edit", canApprovePermissions: false,
     } });
     return { owner, viewer, session, route: routeFor(owner.id, session.id) };
@@ -332,7 +332,7 @@ describe("sessionRoutes v2 patch with the real metadata owner", () => {
     it.each([["1", 403, "session_access_authentication_required"], ["0", 503, "session_access_authentication_unavailable"]] as const)(
         "preserves Team authentication status when key challenge is enabled=%s", async (enabled, status, error) => {
             const f = await fixture();
-            await db.sessionShare.deleteMany({ where: { sessionId: f.session.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: f.session.id } });
             const team = await db.team.create({ data: { name: randomUUID(), authenticationPolicy: {
                 v: 1, mode: "restricted", accepted: [{ kind: "home_method", methodId: "key_challenge" }],
             } } });
@@ -340,7 +340,7 @@ describe("sessionRoutes v2 patch with the real metadata owner", () => {
                 { teamId: team.id, accountId: f.owner.id, role: "owner" },
                 { teamId: team.id, accountId: f.viewer.id, role: "member" },
             ] });
-            await db.sessionTeamGrant.create({ data: {
+            await db.sessionGrant.create({ data: { principalKind: 'team' as const,
                 sessionId: f.session.id, teamId: team.id, accessLevel: "edit", effectiveAt: new Date(),
             } });
             process.env.HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED = enabled;

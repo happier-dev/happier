@@ -199,7 +199,7 @@ describe('First-class Discussions service (SQLite)', () => {
         expect(await db.discussion.count({ where: { createdByAccountId: owner.id } })).toBe(1);
         expect(await db.discussionMessage.count({ where: { discussion: { createdByAccountId: owner.id } } })).toBe(1);
         expect(await db.discussionParticipant.count({ where: { discussion: { createdByAccountId: owner.id } } })).toBe(2);
-        expect(await db.discussionAccountGrant.count({ where: { discussion: { createdByAccountId: owner.id } } })).toBe(1);
+        expect(await db.discussionGrant.count({ where: { principalKind: 'account', discussion: { createdByAccountId: owner.id } } })).toBe(1);
         expect(await db.discussionKeyEnvelope.count({ where: { discussion: { createdByAccountId: owner.id } } })).toBe(0);
         expect(await db.discussionReadState.count({ where: { discussion: { createdByAccountId: owner.id } } })).toBe(2);
         expect(await db.sessionFollowEdge.count({ where: { sourceDiscussion: { createdByAccountId: owner.id } } })).toBe(2);
@@ -276,7 +276,7 @@ describe('First-class Discussions service (SQLite)', () => {
         expect(await db.discussion.count({ where: { createdByAccountId: owner.id } })).toBe(0);
         expect(await db.discussionMessage.count({ where: { discussion: { createdByAccountId: owner.id } } })).toBe(0);
         expect(await db.discussionParticipant.count({ where: { discussion: { createdByAccountId: owner.id } } })).toBe(0);
-        expect(await db.discussionAccountGrant.count({ where: { discussion: { createdByAccountId: owner.id } } })).toBe(0);
+        expect(await db.discussionGrant.count({ where: { principalKind: 'account', discussion: { createdByAccountId: owner.id } } })).toBe(0);
     });
     it('roundtrips a private Task anchor and reply through HTTP and SQLite without an available Task source', async () => {
         const [owner, invitee, outsider] = await Promise.all([1, 2, 3].map(() => db.account.create({ data: { encryptionMode: 'plain' } })));

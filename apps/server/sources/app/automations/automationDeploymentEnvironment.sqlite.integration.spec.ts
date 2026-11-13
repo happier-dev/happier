@@ -307,7 +307,7 @@ describe('Environment-owned Automation controller assignment', () => {
             header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Controller replacement' })),
             body: environmentArtifactBody, dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
         if (!artifact.ok) throw new Error(artifact.error);
-        await db.artifactTeamGrant.create({ data: { artifactId: artifact.artifact.id, teamId: team.id,
+        await db.artifactGrant.create({ data: { principalKind: 'team' as const, artifactId: artifact.artifact.id, teamId: team.id,
             accessLevel: 'admin', createdByAccountId: creator.id } });
         const environment = await inTx(tx => createDeploymentEnvironmentInTx(tx, creator.id, { serverId,
             projectSourceId: source.source.id, requestKey: crypto.randomUUID(), protection: 'production', purpose: 'standard',
@@ -360,7 +360,7 @@ describe('Environment-owned Automation controller assignment', () => {
             body: environmentArtifactBody,
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
         if (!artifact.ok) throw new Error(artifact.error);
-        await db.artifactTeamGrant.create({ data: { artifactId: artifact.artifact.id, teamId: team.id,
+        await db.artifactGrant.create({ data: { principalKind: 'team' as const, artifactId: artifact.artifact.id, teamId: team.id,
             accessLevel: 'admin', createdByAccountId: creator.id } });
         const environment = await inTx(tx => createDeploymentEnvironmentInTx(tx, creator.id, { serverId,
             projectSourceId: source.source.id, requestKey: crypto.randomUUID(), protection: 'production', purpose: 'standard',
