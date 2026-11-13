@@ -111,6 +111,34 @@ describe('useDaemonMergedProjectionInputs', () => {
         } finally { await hook.unmount(); credentials.mockRestore(); }
     });
 
+    it.each(['signed_out', 'unavailable', 'unknown_home'] as const)(
+        'settles a terminal %s credential resolution instead of waiting for a binding', async kind => {
+            const credentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl');
+            if (kind === 'unavailable') credentials.mockRejectedValue(new Error('secure storage unavailable'));
+            else credentials.mockResolvedValue(null);
+            const hook = await renderHook(({ refreshKey }: { refreshKey: number }) => useDaemonMergedProjectionInputs({
+                sections: 'complete', machineId: 'machine-1', refreshKey,
+                serverId: kind === 'unknown_home' ? 'missing-home' : otherServerId,
+            }), { initialProps: { refreshKey: 0 } });
+            try {
+                await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({
+                    phase: 'error', inputs: null,
+                    failureReason: kind === 'signed_out' ? 'authentication-required' : 'authentication-unavailable',
+                }));
+                expect(daemonDescribe).not.toHaveBeenCalled();
+                if (kind !== 'unknown_home') {
+                    credentials.mockRestore();
+                    if (kind === 'unavailable') await hook.rerender({ refreshKey: 1 });
+                    else await act(async () => {
+                        expect(await TokenStorage.setCredentialsForServerUrl('https://projection-hook-other.example.test',
+                            { serverId: otherServerId }, { token: createAccountTokenForTests('account-a') })).toBe(true);
+                    });
+                    await vi.waitFor(() => expect(hook.getCurrent().phase).toBe('ready'));
+                }
+            } finally { await hook.unmount(); credentials.mockRestore(); }
+        },
+    );
+
     it('rebinds a summary key on real Home correspondence publication without borrowing a foreign Home', async () => {
         await primeCache(7);
         const hook = await renderHook(() => useDaemonMergedProjectionSummary({ serverId, machineId: 'machine-1' }));

@@ -11,7 +11,8 @@ import {
     type MachineContributionRegistryProjectionFailureReason,
 } from '@/sync/ops/machineContributionRegistryProjection';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useServerCredentialAccountScopeStates } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { retryServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 import {
@@ -105,12 +106,13 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
     const serverId = normalizeKeyPart(params.serverId);
     const staleMs = params.staleMs;
     const hasProjectionScope = enabled && Boolean(machineId);
-    const routedBindings = useServerCredentialAccountScopeBindings(
+    const routedStates = useServerCredentialAccountScopeStates(
         params.accountLifetime === undefined && hasProjectionScope && serverId ? [serverId] : [],
     );
     // A routed projection uses that Home's credential-bound lifetime, even
     // while another Home is focused. The binding is itself the lifetime.
-    const routedAccountLifetime: ActiveServerAccountScopeLifetime | null = routedBindings.values().next().value ?? null;
+    const routedState = routedStates.values().next().value;
+    const routedAccountLifetime: ActiveServerAccountScopeLifetime | null = routedState?.binding ?? null;
     const activeAccountLifetime = useActiveServerAccountScopeLifetime();
     const accountLifetime = params.accountLifetime !== undefined ? params.accountLifetime : serverId
         ? routedAccountLifetime
@@ -210,7 +212,8 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
     }, [accountLifetime, hasProjectionScope, machineId, observes, readObservedCacheState, serverId, setState]);
 
     React.useEffect(() => {
-        const forceReload = refreshKeyRef.current !== params.refreshKey
+        const refreshRequested = refreshKeyRef.current !== params.refreshKey;
+        const forceReload = refreshRequested
             || projectionRevisionRef.current !== projectionRevision
             || localeRef.current !== locale;
         const scopeChanged = hasProjectionScopeRef.current !== hasProjectionScope
@@ -236,6 +239,9 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
             return;
         }
         if (!accountLifetime) {
+            if (refreshRequested && serverId && routedState?.resolution.kind === 'unavailable') {
+                retryServerCredentialAccountScope(serverId);
+            }
             const previousStateServerId = stateAccountLifetimeRef.current?.scope.serverId;
             const retainRouteMetadata = params.retainInputsAcrossScopeChange === true
                 && Boolean(serverId && (
@@ -245,7 +251,15 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
             // A route replacement may keep inert catalog labels while its Home
             // binds. A missing binding on the same Home withdraws Account data.
             stateAccountLifetimeRef.current = accountLifetime;
-            publishState(previous => ({ phase: 'loading', inputs: retainRouteMetadata ? previous.inputs : null }));
+            if (routedState && routedState.resolution.kind !== 'resolving') {
+                publishState({
+                    phase: 'error', inputs: null,
+                    failureReason: routedState.resolution.kind === 'signed_out'
+                        ? 'authentication-required' : 'authentication-unavailable',
+                });
+            } else {
+                publishState(previous => ({ phase: 'loading', inputs: retainRouteMetadata ? previous.inputs : null }));
+            }
             return;
         }
 
@@ -346,6 +360,7 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
         machineId,
         replaceState,
         setState,
+        routedState?.resolution.kind,
         params.load,
         params.refreshKey,
         params.retainInputsAcrossScopeChange,
