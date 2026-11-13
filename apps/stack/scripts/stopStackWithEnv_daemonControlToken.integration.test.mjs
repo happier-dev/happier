@@ -6,11 +6,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { stopStackWithEnv } from './utils/stack/stop.mjs';
+import { recordStackRuntimeStart } from './utils/stack/runtime_state.mjs';
 import { stopObservedStackForRestart } from './stack/run_script_with_stack_env.mjs';
 import { retireStackDevTarget } from './utils/dev_targets/retirement.mjs';
 import { resolvePreferredStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
 import { applyStackDaemonLifecycleScopeEnv } from './utils/auth/stable_scope_id.mjs';
-import { spawnOwnedSleep, waitForProcessAlive } from './testkit/stack_stop_sweeps_testkit.mjs';
+import { spawnOwnedSleep, waitForProcessAlive, waitForProcessExit } from './testkit/stack_stop_sweeps_testkit.mjs';
 import { STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from './utils/server/listener_ownership.mjs';
 
 async function readJson(req) {
@@ -69,7 +70,11 @@ async function startDaemonControlServer({ token, stopResult = { status: 'stopped
         return;
       }
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ status: stopResult.status === 'stopped' ? 'stopping' : 'session_cleanup_incomplete' }));
+      res.end(JSON.stringify({ status: stopResult.status === 'stopped' ? 'stopping' : 'session_cleanup_incomplete',
+        ...(stopResult.status === 'incomplete' ? { sessionResults: [
+          { sessionId: 'failed-session', result: { status: 'incomplete', reason: 'terminal_control_serviceability_retirement_failed' } },
+          { sessionId: 'normal-session', result: { status: 'stopped' } },
+        ] } : {}), }));
       return;
     }
 
@@ -140,7 +145,7 @@ test(`explicit child stop handles ${stopResult.status} before signaling the life
   const { statePath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl: 'http://127.0.0.1:4101', env: scopedEnv });
   await mkdir(join(statePath, '..'), { recursive: true });
   await writeFile(statePath, JSON.stringify({ pid: child.pid, httpPort: daemon.port, controlToken: token }));
-  await writeFile(join(baseDir, 'stack.runtime.json'), JSON.stringify({ ownerPid: child.pid, processes: {} }));
+  await recordStackRuntimeStart(join(baseDir, 'stack.runtime.json'), { stackName: 'test-stack', ownerPid: child.pid, processes: {} });
 
   let ownerSignaled = false;
   const res = await stopStackWithEnv({
@@ -155,32 +160,28 @@ test(`explicit child stop handles ${stopResult.status} before signaling the life
       assert.deepEqual(daemon.calls.map((call) => call.url), ['/ping', '/stop']);
       ownerSignaled = true;
       child.kill('SIGTERM');
+      await waitForProcessExit({ pid: child.pid });
       return { killed: true, reason: 'killed' };
     },
   });
 
   assert.equal(res.daemonSessionsStopped?.skipped, false);
-  assert.equal(ownerSignaled, stopResult.status === 'stopped');
+  assert.equal(ownerSignaled, true, 'one failed Session must not refuse controller shutdown');
+  assert.equal(res.finalization?.finalized, true, res.finalization?.reason);
+  assert.deepEqual(res.errors, []);
+  assert.deepEqual(res.daemonSessionsStopped?.stoppedSessionIds, stopResult.status === 'incomplete' ? ['normal-session'] : []);
   if (stopResult.status === 'incomplete') {
-    // Feed the real native Stop result into its remote retirement reader.
-    // Only SSH is substituted; cleanup, finalization and refusal stay real.
+    assert.deepEqual(res.warnings, [{ code: 'session_cleanup_incomplete', sessionId: 'failed-session',
+      reason: 'terminal_control_serviceability_retirement_failed', retryable: true }]);
+    // Consume the actual successful native result through the remote owner.
     const target = { name: 'fixture', platform: 'posix', ssh: 'fixture-ssh', repoDir: '/remote/repo', cliHomeDir: '/remote/home' };
-    await assert.rejects(retireStackDevTarget({ target, options: { stackName: 'test-stack' } }, {
+    const warnings = [];
+    await retireStackDevTarget({ target, options: { stackName: 'test-stack' } }, {
       runProcess: async ({ args }) => String(args.at(-1)).includes('stack stop')
-        ? { code: 1, out: JSON.stringify({ ok: res.finalization?.finalized !== false, stopped: res }) }
-        : { code: 1 },
-    }), error => {
-      assert.equal(error.code, 'EDEVTARGETRETIREMENTREFUSED');
-      assert.equal(error.cause?.code, res.finalization.reason);
-      assert.equal(error.retryable, false);
-      return true;
+        ? { code: 0, out: JSON.stringify({ ok: true, stopped: res }) } : { code: 1 },
+      logger: { warn: warning => warnings.push(warning) },
     });
-  }
-  assert.deepEqual(res.daemonSessionsStopped?.stoppedSessionIds, []);
-  if (stopResult.status === 'incomplete') {
-    assert.equal(res.finalization?.finalized, false);
-    assert.equal(res.finalization?.reason, 'session_cleanup_incomplete');
-    assert.equal(res.daemonSessionsStopped.reason, 'session_cleanup_incomplete');
+    assert.ok(warnings.some(warning => warning.includes('fixture') && warning.includes('failed-session')));
   }
 
   const stopCalls = daemon.calls.filter((c) => c.url === '/stop');
@@ -194,7 +195,7 @@ test(`explicit child stop handles ${stopResult.status} before signaling the life
 }
 
 for (const [status, preparedSource] of [['incomplete', true], ['disconnected', true], ['incomplete', false]]) {
-test(`restart retains incumbent custody when daemon stop is ${status} (prepared=${preparedSource})`, async t => {
+test(`restart completes with a warning when daemon stop is ${status} (prepared=${preparedSource})`, async t => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-restart-retirement-'));
   t.after(() => rm(tmp, { recursive: true, force: true }));
   const daemon = await startDaemonControlServer({ token: 'restart-retirement-fixture', stopResult: { status } });
@@ -226,21 +227,14 @@ test(`restart retains incumbent custody when daemon stop is ${status} (prepared=
   const selectedPath = join(baseDir, 'source-runtime', 'selected-server.json');
   const prepared = { identity: 'prepared-replacement', entrypoint: join(tmp, 'prepared', 'server.mjs') };
   await writeFile(selectedPath, JSON.stringify(prepared));
-  await assert.rejects(stopObservedStackForRestart({ rootDir: tmp, stackName, baseDir, env,
-    incumbentRuntimeState: incumbent, json: true, preserveDaemon: false }), error => {
-    assert.equal(error.code, 'ESTACKRUNTIMECLEANUPINCOMPLETE');
-    assert.equal(error.phase, 'stop');
-    assert.equal(error.retryable, false);
-    assert.equal(error.actions.finalization.reason, 'session_cleanup_incomplete');
-    return true;
-  });
-  const retained = JSON.parse(await readFile(runtimePath, 'utf8'));
-  assert.equal(retained.ownerPid, child.pid);
-  assert.deepEqual(retained.sourceRuntimeIdentities, incumbent.sourceRuntimeIdentities);
-  assert.ok(retained.stopRequest);
+  const stopped = await stopObservedStackForRestart({ rootDir: tmp, stackName, baseDir, env,
+    incumbentRuntimeState: incumbent, json: true, preserveDaemon: false });
+  assert.equal(stopped.finalization.finalized, true);
+  assert.deepEqual(stopped.errors, []);
+  assert.ok(stopped.warnings.some(warning => warning.code === 'session_cleanup_incomplete' && warning.retryable === true));
+  await assert.rejects(readFile(runtimePath, 'utf8'), { code: 'ENOENT' });
   assert.deepEqual(JSON.parse(await readFile(selectedPath, 'utf8')), prepared);
-  assert.deepEqual(daemon.calls.map(call => call.url), ['/ping', '/stop'], 'a settled cleanup failure must not repeat shutdown');
-  await waitForProcessAlive({ pid: child.pid });
+  assert.deepEqual(daemon.calls.map(call => call.url), ['/ping', '/stop'], 'the next boundary owns the retry');
 });
 }
 

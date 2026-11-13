@@ -140,6 +140,14 @@ does not classify a generic server or migration exit as a transient dependency
 failure and retry it automatically. Stop and restart can retire a daemon that
 never published its HTTP control port; it has no daemon-held Sessions to clean.
 
+One Session's or browser host's incomplete cleanup is reported as a typed,
+retryable warning and does not refuse the whole stop or restart. Browser hosts
+are swept again at the next cleanup boundary. A remote Session cleanup refusal
+retains the existing target retirement record for the next boundary; local
+Session retirement retains the daemon's Session markers for startup/reconnect
+recovery. Invalid browser confirmation remains visibly incomplete. Core Stack
+process ownership and shutdown confirmation still govern finalization.
+
 QA must read the current controller URL from `urls.internalServerUrl` in
 `hstack stack info <stack> --json` before a run, including after a restart.
 Use that published URL rather than a remembered port, the remote host's private

@@ -310,6 +310,16 @@ async function requestLifecycleOwnerShutdown(
   });
 }
 
+function sessionCleanupWarnings(summary, target) {
+  const failures = (summary?.sessionResults ?? [])
+    .filter(({ result }) => result.status !== 'stopped' && result.status !== 'not_found');
+  return (failures.length ? failures : [{ result: { reason: summary?.reason ?? 'session_cleanup_failed' } }])
+    .map(({ sessionId, result }) => ({ code: 'session_cleanup_incomplete',
+      ...(target ? { target } : {}), ...(sessionId ? { sessionId } : {}),
+      reason: /^[a-z][a-z0-9_]*$/.test(result.reason ?? result.status ?? '')
+        ? result.reason ?? result.status : 'session_cleanup_failed', retryable: true }));
+}
+
 async function stopDaemonTrackedSessions({ cliHomeDir, serverUrl, env, stackName, runtimeState }) {
   // Session drain has no deadline; its control proof must not impose the
   // shorter listener-observation budget before the lifecycle owner can stop it.
@@ -563,6 +573,12 @@ async function stopStackWithEnvInternal({
     mobile: [],
     infra: null,
     errors: [],
+    warnings: [],
+  };
+
+  const warn = warning => {
+    actions.warnings.push(warning);
+    console.warn(`[stack] ${warning.code}${warning.target ? ` for ${warning.target}` : ''}${warning.sessionId ? ` for Session ${warning.sessionId}` : ''}${warning.reason ? ` (${warning.reason})` : ''}; cleanup will retry at the next boundary`);
   };
 
   const serverComponent = resolveServerComponentFromStackEnv(env);
@@ -625,11 +641,9 @@ async function stopStackWithEnvInternal({
   try {
     actions.browsers = await stopStackQaBrowsers({ stackName, baseDir,
       sourceDir, env }, { capture: runCaptureResultImpl });
-    for (const warning of actions.browsers.warnings) console.warn(`[stack] ${warning.code}: ${warning.error}`);
+    for (const warning of actions.browsers.warnings) warn(warning);
   } catch (error) {
-    actions.errors.push({ step: 'browsers', error: redactFailureDiagnostic(error instanceof Error ? error.message : String(error), env) });
-    actions.finalization = { finalized: false, reason: 'browser_cleanup_incomplete' };
-    return actions;
+    warn({ code: 'browser_cleanup_incomplete', reason: 'browser_cleanup_unavailable', retryable: true });
   }
 
   // Retire native roles while the controller's forwards still exist. The same
@@ -648,10 +662,11 @@ async function stopStackWithEnvInternal({
       const prepared = await prepareDevTargetOpenSsh({ targets: loaded.config.targets, mutagenDir: syncRuntime.mutagenDir, env });
       // Retirement controls the already-loaded native runtime. Source sync is
       // startup admission and must not prevent cleanup of existing processes.
-      await retireStackDevTarget({ target, sshArgs: prepared.sshArgs, env: syncRuntime.env,
+      const retirement = await retireStackDevTarget({ target, sshArgs: prepared.sshArgs, env: syncRuntime.env,
         options: { stackName, services: state.services, serverUrl: internalServerUrl,
           runtimeMode, preserveDaemon } },
       { runProcess: input => runDevTargetControlProcess(input, { capture: runCaptureResultImpl }) });
+      actions.warnings.push(...(retirement?.warnings ?? []).map(warning => ({ ...warning, target: name })));
       await recordStackRuntimeUpdate(runtimeStatePath, { remoteTargets: { [name]: {
         status: preserveDaemon && state.services.daemon === true ? (state.serviceStatus?.daemon ?? state.status) : 'stopped',
         phase: null, error: null,
@@ -659,11 +674,16 @@ async function stopStackWithEnvInternal({
           .map(([service]) => [service, preserveDaemon && service === 'daemon' ? (state.serviceStatus?.daemon ?? state.status) : 'stopped'])),
       } } });
     } catch (error) {
-      if (error?.code === 'EDEVTARGETUNREACHABLE') {
+      const itemCleanupIncomplete = error?.code === 'EDEVTARGETRETIREMENTREFUSED'
+        && ['session_cleanup_incomplete', 'browser_cleanup_incomplete', 'remote_cleanup_incomplete'].includes(error.cause?.code);
+      if (error?.code === 'EDEVTARGETUNREACHABLE' || itemCleanupIncomplete) {
         const message = error instanceof Error ? error.message : String(error);
         deferredRetirements.push({ name, services: state.services, runtimeMode, error: message });
         actions.remoteRetirementPending ??= [];
         actions.remoteRetirementPending.push({ target: name, error: message });
+        if (error.actions?.daemonSessionsStopped?.ok === false) {
+          for (const warning of sessionCleanupWarnings(error.actions.daemonSessionsStopped, name)) warn(warning);
+        } else warn({ code: 'remote_cleanup_incomplete', target: name, reason: error.cause?.code ?? 'target_unreachable', retryable: true });
         continue;
       }
       actions.errors.push({ step: 'remote-stop', target: name, error: error instanceof Error ? error.message : String(error) });
@@ -674,29 +694,15 @@ async function stopStackWithEnvInternal({
   }
 
   if (!preserveDaemon) {
-    let sessionCleanupError;
     try {
       actions.daemonSessionsStopped = await stopDaemonTrackedSessions({ cliHomeDir, serverUrl: internalServerUrl, env, stackName, runtimeState });
     } catch (e) {
-      sessionCleanupError = e instanceof Error ? e.message : String(e);
       actions.daemonSessionsStopped = { ok: false, skipped: false, reason: 'session_cleanup_failed', stoppedSessionIds: [] };
     }
     if (!actions.daemonSessionsStopped.ok) {
-      const failures = (actions.daemonSessionsStopped.sessionResults ?? [])
-        .filter(({ result }) => result.status !== 'stopped' && result.status !== 'not_found');
-      if (failures.length) {
-        actions.errors.push(...failures.map(({ sessionId, result }) => ({
-          step: 'daemon-sessions', sessionId, reason: result.reason ?? result.status,
-          error: `Session ${sessionId} cleanup incomplete: ${result.reason ?? result.status}`,
-        })));
-      } else {
-        actions.errors.push({ step: 'daemon-sessions', reason: actions.daemonSessionsStopped.reason,
-          error: sessionCleanupError ?? `daemon Session cleanup incomplete: ${actions.daemonSessionsStopped.reason}` });
-      }
-      // Retain both the daemon and the runtime record for an observable retry;
-      // killing the parent here would orphan the unconfirmed session runners.
-      actions.finalization = { finalized: false, reason: 'session_cleanup_incomplete' };
-      return actions;
+      for (const warning of sessionCleanupWarnings(actions.daemonSessionsStopped)) warn(warning);
+      // The daemon owns retained Session markers and retries their retirement on
+      // startup/reconnect. Keep that evidence; continue ordinary Stack shutdown.
     }
   } else if (preserveDaemon) {
     actions.daemonSessionsStopped = { ok: true, skipped: true, reason: 'preserve_daemon', stoppedSessionIds: [] };

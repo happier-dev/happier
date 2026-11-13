@@ -207,6 +207,34 @@ test('unreachable browser target warns without preventing stack stop or reachabl
   assert.deepEqual(stopped.browsers.remote, [{ target: 'linux1', stackName: f.input.stackName, pids: [1234] }]);
 });
 
+for (const exitCode of [255, 1]) test(`browser cleanup failure (${exitCode}) warns and joins the next cleanup boundary`, async t => {
+  const f = await fixture(t, { targetName: 'windows1-linux' });
+  await rm(f.statePath);
+  const reachable = { ...f.target, name: 'reachable', ssh: 'test-reachable' };
+  await writeFile(join(f.baseDir, 'dev-targets.json'), JSON.stringify({ version: 1, targets: [f.target, reachable] }));
+  let unavailable = true;
+  const cleaned = [];
+  const capture = async (_command, args) => {
+    if (unavailable && args.includes('test-windows1-linux')) {
+      return { ok: false, exitCode, out: '', err: 'Connection closed by 127.0.0.1 port 22' };
+    }
+    cleaned.push(args.includes('test-windows1-linux') ? 'windows1-linux' : 'reachable');
+    return { ok: true, exitCode: 0, out: JSON.stringify({ stackName: f.input.stackName, pids: [] }), err: '' };
+  };
+  const first = await stopStackWithEnvOwner(f.input, { runCaptureResultImpl: capture });
+  assert.equal(first.finalization.finalized, true);
+  assert.deepEqual(first.errors, []);
+  assert.deepEqual(first.browsers.warnings.map(w => w.code), [exitCode === 255
+    ? 'browser_cleanup_unreachable:windows1-linux' : 'browser_cleanup_incomplete:windows1-linux']);
+  assert.deepEqual(cleaned, ['reachable']);
+  unavailable = false;
+  cleaned.length = 0;
+  const next = await stopStackWithEnvOwner(f.input, { runCaptureResultImpl: capture });
+  assert.equal(next.finalization.finalized, true);
+  assert.deepEqual(next.browsers.warnings, []);
+  assert.deepEqual(cleaned.sort(), ['reachable', 'windows1-linux']);
+});
+
 test('unreachable browser hosts warn while reachable browsers are reaped and recovered hosts join the next sweep', async t => {
   const f = await fixture(t, { targetName: 'nl1' });
   await rm(f.statePath);
@@ -241,15 +269,16 @@ test('unreachable browser hosts warn while reachable browsers are reaped and rec
   assert.deepEqual(reaped.sort(), [...names].sort(), 'recovery must not leave a worker excluded from later orphan cleanup');
 });
 
-test('contacted browser workers with invalid cleanup confirmation fail closed', async t => {
+test('invalid browser cleanup confirmation stays visibly incomplete without refusing stack stop', async t => {
   const f = await fixture(t);
   await rm(f.statePath);
   for (const out of ['not-json', JSON.stringify({ stackName: 'other-stack', pids: [] }),
     JSON.stringify({ stackName: f.input.stackName, pids: [0] })]) {
     const stopped = await stopStackWithEnvOwner(f.input, { runCaptureResultImpl: async () => ({ ok: true, exitCode: 0, out, err: '' }) });
-    assert.equal(stopped.finalization.finalized, false, 'a contacted worker must positively confirm this Stack browser cleanup');
-    assert.equal(stopped.finalization.reason, 'browser_cleanup_incomplete');
-    assert.equal(stopped.errors[0].step, 'browsers');
+    assert.equal(stopped.finalization.finalized, true);
+    assert.deepEqual(stopped.errors, []);
+    assert.equal(stopped.browsers.remote.length, 0, 'invalid confirmation must never claim browser retirement');
+    assert.equal(stopped.browsers.warnings[0].code, 'browser_cleanup_incomplete:linux1');
   }
 });
 
@@ -299,15 +328,16 @@ for (const platform of ['posix', 'windows']) {
   });
 }
 
-test('reachable browser cleanup failure still prevents stack stop finalization', async t => {
+test('reachable browser cleanup failure is a typed warning without refusing stack stop', async t => {
   const f = await fixture(t);
   await rm(f.statePath);
   const stopped = await stopStackWithEnvOwner(f.input, { runCaptureResultImpl: async () => ({
     ok: false, exitCode: 1, out: '', err: '[dev-targets] browser pid 1234 cleanup unconfirmed: permission_denied',
   }) });
-  assert.equal(stopped.finalization.finalized, false);
-  assert.equal(stopped.finalization.reason, 'browser_cleanup_incomplete');
-  assert.equal(stopped.errors[0].step, 'browsers');
+  assert.equal(stopped.finalization.finalized, true);
+  assert.deepEqual(stopped.errors, []);
+  assert.equal(stopped.browsers.warnings[0].code, 'browser_cleanup_incomplete:linux1');
+  assert.equal(stopped.browsers.warnings[0].retryable, true);
 });
 
 test('unreachable remote retirement finalizes local stop and survives a move to a healthy target until settlement', async t => {
@@ -388,7 +418,7 @@ test('ambiguous SSH loss and reachable retirement failure do not permit local fi
   }
 });
 
-test('remote Session cleanup refusal survives parent Stop and preserves its recovery', async t => {
+test('remote Session cleanup refusal becomes a warning and retains target retry custody', async t => {
   const f = await fixture(t);
   const daemonSessionsStopped = { ok: false, skipped: false, reason: 'session_cleanup_incomplete',
     stoppedSessionIds: [], sessionResults: [
@@ -402,12 +432,11 @@ test('remote Session cleanup refusal survives parent Stop and preserves its reco
       finalization: { finalized: false, reason: 'session_cleanup_incomplete' },
     } }) : '',
   }) });
-  assert.equal(stopped.finalization.reason, 'remote_cleanup_incomplete');
-  assert.deepEqual(stopped.daemonSessionsStopped, daemonSessionsStopped);
-  assert.match(stopped.errors[0].error, /remote-session.*runner_exit_timeout/);
-  const error = createStackRuntimeCleanupIncompleteError(stopped);
-  assert.match(error.recovery, /--preserve-daemon/);
-  assert.match(error.recovery, /stack daemon test-remote stop --json/);
+  assert.equal(stopped.finalization.finalized, true);
+  assert.deepEqual(stopped.errors, []);
+  assert.deepEqual(stopped.warnings, [{ code: 'session_cleanup_incomplete', target: 'linux1',
+    sessionId: 'remote-session', reason: 'runner_exit_timeout', retryable: true }]);
+  assert.equal((await readStackRuntimeStateFile(f.statePath)).remoteTargets.linux1.status, 'retirement-pending');
 });
 
 test('recorded remote runtime already gone after interrupted stop is verified retired despite unknown exit status', async t => {
@@ -483,15 +512,21 @@ test('parent stop retains remote custody on native Session cleanup failure and r
     }
     if (remote.includes('stack stop')) {
       if (cleanupAllowed) nativeAlive = false;
-      return { ok: cleanupAllowed, exitCode: cleanupAllowed ? 0 : 1, err: cleanupAllowed ? '' : 'session_cleanup_incomplete' };
+      return { ok: cleanupAllowed, exitCode: cleanupAllowed ? 0 : 1,
+        out: cleanupAllowed ? '' : JSON.stringify({ ok: false, stopped: {
+          daemonSessionsStopped: { ok: false, sessionResults: [
+            { sessionId: 'pending-session', result: { status: 'incomplete', reason: 'terminal_control_serviceability_retirement_failed' } },
+          ] }, finalization: { finalized: false, reason: 'session_cleanup_incomplete' },
+        } }) };
     }
     return { ok: !nativeAlive, exitCode: nativeAlive ? 1 : 0 };
   };
   const failed = await stopStackWithEnv(f.input, { runCaptureResultImpl: capture });
-  assert.equal(failed.finalization.finalized, false, 'a surviving native role must prevent parent stopped success');
+  assert.equal(failed.finalization.finalized, true, 'a pending item must not refuse the local stop');
+  assert.equal(failed.warnings[0].sessionId, 'pending-session');
   const retained = await readStackRuntimeStateFile(f.statePath);
-  assert.equal(retained.placement.daemon, 'linux1');
-  assert.ok(retained.stopRequest, 'a retry must retain stop custody');
+  assert.equal(retained.remoteTargets.linux1.status, 'retirement-pending');
+  assert.equal(retained.stopRequest, null, 'pending target custody survives a completed local stop');
   assert.equal(nativeAlive, true);
   cleanupAllowed = true;
   const stopped = await stopStackWithEnv(f.input, { runCaptureResultImpl: capture });

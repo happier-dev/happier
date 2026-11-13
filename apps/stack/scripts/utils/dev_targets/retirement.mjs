@@ -14,7 +14,13 @@ export async function retireStackDevTarget({ target, options, sshArgs = [], env,
   const probe = () => invoke(buildRemoteStackRetirementProbeCommand(target, options));
   if (probeBeforeStop && (await probe())?.code === 0) return;
   const result = await invoke(buildRemoteStackStopCommand(target, options));
-  if (result?.code === 0) return;
+  if (result?.code === 0) {
+    let stopped;
+    try { stopped = JSON.parse(result.out ?? ''); } catch { /* Older successful Stop has no JSON result. */ }
+    const warnings = stopped?.stopped?.warnings ?? [];
+    for (const warning of warnings) logger.warn?.(`[dev-targets] ${target.name}: ${warning.code}${warning.sessionId ? ` for Session ${warning.sessionId}` : ''}${warning.reason ? ` (${warning.reason})` : ''}; cleanup will retry at the next boundary`);
+    return { warnings };
+  }
   // Cleanup can terminate its transport without publishing an exit status.
   // The same fresh absence probe proves retirement for every failed terminal
   // result; a signal or missing code alone never proves that Sessions are gone.

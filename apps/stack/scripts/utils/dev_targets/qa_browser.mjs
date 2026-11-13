@@ -282,29 +282,32 @@ export async function stopStackQaBrowsers({ stackName, baseDir, sourceDir, env }
         remoteCommand: buildRemoteQaBrowserStopCommand(target, { stackName }),
       }), { env, capture });
     } catch (error) {
-      return { warning: { code: `browser_cleanup_unreachable:${target.name}`,
+      return { warning: { code: `browser_cleanup_unreachable:${target.name}`, target: target.name, retryable: true,
         error: redactFailureDiagnostic(error instanceof Error ? error.message : String(error), env) } };
     }
     // SSH transport loss cannot confirm disposable browser retirement, but it
     // must not prevent the reachable Stack resources from stopping.
     if (!result.ok && (result.exitCode === 255 || result.exitCode === 127 || result.exitCode == null)) {
-      return { warning: { code: `browser_cleanup_unreachable:${target.name}`,
+      return { warning: { code: `browser_cleanup_unreachable:${target.name}`, target: target.name, retryable: true,
         error: redactFailureDiagnostic(result.err || result.error?.message || 'browser cleanup transport unavailable', env) } };
     }
-    if (!result.ok) throw new Error(`[dev-targets] ${target.name} browser cleanup failed: ${redactFailureDiagnostic(result.err || result.exitCode, env)}`);
+    if (!result.ok) return { warning: { code: `browser_cleanup_incomplete:${target.name}`,
+      target: target.name, retryable: true,
+      error: redactFailureDiagnostic(result.err || String(result.exitCode), env) } };
     let observed;
     try { observed = JSON.parse(result.out.trim()); } catch { /* Missing confirmation is not retirement. */ }
     if (observed?.stackName !== stackName || !Array.isArray(observed.pids)
       || !observed.pids.every(pid => Number.isSafeInteger(pid) && pid > 1)) {
-      throw new Error(`[dev-targets] ${target.name} invalid browser cleanup confirmation`);
+      return { warning: { code: `browser_cleanup_incomplete:${target.name}`,
+        target: target.name, retryable: true, error: 'invalid browser cleanup confirmation' } };
     }
     return { target: target.name, ...observed };
   }));
-  const failures = results.filter(result => result.status === 'rejected');
-  if (failures.length) throw new AggregateError(failures.map(result => result.reason),
-    failures.map(result => result.reason.message).join('; '));
-  return { local, remote: results.filter(result => !result.value.warning).map(result => result.value),
-    warnings: results.filter(result => result.value.warning).map(result => result.value.warning) };
+  const settled = results.map((result, index) => result.status === 'fulfilled' ? result.value
+    : { warning: { code: `browser_cleanup_incomplete:${targets[index].name}`, target: targets[index].name, retryable: true,
+      error: redactFailureDiagnostic(result.reason instanceof Error ? result.reason.message : String(result.reason), env) } });
+  return { local, remote: settled.filter(result => !result.warning),
+    warnings: settled.filter(result => result.warning).map(result => result.warning) };
 }
 
 // Acquisition owns the only replacement. No consumer receives a failed handle,
