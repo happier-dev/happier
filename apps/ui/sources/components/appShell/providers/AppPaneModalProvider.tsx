@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { ModalProvider } from '@/modal/ModalProvider';
+import { AccountNoticeInvestigationBoundary } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { AppShellPluginUiProjectionProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { PluginTranscriptActivityDismissalProvider } from '@/components/sessions/transcript/items/PluginTranscriptActivityDismissalProvider';
@@ -12,9 +13,11 @@ export function AppPaneModalProvider(props: Readonly<{ children: React.ReactNode
     return (
         <AppPaneProvider>
             <AppShellPluginUiProjectionProvider>
-                <PluginTranscriptActivityDismissalProvider>
-                    <ModalProvider>{props.children}</ModalProvider>
-                </PluginTranscriptActivityDismissalProvider>
+                <AccountNoticeInvestigationBoundary>
+                    <PluginTranscriptActivityDismissalProvider>
+                        <ModalProvider>{props.children}</ModalProvider>
+                    </PluginTranscriptActivityDismissalProvider>
+                </AccountNoticeInvestigationBoundary>
             </AppShellPluginUiProjectionProvider>
         </AppPaneProvider>
     );

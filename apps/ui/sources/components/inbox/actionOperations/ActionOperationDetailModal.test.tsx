@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { act, createSessionFixture, pressTestInstanceAsync, standardCleanup } from '@/dev/testkit';
@@ -39,6 +40,14 @@ vi.mock('expo-router', async () => {
     return createExpoRouterMock({ router: { push: routerPush } }).module;
 });
 
+// Browser focus and dismissal listeners require a DOM; keep the shell, portal and modal owners real.
+vi.mock('@/utils/web/radixCjs', async importOriginal => {
+    const actual = await importOriginal<typeof import('@/utils/web/radixCjs')>();
+    const Inline = (props: Readonly<{ children?: React.ReactNode }>) => props.children;
+    return { ...actual, requireRadixDismissableLayer: () => ({ Root: Inline, Branch: Inline }),
+        requireRadixFocusScope: () => ({ Root: Inline }) };
+});
+
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
@@ -61,6 +70,29 @@ afterEach(async () => {
 const { ActionOperationDetailModal } = await import('./ActionOperationDetailModal');
 
 describe('ActionOperationDetailModal', () => {
+    it('keeps the Account investigation owner when Inbox opens a failed operation in the shell modal', async () => {
+        const [{ AppPaneModalProvider }, { renderScreen: renderRoot }, { openActionOperationDetail }, { AccountNoticeInvestigationBoundary }] = await Promise.all([
+            import('@/components/appShell/providers/AppPaneModalProvider'), import('@/dev/testkit'),
+            import('./openActionOperationDetail'), import('@/hooks/inbox/AccountNoticeInvestigationProvider'),
+        ]);
+        const snapshot = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'modal-setup-failure', revision: 1,
+            actionId: MACHINE_SETUP_APPLY_ACTION_ID_V1, state: 'failed',
+            scope: { accountId: 'account-1', machineId: 'machine-1' }, title: 'Apply machine setup',
+            createdAt: 100, startedAt: 110, settledAt: 120, cancellation: 'unsupported',
+            error: { errorCode: 'content_unavailable', error: 'Setup could not start' },
+        });
+        actionOperationStore.mergeSnapshots({ serverId: 'home-a', snapshots: [snapshot] });
+        // The real shell portal is above Inbox's existing boundary, just as on the loaded app.
+        const screen = await renderRoot(<AppPaneModalProvider><AccountNoticeInvestigationBoundary>
+            <View testID="inbox-page" />
+        </AccountNoticeInvestigationBoundary></AppPaneModalProvider>);
+        try {
+            await act(async () => { openActionOperationDetail({ serverId: 'home-a', operationId: snapshot.operationId }); });
+            const { waitForTestEvent } = await import('@/dev/testkit');
+            await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('action-operation-investigate')).not.toBeNull());
+        } finally { await screen.unmount(); }
+    });
+
     it.each([
         { kind: 'backup', failed: true }, { kind: 'managed-install', failed: true },
         { kind: 'machine-setup', failed: true }, { kind: 'machine-setup-before-execution', failed: true },
