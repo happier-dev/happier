@@ -270,17 +270,17 @@ const TRACK_EDGE_FADE = { fadeSize: 16 } as const;
  * colour to paint over the bar's glass, and the last item read as hidden under the "+" beside it.
  */
 const TrackRevealContext = React.createContext<((id: string, x: number, width: number) => void) | null>(null);
+/** Each track tab's width once the track is measured: a whole number of tabs fills it (`resolveCockpitTrackItemWidth`). */
+const TrackItemWidthContext = React.createContext<number | null>(null);
 
 /** Reports where a tab sits in the track, so the track can bring the selected one into view. */
 function CockpitTabBarTrackItem(props: Readonly<{ id: string; children: React.ReactNode; style?: StyleProp<ViewStyle> }>) {
     const report = React.useContext(TrackRevealContext);
-/** Each track tab's width once the track is measured: a whole number of tabs fills it (`resolveCockpitTrackItemWidth`). */
-const TrackItemWidthContext = React.createContext<number | null>(null);
+    const width = React.useContext(TrackItemWidthContext);
     return (
         <View style={[props.style, width === null ? null : { width }]} onLayout={report ? (event) => report(props.id, event.nativeEvent.layout.x, event.nativeEvent.layout.width) : undefined}>
             {props.children}
         </View>
-    const width = React.useContext(TrackItemWidthContext);
     );
 }
 
@@ -313,20 +313,20 @@ function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode; activeI
         fades.onScroll(event);
     };
     const [nativeWidth, setNativeWidth] = React.useState(0);
+    const [viewportWidth, setViewportWidth] = React.useState(0);
+    const itemWidth = resolveCockpitTrackItemWidth({ viewport: viewportWidth, minWidth: props.tabMinWidth });
     const edges = React.useMemo(() => ({ top: false, bottom: false, left: fades.visibility.left, right: fades.visibility.right }),
         [fades.visibility.left, fades.visibility.right]);
     const webMask = React.useMemo(() => Platform.OS === 'web' ? resolveHorizontalScrollEdgeMaskStyle(edges, TRACK_EDGE_FADE) : undefined, [edges]);
     const nativeRamps = React.useMemo(() => Platform.OS === 'web' ? null : resolveHorizontalScrollEdgeMaskRamps(edges, TRACK_EDGE_FADE), [edges]);
-    const [viewportWidth, setViewportWidth] = React.useState(0);
-    const itemWidth = resolveCockpitTrackItemWidth({ viewport: viewportWidth, minWidth: props.tabMinWidth });
     const onViewportLayout = (event: LayoutChangeEvent) => {
         fades.onViewportLayout(event);
         viewport.current = event.nativeEvent.layout.width;
+        setViewportWidth(event.nativeEvent.layout.width);
         reveal();
         if (Platform.OS !== 'web') setNativeWidth(event.nativeEvent.layout.width);
     };
     const track = (
-        setViewportWidth(event.nativeEvent.layout.width);
         <ScrollView
             ref={scrollRef}
             horizontal
