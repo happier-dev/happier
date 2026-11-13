@@ -1,3 +1,17 @@
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { delimiter } from 'node:path';
+import { PLUGIN_MANIFEST as githubManifest } from '../../../../packages/plugins/scm-github/src/manifest';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { stagePluginDaemonRuntime } from '@/plugins/authoring/bundleDaemonRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { writeExecutableShim } from '@/testkit/fs/executableShim';
+import { reloadConfiguration } from '@/configuration';
+import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
+import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { REQUESTER_ACCOUNT_MCP_AGENT_PLUGIN, startRequesterAccountMcpSession } from '@/agent/runtime/session/loop/requesterAccountMcpSession.testkit';
 import { resolve } from 'node:path';
 import fastify from 'fastify';
 import nacl from 'tweetnacl';
@@ -44,7 +58,14 @@ vi.mock('socket.io-client', async importOriginal => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 // QA cli75: a rev2 running receipt must converge after finite provider observation.
-it.each(['READY', 'ERROR'] as const)('settles the retained Vercel receipt from %s through its real observed path', async readyState => {
+it.each([
+    { scenario: 'READY', title: 'settles the retained Vercel receipt from READY' },
+    { scenario: 'ERROR', title: 'settles the retained Vercel receipt from ERROR' },
+    { scenario: 'exact SHA', title: 'prepares an exact-SHA Vercel deploy without Compose' },
+    { scenario: 'Session GitHub HEAD', title: 'prepares Vercel from native GitHub HEAD through its retained Session MCP' },
+] as const)('$title through its real runtime', async ({ scenario }) => {
+    const sessionHead = scenario === 'Session GitHub HEAD';
+    const readyState = scenario === 'exact SHA' || sessionHead ? 'READY' : scenario;
     const accountId = 'owner', origin = 'https://platform-home.test', serverId = 'srv_vercel_receipt_home';
     const providerAccountId = 'team_reviewed', projectId = 'prj_reviewed', sha = 'f'.repeat(40);
     const app = fastify();
@@ -58,7 +79,10 @@ it.each(['READY', 'ERROR'] as const)('settles the retained Vercel receipt from %
         projectRoot: resolve(import.meta.dirname, '../../../../packages/plugins/deploy-vercel'),
         entryPath: resolve(import.meta.dirname, '../../../../packages/plugins/deploy-vercel/src/accountRuntime.ts'),
         manifestExport: null,
-    } });
+    }, ...(sessionHead ? { additional: [{ manifest: githubManifest,
+        projectRoot: resolve(import.meta.dirname, '../../../../packages/plugins/scm-github'),
+        entryPath: resolve(import.meta.dirname, '../../../../packages/plugins/scm-github/src/accountRuntime.ts'),
+        artifactId: 'github-account-runtime', activateExport: 'activate', manifestExport: null }] } : {}) });
     const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 7,
         provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`, encryption: null };
     const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(83));
@@ -69,7 +93,7 @@ it.each(['READY', 'ERROR'] as const)('settles the retained Vercel receipt from %
     environment.environment.serverId = serverIdentityId;
     environment.environment.owner = { kind: 'account', accountId };
     delete environment.environment.buildMachineId;
-    environment.content.definition = { kind: 'repository', ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [] } };
+    environment.content.definition = { kind: 'repository', ref: 'main', ...(scenario === 'exact SHA' || sessionHead ? {} : { compose: { path: 'compose.yaml', profiles: [], services: [] } }) };
     const sourceIntent = { kind: 'repository' as const, projectSourceId: environment.environment.projectSourceId,
         sourceRevision: 1, sha, compose: environment.content.definition.compose };
     const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: 'example/app' };
@@ -120,6 +144,11 @@ it.each(['READY', 'ERROR'] as const)('settles the retained Vercel receipt from %
                 ...(init?.body ? { payload: await new Response(init.body).text() } : {}) });
             return new Response(response.body, { status: response.statusCode, headers: { 'content-type': 'application/json' } });
         }
+        if (sessionHead && parsed.origin === 'https://api.github.com') {
+            expect(new Headers(init?.headers).get('authorization')).toBe('Bearer session-native-github-secret');
+            return Response.json(parsed.pathname.endsWith('/commits/main') ? { sha }
+                : { full_name: repository.repository, default_branch: 'main' });
+        }
         expect(parsed.origin).toBe('https://api.vercel.com');
         expect(new Headers(init?.headers).get('authorization') === 'Bearer preview-fixture-secret').toBe(true);
         providerRequests.push({ method: init?.method ?? 'GET', path: parsed.pathname, body: null });
@@ -135,7 +164,7 @@ it.each(['READY', 'ERROR'] as const)('settles the retained Vercel receipt from %
     app.get('/v1/projects/sources/:sourceId', async () => ProjectSourcesReadOutputV1Schema.parse({ ok: true, canManage: true,
         source: { id: sourceIntent.projectSourceId, revision: 1, name: 'App', owner: { kind: 'account', accountId },
             audience: [], createdByAccountId: accountId, repository: { protocol: 'https',
-                provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: repository.deployment },
+                provider: { id: sessionHead ? `${githubManifest.id}/github` : 'github', kind: 'github', displayName: 'GitHub', baseUrl: repository.deployment },
                 repository: { nameWithOwner: repository.repository, cloneUrl: 'https://github.com/example/app.git' } } } }));
     app.get('/v1/deployments/environments/:environmentId', async () => ({ ok: true,
         environment: environment.environment, secretScope: environment.secretScope, targetLinks: [row.targetLink] }));
@@ -154,6 +183,10 @@ it.each(['READY', 'ERROR'] as const)('settles the retained Vercel receipt from %
         return { ok: true, environmentId: receipt.environmentId, revision: 1,
             deploymentId: receipt.id, deploymentRevision: receipt.revision, state: receipt.state };
     });
+    if (sessionHead) {
+        app.get('/v1/account/entity-rows/connected-accounts/purposes', async () => ({ status: 'present', revision: 1,
+            content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } } }));
+    }
     await app.ready();
     const restoreHttp = installAxiosFastifyAdapter({ app, origin });
     const mounted = await createAuthoredAdmittedPluginRuntimeFixture({
@@ -161,11 +194,46 @@ it.each(['READY', 'ERROR'] as const)('settles the retained Vercel receipt from %
             accountExecution: { credentials, serverUrl: origin, serverId, serverIdentityId, machineId: 'machine-a', isCurrent: async () => true },
             resolveCurrentMachineId: () => 'machine-a' },
         plugins: [{ manifest: vercel.manifest, files: { [vercel.manifest.entrypoints!.daemon!]: 'export function activate() {}' },
-            instantiateCommittedModule: () => ({ activate: vercel.activate }) }],
+            instantiateCommittedModule: () => ({ activate: vercel.activate }) },
+            ...(sessionHead ? [{ manifest: githubManifest, files: { [githubManifest.entrypoints!.daemon!]: 'export function activate() {}' } }] : [])],
         resolveContributes: async happyHomeDir => createResolvedContributionRegistry(projectLoadedPluginContributes({
             loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external' })),
     });
+    let sourceSession: Awaited<ReturnType<typeof startRequesterAccountMcpSession>> | undefined;
+    let githubRuntime: Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>> | undefined;
+    let githubHome: string | undefined;
+    const sessionEnv = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
     try {
+        if (sessionHead) {
+            githubHome = await mkdtemp(resolve(tmpdir(), 'vercel-session-github-'));
+            sessionEnv.patch({ HAPPIER_HOME_DIR: githubHome });
+            reloadConfiguration();
+            const declaration = normalizePluginManifestV2(githubManifest);
+            const stagedRoot = resolve(githubHome, 'github-daemon');
+            await mkdir(stagedRoot);
+            const staged = await stagePluginDaemonRuntime({
+                sourceRootPath: resolve(import.meta.dirname, '../../../../packages/plugins/scm-github'),
+                sourceEntryPath: resolve(import.meta.dirname, '../../../../packages/plugins/scm-github/src/index.ts'),
+                stagedRootPath: stagedRoot, daemonEntrypoint: declaration.entrypoints!.daemon!,
+            });
+            const files: Record<string, string | Uint8Array> = Object.fromEntries(declaration.contributes.resources.flatMap(resource =>
+                'path' in resource && typeof resource.path === 'string' ? [[resource.path, '{}']] : []));
+            for (const path of staged.outputRelativePaths) files[path] = await readFile(resolve(stagedRoot, path));
+            files['package.json'] = JSON.stringify({ type: 'module' });
+            const executableDirectory = resolve(githubHome, 'bin');
+            await writeExecutableShim({ dir: executableDirectory, fileName: process.platform === 'win32' ? 'gh.cmd' : 'gh',
+                contents: process.platform === 'win32' ? '@echo off\r\necho session-native-github-secret\r\n'
+                    : '#!/bin/sh\nprintf \'%s\\n\' \'session-native-github-secret\'\n' });
+            sessionEnv.patch({ PATH: `${executableDirectory}${delimiter}${process.env.PATH ?? ''}` });
+            githubRuntime = await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: githubHome,
+                controller: pluginReloadController, plugins: [{ manifest: declaration, files }, REQUESTER_ACCOUNT_MCP_AGENT_PLUGIN], coldStart: true });
+            await runWithServerHttpBaseUrl(origin, () => ensureCliActionPolicySettings(credentials, origin));
+            const snapshot = getActiveAccountSettingsSnapshot();
+            if (!snapshot) throw new Error('Expected Vercel Session requester policy');
+            sourceSession = await startRequesterAccountMcpSession({ credentials, snapshot, serverId,
+                serverHttpBaseUrl: origin, accountId, machineId: 'machine-a', installationId: 'installation-a',
+                sessionId: 'vercel-github-head-session', happyHomeDir: githubHome, pluginRuntimeRegistryLease: githubRuntime.lease });
+        }
         const identityOwner = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => serverIdentityId,
             resolveHostIdentity: async () => ({ machineId: 'machine-a', installationId: 'installation-a', custodianAccountId: accountId }) });
         const deps = createDaemonDeploymentActionDeps({ credentials, serverId, serverHttpBaseUrl: origin, machineId: 'machine-a',
@@ -173,6 +241,7 @@ it.each(['READY', 'ERROR'] as const)('settles the retained Vercel receipt from %
                 const requester = await identityOwner.resolveActionRequester!(context);
                 try { return requester.identity; } finally { await requester.dispose(); }
             },
+            ...(sourceSession ? { executeSourceReadAction: sourceSession.executeSourceReadAction } : {}),
             runtime: { async acquire() { throw new Error('Provider Git deployment must not acquire native runtime'); } },
             acquirePluginRuntimeRegistryLease: () => mounted.controller.acquireRuntimeRegistry({ resolveRuntimeRegistry: async () => mounted.registry }) });
         const context: ActionExecutorContext = { surface: 'cli', authority: 'present_user', runtimeAccountId: accountId,
@@ -181,6 +250,18 @@ it.each(['READY', 'ERROR'] as const)('settles the retained Vercel receipt from %
                 installationId: 'installation-a', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true,
             actionsSettings: normalizeActionsSettingsV1(undefined), presentUserConfirmation: { actionId: 'deployments.deploy' },
             operationAcceptance: { operationId: 'preview-operation', accept() {} } };
+        if (scenario === 'exact SHA' || sessionHead) {
+            const prepared = await deps.prepareDeploymentAction({ actionId: 'deployments.deploy', input: {
+                serverId, environmentId: environment.environment.id, targetLinkId: row.targetLink.id,
+                requestKey: 'replay147-vercel-exact-deploy', ...(sessionHead ? {} : { sha: '9275dfbb315739d0ccb463075ab8d2b4966b08fc' }) }, context });
+            expect(prepared, JSON.stringify(prepared)).toMatchObject({ input: { serverId,
+                environmentId: environment.environment.id, targetLinkId: row.targetLink.id },
+                preview: { sourceMethod: 'gitIntegration', sourceIntent: {
+                    kind: 'repository', sha: sessionHead ? sha : '9275dfbb315739d0ccb463075ab8d2b4966b08fc' } } });
+            if ('preview' in prepared) expect(prepared.preview).not.toHaveProperty('sourceIntent.compose');
+            expect(providerRequests).toEqual([]);
+            return;
+        }
         const candidate = await deps.prepareDeployCandidate({ environmentId: environment.environment.id,
             requestKey: 'reviewed-preview', sourceIntent, sourceMethod: 'gitIntegration', context });
         expect(candidate, JSON.stringify(candidate)).toMatchObject({ ok: true,
@@ -221,5 +302,12 @@ it.each(['READY', 'ERROR'] as const)('settles the retained Vercel receipt from %
             .toMatchObject({ ok: true, result: { state, deploymentRevision: 3 } });
         expect(transitions).toHaveLength(1);
         expect(providerRequests).toHaveLength(1);
-    } finally { await mounted.dispose(); restoreHttp(); await app.close(); }
-});
+    } finally {
+        try { await sourceSession?.stop(); await githubRuntime?.dispose(); await mounted.dispose(); }
+        finally {
+            sessionEnv.restore(); reloadConfiguration(); resetActiveAccountSettingsSnapshotForTests();
+            restoreHttp(); await app.close();
+            if (githubHome) await rm(githubHome, { recursive: true, force: true });
+        }
+    }
+}, 60_000);

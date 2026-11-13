@@ -136,8 +136,8 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
                     sha = await host.resolveRepositoryRef(sourceRepository, definition.ref, request.context);
                 } else return refuse('deployment_source_unavailable');
             }
-            intent = { kind: 'repository', projectSourceId: sourceId, sourceRevision, compose: definition.compose,
-                sha };
+            intent = { kind: 'repository', projectSourceId: sourceId, sourceRevision,
+                ...(definition.compose === undefined ? {} : { compose: definition.compose }), sha };
         }
     }
     const assertSourceCurrent = async () => {

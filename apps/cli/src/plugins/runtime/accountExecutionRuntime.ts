@@ -7,6 +7,7 @@ import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAtt
 import { fetchServerFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { PluginReloadController, PluginRuntimeRegistryLease } from './reload/controller';
 import { pluginReloadController } from './reload/singleton';
+import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from './reload/runtimeLease';
 import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 
 type RegistryInput = NonNullable<Parameters<typeof resolveExecutablePluginRuntimeRegistry>[0]>;
@@ -18,6 +19,8 @@ export type AccountExecutionRuntimeInput = Readonly<{
     signal?: AbortSignal;
     /** A containing Machine operation holds this registry until Account execution ends. */
     credentialRuntimeRegistry?: PluginRuntimeRegistryLease['registry'];
+    /** A containing host already holds native sign-in without replacing Account credential implementations. */
+    nativeCredentialRuntimeRegistry?: PluginRuntimeRegistryLease['registry'];
     resolveServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined | Promise<CliServerFeaturesSnapshot | undefined>;
 }>;
 
@@ -44,6 +47,18 @@ export async function resolveAccountExecutionRuntime(input: AccountExecutionRunt
             isRuntimeRegistryCurrent: candidate => candidate === readCredentialRegistry(),
             subscribe: pluginReloadController.subscribe,
         };
+        const heldNativeCredentialRegistry = input.nativeCredentialRuntimeRegistry ?? input.credentialRuntimeRegistry;
+        const nativeCredentialRegistryAccess = {
+            // Native materialization calls this only after the purpose owner's
+            // custody admission, and releases the acquired lease in its finally.
+            acquireRuntimeRegistry: async (): Promise<PluginRuntimeRegistryLease> => heldNativeCredentialRegistry
+                ? { registry: heldNativeCredentialRegistry, source: 'ephemeral', durableRevision: -1, release: async () => {} }
+                : tryAcquireAuthoritativePluginRuntimeRegistryLease({ happyHomeDir: input.happyHomeDir }) ?? borrowAccountRegistry(),
+            isRuntimeRegistryCurrent: (candidate: PluginRuntimeRegistryLease['registry']) => heldNativeCredentialRegistry
+                ? candidate === heldNativeCredentialRegistry
+                : candidate === registry || pluginReloadController.isRuntimeRegistryCurrent(candidate),
+            subscribe: pluginReloadController.subscribe,
+        };
         let qualifiedSupport: Promise<ReturnType<typeof resolveQualifiedConnectedAccountAtomicV4Negotiation>> | undefined;
         const resolveQualifiedSupport = () => qualifiedSupport ??= (async () => {
             const features = input.resolveServerFeaturesSnapshot ? await input.resolveServerFeaturesSnapshot()
@@ -58,6 +73,7 @@ export async function resolveAccountExecutionRuntime(input: AccountExecutionRunt
             return createRequesterConnectedAccountPurposeBindingRuntime({ operationContext, accountId,
                 ...(authority.machineId ? { machineId: authority.machineId } : {}),
                 reloadController: credentialRegistryAccess,
+                nativeReloadController: nativeCredentialRegistryAccess,
                 isCurrent: async () => await authority.isCurrent() && await authority.isCredentialCurrent?.() !== false,
                 allowNativeAccountCredentials: operationContext.machineAdmission?.actorAccountId === accountId
                     && isCustodianMachineAdmission(operationContext.machineAdmission),

@@ -43,6 +43,7 @@ export async function startMcpRequesterParent(input: Readonly<{
   let parent: HostSessionRuntimeFactoryParams | undefined;
   let controls: SessionRuntimeControls | null = null;
   let requestRuntimeStop: (() => Promise<void>) | undefined;
+  let startedRuntime: RuntimeTurnOperations | undefined;
   let liveSession = input.session;
   let originalControls = liveSession.setSessionRuntimeControls;
   const installControls: typeof originalControls = next => {
@@ -149,7 +150,8 @@ export async function startMcpRequesterParent(input: Readonly<{
     formatPromptErrorMessage: String, startRuntimeBeforeFirstPrompt: true,
     ...(input.nativeParentSelection ? { processLifecycleOwnership: 'caller' as const,
       onRuntimeStopReady: (stop: () => Promise<void>) => { requestRuntimeStop = stop; } } : {}),
-    onAfterStart: async () => {
+    onAfterStart: async ({ runtime }) => {
+      startedRuntime = runtime;
       ready.resolve();
       if (!input.nativeParentSelection) { await finish.promise; throw finished; }
     },
@@ -191,6 +193,11 @@ export async function startMcpRequesterParent(input: Readonly<{
       submitUserPrompt(text: string, permissionMode: 'default' | 'yolo' = 'default') {
         if (!parent?.messageQueue) throw new Error('Host prompt queue is unavailable');
         parent.messageQueue.push({ text, localId: crypto.randomUUID(), userMessageSeq: 1 }, { permissionMode });
+      },
+      async submitNativePrompt(text: string) {
+        if (!startedRuntime) throw new Error('Native Session runtime is unavailable');
+        await startedRuntime.sendTurnPrompt(text, { localId: crypto.randomUUID(),
+          turnId: crypto.randomUUID(), userMessageSeq: 1 });
       },
       async stop() {
       try {
