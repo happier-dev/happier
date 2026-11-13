@@ -11257,6 +11257,7 @@ deleteWarning: "Això elimina els inicis de sessió i les dades dels llocs desat
     },
 
     simulatorPreview: {
+        title: 'Simulador',
         picker: {
             title: 'Dispositius',
             empty: 'No hi ha dispositius de simulador disponibles.',

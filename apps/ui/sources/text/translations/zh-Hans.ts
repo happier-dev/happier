@@ -11708,6 +11708,7 @@ deleteWarning: "这会删除配置文件中保存的登录信息和网站数据�
   },
 
   simulatorPreview: {
+    title: '模拟器',
     picker: {
       title: '设备',
       empty: '没有可用的模拟器设备。',

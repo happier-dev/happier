@@ -76,6 +76,20 @@ const simulatorTab = {
 await import('./SessionDetailsPanel');
 
 describe('SessionDetailsPanel simulator runtime wiring', () => {
+    it('renders the Session opener\'s Simulator tab from the live daemon snapshot', async () => {
+        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+        const { SessionSimulatorPreviewPane } = await import('@/components/sessions/simulator/SessionSimulatorPreviewPane');
+        const { createSimulatorPreviewDetailsTab } = await import('@/components/sessions/simulator/simulatorPreviewDetailsTab');
+        const screen = await renderScreen(<runtime.Wrapper>
+            <SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId="session:s1" nowMs={nowMs} />
+        </runtime.Wrapper>);
+        await act(async () => runtime.pane.openDetailsTab(createSimulatorPreviewDetailsTab({ title: 'Simulator' }), { intent: 'pinned' }));
+        await waitForHomeGovernance(() => expect(
+            screen.tree.findByType(SessionSimulatorPreviewPane).props.viewModel.devices
+                .map((device: { simulatorId: string }) => device.simulatorId),
+        ).toEqual(['sim_1', 'sim_2']));
+    });
+
     it('renders the live daemon snapshot and preserves device selection through real actions', async () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
         const { SessionSimulatorPreviewPane } = await import('@/components/sessions/simulator/SessionSimulatorPreviewPane');

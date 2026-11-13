@@ -152,6 +152,7 @@ import {
 } from './sessionHeaderMenuGroups';
 import { getSessionActionMetadata } from './sessionActionMetadata';
 import { useOpenSessionComputerScreen } from '@/components/computer/useOpenSessionComputerScreen';
+import { useOpenSessionSimulatorPreview } from '@/components/sessions/simulator/useOpenSessionSimulatorPreview';
 
 const SESSION_FOLLOW_IN_ANOTHER_SESSION_ACTION_ID = 'follow.set';
 
@@ -382,6 +383,12 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const hasGlobalVoiceAgentConversation = useHasGlobalVoiceAgentConversation();
   const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
   const [open, setOpen] = React.useState(false);
+  // Each opening asks the simulator owner again, so a simulator booted since mount appears.
+  const [menuOpenings, setMenuOpenings] = React.useState(0);
+  const onMenuOpenChange = React.useCallback((next: boolean) => {
+    if (next) setMenuOpenings((count) => count + 1);
+    setOpen(next);
+  }, []);
   // People is a rail destination; the header's ⋯ carries it (with its conversation attention) only
   // while the rail is not on screen. No named-viewer presence is read for a header entry any more.
   const collaborationAttentionLabel = useSessionPeopleAttentionLabel(
@@ -430,6 +437,10 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   // The one Computer opener; offline keeps the entry with its presence reason (calm-shell R2-2).
   const computerOpener = useOpenSessionComputerScreen({ sessionId: props.sessionId, serverId: sessionServerId ?? null });
   const openComputer = props.destinationsInMenu === true ? computerOpener : null;
+  // The rail does not carry the simulator, so the ⋯ is its entry wherever the Session is open.
+  const openSimulator = useOpenSessionSimulatorPreview({
+    sessionId: props.sessionId, serverId: sessionServerId ?? null, refreshKey: menuOpenings,
+  });
   const showCompanionInOverflow = props.companionHeaderActionPlacement === 'overflow'
     && companionRevealPort !== null
     && companion.availability === 'ready'
@@ -694,6 +705,10 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
         disabled: Boolean(openComputer.disabledReason), subtitle: openComputer.disabledReason ?? undefined,
         icon: <Icon name="desktop" size={16} color={iconColor} /> });
     }
+    if (openSimulator) {
+      push('open', { id: 'header.openSimulator', title: t('simulatorPreview.title'),
+        icon: <Icon name="device-mobile" size={16} color={iconColor} /> });
+    }
 
     if (props.collaborationHeader && props.destinationsInMenu === true) {
       push('open', createSessionPeopleMenuItem({
@@ -829,6 +844,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     props.collaborationHeader,
     props.extraItems,
     openComputer,
+    openSimulator,
     showCompanionInOverflow,
     companion.preference.items.length,
     companion.preference.visible,
@@ -904,7 +920,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     <View ref={menuAnchorRef} collapsable={false}>
     <DropdownMenu
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={onMenuOpenChange}
       items={actions}
       showCategoryTitles
       // On a phone the menu is the anchored panel under its ⋯ (owner R2), named by the session it acts on.
@@ -959,6 +975,10 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
         }
         if (actionId === 'header.openComputer') {
           openComputer?.open();
+          return;
+        }
+        if (actionId === 'header.openSimulator') {
+          openSimulator?.open();
           return;
         }
         if (actionId === 'header.openCompanion' && showCompanionInOverflow) {

@@ -12295,6 +12295,7 @@ deleteWarning: "Le credenziali e i dati dei siti salvati nel profilo vengono eli
   },
 
   simulatorPreview: {
+    title: 'Simulatore',
     picker: {
       title: 'Dispositivi',
       empty: 'Nessun dispositivo simulatore disponibile.',

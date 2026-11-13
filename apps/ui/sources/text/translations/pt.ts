@@ -12191,6 +12191,7 @@ deleteWarning: "Isso exclui os logins e dados de sites salvos no perfil e fecha 
   },
 
   simulatorPreview: {
+    title: 'Simulador',
     picker: {
       title: 'Dispositivos',
       empty: 'Nenhum dispositivo de simulador disponível.',

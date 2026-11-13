@@ -13910,6 +13910,7 @@ const enStreamPlayer = {
 };
 
 const enSimulatorPreview = {
+  title: 'Simulator',
   picker: {
     title: 'Devices',
     empty: 'No simulator devices are available.',

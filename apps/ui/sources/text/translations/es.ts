@@ -12074,6 +12074,7 @@ deleteWarning: "Se borran los inicios de sesión y datos de sitios guardados en 
   },
 
   simulatorPreview: {
+    title: 'Simulador',
     picker: {
       title: 'Dispositivos',
       empty: 'No hay dispositivos de simulador disponibles.',

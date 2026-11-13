@@ -11903,6 +11903,7 @@ deleteWarning: "Spowoduje to usunięcie zapisanych logowań i danych witryn prof
   },
 
   simulatorPreview: {
+    title: 'Symulator',
     picker: {
       title: 'Urządzenia',
       empty: 'Brak dostępnych urządzeń symulatora.',

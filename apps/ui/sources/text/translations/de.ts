@@ -11943,6 +11943,7 @@ deleteWarning: "Gespeicherte Anmeldungen und Website-Daten dieses Profils werden
     },
 
     simulatorPreview: {
+        title: 'Simulator',
         picker: {
             title: 'Geräte',
             empty: 'Es sind keine Simulator-Geräte verfügbar.',

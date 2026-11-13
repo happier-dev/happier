@@ -11912,6 +11912,7 @@ deleteWarning: "Les connexions et données des sites enregistrées dans ce profi
   },
 
   simulatorPreview: {
+    title: 'Simulateur',
     picker: {
       title: 'Appareils',
       empty: 'Aucun appareil de simulateur n’est disponible.',

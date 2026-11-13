@@ -9865,6 +9865,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     simulatorPreview: {
+        title: '模擬器',
         picker: {
             title: '裝置',
             empty: '沒有可用的模擬器裝置。',

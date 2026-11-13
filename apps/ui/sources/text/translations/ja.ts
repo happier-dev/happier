@@ -12371,6 +12371,7 @@ deleteWarning: "このプロファイルに保存されたログイン情報と�
   },
 
   simulatorPreview: {
+    title: 'シミュレーター',
     picker: {
       title: 'デバイス',
       empty: '利用可能なシミュレーターデバイスはありません。',
