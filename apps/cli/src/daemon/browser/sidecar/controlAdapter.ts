@@ -134,6 +134,8 @@ export type BrowserSidecarControlAdapterFactoryResult =
         adapter: BrowserDaemonControlAdapter;
         extensions?: BrowserSidecarExtensionSurface;
         localWindow?: LocalBrowserWindowSurface;
+        /** Session end retires its engine, retaining persistent profile storage. */
+        stopSession?: (browserSessionId: string) => Promise<void>;
         dispose?: () => void | Promise<void>;
         contextCapture?: BrowserSidecarContextCaptureSurface;
         readProcessRoots?: () => readonly HappierProcessRootSource[];

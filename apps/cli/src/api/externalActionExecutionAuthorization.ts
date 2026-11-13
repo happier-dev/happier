@@ -30,9 +30,10 @@ export { mintExternalActionExecutionAuthorization, type ExternalActionAuthorizat
 import axios from '@/api/client/credentialAxios';
 import { MachineAdminAccessSetInputV1Schema, MachineAgentIsolationPreviewInputV1Schema, MachineAgentIsolationSetInputV1Schema,
   type MachineAdminAccessActionInput, type MachineAgentIsolationPreviewInputV1, type MachineAgentIsolationSetInputV1 } from '@happier-dev/protocol';
-import { ManagedMachineV1Schema, matchesManagedMachineEnrollmentAdminAccessV1, matchesManagedMachineEnrollmentAgentIsolationV1,
+import { matchesManagedMachineEnrollmentAdminAccessV1, matchesManagedMachineEnrollmentAgentIsolationV1,
   type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { MachineSetupApplyInputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupApplyInputV1Schema, ManagedGetOutputV1Schema, managedMachineActionEndpointPathV1,
+  unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { readManagedMachine } from '@/machines/managed/readManagedMachine';
 import type { ManagedPresetAcquireOriginV1 } from '@happier-dev/cli-common/machines/managed';
 import { prepareOriginalAccountManagedPresetAcquire } from './managedPresetOrigination';
@@ -680,7 +681,8 @@ type OriginalAccountActionInput = Readonly<{
 /** Home-bound managed effects, Sync writes, native Agent inventory, finite work, owned-copy review and terminal access need Machine
  * admission even on an own target. Workflow birth also needs the authenticated
  * requester custody that private root control does not carry. */
-export function requiresOriginalAccountMachineActionProof(actionId: string, input?: unknown): boolean {
+export function requiresOriginalAccountMachineActionProof(actionId: string, input?: unknown,
+  context?: Pick<ActionExecutorContext, 'actionCaller' | 'surface'>): boolean {
   const action = ActionIdSchema.safeParse(actionId);
   const spec = action.success ? getActionSpec(action.data) : null;
   const hasSession = input !== null && typeof input === 'object' && 'sessionId' in input
@@ -690,7 +692,7 @@ export function requiresOriginalAccountMachineActionProof(actionId: string, inpu
   // Every Action's declared Machine content/review demand needs the original
   // requester, even when this person's approval policy is waived.
   return action.success && spec !== null
-    && resolveActionExecutionPlacementForInput(spec, input) === 'machine'
+    && resolveActionExecutionPlacementForInput(spec, input, context?.actionCaller, context?.surface ?? 'api') === 'machine'
     && (doesExternalActionConsumeRequesterAccountContentV1({ actionId, input })
       // Declared host roots keep their local review; content still needs Home custody.
       || spec.originalExecution?.terminalRoot !== 'host'
@@ -773,7 +775,10 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   const requiresMachineProof = input.invocation?.caller.kind === 'plugin'
     || requiresOriginalAccountInvocationMachineProofV1(input.actionId) && input.invocation !== undefined
     || input.managedContinuation !== undefined
-    || requiresOriginalAccountMachineActionProof(input.actionId, input.input);
+    || requiresOriginalAccountMachineActionProof(input.actionId, input.input,
+      input.installedWorkflow?.context ?? (input.invocation && {
+        actionCaller: input.invocation.caller, surface: input.invocation.surface,
+      }));
   const workflow = input.installedWorkflow;
   const workflowCaller = workflow?.context.actionCaller;
   const workflowAuthorization = workflowCaller?.kind === 'workflowRun'
@@ -2253,7 +2258,7 @@ async function verifyManagedCreationEnrollmentPolicyInput(input: Omit<Parameters
       headers: headers.headers, signal: input.context.signal, validateStatus: () => true,
     });
     if (response.status !== 200) return false;
-    const row = ManagedMachineV1Schema.parse(response.data);
+    const row = unwrapManagedMachineReadV1(ManagedGetOutputV1Schema.parse(response.data));
     return row.id === continuation.managedId && row.homeId === binding.serverIdentityId
       && row.enrolledMachineId === binding.machineId && row.intentRevision === continuation.expectedIntentRevision
       && row.creationState === 'active' && row.allocation === 'bound' && row.desired !== 'delete'

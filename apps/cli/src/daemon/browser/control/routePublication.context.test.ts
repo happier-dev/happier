@@ -65,6 +65,8 @@ it.each(['actionPopup', 'optionsPage'] as const)('captures an admitted persisten
         viewTargets: { enabled: true }, internal: { enabled: true }, sidecar: { enabled: true }, context: { enabled: true } } } });
     const publication = createBrowserRoutePublication({ params: {
         machineId: 'machine', credentials, serverBaseUrl: 'http://127.0.0.1:3030', processEnv: {},
+        readMachineMemory: () => ({ reported: true, totalBytes: 16 * 1024 ** 3, availableBytes: 16 * 1024 ** 3,
+            usedBytes: 0, pressure: { level: 'calm', source: 'none' } }),
         getApiMachineForSessions: () => null, browserSidecarControlAdapterFactory: factory,
         daemonSessionMutationCustody: createDaemonSessionMutationCustody({ credentials }),
         onBrowserControlRoutesReady: value => { control = value; },
@@ -83,6 +85,17 @@ it.each(['actionPopup', 'optionsPage'] as const)('captures an admitted persisten
             .toMatchObject({ visibleText: 'Extension control', sourceViewId: view.viewId });
         expect(control?.getCommandAccessFailure?.(view, { machineAdmission: { role: 'use', actorAccountId: 'guest', custodianAccountId: 'owner' } }))
             .toMatchObject({ status: 'failed', error: { code: 'profile_policy_denied' } });
+        const openInNextSession = () => control?.extensions?.execute(kind === 'actionPopup' ? 'browser.extensions.openActionPopup' : 'browser.extensions.openOptions',
+            { machineId: 'machine', browserSessionId: 'next-session', viewId: 'next-view', profileId: profile.profileId,
+                extensionId: extension.id, commandId: 'next-open' });
+        expect(await openInNextSession()).toMatchObject({ status: 'failed', error: { code: 'profile_policy_denied' } });
+        await publication.purgeBrowserStorageForSessionDeleted('unrelated-session');
+        expect(await openInNextSession()).toMatchObject({ status: 'failed', error: { code: 'profile_policy_denied' } });
+        await publication.purgeBrowserStorageForSessionDeleted(view.browserSessionId);
+        expect(control?.listViews?.(view.browserSessionId)).toEqual([]);
+        expect(await profiles.loadPersistentProfile(profile.profileId)).toMatchObject({ lifecycleState: 'active' });
+        expect((await profiles.listExtensions(profile.profileId)).ok).toBe(true);
+        expect(await openInNextSession()).toMatchObject({ status: 'dispatched' });
     } finally {
         await publication.dispose();
         await rm(root, { recursive: true, force: true });

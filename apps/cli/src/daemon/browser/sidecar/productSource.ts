@@ -358,6 +358,7 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
         }
         return {
             ok: true,
+            stopSession: async browserSessionId => { await sessions.get(browserSessionId)?.stop(); },
             readResourceTargets,
             readProcessRoots: () => readResourceTargets().map(target => target.root),
             localWindow: {

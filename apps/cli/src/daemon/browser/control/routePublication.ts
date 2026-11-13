@@ -44,7 +44,7 @@ import { createBrowserProfileCookieImporter } from "@/daemon/browser/profiles/im
 import { createBrowserProfilePasskeyAuthenticator } from "@/daemon/browser/profiles/passkeys";
 import type { BrowserSidecarContextCaptureSurface, BrowserSidecarControlAdapterFactory, BrowserSidecarControlAdapterFactoryInput, BrowserSidecarControlAdapterFactoryResult } from "@/daemon/browser/sidecar/controlAdapter";
 import { createProductBrowserSidecarControlAdapterFactory } from "@/daemon/browser/sidecar/productSource";
-import { createBrowserDaemonViewDiscovery } from './viewDiscovery';
+import { createBrowserDaemonViewDiscovery, type BrowserDaemonViewDiscovery } from './viewDiscovery';
 import { createBrowserDaemonFeatureGate, type BrowserDaemonFeatureGate } from "@/daemon/browser/featureGate";
 import type { MachineLiveStreamCaptureRegistry } from "@/daemon/peer/mediation/stream";
 import { type CliServerFeaturesSnapshot } from "@/features/serverFeaturesClient";
@@ -82,6 +82,7 @@ onBrowserDiagnosticsRoutesReady?: (
 onBrowserRecordingRoutesReady?: (routes: BrowserRecordingRoutes) => void;
 onBrowserRecordingRuntimeReady?: (runtime: BrowserRecordingDaemonRuntime | null) => void;
 onBrowserControlRoutesReady?: (routes: BrowserDaemonControlRoutes) => void;
+onBrowserViewDiscoveryReady?: (discovery: BrowserDaemonViewDiscovery) => void;
 onBrowserContextRoutesReady?: (routes: BrowserContextRoutes) => void;
 onBrowserAutomationRoutesReady?: (routes: BrowserAutomationRoutes) => void;
 liveStreamCaptureRegistry?: MachineLiveStreamCaptureRegistry;
@@ -135,6 +136,7 @@ setBrowserRecordingRoutesProvider?: (
     stopRecording: () => Promise<void>;
     purgeBrowserStorageForSessionDeleted: (sessionId: string) => Promise<void>;
     purgeBrowserStorageForLogout: () => Promise<void>;
+    purgeBrowserStorageForRoleDeactivation: () => Promise<void>;
 }> {
   let controlRuntimeResourcesDisposed = false;
   // OWNER-GATE: one daemon-boundary browser feature gate. The first startup pass keeps the daemon
@@ -198,6 +200,7 @@ setBrowserRecordingRoutesProvider?: (
   let unregisterBrowserSidecarControlAdapter: (() => void) | null = null;
   let disposeBrowserSidecarControlAdapter: (() => void | Promise<void>) | null =
     null;
+  let stopBrowserSidecarSession: ((browserSessionId: string) => Promise<void>) | undefined;
   let browserProfilePasskeys: ReturnType<typeof createBrowserProfilePasskeyAuthenticator> | null = null;
   let browserSidecarDiagnosticsRuntime: ReturnType<typeof createSidecarCdpDiagnosticsRuntime> | null = null;
   let browserControlRoutes: BrowserDaemonControlRoutes | null = null;
@@ -215,6 +218,7 @@ setBrowserRecordingRoutesProvider?: (
   let browserCdpScreencastProducer: BrowserCdpScreencastProducer | null = null;
   let browserRecordingRuntimeHasCdpScreencast = false;
   let browserRecordingCdpScreencastAvailable = false;
+  let browserViewDiscoveryPublished = false;
   let browserControlRoutesPublished = false;
   let browserContextRoutesPublished = false;
   let browserAutomationRoutesPublished = false;
@@ -222,16 +226,16 @@ setBrowserRecordingRoutesProvider?: (
   let browserRecordingRoutesPublished = false;
   let refreshBrowserRouteOwnersInFlight: Promise<void> | null = null;
   const publishBrowserRouteOwners = (): void => {
-    params.getApiMachineForSessions()?.registerBrowserViewDiscovery?.(browserViewDiscovery);
+    if (!browserViewDiscoveryPublished) {
+      browserViewDiscoveryPublished = true;
+      params.onBrowserViewDiscoveryReady?.(browserViewDiscovery);
+    }
     if (browserControlRoutes && !browserControlRoutesPublished) {
       browserControlRoutesPublished = true;
       runtimeActionRouteProviderTarget.setBrowserDaemonControlRoutesProvider?.(
         () => browserControlRoutes,
       );
       params.onBrowserControlRoutesReady?.(browserControlRoutes);
-      params
-        .getApiMachineForSessions()
-        ?.registerBrowserControlRoutes(browserControlRoutes);
     }
     if (browserContextRoutes && !browserContextRoutesPublished) {
       browserContextRoutesPublished = true;
@@ -239,9 +243,6 @@ setBrowserRecordingRoutesProvider?: (
         () => browserContextRoutes,
       );
       params.onBrowserContextRoutesReady?.(browserContextRoutes);
-      params
-        .getApiMachineForSessions()
-        ?.registerBrowserContextRoutes?.(browserContextRoutes, () => browserControlRoutes);
     }
     if (browserAutomationRoutes && !browserAutomationRoutesPublished) {
       browserAutomationRoutesPublished = true;
@@ -253,9 +254,6 @@ setBrowserRecordingRoutesProvider?: (
     if (browserDiagnosticsRoutes && !browserDiagnosticsRoutesPublished) {
       browserDiagnosticsRoutesPublished = true;
       params.onBrowserDiagnosticsRoutesReady?.(browserDiagnosticsRoutes);
-      params
-        .getApiMachineForSessions()
-        ?.registerBrowserDiagnosticsRoutes(browserDiagnosticsRoutes, () => browserControlRoutes);
     }
     if (browserDiagnosticsActionRoutes) {
       runtimeActionRouteProviderTarget.setBrowserDiagnosticsActionRoutesProvider?.(
@@ -269,9 +267,6 @@ setBrowserRecordingRoutesProvider?: (
         () => browserRecordingRoutes,
       );
       params.onBrowserRecordingRoutesReady?.(browserRecordingRoutes);
-      params
-        .getApiMachineForSessions()
-        ?.registerBrowserRecordingRoutes(browserRecordingRoutes, () => browserControlRoutes);
     }
   };
   const refreshBrowserRouteOwners = async (): Promise<void> => {
@@ -352,6 +347,7 @@ setBrowserRecordingRoutesProvider?: (
             );
           disposeBrowserSidecarControlAdapter =
             browserSidecarControlAdapterResult.dispose ?? null;
+          stopBrowserSidecarSession = browserSidecarControlAdapterResult.stopSession;
           if (
             browserControlBroker.hasExecutableAdapters() &&
             !browserControlRoutes
@@ -729,6 +725,9 @@ setBrowserRecordingRoutesProvider?: (
   ): Promise<void> => {
     const trimmed = sessionId.trim();
     if (!trimmed) return;
+    // Engine custody is Session-scoped even when its profile storage is retained.
+    // Retire through the launch owner without depending on a discoverable view.
+    await stopBrowserSidecarSession?.(trimmed);
     const outcome = await browserProfileStore.purgeForSessionDeleted({
       sessionId: trimmed,
     });
@@ -740,6 +739,17 @@ setBrowserRecordingRoutesProvider?: (
           failedProfileIds: outcome.failedProfileIds,
         },
       );
+    }
+  };
+  // The devices role was turned off: no Session can reach its Session/ephemeral profiles until it
+  // is on again, and this in-memory registry goes with the role, so purge them now.
+  const purgeBrowserStorageForRoleDeactivation = async (): Promise<void> => {
+    const outcome = await browserProfileStore.purgeForExplicitRequest({ profileIds: browserProfileStore.listProfiles()
+      .filter(profile => profile.storageMode === 'session' || profile.storageMode === 'ephemeral')
+      .map(profile => profile.profileId) });
+    if (outcome.failedProfileIds.length > 0) {
+      logger.debug('[DAEMON RUN] Browser storage role-deactivation purge failed for profiles',
+        { failedProfileIds: outcome.failedProfileIds });
     }
   };
   const purgeBrowserStorageForLogout = async (): Promise<void> => {
@@ -838,5 +848,6 @@ setBrowserRecordingRoutesProvider?: (
     params.onBrowserRecordingRuntimeReady?.(null);
   };
   return { refreshBrowserRouteOwners, publishBrowserRouteOwners, publishBrowserAutomationRuntimeProvisioner,
-    retire, dispose, stopRecording, purgeBrowserStorageForSessionDeleted, purgeBrowserStorageForLogout };
+    retire, dispose, stopRecording, purgeBrowserStorageForSessionDeleted, purgeBrowserStorageForLogout,
+    purgeBrowserStorageForRoleDeactivation };
 }
