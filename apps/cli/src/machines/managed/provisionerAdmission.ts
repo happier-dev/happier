@@ -15,7 +15,7 @@ export async function prepareCliManagedProvisionerAdmission(
     const readSelected = (pluginId: string) => readCliManagedProvisioners(pluginId, account, request.context.signal);
     if (request.actionId === 'machines.managed.power.set' || request.actionId === 'machines.managed.inspect' || isManagedResizeActionIdV1(request.actionId)) {
         const input = ManagedMachineActionInputSchemasV1[request.actionId].parse(request.input);
-        if ('when' in input ? input.when !== 'now' : 'includeGuestDiagnostics' in input ? !input.includeGuestDiagnostics : !isManagedResizeActionIdV1(request.actionId)) return null;
+        if ('when' in input && input.when !== 'now') return null;
         const options = 'includeGuestDiagnostics' in input && input.includeGuestDiagnostics ? { includeGuestDiagnostics: true as const } : undefined;
         if (!account.managedMachineAction) return { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
         const result = await account.managedMachineAction({ actionId: 'machines.managed.get',

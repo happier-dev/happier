@@ -1,5 +1,5 @@
 import { createManagedNativeObservationWait, executeManagedMachinePowerIntent,
-    ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
+    ManagedMachineControllerError, ManagedMachineNativeEffectGuardRefusal } from '@happier-dev/cli-common/machines/managed';
 import { ManagedAdmissionOutputV1Schema, ManagedControlAdmissionInputV1Schema, ManagedControllerCurrentnessV1Schema,
     ManagedControllerMachineOutputV1Schema, ManagedControllerSubmitOutputV1Schema,
     type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -9,6 +9,8 @@ import { readCurrentAccountPluginExecutionSelection } from '@/plugins/runtime/ac
 import type { StoredCredentials } from '@/persistence';
 import { createCliManagedAccountNativeInvocation } from './accountNative';
 import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 
 /** Foreground Account execution consumes Home admission, not an invented controller identity. */
 export async function executeCliManagedAccountPower(input: Readonly<{
@@ -47,10 +49,23 @@ export async function executeCliManagedAccountPower(input: Readonly<{
     if (!submitted.submitted) throw new ManagedMachineControllerError('native_intent_unconfirmed');
     const invoke = createCliManagedAccountNativeInvocation({ machine, provisioner, selected,
         context: input.context, signal: input.signal, requestId });
-    const power = await executeManagedMachinePowerIntent({ machine, invoke, io: { signal: input.signal },
-        guestStartup: { transport: provisioner.bootstrapTransport,
-            channel: resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label },
-        waitForObservation: createManagedNativeObservationWait(input.signal) });
+    let power: Awaited<ReturnType<typeof executeManagedMachinePowerIntent>>;
+    try {
+        power = await executeManagedMachinePowerIntent({ machine, invoke, io: { signal: input.signal },
+            guestStartup: { transport: provisioner.bootstrapTransport,
+                channel: resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label },
+            waitForObservation: createManagedNativeObservationWait(input.signal) });
+    } catch (error) {
+        try {
+            await input.post('report-intent', { ...correlation, result: {
+                kind: error instanceof ManagedMachineNativeEffectGuardRefusal ? 'refused' : 'unknown',
+                code: error instanceof ManagedMachineControllerError ? error.code : 'native_intent_unconfirmed',
+            } }, ManagedControllerMachineOutputV1Schema, null);
+        } catch (reportError) {
+            logger.warn('[MANAGED MACHINE] Native outcome report failed', projectActionFailureCauseV1(reportError, 'machines.managed.power.set'));
+        }
+        throw error;
+    }
     await input.post('report-intent', { ...correlation, result: power.result, observation: power.observation }, ManagedControllerMachineOutputV1Schema, null);
     if (power.guestStartupError) throw power.guestStartupError;
     if (power.result.kind === 'refused') throw new ManagedMachineControllerError(power.result.code);

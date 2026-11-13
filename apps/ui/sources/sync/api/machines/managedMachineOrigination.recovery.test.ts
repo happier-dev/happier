@@ -2,6 +2,7 @@ import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { readMachineProvisionerActionRolesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
@@ -25,12 +26,14 @@ const { executeManagedMachineNativeAction } = await import('./managedMachineOrig
 afterEach(standardCleanup);
 
 it.each([
-    { actionId: 'machines.managed.inspect', mode: 'plain' },
-    { actionId: 'machines.managed.inspect', mode: 'e2ee' },
-    { actionId: 'machines.managed.bootstrap.retry', mode: 'plain' },
-    { actionId: 'machines.managed.bootstrap.retry', mode: 'e2ee' },
+    { actionId: 'machines.managed.inspect', mode: 'plain', pendingPower: false },
+    { actionId: 'machines.managed.inspect', mode: 'e2ee', pendingPower: false },
+    { actionId: 'machines.managed.inspect', mode: 'plain', pendingPower: true },
+    { actionId: 'machines.managed.inspect', mode: 'e2ee', pendingPower: true },
+    { actionId: 'machines.managed.bootstrap.retry', mode: 'plain', pendingPower: false },
+    { actionId: 'machines.managed.bootstrap.retry', mode: 'e2ee', pendingPower: false },
 ] as const)(
-    'resumes $mode Account $actionId against Home retained identity with no allocation or Machine operation', async ({ actionId, mode }) => {
+    'resumes $mode Account $actionId against Home retained identity with no allocation or Machine operation (pending power: $pendingPower)', async ({ actionId, mode, pendingPower }) => {
     const { Modal } = await import('@/modal');
     const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValue(false);
     onTestFinished(() => confirm.mockRestore());
@@ -64,7 +67,8 @@ it.each([
     }] };
     let machine = ManagedMachineV1Schema.parse({ id: 'retained', homeId, custodianAccountId: accountId,
         enrollmentAccountId: accountId, enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, launch,
-        allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 2,
+        allocation: 'bound', creationState: 'active', desired: pendingPower ? 'stop' : 'start', desiredWhen: 'now', intentRevision: 2,
+        ...(pendingPower ? { submittedNativeEffect: { intent: 'stop', requestId: 'original-power', intentRevision: 1 } } : {}),
         resource: { contributionRef: provider, schemaVersion: 1, value: { id: 'same-native' } },
         retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
         reviewedFacts: { launch, provisioner, optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
@@ -90,6 +94,15 @@ it.each([
                 const body = await new Response(init?.body).json();
                 expect(body).toMatchObject({ requestId: 'retained-creation', result: { kind: 'bound', resource: machine.resource } });
                 machine = ManagedMachineV1Schema.parse({ ...machine, observation: body.observation });
+                return Response.json({ machine });
+            }
+            if (path.endsWith('/controller/report-intent')) {
+                const body = await new Response(init?.body).json();
+                expect(pendingPower).toBe(true);
+                expect(body).toMatchObject({ requestId: 'original-power', expectedIntentRevision: 1,
+                    result: { kind: 'unknown' }, observation: { availability: 'present', power: 'stopped' } });
+                const { submittedNativeEffect: _settled, ...current } = machine;
+                machine = ManagedMachineV1Schema.parse({ ...current, observation: body.observation });
                 return Response.json({ machine });
             }
             if (path.endsWith('/controller/current') || path.endsWith('/controller/enrollment-context')) {
@@ -130,7 +143,7 @@ it.each([
             roles.push(role);
             if (role === 'inspect') {
                 expect(body.input).toMatchObject({ resource: { id: 'same-native' } });
-                return { ok: true, result: { observedAt: 2, availability: 'present', power: 'running', storage: 'retained' } };
+                return { ok: true, result: { observedAt: 2, availability: 'present', power: pendingPower ? 'stopped' : 'running', storage: 'retained' } };
             }
             if (role === 'bootstrap') return { ok: true, result: { kind: 'native',
                 transport: { contributionRef: provider, schemaVersion: 1 } } };
@@ -165,9 +178,13 @@ it.each([
     const result = await executeManagedMachineNativeAction({ account, actionId, input, context,
         installNativePayload: async () => ({ binaryPath: '/guest/happier', installedVersion: '1.0.0' }) });
     expect(result, JSON.stringify(result)).toMatchObject(actionId === 'machines.managed.inspect'
-        ? { ok: true, result: { machine: { id: machine.id, observation: { power: 'running' } } } }
+        ? { ok: true, result: { machine: { id: machine.id, observation: { power: pendingPower ? 'stopped' : 'running' } } } }
         : { ok: true, result: { managedId: machine.id } });
     if (actionId === 'machines.managed.inspect') {
+        if (pendingPower) {
+            const observed = ManagedMachineActionOutputSchemasV1['machines.managed.inspect'].parse(result.ok ? result.result : null);
+            expect(observed.machine.submittedNativeEffect).toBeUndefined();
+        }
         expect(roles).toEqual(['inspect']);
         expect(approvals).toBe(0);
     }

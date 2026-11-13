@@ -1,4 +1,5 @@
 import { join, resolve } from 'node:path';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
@@ -17,6 +18,7 @@ import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionDaemonDispa
     computeActionInputApprovalDigestV1, computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControlAdmissionInputV1Schema, ManagedControllerSubmitOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { resolveManagedMachineEnrollmentAgentIsolationV1 } from '@happier-dev/protocol/machines/managed/enrollmentIdentityV1';
 import { ActionsSettingsV1Schema, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import type { ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
@@ -54,7 +56,8 @@ import { runWithServerHttpBaseUrl } from '../../../../../../cli/src/api/client/s
 import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '../../../../../../cli/src/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '../../../../../../cli/src/settings/accountSettings/accountSettingsScopeKey';
 import { createAccountServerActionDeps } from '../../../../../../cli/src/api/accountServerActionDeps';
-import { createActionExecutor, type ActionExecuteResult, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { createActionExecutor, type ActionExecuteResult, type ActionExecutorDeps, type ActionExecutorContext } from '@happier-dev/protocol';
+import { prepareReviewedChildAuthorization } from './reviewedChildAuthorization.composed.testkit';
 import { seedBundledManagedAvailability } from '@/app/machines/managed/managedProjectionVolume.testkit';
 import { managedQb56Input, managedQb56RequestId } from './managedQb56Input.testkit';
 import { snapshotEnv, restoreEnv } from '@/testkit/env';
@@ -96,12 +99,6 @@ import { createEnrollmentJourneyProviderAuthority } from '../../../../../../cli/
 import { createHostActionOperationRuntime } from '../../../../../../cli/src/daemon/actionOperations/createHostActionOperationRuntime';
 
 const nativeVendor = vi.hoisted(() => ({ request: vi.fn<(url: string, init?: RequestInit) => Promise<Response>>() }));
-// test-policy-boundary: only the provider's third-party HTTP transport is substituted.
-vi.mock('undici', async importOriginal => {
-    const original = await importOriginal<typeof import('undici')>();
-    return { ...original, fetch: (url: string, init?: RequestInit) => new URL(String(url)).origin === 'https://native-provider.test'
-        ? nativeVendor.request(String(url), init) : original.fetch(url, init) };
-});
 
 describe('composed CLI managed Action origination', () => {
     const homeId = managedQb56Input.selection.homeId;
@@ -110,6 +107,12 @@ describe('composed CLI managed Action origination', () => {
     const initialEnv = snapshotEnv();
     beforeAll(async () => {
         const cliRoot = resolve(import.meta.dirname, '../../../../../../cli');
+        // test-policy-boundary: resolve the importing CLI's external transport; server and CLI may own different Undici versions.
+        vi.doMock(createRequire(join(cliRoot, 'package.json')).resolve('undici'), async importOriginal => {
+            const original = await importOriginal<typeof import('undici')>();
+            return { ...original, fetch: (url: string, init?: RequestInit) => new URL(String(url)).origin === 'https://native-provider.test'
+                ? nativeVendor.request(String(url), init) : original.fetch(url, init) };
+        });
         nativeRelease = await buildAuthoredAccountActionRelease({ manifest: fixtureManifests.native,
             artifactId: 'portable', accountArtifactId: crypto.randomUUID(), manifestExport: null,
             activateExport: 'activate', archiveDigestCharacter: 'a', source: { manifest: fixtureManifests.native,
@@ -256,7 +259,7 @@ describe('composed CLI managed Action origination', () => {
             const hosted = nativeRelease.hostedArtifacts.find(hosted => hosted.graphArtifactId === slot.artifactId);
             if (!hosted) throw new Error('Expected compiled Account artifact');
             const artifactId = crypto.randomUUID();
-            await db.artifact.create({ data: { id: artifactId, accountId: selected.account.id,
+            await db.artifact.create({ data: { id: artifactId, accountId: selected.account.id, headerVersion: 1, bodyVersion: 1,
                 header: decodeBase64(encodePlainArtifactStoredContent(hosted.archive.header), 'base64'),
                 body: decodeBase64(encodePlainArtifactStoredContent({ body: encodePluginUiArtifactArchiveBodyV1(hosted.archive.body) }), 'base64'),
                 dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64') } });
@@ -423,7 +426,7 @@ describe('composed CLI managed Action origination', () => {
                     const body = { homeId, managedId };
                     const observed = await instance.inject({ method: 'POST', url: path, payload: body,
                         headers: createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: actionId,
-                            target: dispatchedRoot.target, installationId: selected.controller.installationId,
+                            target: authorization.binding.target, installationId: selected.controller.installationId,
                             privateKey: selected.keys.secretKey, method: 'POST', path, body }) });
                     expect(observed.statusCode, observed.body).toBe(managedId === row.id ? 200 : 401);
                 }
@@ -498,6 +501,7 @@ describe('composed CLI managed Action origination', () => {
         const actionId = 'machines.agentIsolation.set';
         const childInput = { serverId: scenario === 'other Home' ? 'srv_other' : homeId,
             machineId: scenario === 'other guest' ? caller.controller.machineId : guest.id, enabled: true,
+            ...resolveManagedMachineEnrollmentAgentIsolationV1(parentInput.enrollmentIdentity),
             expectedMetadataVersion: 0, expectedPolicy: { enabled: false }, expectedPlanDigest: 'reviewed-plan' };
         const phases: Array<{ phase: string; elapsedMs: number; status?: number }> = [];
         let effects = 0;
@@ -516,7 +520,7 @@ describe('composed CLI managed Action origination', () => {
                     creationRequestId: selected.requestId, controller: selected.controller } });
                 const binding = authorization.binding;
                 const encryptionBinding = { serverIdentityId: homeId, accountId: caller.account.id, authentication: binding.authentication,
-                    actionId, requestId: selected.requestId, target: admitted.envelope.target! } satisfies ExternalActionEncryptionBindingV2;
+                    actionId, requestId: admitted.envelope.requestId, target: admitted.envelope.target! } satisfies ExternalActionEncryptionBindingV2;
                 const input = admitted.envelope.v === 1 ? admitted.envelope.input
                     : openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: encryptionBinding, envelope: admitted.envelope, material })?.input;
                 expect(input).toEqual(childInput);
@@ -526,38 +530,58 @@ describe('composed CLI managed Action origination', () => {
                 const execution = { ok: true as const, result: { kind: 'accepted', operationId: 'isolation', metadataVersion: 1,
                     status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } } };
                 const prepared = admitted.envelope.v === 1 ? prepareExternalActionResponseEnvelopeV1({ v: 1,
-                    actionId, requestId: selected.requestId, execution }) : prepareExternalActionResponseV2({ binding: encryptionBinding,
+                    actionId, requestId: admitted.envelope.requestId, execution }) : prepareExternalActionResponseV2({ binding: encryptionBinding,
                         executedMachineId: guest.id, request: admitted.envelope, execution, material, randomBytes: tweetnacl.randomBytes });
                 return { ok: true, result: createExternalActionDaemonDispatchResponse(prepared) };
             } catch (error) { deliveryFailure = error; throw error; }
-        }, http => { http.get('/v1/account/encryption', async () => ({ mode, updatedAt: 1 })); }, phases);
+        }, registerAccountEncryptionRoutes, phases);
         const restoreHttp = installAxiosFastifyAdapter({ app: instance, origin: 'http://managed-seam.test' });
         try {
-            const parent = createActionExecutor({ managedMachineAction: async ({ context }) => {
+            let admittedManagedId: string | undefined;
+            const admitParent = async () => {
                 const admitted = await admitManagedAcquire({ custodianAccountId: selected.account.id,
                     requesterAccountId: selected.account.id, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({
                         v: 1, requestId: selected.requestId, target: { kind: 'machine', machineId: selected.controller.machineId }, input: parentInput }),
                     input: { input: parentInput, requestId: selected.requestId, continuationPresent: false } });
+                admittedManagedId = admitted.machine.id;
                 // Provider allocation and guest enrollment are the system boundary.
                 await db.managedMachine.update({ where: { id: admitted.machine.id }, data: { allocation: 'bound',
                     enrolledMachineId: guest.id, resource: { contributionRef: selected.input.selection.launch.provider,
                         schemaVersion: 1, value: { id: 'native-guest' } } } });
+                return admitted.machine.id;
+            };
+            const dispatchChild = async (context: ActionExecutorContext) => {
+                if (!admittedManagedId) throw new Error('Managed parent did not admit the child');
                 childResult = await dispatchLocalManagedMachineAgentIsolation({ actionId, input: childInput, homeId, context, credentials,
                     custodianAccountId: caller.account.id, serverHttpBaseUrl: 'http://managed-seam.test', isCurrent: async () => true,
-                    managedContinuation: { managedId: admitted.machine.id, creationRequestId: selected.requestId, expectedIntentRevision: 0 } });
-                return childResult.ok ? { managedId: admitted.machine.id } : childResult;
-            } });
-            const result = await parent.execute('machines.managed.acquire', parentInput, { surface: 'ui', authority: 'present_user',
+                    managedContinuation: { managedId: admittedManagedId, creationRequestId: selected.requestId, expectedIntentRevision: 0 } });
+                return childResult;
+            };
+            const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user',
                 actionCaller: { kind: 'host' }, runtimeAccountId: caller.account.id, serverId: homeId, serverIdentityId: homeId,
                 actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
                 actionRequestId: selected.requestId, externalActionTarget: { kind: 'machine', machineId: selected.controller.machineId },
                 presentUserConfirmation: { actionId: 'machines.managed.acquire', accountId: caller.account.id, serverId: homeId,
                     requestId: selected.requestId, target: { kind: 'machine', machineId: selected.controller.machineId },
-                    inputDigest: computeActionInputApprovalDigestV1('machines.managed.acquire', parentInput) } });
+                    inputDigest: computeActionInputApprovalDigestV1('machines.managed.acquire', parentInput) } };
+            let result: ActionExecuteResult;
+            if (scenario === 'declared') {
+                const managedId = await admitParent();
+                const prepared = await prepareReviewedChildAuthorization({ actionId: 'machines.managed.acquire', input: parentInput,
+                    context, managedId, child: { action: actionId, role: actionId, input: childInput }, execute: dispatchChild });
+                childResult = prepared.execution;
+                result = prepared.parentExecution;
+            } else {
+                result = await createActionExecutor({ managedMachineAction: async ({ context }) => {
+                    const managedId = await admitParent();
+                    const child = await dispatchChild(context);
+                    return child.ok ? { managedId } : child;
+                } }).execute('machines.managed.acquire', parentInput, context);
+            }
             if (deliveryFailure) throw deliveryFailure;
             expect(childResult, JSON.stringify(result)).toBeDefined();
             if (scenario === 'declared') {
-                expect(childResult, childResult?.ok === false ? childResult.errorCode : 'local isolation outcome')
+                expect(childResult, JSON.stringify({ execution: childResult, phases }))
                     .toMatchObject({ ok: true, result: { kind: 'accepted', operationId: 'isolation' } });
                 expect(result).toMatchObject({ ok: true });
                 expect(effects).toBe(1);
@@ -714,13 +738,19 @@ describe('composed CLI managed Action origination', () => {
                     verifyExecutionAuthorization: async ({ authorization }) => {
                         return await verifyCurrentExternalActionPrincipal(authorization.binding) !== null;
                     },
+                    prepareRequesterAccountContext: request => prepareRequesterAccountActionContext({ authorization: request.authorization,
+                        purpose: { kind: 'external_action' }, machineId: selected.controller.machineId,
+                        installationId: selected.controller.installationId, installationPrivateKey: selected.keys.secretKey,
+                        serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: 'http://managed-seam.test',
+                        ownCredentials: credentials, isCurrent: async () => true, createExecutor: () => receiver }),
                     resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
                 });
-                if (result.kind !== 'response') throw new Error(`Daemon rejected managed ingress: ${result.kind} (${result.errorCode})`);
+                if (result.kind !== 'response') throw new Error(`Daemon rejected managed ingress: ${result.kind} (${result.errorCode}): ${JSON.stringify(result.failureCause)}`);
                 return { ok: true, result: createExternalActionDaemonDispatchResponseV1(result.prepared) };
             } catch (error) { deliveryFailure = error; throw error; }
         }, http => {
-            http.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
+            registerAccountProfileRoute(http);
+            registerAccountEncryptionRoutes(http);
             http.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: storedSettings },
                 version: policy === 'invalid' ? 'invalid' : 2 }));
             http.post('/v1/artifacts', async request => {
@@ -736,6 +766,7 @@ describe('composed CLI managed Action origination', () => {
             });
         }, phases);
         const restoreHttp = installAxiosFastifyAdapter({ app: instance, origin: 'http://managed-seam.test' });
+        const sockets = await createRequesterCurrentnessSocketHarness();
         const began = performance.now();
         let output = '';
         const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
@@ -755,7 +786,7 @@ describe('composed CLI managed Action origination', () => {
             });
             if (deliveryFailure) throw deliveryFailure;
             phases.push({ phase: 'cli-create-to-ask', elapsedMs: performance.now() - began });
-            expect(JSON.parse(output)).toMatchObject(policy === 'invalid'
+            expect(JSON.parse(output), output).toMatchObject(policy === 'invalid'
                 ? { ok: false, kind: 'actions_invoke', error: { code: 'ACCOUNT_SETTINGS_CONTENT_INVALID' } }
                 : { ok: true, kind: 'actions_invoke', data: { kind: 'approval_request_created', actionId: 'machines.managed.acquire' } });
             expect(approvals).toHaveLength(policy === 'invalid' ? 0 : 1);
@@ -781,7 +812,7 @@ describe('composed CLI managed Action origination', () => {
             }
         } finally {
             stdout.mockRestore(); process.exitCode = previousExitCode;
-            restoreHttp(); resetActiveAccountSettingsSnapshotForTests(); await instance.close();
+            await sockets.close(); restoreHttp(); resetActiveAccountSettingsSnapshotForTests(); await instance.close();
             if (policy === 'qb56') console.info('qb58-replay-phases', JSON.stringify(phases));
         }
     });

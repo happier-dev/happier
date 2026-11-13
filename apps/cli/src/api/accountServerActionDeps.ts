@@ -33,10 +33,12 @@ import { MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, 
 import { ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { executeCliManagedAccountPower } from '@/machines/managed/accountPower';
 import { executeCliManagedAccountResize } from '@/machines/managed/accountResize';
+import { executeCliManagedAccountInspect } from '@/machines/managed/accountInspect';
 import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readCliManagedAccountGuestDiagnostics } from '@/machines/managed/accountDiagnostics';
 import { executeCliManagedProvisionerList } from '@/machines/managed/provisionerDiscovery';
 import { ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { MachinePoolErrorV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 import { SessionPublicLinkCreateActionInputV1Schema, projectSessionPublicLinkActionResultV1, projectSessionPublicLinkCreateActionResultV1 } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
@@ -90,7 +92,7 @@ import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1, McpServerCatalogRowReadResponseV1Sche
 import { createCliAccountKvJsonTransport, resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
 import { createUsageCoachSuppressionPort, USAGE_COACH_SUPPRESSIONS_KV_KEY, type UsageCoachSuppressionStateV1 } from '@happier-dev/protocol/usage/coach/coachActions';
 import { readAccountSettingsV2Raw } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
-import { ActionExecuteFailureSchema, parseActionExecuteFailure, projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1, type AccountActionHttpFailureDetailsV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, parseActionExecuteFailure, readUnexpectedActionErrorDiagnosticV1, type AccountActionHttpFailureDetailsV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 
 export type AccountServerActionDeps = Pick<
@@ -912,37 +914,54 @@ export function createAccountServerActionDeps(input: Readonly<{
         const result = await executeCliManagedProvisionerList({
           value: ManagedMachineActionInputSchemasV1['machines.provisioners.list'].parse(body),
           credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
-          serverUrl: serverHttpBaseUrl, signal,
+          serverUrl: serverHttpBaseUrl, signal, homeDomainAction: deps.homeDomainAction!,
         });
         if (input.isCredentialCurrent && !await input.isCredentialCurrent())
           return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
         return result;
+      }
+      const post: Parameters<typeof executeCliManagedAccountPower>[0]['post'] = async (suffix, request, schema, requestSignal = signal) => {
+        const path = `/v1/machines/managed/controller/${suffix}`;
+        const headers = resolveRequestHeaders({ context: actionContext, effectActionId: actionId, method: 'POST', path, body: request });
+        if (!headers.ok) throw new ManagedMachineControllerError('admission_unavailable');
+        const dispatch = await dispatchAccountServerActionHttpRequest({ headers: headers.headers, method: 'POST', path, body: request,
+          sideEffectClass: spec.sideEffectClass, ...(requestSignal ? { signal: requestSignal } : {}) });
+        if (!dispatch.ok) throw new ManagedMachineControllerError(dispatch.errorCode ?? 'managed_request_failed');
+        if (dispatch.response.status < 200 || dispatch.response.status >= 300) {
+          const refusal = ManagedErrorV1Schema.safeParse(dispatch.response.data);
+          throw Object.assign(new ManagedMachineControllerError(refusal.success ? refusal.data.code : 'managed_request_failed'),
+            { status: dispatch.response.status });
+        }
+        return schema.parse(dispatch.response.data);
+      };
+      if (actionId === 'machines.managed.inspect' && 'managedId' in body && !('includeGuestDiagnostics' in body && body.includeGuestDiagnostics)) {
+        const retained = await deps.managedMachineAction!({ actionId: 'machines.managed.get',
+          input: { homeId, managedId: body.managedId }, context: actionContext, signal });
+        const refusal = ActionExecuteFailureSchema.safeParse(retained);
+        if (refusal.success) return refusal.data;
+        const machine = ManagedMachineActionOutputSchemasV1['machines.managed.get'].parse(retained);
+        if (!machine.controller) {
+          try {
+            return await executeCliManagedAccountInspect({ machine, context: actionContext,
+              credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
+              serverUrl: serverHttpBaseUrl, signal, post });
+          } catch (error) {
+            if (error instanceof ManagedMachineControllerError) return { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
+            throw error;
+          }
+        }
       }
       if (actionId === MANAGED_RESIZE_ACTION_ID_V1 || actionId === 'machines.managed.power.set') {
         try {
           const execution: Omit<Parameters<typeof executeCliManagedAccountPower>[0], 'body'> = {
             context: actionContext, credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
             serverUrl: serverHttpBaseUrl, signal,
-            post: async (suffix, request, schema, requestSignal = signal) => {
-              const path = `/v1/machines/managed/controller/${suffix}`;
-              const headers = resolveRequestHeaders({ context: actionContext, effectActionId: actionId, method: 'POST', path, body: request });
-              if (!headers.ok) throw new ManagedMachineControllerError('admission_unavailable');
-              const dispatch = await dispatchAccountServerActionHttpRequest({ headers: headers.headers, method: 'POST', path, body: request,
-                sideEffectClass: spec.sideEffectClass, ...(requestSignal ? { signal: requestSignal } : {}) });
-              if (!dispatch.ok) throw new ManagedMachineControllerError(dispatch.errorCode ?? 'managed_request_failed');
-              if (dispatch.response.status < 200 || dispatch.response.status >= 300) {
-                const refusal = ManagedErrorV1Schema.safeParse(dispatch.response.data);
-                throw Object.assign(new ManagedMachineControllerError(refusal.success ? refusal.data.code : 'managed_request_failed'),
-                  { status: dispatch.response.status });
-              }
-              return schema.parse(dispatch.response.data);
-            } };
+            post };
           return actionId === MANAGED_RESIZE_ACTION_ID_V1
             ? await executeCliManagedAccountResize({ ...execution, body: ManagedMachineActionInputSchemasV1[MANAGED_RESIZE_ACTION_ID_V1].parse(body) })
             : await executeCliManagedAccountPower({ ...execution, body: ManagedMachineActionInputSchemasV1['machines.managed.power.set'].parse(body) });
         } catch (error) {
-          if (error instanceof ManagedMachineControllerError) return { ok: false, errorCode: error.code, error: error.code,
-            failureCause: projectActionFailureCauseV1(error, actionId) };
+          if (error instanceof ManagedMachineControllerError) return { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
           throw error;
         }
       }

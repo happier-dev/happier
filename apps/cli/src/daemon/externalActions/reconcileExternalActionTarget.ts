@@ -9,6 +9,7 @@ import { normalizeSessionTargetV1 } from '@happier-dev/protocol/actions/sessionT
 import { PluginSettingsAdministrationActionIdV1Schema, resolvePluginSettingsAdministrationTargetV1 } from '@happier-dev/protocol/plugins/settingsAdministration';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isManagedAccountNativeControlInvocationV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readManagedMachine } from '@/machines/managed/readManagedMachine';
 import type { StoredCredentials } from '@/persistence';
 
@@ -42,9 +43,11 @@ export async function resolveManagedControlControllerTarget(input: Readonly<{
 /** The installed provisioner registry and native managed lifecycle belong to the daemon. */
 export function requiresManagedMachineDaemonIngress(actionId: ActionId,
   placement: ReturnType<typeof resolveActionExecutionPlacementForInput> | null,
-  controlControllerTarget?: Readonly<{ kind: 'machine'; machineId: string }> | null): boolean {
+  controlControllerTarget?: Readonly<{ kind: 'machine'; machineId: string }> | null,
+  originalTerminalInput?: unknown): boolean {
   return placement === 'machine' && MANAGED_MACHINE_ACTION_IDS_V1.some(id => id === actionId)
-    || controlControllerTarget != null;
+    || controlControllerTarget != null
+    || originalTerminalInput !== undefined && placement === 'account' && isManagedAccountNativeControlInvocationV1(actionId, originalTerminalInput);
 }
 
 // Only declared execution targets participate. Other nested Machine ids can

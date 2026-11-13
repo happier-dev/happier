@@ -104,6 +104,14 @@ it('binds role authority only to one selected Account in its declared service sc
         authorizations: [{ purpose, serviceRefs: [service] }], provider: machine.launch.provider, credentials,
     });
     expect(bind([credential])).toEqual([{ purpose, serviceRefs: [service], credential }]);
+    for (const deliveryMode of ['brokered', 'direct'] as const) {
+        const teamCredential = { purpose: credential.purpose, teamId: 'team-a', selection: {
+            source: 'team_resource' as const, resourceId: 'shared-cloud', deliveryMode,
+            ...(deliveryMode === 'direct' ? { disclosedMember: credential.account } : {}),
+        } };
+        const retained = ManagedMachineV1Schema.parse({ ...machine, launch: { ...machine.launch, credentials: [teamCredential] } });
+        expect(bind(retained.launch.credentials)).toEqual([{ purpose, serviceRefs: [service], credential: teamCredential }]);
+    }
     for (const credentials of [[], [credential, credential], [{ ...credential,
         account: { ...credential.account, service: { ...service, localId: 'undeclared-service' } } }], [{ ...credential,
         purpose: { ...credential.purpose, consumer: { ...machine.launch.provider, pluginId: 'another-provider' } } }], [{ ...credential,
@@ -162,6 +170,25 @@ function boundary(initial: ManagedMachineV1 = machine) {
 }
 
 describe('portable managed reconciliation', () => {
+    it.each(['present', 'unavailable'] as const)('observes retained power custody through its original correlation when native availability is %s', async availability => {
+        const outstanding = { intent: 'stop' as const, requestId: 'original-power', intentRevision: 2,
+            controller: machine.controller };
+        const retained = ManagedMachineV1Schema.parse({ ...machine, allocation: 'bound', resource, intentRevision: 4,
+            submittedNativeEffect: outstanding });
+        const run = boundary(retained);
+        const reports: Array<{ path: string; body: unknown }> = [];
+        const roles: string[] = [];
+        const observation = { observedAt: 20, availability, ...(availability === 'present' ? { power: 'stopped' as const } : {}) };
+        await reconcileManagedMachine({ ...run.input, action: 'machines.managed.inspect',
+            home: { ...run.input.home, row: async (path, body) => { reports.push({ path, body }); return retained; } },
+            createNative: () => ({ prepareRoles: async () => {}, invoke: async role => { roles.push(role); return observation; } }),
+        });
+        expect(reports).toEqual([{ path: 'report-intent', body: { homeId: retained.homeId, managedId: retained.id,
+            expectedIntentRevision: outstanding.intentRevision, requestId: outstanding.requestId, controller: outstanding.controller,
+            result: { kind: 'unknown' }, observation } }]);
+        expect(roles).toEqual(['inspect']);
+    });
+
     it.each(['initial', 'continued', 'unreviewed'] as const)(
         'passes only the admitted effect digest to native acquisition (%s)', async mode => {
             const digest = 'a'.repeat(64);

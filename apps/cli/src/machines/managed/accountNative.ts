@@ -1,4 +1,6 @@
-import { bindManagedMachineRoleCredentials, ManagedMachineControllerError,
+import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import { projectManagedMachineRolePurposeBindingsV1, readManagedMachineRoleCredentialConfigurationsV1, bindManagedMachineRoleCredentials, ManagedMachineControllerError,
+    ManagedMachineNativeEffectGuardRefusal,
     type ManagedNativeInvocation } from '@happier-dev/cli-common/machines/managed';
 import { projectConnectedAccountHostAccessScopes, type ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
@@ -7,6 +9,7 @@ import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/ma
 import { readMachineProvisionerActionRolesV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { resolvePluginContributionHostAccessRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import { readPluginActionFailureHandlerInvocation } from '@happier-dev/protocol/plugins/actions/invocation';
 
 /** Finite Account controls and reads consume the same selected, reviewed role port. */
 export function createCliManagedAccountNativeInvocation(input: Readonly<{
@@ -37,19 +40,24 @@ export function createCliManagedAccountNativeInvocation(input: Readonly<{
         });
         let active = true;
         const binding: ConnectedAccountInvocationPurposeBinding = { identity,
-            operationId: input.context.operationAcceptance?.operationId ?? input.requestId,
+            operationId: input.context.externalActionExecutionAuthorization?.binding.requestId ?? input.requestId,
             purposes: authorizations.map(authorization => authorization.purpose),
-            purposeBindings: { v: 1, bindings: authorizations.map(authorization => ({ purpose: authorization.purpose,
-                target: { kind: 'account', account: authorization.credential.account } })) },
+            purposeBindings: projectManagedMachineRolePurposeBindingsV1(authorizations),
+            actionOperation: { pluginVersion: selected.manifest.version, signal: input.signal ?? new AbortController().signal,
+                resolveRequestHeaders: createExternalActionRequesterServerRequestHeaders(input.context) },
             isCurrent: () => active && !input.signal?.aborted,
-            managedOperation: { role, credentialConfigurations: authorizations.flatMap(({ credential }) => credential.configurationRevision === undefined
-                ? [] : [{ account: credential.account, revision: credential.configurationRevision }]),
+            managedOperation: { role, credentialConfigurations: readManagedMachineRoleCredentialConfigurationsV1(authorizations),
                 isCurrent: currentRole => active && currentRole === role && !input.signal?.aborted },
         };
         try {
             const result = await port.invoke({ action: identity, role, input: PluginJsonValueV2Schema.parse(body),
                 invocationServices: { managedMachine: machine, connectedAccountPurposeBinding: binding } });
-            if (!result.ok) throw new ManagedMachineControllerError(result.errorCode ?? 'provider_unavailable');
+            if (!result.ok) {
+                const ErrorClass = readPluginActionFailureHandlerInvocation({ code: result.errorCode, message: result.error,
+                    data: result.details }) === 'notStarted'
+                    ? ManagedMachineNativeEffectGuardRefusal : ManagedMachineControllerError;
+                throw ErrorClass.fromActionFailure(result, 'action.invoke', identity);
+            }
             return PluginJsonValueV2Schema.parse(result.result ?? null);
         } finally { active = false; }
     };

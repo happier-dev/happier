@@ -8,7 +8,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { ManagedControllerIntentReportV1Schema, ManagedControllerReportV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerCurrentInputV1Schema, ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedControlAdmissionInputV1Schema, ManagedControllerIntentReportV1Schema, ManagedControllerReportV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerCurrentInputV1Schema, ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { resolveMachineRetentionNativeIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import type { ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { signMachineInstallationProof, verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import type { ManagedActivityBridgeResultV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
@@ -77,6 +78,9 @@ import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/e
 import { createStablePluginHttpHost } from '@/plugins/runtime/fetch/service';
 import { createConnectedAccountPluginHttpPurposeHost } from '@/plugins/runtime/fetch/connectedAccountPurpose';
 import { createDeferred } from '@/testkit/async/deferred';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { logger } from '@/ui/logger';
+import { ManagedMachineNativeEffectGuardRefusal } from './controllerErrors';
 
 const unavailable = async (): Promise<never> => { throw new Error('Unexpected credential transport'); };
 function signedIdle(machine: ReturnType<typeof ManagedMachineV1Schema.parse>, since: number, confirmedAt: number) {
@@ -126,13 +130,22 @@ function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unk
     const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
         const path = String(url);
         if (path.endsWith('/activation-failed')) return { status: 200, data: { ok: true, didFail: true } };
-        if (path.endsWith('/admit-control')) return { status: 200, data: { machine, replayed: submitted } };
+        if (path.endsWith('/admit-control')) {
+            const admission = ManagedControlAdmissionInputV1Schema.parse(body);
+            expect(admission.input.homeId).toBe(homeId);
+            if (admission.action === 'machines.managed.power.set' || admission.action === 'machines.managed.delete') {
+                expect(admission.input.managedId).toBe(machine.id);
+                machine = { ...machine, desired: admission.input.intent, desiredWhen: admission.input.when,
+                    desiredAfterMs: admission.input.when === 'after-idle' ? admission.input.afterMs : undefined };
+            }
+            return { status: 200, data: { machine, replayed: submitted } };
+        }
         if (path.endsWith('/prepare-policy')) {
             const preparation = ManagedPolicyAdmissionInputV1Schema.parse(body);
             return { status: 200, data: { machine: { ...machine,
                 ...(preparation.purpose.kind === 'accepted-input-start' ? { desired: 'start' as const }
                     : preparation.purpose.kind === 'retention' && machine.retention.kind !== 'until-delete' && !machine.submittedNativeEffect
-                        ? { desired: machine.retention.effect } : {}),
+                        ? { desired: resolveMachineRetentionNativeIntentV1(machine.retention.effect, [intent])! } : {}),
                 desiredWhen: 'now', desiredAfterMs: undefined } } };
         }
         if (path.endsWith('/admit-policy')) {
@@ -142,7 +155,7 @@ function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unk
             machine = { ...machine, intentRevision: 2,
                 ...(admission.purpose.kind === 'accepted-input-start' ? { desired: 'start' as const }
                     : admission.purpose.kind === 'retention' && machine.retention.kind !== 'until-delete' && !machine.submittedNativeEffect
-                        ? { desired: machine.retention.effect } : {}) };
+                        ? { desired: resolveMachineRetentionNativeIntentV1(machine.retention.effect, [intent])! } : {}) };
             return { status: 200, data: { machine, requestId: 'control', replayed: submitted } };
         }
         if (path.endsWith('/actions/get')) return { status: 200, data: machine };
@@ -212,9 +225,9 @@ function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unk
         operationAcceptance: { operationId: 'operation', accept(_result: unknown) {} },
         operationOwnerUpdate: { update() {} },
     } };
-    const run = (signal?: AbortSignal) => driver.execute('machines.managed.delete', { homeId, managedId: machine.id,
-        ...machine.desiredWhen === 'after-idle' ? { when: 'after-idle', intent: 'delete', afterMs: machine.desiredAfterMs } : { when: 'now', intent: 'delete', expectedRevision: machine.intentRevision },
-        reviewedDependencies: true }, { ...options, ...(signal ? { signal } : {}) });
+    const run = (signal?: AbortSignal) => driver.execute(intent === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set', { homeId, managedId: machine.id,
+        ...machine.desiredWhen === 'after-idle' ? { when: 'after-idle', intent, afterMs: machine.desiredAfterMs } : { when: 'now', intent, expectedRevision: machine.intentRevision },
+        ...(intent === 'delete' ? { reviewedDependencies: true } : {}) }, { ...options, ...(signal ? { signal } : {}) });
     return { effects, nativeInputs, reports, post, readActivity, confirmIdle, reopen, waitForChange, run, driver, driverInput, options, installationKeys,
         retireNative: native.retire,
         readMachine: () => machine,
@@ -222,6 +235,52 @@ function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unk
     };
 }
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+it('preserves the authored native failure when controller outcome reporting fails and records its closed report warning', async () => {
+    const failureCause = { phase: 'action.invoke', errorClass: 'Error', errorCode: 'EPIPE', httpStatus: null } as const;
+    const test = setup(undefined, undefined, 'stop', undefined, () => {
+        throw new PluginError({ code: 'native_transport_unavailable', message: 'Reconnect the native provider', failureCause });
+    });
+    const transport = test.post.getMockImplementation()!;
+    test.post.mockImplementation(async (url, body, config) => String(url).endsWith('/report-intent')
+        ? { status: 403, data: { code: 'forbidden' } } : await transport(url, body, config));
+    // Console/file output is the external logging boundary, not domain logic.
+    const warnings = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const machine = test.readMachine();
+    await expect(test.driver.execute('machines.managed.power.set', { homeId: machine.homeId, managedId: machine.id,
+        intent: 'stop', when: 'now', expectedRevision: machine.intentRevision }, test.options))
+        .rejects.toMatchObject({ code: 'native_transport_unavailable', failureCause,
+            cause: { ok: false, errorCode: 'native_transport_unavailable', error: 'Reconnect the native provider', failureCause } });
+    expect(warnings).toHaveBeenCalledWith(expect.any(String), {
+        phase: 'machines.managed.power.set', errorClass: 'ManagedMachineControllerError', errorCode: 'forbidden', httpStatus: 403,
+    });
+});
+
+it('preserves the native pre-handler refusal and submitted custody when refusal reporting fails', async () => {
+    const test = setup();
+    test.setMachine({ desiredWhen: 'after-idle' });
+    const transport = test.post.getMockImplementation()!;
+    test.post.mockImplementation(async (url, body, config) => {
+        if (String(url).endsWith('/submit-intent')) {
+            // Guest network facts change before the real private pre-handler.
+            test.confirmIdle.mockResolvedValue({ kind: 'busy', reasons: ['finite'] });
+        }
+        if (String(url).endsWith('/report-intent')) return { status: 403, data: { code: 'forbidden' } };
+        return await transport(url, body, config);
+    });
+    const warnings = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const error = await test.run().then(() => undefined, (failure: unknown) => failure);
+    const report = test.post.mock.calls.find(([url]) => String(url).endsWith('/report-intent'));
+    expect(report?.[1]).toMatchObject({ result: { kind: 'refused', code: 'activity_changed' } });
+    expect(error).toBeInstanceOf(ManagedMachineNativeEffectGuardRefusal);
+    expect(error).toMatchObject({ code: 'activity_changed' });
+    expect(test.readMachine().submittedNativeEffect).toMatchObject({ requestId: 'control', intent: 'delete' });
+    expect(test.effects).toEqual([]);
+    expect(test.reopen).not.toHaveBeenCalled();
+    expect(warnings).toHaveBeenCalledWith(expect.any(String), {
+        phase: 'machines.managed.delete', errorClass: 'ManagedMachineControllerError', errorCode: 'forbidden', httpStatus: 403,
+    });
+});
 
 describe('Delete with no native resource', () => {
     it('settles the Home-confirmed absence without native effects or guest activity', async () => {
@@ -244,6 +303,10 @@ describe('Delete with a retained native resource after canceled bootstrap', () =
             observation: { observedAt: 1, availability: 'unavailable', reason: 'bootstrap.remote_command_failed' } satisfies ProviderObservationV1 },
         { incident: 'F acquisition recovery', bootstrapInstalled: undefined,
             observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' } satisfies ProviderObservationV1 },
+        { incident: 'lost native Delete reply', bootstrapInstalled: true,
+            observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' } satisfies ProviderObservationV1 },
+        { incident: 'lost controller Delete reply', bootstrapInstalled: true,
+            observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' } satisfies ProviderObservationV1 },
     ])('deletes the retained stopped Lima disk when Home admission changes the cleanup reason ($incident)', async ({ incident, bootstrapInstalled, observation }) => {
         const directory = mkdtempSync(join(tmpdir(), 'managed-lima-delete-'));
         const resource = { instance: 'happier-retained-stopped', store: join(directory, 'store'), arch: 'x86_64', vmType: 'qemu',
@@ -259,6 +322,8 @@ describe('Delete with a retained native resource after canceled bootstrap', () =
                 expect(args).toEqual(['delete', '--force', resource.instance]);
                 nativeDeletes.push(args);
                 retained = false;
+                if (incident === 'lost native Delete reply') throw new PluginError({ code: 'native_transport_unavailable',
+                    message: 'Native reply lost', failureCause: { phase: 'native.destroy.reply', errorClass: 'Error', errorCode: 'EPIPE', httpStatus: null } });
             }
             return { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
                 stdout: new TextEncoder().encode(args[0] === 'list' && retained
@@ -296,17 +361,37 @@ describe('Delete with a retained native resource after canceled bootstrap', () =
                     reference: `${resource.store}/${resource.instance}`, reason: 'lima_start_failed' } } : {}),
                 cleanup: { disposition: 'pending', reason: 'creation_canceled' } });
             const transport = test.post.getMockImplementation()!;
+            let reportReplyLost = false;
             test.post.mockImplementation(async (url, body, config) => {
                 // Home admission changes diagnostics while retaining native ownership.
                 if (String(url).endsWith('/admit-control')) {
                     test.setMachine({ cleanup: { disposition: 'pending', reason: 'delete_requested' } });
                 }
-                return await transport(url, body, config);
+                const response = await transport(url, body, config);
+                if (incident === 'lost controller Delete reply' && !reportReplyLost && String(url).endsWith('/report-intent')) {
+                    reportReplyLost = true;
+                    throw new axios.AxiosError('Reply lost after Home committed', 'EPIPE');
+                }
+                return response;
             });
-            await expect(test.run()).resolves.toMatchObject({ kind: 'accepted', managedId: 'managed' });
+            const machine = test.readMachine();
+            const operations = createHostActionOperationRuntime({ machineId: machine.controller!.machineId,
+                resolveAccountId: async () => 'owner', generateOperationId: () => 'retained-delete' });
+            const input = { homeId: machine.homeId, managedId: machine.id, intent: 'delete', when: 'now',
+                expectedRevision: machine.intentRevision, reviewedDependencies: true };
+            let work: ReturnType<typeof test.driver.execute> | undefined;
+            await operations.observeExecution({ actionId: 'machines.managed.delete', input, actionRequestId: 'control',
+                execute: async context => {
+                    work = test.driver.execute('machines.managed.delete', input, { requestId: 'control', context, signal: context.signal });
+                    return { ok: true, result: await work };
+                } });
+            await expect(work).resolves.toMatchObject({ kind: 'accepted', managedId: 'managed' });
             expect(nativeDeletes).toEqual([['delete', '--force', resource.instance]]);
             expect(retained).toBe(false);
             expect(test.readMachine()).toMatchObject({ allocation: 'confirmed-absent', observation: { availability: 'absent' } });
+            expect(test.readMachine().submittedNativeEffect).toBeUndefined();
+            expect(await operations.handlers.getV2({ operationId: 'retained-delete' })).toMatchObject({ kind: 'found',
+                operation: { state: 'succeeded', requestId: 'control' } });
         } finally {
             await plugin.dispose();
             rmSync(directory, { recursive: true, force: true });
@@ -1838,6 +1923,7 @@ describe('unused Stop through guest drain and controller operation custody', () 
         { boundary: 'admit-control', intent: 'delete', action: 'machines.managed.delete', code: 'database_transaction_conflict_exhausted' },
         { boundary: 'admit-control', intent: 'rebuild', action: 'machines.managed.rebuild', code: 'database_transaction_conflict_exhausted' },
         { boundary: 'submit-intent', intent: 'start', action: 'machines.managed.power.set', code: 'database_connection_unavailable' },
+        { boundary: 'submit-intent', intent: 'delete', action: 'machines.managed.delete', code: 'request_conflict' },
     ] as const)('retains the managed target through $action $boundary $code', async ({ boundary, intent, action, code }) => {
         const test = setup(undefined, undefined, intent);
         const machine = test.readMachine();
@@ -1845,7 +1931,7 @@ describe('unused Stop through guest drain and controller operation custody', () 
         if (!nativeController) throw new Error('The native fixture requires its installed controller.');
         const home = test.post.getMockImplementation()!;
         test.post.mockImplementation(async (url, body, config) => String(url).endsWith(`/${boundary}`)
-            ? { status: 503, data: { error: code } }
+            ? { status: code === 'request_conflict' ? 409 : 503, data: { error: code } }
             : await home(url, body, config));
         const snapshots: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1[] = [];
         const operations = createHostActionOperationRuntime({ machineId: nativeController.machineId,
@@ -1866,7 +1952,10 @@ describe('unused Stop through guest drain and controller operation custody', () 
                 return failure.success ? failure.data : { ok: true, result };
             } });
         const uncertainAdmission = boundary === 'admit-control' && code === 'database_connection_unavailable';
-        if (boundary === 'admit-control' && !uncertainAdmission) {
+        if (code === 'request_conflict') {
+            await expect(observed).resolves.toMatchObject({ ok: true, result: { kind: 'accepted', managedId: machine.id } });
+            await expect(work).rejects.toMatchObject({ code, status: 409 });
+        } else if (boundary === 'admit-control' && !uncertainAdmission) {
             await expect(observed).rejects.toMatchObject({ code });
         } else if (uncertainAdmission) {
             await expect(observed).resolves.toMatchObject({ ok: false, errorCode: 'action_outcome_unknown' });
@@ -1879,11 +1968,15 @@ describe('unused Stop through guest drain and controller operation custody', () 
                 path: '/v1/machines/managed/controller/submit-intent', status: 503, code: 'database_connection_unavailable',
             } });
         }
+        if (uncertainAdmission || boundary === 'submit-intent' && code !== 'request_conflict') {
+            await expect(work).resolves.toMatchObject({ failureCause: { phase: expect.any(String), errorCode: code },
+                details: { requestId: expect.any(String) } });
+        }
         expect(test.effects).toEqual([]);
         expect(ActionOperationGetV1ResponseSchema.parse(await operations.handlers.getV2({ operationId: `unavailable-${boundary}` })))
             .toMatchObject({ kind: 'found', operation: {
                 domainRef: { kind: 'managedMachine', id: machine.id },
-                ...(boundary === 'submit-intent' || uncertainAdmission
+                ...(boundary === 'submit-intent' && code !== 'request_conflict' || uncertainAdmission
                     ? { state: 'running', observation: { kind: 'outcome_uncertain', code: 'action_outcome_unknown' } }
                     : { state: 'failed', error: { errorCode: code } }),
             } });
@@ -2081,8 +2174,7 @@ describe('unused Stop through guest drain and controller operation custody', () 
         registerManagedActivityRpcHandlers({ activity: inventory, admissionDrain: drain,
             rpcHandlerManager: { registerHandler<TRequest, TResponse>(method: string, handler: RpcHandler<TRequest, TResponse>) {
                 handlers.set(method, (raw, ingress) => handler(raw as TRequest, ingress));
-            } }, validateCurrentTarget: async target => target.managedId === machine.id
-                && target.expectedRevision === test.readMachine().intentRevision,
+            } },
             commitIdleEvidence: (_target, idle) => signedIdle(test.readMachine(), idle.since, Date.now()) });
         const call = async (current: typeof machine, method: string, action?: 'begin' | 'resume') => {
             const handler = handlers.get(method);
@@ -3277,8 +3369,9 @@ describe('managed native intent through the accepted Action', () => {
     it('carries an after-idle retention Stop out as native Suspend for a provider that only suspends', async () => {
         vi.useFakeTimers({ now: 3_599_999 });
         const test = setup(undefined, undefined, 'suspend');
-        test.setMachine({ desiredWhen: 'after-idle', desiredAfterMs: 3_600_000, retention: { kind: 'unused', afterMs: 3_600_000, effect: 'stop' } });
-        const work = test.run();
+        test.setMachine({ desired: 'start', retention: { kind: 'unused', afterMs: 3_600_000, effect: 'stop' } });
+        const machine = test.readMachine();
+        const work = test.driver.executePolicy(machine, { kind: 'retention', evidence: signedIdle(machine, 0, Date.now()) }, test.options);
         await vi.advanceTimersByTimeAsync(0);
         expect(test.effects).toEqual([]);
         await vi.advanceTimersByTimeAsync(1);
@@ -3360,6 +3453,7 @@ describe('managed native intent through the accepted Action', () => {
         await test.run();
         await expect(test.run()).resolves.toMatchObject({ ok: false, errorCode: 'action_outcome_unknown' });
         expect(test.effects).toEqual(['power']);
+        expect(test.nativeInputs).toMatchObject([{ intent: 'stop' }]);
         expect(test.reports).toEqual([expect.objectContaining({ result: { kind: 'confirmed' } }),
             expect.objectContaining({ result: { kind: 'unknown' }, observation: { observedAt: 0, availability: 'present' } })]);
     });
@@ -3570,40 +3664,61 @@ describe('managed native intent through the accepted Action', () => {
             await work.catch(() => undefined);
         }
     });
-    it('refuses a retired FIN scope after asynchronous final idle confirmation without issuing Delete', async () => {
+    it('cancels the admitted FIN scope locally after asynchronous final idle confirmation without issuing Delete', async () => {
         const test = setup();
         test.setMachine({ desiredWhen: 'after-idle' });
         const machine = test.readMachine();
         let sourceCurrent = true;
         const origin = await finScopeAuthorization(test, () => sourceCurrent);
+        const cancellation = new AbortController();
         test.confirmIdle.mockImplementation(async () => {
-            // Home/source changes while the final guest transport awaits. The
-            // native row/credential checks already completed before this RPC.
+            // Source withdrawal applies to the next admission. This already
+            // admitted executor stops through its actual local cancellation.
             sourceCurrent = false;
+            cancellation.abort();
             return { kind: 'idle', since: 0, evidence: signedIdle(machine, 0, Date.now()) };
         });
         const work = test.driver.execute('machines.managed.delete', { homeId: machine.homeId, managedId: machine.id,
-            intent: 'delete', when: 'after-idle', reviewedDependencies: true }, { ...test.options,
+            intent: 'delete', when: 'after-idle', reviewedDependencies: true }, { ...test.options, signal: cancellation.signal,
             context: { ...test.options.context, ...origin },
         });
-        await expect(work).rejects.toBeInstanceOf(Error);
+        await expect(work).rejects.toMatchObject({ code: 'cancelled' });
         expect(test.effects).toEqual([]);
         expect(test.readMachine().submittedNativeEffect).toBeUndefined();
         expect(test.reopen).toHaveBeenCalled();
     });
-    it.each(['busy', 'unknown', 'interval'] as const)('retires the same accepted FIN scope during %s waiting without native IO', async phase => {
+    it.each(['busy', 'unknown', 'interval'] as const)('cancels the admitted FIN scope locally during %s waiting after source withdrawal without native IO', async phase => {
         if (phase === 'interval') { vi.useFakeTimers(); vi.setSystemTime(0); }
         const test = setup(phase === 'interval' ? { kind: 'idle', since: 0 } : { kind: phase, reasons: ['finite'] });
         test.setMachine({ desiredWhen: 'after-idle', ...(phase === 'interval' ? { desiredAfterMs: 100 } : {}) });
         let sourceCurrent = true;
         const origin = await finScopeAuthorization(test, () => sourceCurrent);
-        test.waitForChange.mockImplementation(async () => { sourceCurrent = false; });
+        const cancellation = new AbortController();
+        let entered!: () => void;
+        const waiting = new Promise<void>(resolve => { entered = resolve; });
+        const waitForChange = test.waitForChange.getMockImplementation()!;
+        test.waitForChange.mockImplementation(async signal => {
+            sourceCurrent = false;
+            entered();
+            // The real activity boundary stays pending until pushed activity
+            // or local cancellation; a resolved fake would spin while busy.
+            return await waitForChange(signal);
+        });
         const machine = test.readMachine();
         const work = test.driver.execute('machines.managed.delete', { homeId: machine.homeId, managedId: machine.id,
             intent: 'delete', when: 'after-idle', ...(phase === 'interval' ? { afterMs: 100 } : {}), reviewedDependencies: true },
-            { ...test.options, context: { ...test.options.context, ...origin } });
-        await expect(work).rejects.toMatchObject({ code: 'intent_changed' });
-        expect(test.effects).toEqual([]);
-        expect(test.readMachine().submittedNativeEffect).toBeUndefined();
+            { ...test.options, signal: cancellation.signal, context: { ...test.options.context, ...origin } });
+        const settled = work.then(value => ({ value }), error => ({ error }));
+        try {
+            expect(await Promise.race([waiting.then(() => 'waiting' as const), settled])).toBe('waiting');
+            expect(sourceCurrent).toBe(false);
+            expect(test.effects).toEqual([]);
+            cancellation.abort();
+            expect(await settled).toMatchObject({ error: { code: 'cancelled' } });
+            expect(test.readMachine().submittedNativeEffect).toBeUndefined();
+        } finally {
+            cancellation.abort();
+            await settled;
+        }
     });
 });
