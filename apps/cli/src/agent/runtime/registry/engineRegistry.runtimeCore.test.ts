@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type {
     ExecClientHandleV1,
     JsonRpcClientV1,
@@ -36,7 +36,7 @@ import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/act
 import type { HostSessionRuntimeFactoryParams } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import type { Metadata } from '@/api/types';
 import type { RegisteredSessionStateFieldMutationV1 } from '../../../api/session/client/transport/mutations/sessionClientDurableMutationTypes';
-import type { Credentials } from '@/persistence';
+import { writeSettings, type Credentials } from '@/persistence';
 import type {
     ProviderAccountUsageAdoptionV1,
 } from '@/daemon/connectedServices/accountUsage/adoption';
@@ -75,8 +75,6 @@ const {
     resolvePluginBackendSurfaceHandlersMock,
     pluginReloadControllerStateMock,
     pluginReloadControllerTryAcquireRuntimeRegistryMock,
-    readCredentialsMock,
-    readSettingsMock,
     readOrCreateInstallationIdentityMock,
     createCliApprovalsArtifactStoreMock,
     getConnectedServiceRuntimeAuthAdapterMock,
@@ -91,8 +89,6 @@ const {
     resolvePluginBackendSurfaceHandlersMock: vi.fn<(...args: unknown[]) => unknown>(),
     pluginReloadControllerStateMock: vi.fn<(...args: unknown[]) => unknown>(),
     pluginReloadControllerTryAcquireRuntimeRegistryMock: vi.fn<(...args: unknown[]) => unknown>(),
-    readCredentialsMock: vi.fn<(...args: unknown[]) => unknown>(),
-    readSettingsMock: vi.fn<(...args: unknown[]) => unknown>(),
     readOrCreateInstallationIdentityMock: vi.fn<(...args: unknown[]) => unknown>(),
     createCliApprovalsArtifactStoreMock: vi.fn<(...args: unknown[]) => unknown>(),
     getConnectedServiceRuntimeAuthAdapterMock: vi.fn<(...args: unknown[]) => unknown>(),
@@ -112,21 +108,19 @@ vi.mock('../../../plugins/runtime/resolveExecutablePluginRuntimeRegistry', () =>
     resolveExecutablePluginRuntimeRegistry: resolveExecutablePluginRuntimeRegistryMock,
 }));
 
-vi.mock('../../../plugins/runtime/reload/singleton', () => ({
-    pluginReloadController: {
-        getState: pluginReloadControllerStateMock,
-        tryAcquireRuntimeRegistry: pluginReloadControllerTryAcquireRuntimeRegistryMock,
-    },
-}));
+vi.mock('../../../plugins/runtime/reload/singleton', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../../plugins/runtime/reload/singleton')>();
+    return {
+        pluginReloadController: {
+            ...actual.pluginReloadController,
+            getState: pluginReloadControllerStateMock,
+            tryAcquireRuntimeRegistry: pluginReloadControllerTryAcquireRuntimeRegistryMock,
+        },
+    };
+});
 
 vi.mock('./resolvePluginBackendSurfaceHandlers', () => ({
     resolvePluginBackendSurfaceHandlers: resolvePluginBackendSurfaceHandlersMock,
-}));
-
-vi.mock('@/persistence', () => ({
-    readCredentials: readCredentialsMock,
-    readStoredCredentials: readCredentialsMock,
-    readSettings: readSettingsMock,
 }));
 
 vi.mock('@/daemon/identity/store', () => ({
@@ -240,7 +234,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         } as never)).toBe(false);
     });
 
-    beforeEach(() => {
+    beforeEach(async () => {
         // Owners are imported once above; reset their fixture state rather than
         // re-evaluating the dynamic runtime graph into duplicate module instances.
         resolveMergedContributionRegistryMock.mockReset();
@@ -251,8 +245,6 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         });
         pluginReloadControllerStateMock.mockReset();
         pluginReloadControllerTryAcquireRuntimeRegistryMock.mockReset();
-        readCredentialsMock.mockReset();
-        readSettingsMock.mockReset();
         readOrCreateInstallationIdentityMock.mockReset();
         createCliApprovalsArtifactStoreMock.mockReset();
         getConnectedServiceRuntimeAuthAdapterMock.mockReset();
@@ -288,7 +280,11 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 release: vi.fn(async () => undefined),
             } : null;
         });
-        readSettingsMock.mockResolvedValue({ machineId: 'machine-1' });
+        // Vitest's canonical Home setup provides disposable real persistence.
+        await writeSettings({
+            schemaVersion: 6, onboardingCompleted: true,
+            machineIdByServerId: { [configuration.activeServerId]: 'machine-1' },
+        });
         setActiveAccountSettingsSnapshot({
             source: 'none',
             settings: accountSettingsParse({ schemaVersion: 6 }),
@@ -2873,8 +2869,16 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         const daemonCreateRuntime = vi.fn(async (): Promise<AgentRuntime> => ({
             executionRuns: { open: openExecutionRun },
         }));
-        const runtimeRegistry = completeLeaseRuntimeRegistryFixture(
-            {
+        const { resolveExecutablePluginRuntimeRegistry } = await vi.importActual<
+            typeof import('../../../plugins/runtime/resolveExecutablePluginRuntimeRegistry')
+        >('../../../plugins/runtime/resolveExecutablePluginRuntimeRegistry');
+        const baseRuntimeRegistry = await resolveExecutablePluginRuntimeRegistry({
+            contributes: createResolvedContributionRegistry({}),
+            pluginIds: [],
+        });
+        const runtimeRegistry = {
+            ...baseRuntimeRegistry,
+            ...completeLeaseRuntimeRegistryFixture({
                 ...createRuntimeRegistry({
                     contributes,
                     backendId,
@@ -2895,14 +2899,20 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                         }),
                     });
                 }) satisfies CreateAgentInvocationServices,
-            },
-            contributes,
-        );
-        pluginReloadControllerStateMock.mockReturnValue({
-            generation: 1,
-            activeRegistry: runtimeRegistry,
-            lastResult: null,
+            }, contributes),
+            dispose: baseRuntimeRegistry.dispose,
+        };
+        const { pluginReloadController } = await vi.importActual<
+            typeof import('../../../plugins/runtime/reload/singleton')
+        >('../../../plugins/runtime/reload/singleton');
+        onTestFinished(() => pluginReloadController.shutdown());
+        await pluginReloadController.adoptPreparedRuntimeRegistry({
+            registry: runtimeRegistry,
+            changedPluginIds: [pluginId],
+            runningSessionDisposition: 'retainRunningSessions',
         });
+        pluginReloadControllerStateMock.mockImplementation(pluginReloadController.getState);
+        pluginReloadControllerTryAcquireRuntimeRegistryMock.mockImplementation(pluginReloadController.tryAcquireRuntimeRegistry);
         resolvePluginBackendSurfaceHandlersMock.mockResolvedValue({
             surfaces: {
                 terminalRuntime: null,
@@ -2944,8 +2954,8 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 getPermissionRequestStore: () => permissionRequestStore as never,
             });
 
-        expect(daemonCreateRuntime).toHaveBeenCalledOnce();
         await expect(executionRuntime?.readResumeSupport()).resolves.toBe(true);
+        expect(daemonCreateRuntime).toHaveBeenCalledOnce();
         await expect(executionRuntime?.provisionRuntime({
             resumeRuntimeId: 'finite-provider-session-1',
         })).resolves.toEqual({
@@ -2973,7 +2983,11 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             title: 'Allow external write?',
             subject: { kind: 'tool', name: 'Write', input: { path: '/repo/a.txt' } },
         });
-        await vi.waitFor(() => expect(permissionRequestStore.publishRequest).toHaveBeenCalledOnce());
+        await expect(Promise.race([
+            vi.waitFor(() => expect(permissionRequestStore.publishRequest).toHaveBeenCalledOnce())
+                .then(() => 'published'),
+            approval,
+        ])).resolves.toBe('published');
         const published = permissionRequestStore.publishRequest.mock.calls[0]![0] as {
             responseTarget: { providerRequestId: string };
         };
