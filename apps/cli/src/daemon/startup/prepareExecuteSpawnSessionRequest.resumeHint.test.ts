@@ -1,4 +1,5 @@
 import fileSystem, { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, relative, isAbsolute } from 'node:path';
@@ -24,8 +25,8 @@ import { prepareExecuteSpawnSessionRequest } from './prepareExecuteSpawnSessionR
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return { ...actual,
-    open: (...args: Parameters<typeof actual.open>) => actual.default.open(...args),
-    readdir: (...args: Parameters<typeof actual.readdir>) => actual.default.readdir(...args),
+    open: (...args: Parameters<typeof actual.open>) => actual.open(...args),
+    readdir: (...args: Parameters<typeof actual.readdir>) => actual.readdir(...args),
   };
 });
 const home = vi.hoisted(() => ({ session: vi.fn(), encryption: vi.fn() }));
@@ -54,10 +55,10 @@ describe('persisted Claude resume → connected-service target reachability', ()
     const id = '019e7327-46cc-7dca-bb14-8473727db321';
     const transcript = join(store, `${id}.jsonl`);
     const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
-    const bindings = { v: 2, bindingsByServiceId: {
+    const bindings: ConnectedServiceBindingsV2 = { v: 2, bindingsByServiceId: {
       'happier.agent.claude/claude-subscription': { source: 'connected', selection: 'profile', profileId: 'work' },
     } };
-    const identity = { v: 1, id: 'csm_resume_hint_fixture', createdAt: 1, source: 'first_spawn' };
+    const identity = { v: 1, id: 'csm_resume_hint_fixture', createdAt: 1, source: 'first_spawn' } as const;
     const credentials = { token: 'synthetic-owner', encryption: null };
     const { owner } = createForegroundPurposeOwnerFixture({ consumer: { pluginId: service.pluginId, localId: 'claude' },
       service, accountId: 'work',

@@ -108,7 +108,7 @@ describe('legacy connected-service projection admission', () => {
       applyLiveCredentialRevision: async (input) => applyConnectedServiceProjectionCredentialUpdate({
         input,
         listRuntimeTargets: () => present ? [{
-          pid: 42, agentId: 'pi', sessionId: 'native-session',
+          pid: 42, agentId: 'pi', sessionId: 'native-session', materializationKey: 'materialization-42',
           bindings: [{ serviceId: nativeService, profileId: 'work' }],
         }] : [],
         stopSession: async () => { present = false; return { status: 'stopped' }; },

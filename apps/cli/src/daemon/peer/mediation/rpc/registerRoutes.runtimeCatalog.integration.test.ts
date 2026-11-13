@@ -760,7 +760,6 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
                     dangerLevel: 'safe',
                     scopes: ['global'],
                     surfaces: ['ui'],
-                    placementBindings: ['composer.primary'],
                 },
                 handler: async (_input, context) => {
                     const signal = context.signal;

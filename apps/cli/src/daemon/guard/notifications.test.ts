@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
-import { NotificationChannelRecordV1Schema } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { WebhookNotificationChannelRecordV1Schema } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { clearActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot,
   commitActiveNotificationChannelCatalog, getActiveAccountSettingsSnapshotLifetimeToken,
   resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -21,7 +21,7 @@ vi.mock('@/network/pinnedHttp', () => ({ openPinnedHttpStream: network.open }));
 
 const credentials = { token: 'guard-notification-account', encryption: null };
 const target = { serverId: 'home', machineId: 'guard-machine', installationId: 'guard-installation' };
-const channel = NotificationChannelRecordV1Schema.parse({ v: 1, id: 'guard-hook', kind: 'webhook', enabled: true,
+const channel = WebhookNotificationChannelRecordV1Schema.parse({ v: 1, id: 'guard-hook', kind: 'webhook', enabled: true,
   url: 'https://hooks.example.test/guard', signingSecretRef: null, topics: { machines: true } });
 
 function publishAccount() {

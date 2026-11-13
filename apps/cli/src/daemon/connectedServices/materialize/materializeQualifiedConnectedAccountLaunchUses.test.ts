@@ -76,7 +76,7 @@ describe('materializeQualifiedConnectedAccountLaunchUses', () => {
     if (!spawn) throw new Error('Expected typed launch refusal');
     const projected = projectSessionSpawnFailure(spawn);
     expect(projected.retryable).toBe(false);
-    expect(SessionSpawnLaunchErrorV1Schema.parse(projected.launchError)).toMatchObject({
+    expect(SessionSpawnLaunchErrorV1Schema.parse('launchError' in projected ? projected.launchError : undefined)).toMatchObject({
       code: 'credential_unavailable', failureCause: { phase: 'authentication', code: 'credential_unavailable' },
     });
     expect(JSON.stringify(spawn)).not.toContain('fixture-subscription-token');
@@ -142,9 +142,9 @@ describe('materializeQualifiedConnectedAccountLaunchUses', () => {
       // JSON-RPC process creation is the host boundary, receiving the same launch preparation.
       async withDeclaredJsonRpcClient(_command, useClient) {
         expect(probeEnvironment.COPILOT_GITHUB_TOKEN).toBe('gho_fixture-selected');
-        return useClient({ request: async method => method === 'initialize' ? {} : {
+        return useClient({ request: async (method: string) => method === 'initialize' ? {} : {
           models: { currentModelId: 'native-model', availableModels: [{ modelId: 'native-model', name: 'Native' }] },
-        } } as never);
+        } } as never, signal);
       },
     } as Parameters<typeof COPILOT_PREFLIGHT_SESSION_CONTROLS.probeModels>[0]);
     expect(models).toEqual([expect.objectContaining({ modelId: 'native-model' })]);
@@ -155,6 +155,7 @@ describe('materializeQualifiedConnectedAccountLaunchUses', () => {
       materialize: async () => { throw new Error('Already admitted launch material must not be acquired twice'); },
     } }, protocols: { acp: { open } } } as unknown as AgentSessionRuntimeContext;
     const runtime = await createCopilotAgentRuntime({} as never);
+    if (!runtime.sessions) throw new Error('Copilot runtime has no Session owner');
     await runtime.sessions.open({ kind: 'create', sessionId: 'copilot-selected', cwd: '/workspace',
       connectedAccounts: [{ purpose: 'github-copilot', account }], launchEnvironment,
       configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: 'native-model', updatedAtMs: 0 },

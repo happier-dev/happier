@@ -11,6 +11,7 @@ import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '../accountGroups
 import { DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS } from './resolveRuntimeAuthRecoveryResultDisposition';
 import type { RuntimeAuthRecoveryIntent } from './RuntimeAuthRecoveryScheduler';
 import type { RecoveryIntentFileStore } from '../recoveryScheduler/recoveryIntentFileStore';
+import type { DurableBackoffRecoveryStore } from '../recoveryScheduler/DurableBackoffRecoveryScheduler';
 import { createPredecessorCompatibleRuntimeAuthRecoveryStore } from './predecessorRuntimeAuthRecoveryStore';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
@@ -33,12 +34,7 @@ type RuntimeAuthRecoveryModule = Readonly<{
       | { status: 'open' }
       | { status: 'delayed'; retryAtMs: number; reason: string };
     recordDiagnostic?: (event: unknown) => void;
-    durableStore?: {
-      read: (sessionId: string) => unknown | null;
-      readAll?: () => ReadonlyArray<readonly [string, unknown]>;
-      write: (sessionId: string, intent: unknown) => Promise<void> | void;
-      remove?: (sessionId: string) => Promise<void> | void;
-    };
+    durableStore?: DurableBackoffRecoveryStore<RuntimeAuthRecoveryIntent>;
   }) => {
     beginClassifiedFailure: (input: {
       reportId?: string;

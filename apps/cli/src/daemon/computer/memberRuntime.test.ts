@@ -68,7 +68,7 @@ describe('member desktop launch custody', () => {
     vi.spyOn(filesystem, 'lstat').mockImplementation(async path => String(path) === member.home
       ? Object.assign(await lstat(directory), { uid: member.agentUid, gid: member.agentGid, mode: 0o40700 }) : lstat(path));
     vi.stubEnv('DISPLAY', ':owner'); vi.stubEnv('XAUTHORITY', '/owner/cookie'); vi.stubEnv('DBUS_SESSION_BUS_ADDRESS', 'unix:path=/owner/bus');
-    let readMaterial: (() => AgentLaunchOperationMaterialization | undefined) | undefined;
+    let readMaterial: Parameters<ApiMachineClient['prepareNativeOperation']>[0]['readMaterial'] | undefined;
     let selectedMaterial: AgentLaunchOperationMaterialization | undefined;
     const machine: HostAgentIsolationLaunchContext = {
       managedHappierBinaryPath: preparation.effects.installedCli,
@@ -103,7 +103,7 @@ describe('member desktop launch custody', () => {
       reloadController: createPluginReloadController() })).rejects.toMatchObject({ code: 'agent_isolation_unavailable' });
     expect(nativeOs.readinessProbes).toBe(0);
     vi.mocked(spawn).mockClear();
-    vi.mocked(spawn).mockImplementationOnce(() => { selectedMaterial = readMaterial?.(); throw new Error('fixture_native_spawn_refusal'); });
+    vi.mocked(spawn).mockImplementationOnce(() => { selectedMaterial = readMaterial?.(member); throw new Error('fixture_native_spawn_refusal'); });
     const result = prepareMemberComputerRuntime({ prepareNativeOperation, identity, placement: 'member' });
     await expect(result).rejects.toMatchObject({ code: 'plugin_exec_spawn_failed' });
     const call = vi.mocked(spawn).mock.calls.at(-1)!;

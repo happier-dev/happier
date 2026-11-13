@@ -57,11 +57,11 @@ describe('portable Account-purpose materialization through the established runti
                 await context.stagedCredentials.set('marker', endpoint);
                 await context.stagedCredentials.set('foreign', foreign);
                 await context.stagedCredentials.set('token', token);
-                return { status: 'rejected', diagnostic: { code: 'provider-refused', message: `${endpoint} ${foreign} ${token}` } };
+                return { status: 'rejected', diagnostic: { code: 'provider-refused', severity: 'error', message: `${endpoint} ${foreign} ${token}` } };
             },
             async status(context) {
                 const values = await Promise.all(['marker', 'foreign', 'token', 'held'].map(key => context.credentials.get(key)));
-                return { status: 'rejected', diagnostic: { code: 'provider-refused', message: values.filter(value => value !== null).join(' ') } };
+                return { status: 'rejected', diagnostic: { code: 'provider-refused', severity: 'error', message: values.filter(value => value !== null).join(' ') } };
             },
             async materialize(_request, context) {
                 await context.credentials.get('marker');
@@ -76,7 +76,8 @@ describe('portable Account-purpose materialization through the established runti
         const lease: ConnectedAccountRuntimeLease | ConnectedAccountPortableRuntimeLease = realm === 'host'
             ? { ...identity, owner: 'host', sourceCustody: { kind: 'host' } }
             : realm === 'portable'
-                ? { ...identity, realm: 'account', sourceCustody: pluginCustody, authentication: { acquire: create => create() } }
+                ? { ...identity, runtime: { ...runtime, authentication: { modes: {} } }, realm: 'account',
+                    sourceCustody: pluginCustody, authentication: { acquire: create => create() } }
                 : { ...identity, sourceCustody: pluginCustody };
         const owners = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} } });
         const invoker = createConnectedAccountHostRuntimeInvoker({ resolveRuntime: async () => lease,

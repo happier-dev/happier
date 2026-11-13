@@ -17,9 +17,9 @@ describe('deviceLocalSecretStorage', () => {
 
       expect((await stat(home)).mode & 0o777).toBe(0o710);
       expect((await stat(path)).mode & 0o777).toBe(0o600);
-      const sealed = storage.sealJson({ purpose: 'plugin_secrets', value: { token: 'private' } });
+      const sealed = storage.sealJson({ purpose: 'execution_run_state', value: { token: 'private' } });
       const restarted = await readOrCreateDeviceLocalSecretStorage({ path });
-      expect(restarted.openJson({ purpose: 'plugin_secrets', ciphertext: sealed })).toEqual({ token: 'private' });
+      expect(restarted.openJson({ purpose: 'execution_run_state', ciphertext: sealed })).toEqual({ token: 'private' });
     } finally { await rm(home, { recursive: true, force: true }); }
   });
 

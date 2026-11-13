@@ -41,6 +41,7 @@ import {
 import {
     revokeQualifiedConnectedAccount,
 } from './revokeQualifiedConnectedAccount';
+import type { QualifiedConnectedAccountEstablishedRuntimeOwner } from './qualifiedConnectedAccountEstablishedRuntimeOwner';
 import {
     revokeRevisionedLegacyConnectedAccount,
 } from './revokeRevisionedLegacyConnectedAccount';
@@ -247,6 +248,9 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
         | 'resolveRemovalReviewSupport'
         | 'cleanupAccountHomes'
     > & Readonly<{
+        /** Revocation reads revisions and receipts; Test connection invokes the same established owner. */
+        establishedRuntimeOwner: Pick<QualifiedConnectedAccountEstablishedRuntimeOwner,
+            'invoke' | 'invokeWithReceipt' | 'readCredentialRevision'>;
         legacyCredentialApi?: RevisionedLegacyRevocationInput['api'];
     }>;
 }>): ConnectedAccountDaemonRuntime & Readonly<{ dispose(): void }> {

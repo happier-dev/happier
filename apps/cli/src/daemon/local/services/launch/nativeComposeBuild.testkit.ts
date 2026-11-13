@@ -26,6 +26,9 @@ import { createNativeComposeLifecycle, type NativeComposeEnvironmentProject, typ
 import { machineNativeEffectAdmission, type MachineNativeEffectContext } from './machineNativeEffectAdmission';
 import { readNativeComposeArchiveTransportIdentity, resolveNativeComposeDeploymentImageReferences } from './nativeComposeImageIdentity';
 
+/** The launch phase the canonical secret-binding owner accepts. */
+type LaunchPhase = NonNullable<Parameters<typeof prepareEnvironmentSecretBindingsForLaunch>[0]['phase']>;
+
 export const nativeBuildFixtureDigest = (value: string | Buffer) => `sha256:${createHash('sha256').update(value).digest('hex')}`;
 const buildSecret = 'buildkit-only-fixture-secret';
 const runtimeSecret = 'runtime-only-fixture-secret';
@@ -203,9 +206,9 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
                 resourceCatalogState: 'ready', isCurrent: () => true }), assertCurrent: source.assertCurrent });
         const exec = createStablePluginExecService({ signal,
             isOccurrenceCurrent: () => true, resolveExecutable: async () => ({ command: '/docker' }), resolvePath: async path => String(path),
-            systemTools: { async resolve() { return { executablePath: '/docker', launch: { executablePath: '/docker' } }; } } });
+            systemTools: { async resolve(request) { return { grantId: 'docker-fixture', toolId: request.toolId, displayName: 'Docker fixture', source: 'system', executablePath: '/docker', launch: { kind: 'binary', executablePath: '/docker' } }; } } });
         const envPort = createDeploymentExecEnvPortForHost({ source, phase: 'build', signal,
-            isCurrent: () => true, prepare: ({ phase }) => prepareEnvironmentSecretBindingsForLaunch({ phase, environmentId: source.environmentId,
+            isCurrent: () => true, prepare: ({ phase }: Readonly<{ phase: LaunchPhase }>) => prepareEnvironmentSecretBindingsForLaunch({ phase, environmentId: source.environmentId,
                 machineId: source.machineId, installationId: source.installationId, installationPrivateSeed: seed,
                 registryUses: hasRegistry && !options?.preapprovalIndex ? [registryUse] : [], registryConfigBaseDir: join(root, 'registry-configs'),
                 bindings, grants: prepared.grants, assertCurrent: source.assertCurrent }) });
@@ -444,7 +447,7 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
                 runtime: { exec, buildExecutionDirectory: executionDirectory, secrets: { installationPrivateSeed: seed,
                     grants: prepared.grants, registryConfigBaseDir: join(root, 'registry-configs') } },
                 environment: { name: 'Native builder', retainPreviousDeployments: 3,
-                    definition: { kind: 'repository', ref: 'fixture-source', compose: { path: composeFile, services: ['web', 'worker'] } }, bindings },
+                    definition: { kind: 'repository', ref: 'fixture-source', compose: { path: composeFile, profiles: [], services: ['web', 'worker'] } }, bindings },
                 targetLinkId: registryUse.targetLinkId, operation: 'deploy', signal, assertCurrent: source.assertCurrent,
             }) } : hasRegistry ? { imageAcquisition: { operation: 'deploy' as const, registries: [{ access: registryUse.access,
                 origin: registryUse.registryOrigin, bindingIdentity: environmentSecretBindingIdentityV1(registryUse), envPort: registryEnvPort,
@@ -460,7 +463,7 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
             assert.ok(installation, 'Runtime must use a prepared installation');
             const runtimeSource = { ...source, machineId: installation.machineId, installationId: installation.installationId };
             const runtimeEnvPort = createDeploymentExecEnvPortForHost({ source: runtimeSource, phase: 'runtime', signal,
-                isCurrent: () => true, prepare: ({ phase }) => prepareEnvironmentSecretBindingsForLaunch({ phase, environmentId: source.environmentId,
+                isCurrent: () => true, prepare: ({ phase }: Readonly<{ phase: LaunchPhase }>) => prepareEnvironmentSecretBindingsForLaunch({ phase, environmentId: source.environmentId,
                     machineId: installation.machineId, installationId: installation.installationId, installationPrivateSeed: installation.seed,
                     bindings, grants: prepared.grants, assertCurrent: source.assertCurrent }) });
             const archives = await Promise.all((selection?.images ?? []).map(async image => {

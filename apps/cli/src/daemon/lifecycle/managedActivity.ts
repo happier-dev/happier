@@ -122,7 +122,7 @@ export function createLiveWorkProducerGroup(resolve: () => readonly LiveWorkProd
                 subscriptions.set(owner, owner.subscribe(notifyChanged));
             }
         }
-        if (!owners?.length || disposed) return { items: [], coverage: 'unknown' as const };
+        if (!owners?.length || disposed) return Promise.resolve<LiveWorkInventoryV1>({ items: [], coverage: 'unknown' });
         const snapshots = owners.map(owner => {
             try { return owner.read(scope); } catch (error) { return Promise.reject(error); }
         });

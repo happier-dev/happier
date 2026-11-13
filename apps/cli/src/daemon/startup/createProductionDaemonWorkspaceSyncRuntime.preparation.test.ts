@@ -95,7 +95,7 @@ describe('signed Project clean preparation', () => {
       accountEncryptionMode: 'plain', actionId: 'projects.open', machineId: fixture.targetRef.machineId,
       installationId: fixture.childInstallationId, custodianAccountId: 'owner', requestId: envelope.requestId,
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target: envelope.target,
-      workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId(envelope.requestId),
+      workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId(input.operationId),
         sourceWorkspaceRefId: fixture.sourceRef.id, source: machineAdmission },
     } });
     const admitted = await admitRequesterAccountActionContext({ authorization, credentials: requesterCredentials,
@@ -157,7 +157,7 @@ describe('signed Project clean preparation', () => {
       accountEncryptionMode: 'plain', actionId: 'projects.open', machineId: fixture.targetRef.machineId,
       installationId: fixture.childInstallationId, custodianAccountId: 'owner', requestId: envelope.requestId,
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target: envelope.target,
-      workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId(envelope.requestId),
+      workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId(`installed-open-${accountId}`),
         sourceWorkspaceRefId: fixture.sourceRef.id, source: admission },
     } });
     const routing = WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: 'prepare', operationId: envelope.requestId,
@@ -280,7 +280,7 @@ describe('signed Project clean preparation', () => {
       machineId: fixture.targetRef.machineId, custodianAccountId: 'owner', installationId: fixture.controller.installationId,
       actionId: 'projects.script.run', requestId: envelope.requestId, target: envelope.target,
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), accountEncryptionMode: 'plain',
-      workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId(envelope.requestId), sourceWorkspaceRefId: fixture.sourceRef.id,
+      workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId('non-owner-script'), sourceWorkspaceRefId: fixture.sourceRef.id,
         source: machineAdmission },
     } });
     const admitted = await admitRequesterAccountActionContext({ authorization, credentials: requesterCredentials,
@@ -303,8 +303,8 @@ describe('signed Project clean preparation', () => {
         sourceContext: { machineAdmission, callerAuthority: 'account_automation' } }),
     };
     preparing = true;
-    const result = await receiver({ sourceWorkspaceRefId: fixture.sourceRef.id, targetWorkspaceRefId: fixture.targetRef.id }, context)
-      .then(value => ({ kind: 'returned' as const, value }), (error: unknown) => ({ kind: 'refused' as const,
+    const result = await Promise.resolve(receiver({ sourceWorkspaceRefId: fixture.sourceRef.id, targetWorkspaceRefId: fixture.targetRef.id }, context))
+      .then((value: unknown) => ({ kind: 'returned' as const, value }), (error: unknown) => ({ kind: 'refused' as const,
         code: error && typeof error === 'object' && 'code' in error ? error.code : undefined }));
     expect(accountEffects).toContain('requester');
     if (requesterAccountId === 'requester') {
@@ -388,7 +388,7 @@ describe('signed Project clean preparation', () => {
       machineId: fixture.targetRef.machineId, custodianAccountId: 'owner', installationId: 'parent-installation',
       actionId: 'projects.script.run', requestId: envelope.requestId, target: envelope.target,
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), accountEncryptionMode: 'plain',
-      workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId(envelope.requestId),
+      workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId('causal-clean'),
         sourceWorkspaceRefId: fixture.sourceRef.id, source: sourceMachineAdmission },
     } });
     const diagnostics = vi.spyOn(logger, 'warnLocalFile');
@@ -505,7 +505,7 @@ describe('signed Project clean preparation', () => {
     } });
     const laterAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization,
       binding: { ...authorization.binding, requestId: laterEnvelope.requestId,
-        workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId(laterEnvelope.requestId),
+        workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId('two-link-clean'),
           sourceWorkspaceRefId: fixture.targetRef.id, source: context.machineAdmission },
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(laterEnvelope) } });
     const laterAdmitted = await admitRequesterAccountActionContext({ authorization: laterAuthorization,

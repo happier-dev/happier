@@ -16,7 +16,7 @@ import {
 
 import { logger } from '@/ui/logger';
 import { createDaemonControlApp } from './controlServer';
-import type { ConnectedAccountRequestAuthSubject } from './connectedServices/requestAuth/ConnectedAccountRequestAuthService';
+import type { ConnectedAccountRequestAuthSubject, HeadersMaterial } from './connectedServices/requestAuth/ConnectedAccountRequestAuthService';
 import { createConnectedAccountRequestAuthService } from './connectedServices/requestAuth/ConnectedAccountRequestAuthService';
 import { createConnectedAccountRequestAuthSubjectRegistry } from './connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { readConnectedAccountRequestAuthCapabilityFile } from '@happier-dev/agents/request-auth';
@@ -456,12 +456,10 @@ describe('daemon private connected-account request-auth routes', () => {
 
   it('lets one request admitted before quiescence finish without a second authorization or replay', async () => {
     let quiescing = false;
-    let resolveLookup!: (value: {
-      accessToken: string;
+    let resolveLookup!: (value: HeadersMaterial & {
       credentialContext: typeof credentialContext;
     }) => void;
-    const lookupResult = new Promise<{
-      accessToken: string;
+    const lookupResult = new Promise<HeadersMaterial & {
       credentialContext: typeof credentialContext;
     }>((resolve) => {
       resolveLookup = resolve;

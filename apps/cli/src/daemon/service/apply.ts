@@ -86,7 +86,7 @@ function runCommand(command: DaemonServicePlannedCommand, deadlineMs?: number): 
     const out = `${res.stdout ? String(res.stdout) : ''}${res.stderr ? String(res.stderr) : ''}`.trim();
     return { ok, out: out.length > 0 ? out : null, status: typeof res.status === 'number' ? res.status : null,
       ...(res.signal ? { signal: res.signal } : {}),
-      ...(res.error?.code ? { errorCode: res.error.code } : {}),
+      ...(res.error && 'code' in res.error && typeof res.error.code === 'string' ? { errorCode: res.error.code } : {}),
     };
   } catch (error) {
     return { ok: false, out: null, status: null,

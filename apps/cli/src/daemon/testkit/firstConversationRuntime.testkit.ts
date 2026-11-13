@@ -63,7 +63,8 @@ export async function runInstalledFirstConversationRuntime(input: Readonly<{
       return { ok: true, status: 200, body: JSON.stringify(result) };
     }
     const response = await app.inject({ method: 'POST', url: params.path,
-      headers: params.headers, payload: params.body });
+      // The real transport sends exactly this JSON text with its JSON content type.
+      headers: params.headers, payload: JSON.stringify(params.body) });
     return { ok: response.statusCode >= 200 && response.statusCode < 300,
       status: response.statusCode, body: response.body };
   });

@@ -88,6 +88,8 @@ import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWork
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import type { ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 /** Real Sync receiver/native/controller composition; callers install OS boundaries only. */
 export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
   cold?: true;
@@ -278,17 +280,18 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
         effectActionId: signed.effectActionId, target: signed.target, installationId: signed.installationId,
         method: payload.method, requestId: payload.requestId, params: payload.params, workspaceSyncSeedRouting: routing })).toBe(true);
       const sourceContext = routing.sourceWriterTarget.source.sourceContext;
-      if (!sourceRpc || !sourceContext) throw new Error('Installed SOURCE receiver is unavailable');
+      const receiver = sourceRpc;
+      if (!receiver || !sourceContext) throw new Error('Installed SOURCE receiver is unavailable');
       if (options.forwardHomeRpc) return options.forwardHomeRpc(payload, packet =>
         requesterWorkspaceSyncTargetInstallationFiles.run({ path: configuration.installationIdentityFile,
-          identity: JSON.stringify(installed.installation) }, () => sourceRpc!.handleRequest(packet, undefined, 'authenticated_home_socket')));
-      const received: RpcRequest = { ...payload,
-        method: payload.method as string, params: payload.params, workspaceSyncSeedRouting: routing,
+          identity: JSON.stringify(installed.installation) }, () => receiver.handleRequest(packet, undefined, 'authenticated_home_socket')));
+      const received: RpcRequest = { ...payload, requestId: payload.requestId,
+        method: payload.method, params: payload.params, workspaceSyncSeedRouting: routing,
         callerInputAuthorization: signed.authorization, machineAdmission: sourceContext.machineAdmission,
         callerAuthority: sourceContext.callerAuthority, sessionActionOrigin: sourceContext.sessionActionOrigin,
         callerInputConstraints: sourceContext.callerInputConstraints };
       const result = await requesterWorkspaceSyncTargetInstallationFiles.run({ path: configuration.installationIdentityFile,
-        identity: JSON.stringify(installed.installation) }, () => sourceRpc.handleRequest(received));
+        identity: JSON.stringify(installed.installation) }, () => receiver.handleRequest(received));
       return { ok: true, result };
     } }));
   const homeActionRequests: ReturnType<typeof ExternalActionDaemonDispatchRequestSchema.parse>[] = [];
@@ -397,9 +400,10 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
           originalEnvelopePresent: context?.workspaceSyncSourceRouting?.originalActionEnvelope !== undefined,
           sourceRootMatches: context?.callerInputAuthorization && context.workspaceSyncSourceRouting
             ? doesWorkspaceSyncSourceRootMatchRouting(context.callerInputAuthorization, context.workspaceSyncSourceRouting) : null,
-          writerRootMatches: context?.callerInputAuthorization && context.workspaceSyncSourceRouting
+          writerRootMatches: context?.callerInputAuthorization && context.workspaceSyncSourceRouting?.sourceContext
             ? doesWorkspaceSyncSourceWriterTargetRootMatchRouting(context.callerInputAuthorization, { v: 1,
-              source: context.workspaceSyncSourceRouting, target: descriptor.routing,
+              source: { ...context.workspaceSyncSourceRouting, sourceContext: context.workspaceSyncSourceRouting.sourceContext },
+              target: descriptor.routing,
               sourceWriter: { machineId: installed.machineId, installationId: installed.installation.installationId } }) : null,
           methodMatches: descriptor.method === readWorkspaceSyncTargetMethod(descriptor.routing.phase),
           requestMatches: context?.workspaceSyncSourceRouting?.sourceContext ? doesWorkspaceSyncTargetRequestMatchRouting(
@@ -537,7 +541,13 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
             : { machineId: 'target-parent', installationId: targetInstallation.installationId,
               installationPublicKey: targetInstallation.publicKey } } : { error: 'access_denied' } };
       }
-      if (url.endsWith('/v1/machines/machine/admission/verify') && originalHomePost) return originalHomePost(url, body, config);
+      if (url.endsWith('/v1/machines/machine/admission/verify') && originalHomePost) {
+        const response: unknown = await originalHomePost(url, body, config);
+        if (!response || typeof response !== 'object' || !('status' in response) || typeof response.status !== 'number') {
+          throw new Error('Invalid Machine admission boundary response');
+        }
+        return { status: response.status, data: 'data' in response ? response.data : undefined };
+      }
       if (options.remoteTarget && url.endsWith('/v1/machines/target-parent/admission/verify') && body && typeof body === 'object'
         && 'proof' in body) {
         const { proof, ...wirePurpose } = body;
@@ -594,7 +604,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
   });
   if (options.remoteTarget) {
     if (!fixture.targetParent) throw new Error('Physical target runtime is unavailable');
-    targetRpc = new RpcHandlerManager({ scopePrefix: 'target-parent', localMachineId: 'target-parent', scopeKind: 'machine',
+    targetRpc = new RpcHandlerManager({ scopePrefix: 'target-parent', localMachineId: 'target-parent',
       ...(targetResource ? { encryptionMode: 'e2ee' as const, encryptionKey: targetResource.encryptionKey, encryptionVariant: 'dataKey' as const }
         : { encryptionMode: 'plain' as const }), logger: (message, data) => { targetRpcDiagnostics.push({ message, data }); }, authorizeRequest: async (request, source) => {
         const routing = request.workspaceSyncSourceWriterTargetRouting;
@@ -656,7 +666,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     const account = await admitRequesterAccountActionContext({ authorization: wire, credentials,
       invocation: { surface: 'ui', authority: 'present_user', caller: { kind: 'host' } },
       serverId: installed.serverId, serverIdentityId: installed.homeServerIdentityId, serverHttpBaseUrl: installed.serverHttpBaseUrl,
-      isCurrent: installed.isHomeCurrent, isRetainedCustodyCurrent: installed.isHomeCurrent });
+      isCurrent: async () => installed.isHomeCurrent(), isRetainedCustodyCurrent: async () => installed.isHomeCurrent() });
     if (!account) throw new Error('Requester Account admission refused');
     onTestFinished(() => account.dispose());
     const sealed = sealExternalActionRequesterAccountContextV1({ authorization: wire,
@@ -689,17 +699,17 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     }, source);
   };
   const rpc = new RpcHandlerManager({ scopePrefix: installed.machineId, localMachineId: installed.machineId,
-    scopeKind: 'machine',
     ...(sourceResource ? { encryptionMode: 'e2ee' as const, encryptionKey: sourceResource.encryptionKey, encryptionVariant: 'dataKey' as const } : { encryptionMode: 'plain' as const }), logger: (message, data) => { rpcDiagnostics.push({ message, data }); },
     prepareRequesterAccountContext: input => prepareInstalledRequesterAccountActionContext({ ...input,
       ownCredentials: installed.bootstrap.credentials,
       machineId: installed.machineId, serverId: installed.serverId, serverHttpBaseUrl: installed.serverHttpBaseUrl,
-      isRetainedCustodyCurrent: installed.isHomeCurrent,
+      isRetainedCustodyCurrent: async () => installed.isHomeCurrent(),
       resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: installed.machineId,
         serverIdentityId: installed.homeServerIdentityId }),
       createExecutor: () => createActionExecutor(createUnavailableActionTransportDeps()) }),
     authorizeRequest: authorizeSourceRequest });
   const diagnosticRegistrarFor = (manager: RpcHandlerManager): RpcHandlerRegistrar => ({
+      purpose: input.purpose ?? { kind: 'external_action' },
     registerHandler: (method, handler) => manager.registerHandler(method, async (request, context) => {
       if (method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE) {
         rpcDiagnostics.push({ message: 'Sync handler input', data: { originalEnvelopePresent: context?.originalActionEnvelope !== undefined } });
@@ -747,7 +757,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
       ownCredentials: installed.bootstrap.credentials,
       authorization: input.authorization, purpose: input.purpose ?? { kind: 'external_action' },
       machineId: installed.machineId, serverId: installed.serverId, serverHttpBaseUrl: installed.serverHttpBaseUrl,
-      isRetainedCustodyCurrent: installed.isHomeCurrent,
+      isRetainedCustodyCurrent: async () => installed.isHomeCurrent(),
       resolveCurrentMachineExecutionOriginContext: resolveOrigin,
       createExecutor: admitted => createExecutor(admitted.credentials, undefined, undefined, undefined, undefined, undefined, admitted) });
     const ingressOwner: ExternalActionIngressOwner = {
@@ -786,7 +796,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
         const sessionId = publication.request.sessionId;
         const transport = await resolveSessionTransportContext({ reason: 'session-control', credentials, idOrPrefix: sessionId,
           ...(signal ? { signal } : {}) });
-        if (!transport.ok || transport.sessionId !== sessionId) return { v: 1, ok: false, error: 'discussion_post_denied' };
+        if (!transport.ok || transport.sessionId !== sessionId) return { v: 1, ok: false, error: 'discussion_post_denied' } as const;
         const rpc = { token: credentials.token, sessionId, method: `${sessionId}:${SESSION_RPC_METHODS.DISCUSSION_AGENT_POST_V1}`,
           request: publication, timeoutMs: null, ...(signal ? { signal } : {}) };
         return DiscussionAgentPublisherResponseV1Schema.parse(transport.mode === 'plain'
@@ -799,7 +809,9 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
       // As in startup, the port reader refuses until an HTTP server publishes it.
       // This fixture owns no connected-account request-auth HTTP listener.
       requireConnectedAccountRequestAuthHttpPort: () => { throw new Error('connected_account_request_auth_http_port_unavailable'); },
-      localServicesActionFeatureGate: createLocalServicesDaemonFeatureGate({ env: process.env }),
+      localServicesActionFeatureGate: createLocalServicesDaemonFeatureGate({ env: process.env,
+        // This fixture serves no server feature snapshot; the gate fails closed.
+        resolveServerFeaturesSnapshot: () => undefined }),
       localServicesRuntimeActionRoutes: { inventoryRoutes: localServices.inventoryRoutes,
         launcherRoutes: localServices.launcherRoutes, previewRoutes: localServices.previewRoutes, actionRoutes: localServices.actionRoutes },
       localServicesRuntime: localServices,
@@ -823,7 +835,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
       purpose: { kind: 'machine_rpc', method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE, params: invocation.request } });
     if (!prepared) throw new Error('Requester Action ingress refused');
     onTestFinished(() => prepared.dispose());
-    const context = { ...buildActionExecutorContextForRpc({ actionId: invocation.authorization.binding.actionId,
+    const context = { ...buildActionExecutorContextForRpc({ actionId: ActionIdSchema.parse(invocation.authorization.binding.actionId),
       serverId: installed.serverId, runtimeAccountId: prepared.authorization.binding.accountId,
       callerAuthority: 'present_user', callerInputAuthorization: prepared.authorization,
       originalActionEnvelope: invocation.envelope, verifyMachineAdmissionCurrent: async () => installed.isHomeCurrent(),

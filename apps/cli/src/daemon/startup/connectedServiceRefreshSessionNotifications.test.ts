@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
 import { resolveConnectedServiceRefreshSessionIds } from './connectedServiceRefreshSessionNotifications';
+import { legacyPidSessionTrackingKey, type TrackedSessionMap } from '../sessions/sessionTrackingKey';
+
+function trackedParentSession(): TrackedSessionMap {
+  const trackingKey = legacyPidSessionTrackingKey(101);
+  return new Map([[trackingKey, { trackingKey, pid: 101, happySessionId: 'parent-session', startedBy: 'daemon' }]]);
+}
 
 function registerTargets(registry: ConnectedServiceRuntimeRegistry) {
   const input = {
@@ -27,7 +33,7 @@ describe('connected service refresh Session notifications', () => {
     expect(resolveConnectedServiceRefreshSessionIds({
       affectedTargets: targets.filter((target) => target.materializationKey === 'finite-run'),
       registry,
-      trackedSessions: new Map([[101, { happySessionId: 'parent-session' }]]),
+      trackedSessions: trackedParentSession(),
     })).toEqual([]);
   });
 
@@ -36,7 +42,7 @@ describe('connected service refresh Session notifications', () => {
     expect(resolveConnectedServiceRefreshSessionIds({
       affectedTargets: registerTargets(registry),
       registry,
-      trackedSessions: new Map([[101, { happySessionId: 'parent-session' }]]),
+      trackedSessions: trackedParentSession(),
     })).toEqual(['parent-session']);
   });
 
@@ -47,7 +53,7 @@ describe('connected service refresh Session notifications', () => {
     expect(resolveConnectedServiceRefreshSessionIds({
       affectedTargets: targets,
       registry,
-      trackedSessions: new Map([[101, { happySessionId: 'parent-session' }]]),
+      trackedSessions: trackedParentSession(),
     })).toEqual([]);
   });
 });

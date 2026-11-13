@@ -52,6 +52,8 @@ it('attests the current development Gateway source for a peer without acquiring 
         isCurrent: async scope =>
           runtime.isCurrent() && scope.occurrenceId === runtime.activationOccurrenceId
             && pluginSourceCustodyV1Equal(scope.sourceCustody, runtime.sourceCustody),
+        // Admission revalidation is the caller's live-authority boundary; this fixture keeps it current.
+        revalidateAdmission: async () => true,
         // Home/carrier transport must not be opened just to attest the source.
         openBroker: async (): Promise<never> => { throw new Error('Unexpected broker effect during preparation'); },
         installConsumerCleanup: () => {}, cleanup: async () => {}, readSupervisionLaunchAuthority: () => null,

@@ -72,7 +72,7 @@ describe('finite host operation custody', () => {
     const held = { ok: false as const, errorCode: 'restore_snapshot_not_confirmed', error: 'restore_snapshot_not_confirmed',
       details: { steps: [], snapshot } };
     // This owner test substitutes the external effect result; receipt admission and continuation remain real.
-    const first = { actionId: 'deployments.backups.restore', input, context,
+    const first = { actionId: 'deployments.backups.restore' as const, input, context,
       execute: async (effectContext: Parameters<Parameters<typeof runtime.runActionOperation>[0]['execute']>[0]) => {
         effects++;
         effectContext.operationOwnerUpdate!.update({ domainRef: { kind: 'deployment', serverId: 'home',
@@ -161,16 +161,16 @@ describe('finite host operation custody', () => {
   });
 
   it.each([
-    { actionId: 'deployments.backups.restore', errorCode: 'backup_failed', facts: { steps: [
+    { actionId: 'deployments.backups.restore' as const, errorCode: 'backup_failed', facts: { steps: [
       { id: 'safety', status: 'completed' }, { id: 'restore', status: 'failed' },
     ] } },
-    { actionId: 'deployments.backups.prune', errorCode: 'backup_failed', facts: { step: 'prune', code: 'backup_failed',
+    { actionId: 'deployments.backups.prune' as const, errorCode: 'backup_failed', facts: { step: 'prune', code: 'backup_failed',
       removedSnapshotIds: ['a'.repeat(64)], uncertainSnapshotIds: [] } },
-    { actionId: 'deployments.backups.prune', errorCode: 'backup_failed', facts: { step: 'forget', code: 'backup_failed',
+    { actionId: 'deployments.backups.prune' as const, errorCode: 'backup_failed', facts: { step: 'forget', code: 'backup_failed',
       removedSnapshotIds: [], uncertainSnapshotIds: ['b'.repeat(64)] } },
-    { actionId: 'deployments.backups.prune', errorCode: 'cancelled', facts: { step: 'prune', code: 'cancelled',
+    { actionId: 'deployments.backups.prune' as const, errorCode: 'cancelled', facts: { step: 'prune', code: 'cancelled',
       removedSnapshotIds: ['c'.repeat(64)], uncertainSnapshotIds: [] } },
-    { actionId: 'deployments.backups.restore', errorCode: 'cancelled', facts: { steps: [
+    { actionId: 'deployments.backups.restore' as const, errorCode: 'cancelled', facts: { steps: [
       { id: 'safety', status: 'completed' }, { id: 'restore', status: 'failed' },
     ] } },
   ])('retains safe $actionId failure evidence through receipt reads and request replay ($errorCode)', async ({ actionId, errorCode, facts }) => {
@@ -218,7 +218,7 @@ describe('finite host operation custody', () => {
     const input = { serverId: 'home', environmentId: 'environment', targetLinkId: 'target', expectedRevision: 2,
       expectedTargetLinkRevision: 1, requestKey: 'retry-deploy', contentArtifactId: 'first-candidate',
       contentHeaderVersion: 3, contentBodyVersion: 3 };
-    const request = { actionId: 'deployments.deploy', input, context: { actionRequestId: 'first-request' },
+    const request = { actionId: 'deployments.deploy' as const, input, context: { actionRequestId: 'first-request' },
       execute: async () => ({ ok: false as const, errorCode: 'database_transaction_conflict_exhausted',
         error: 'database_transaction_conflict_exhausted', ...(effectAttempted === undefined ? {} : { effectAttempted }) }) };
     expect(await runtime.runActionOperation(request)).toMatchObject({ ok: false, errorCode: 'database_transaction_conflict_exhausted' });

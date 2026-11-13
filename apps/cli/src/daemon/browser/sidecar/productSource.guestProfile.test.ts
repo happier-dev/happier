@@ -323,7 +323,7 @@ it.each([
                 await rpc.invokeLocal(watch ? RPC_METHODS.DAEMON_BROWSER_VIEW_WATCH : RPC_METHODS.DAEMON_BROWSER_VIEW_LIST,
                     { machineId: 'machine', browserSessionId, ...(watch ? { knownViewIds: ['foreign-view'] } : {}) }, rawContext)).views;
             const selected = await dispatch({ kind: 'openView', commandId: 'machine-profile-open',
-                browserSessionId: 'machine-session', viewId: 'view', platform: 'web', profileId: persistent.profileId,
+                browserSessionId: 'machine-session', viewId: 'view', platform: 'web', focus: true, profileId: persistent.profileId,
                 target: { kind: 'externalUrl', targetId: 'fixture', url: 'https://example.test/' } });
             const popup = await control.extensions!.execute('browser.extensions.openActionPopup', {
                 machineId: 'machine', browserSessionId: 'machine-session', viewId: 'popup', commandId: 'machine-popup',
@@ -363,7 +363,7 @@ it.each([
                     authority: 'present_user', surface: 'ui', actionCaller: { kind: 'host' }, ...machineContext(role) } }))
                     .toMatchObject({ recordingId: 'mounted-recording' });
                 expect(await dispatch({ kind: 'openView', commandId: 'guest-profile-open',
-                    browserSessionId: 'raw-guest-session', viewId: 'own-view', platform: 'web',
+                    browserSessionId: 'raw-guest-session', viewId: 'own-view', platform: 'web', focus: true,
                     target: { kind: 'externalUrl', targetId: 'own-fixture', url: 'https://example.test/' } }))
                     .toMatchObject({ status: 'dispatched' });
                 for (const kind of ['raw', 'action']) {
@@ -467,7 +467,7 @@ it.each([
                     authority: 'present_user', surface: 'ui', actionCaller: { kind: 'host' }, ...machineContext(role) } })).toEqual([]);
                 // A Session can reopen with its default ephemeral profile while old owner media survives.
                 expect(await dispatch({ kind: 'openView', commandId: 'same-session-ephemeral-open', ...ownerView,
-                    platform: 'web', target: { kind: 'externalUrl', targetId: 'own', url: 'https://example.test/' } }))
+                    platform: 'web', focus: true, target: { kind: 'externalUrl', targetId: 'own', url: 'https://example.test/' } }))
                     .toMatchObject({ status: 'dispatched' });
                 await exerciseContextClaims('reopened');
                 await seedRecording(ownerView, 'same-session-ephemeral-recording');

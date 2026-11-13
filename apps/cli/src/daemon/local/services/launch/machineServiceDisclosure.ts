@@ -1,4 +1,4 @@
-import type { ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import type { ProjectManagedServiceHandle, WorkspaceProjectManagedServiceHandle, EnvironmentProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -12,21 +12,28 @@ export type MachineServiceDisclosureRequest = Readonly<{
 }>;
 
 /** The incumbent list's exact selection and requester disclosure policy. */
-export async function selectVisibleMachineProjectServices(
+type DisclosableProjectService = Pick<ProjectManagedServiceHandle, 'serviceId' | 'isCurrent' | 'retirementSignal'> & (
+    Pick<WorkspaceProjectManagedServiceHandle, 'kind' | 'workspace' | 'requester'>
+    | Pick<EnvironmentProjectManagedServiceHandle, 'kind' | 'serverId' | 'machineId' | 'environmentId'>
+);
+
+export async function selectVisibleMachineProjectServices<T extends DisclosableProjectService>(
     target: Readonly<{ serverId: string; machineId: string }>,
-    services: readonly ProjectManagedServiceHandle[],
+    services: readonly T[],
     request: MachineServiceDisclosureRequest,
     serviceId?: string,
-): Promise<readonly ProjectManagedServiceHandle[]> {
+): Promise<readonly T[]> {
     const custody = readRequesterAccountActionContext(request.context?.externalActionExecutionAuthorization);
     const binding = custody?.authorization.binding;
     const custodian = custody !== null && binding !== undefined && binding.accountId === request.requesterAccountId
         && binding.accountId === binding.custodianAccountId
         && binding.machineId === target.machineId && binding.serverIdentityId === target.serverId
         && await custody.isCustodyCurrent?.() === true;
-    const projects: ProjectManagedServiceHandle[] = [];
+    const projects: T[] = [];
     for (const handle of services) {
-        const authority = handle.kind === 'workspace' ? handle.workspace : handle;
+        // Narrow through the constraint: a generic `T` does not narrow on its `kind`.
+        const disclosable: DisclosableProjectService = handle;
+        const authority = disclosable.kind === 'workspace' ? disclosable.workspace : disclosable;
         if (serviceId && handle.serviceId !== serviceId || authority.machineId !== target.machineId
             || !handle.isCurrent() || handle.retirementSignal.aborted
             || !await isServerProfileHomeIdentity(target.serverId, authority.serverId)) continue;

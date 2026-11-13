@@ -18,7 +18,7 @@ import { importConnectedServiceSessionFiles } from './importConnectedServiceSess
 // Keep the OS read boundary observable even when a plugin loads the SDK first.
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...actual, open: (...args: Parameters<typeof actual.open>) => actual.default.open(...args) };
+  return { ...actual, open: (...args: Parameters<typeof actual.open>) => actual.open(...args) };
 });
 
 const descriptor = {

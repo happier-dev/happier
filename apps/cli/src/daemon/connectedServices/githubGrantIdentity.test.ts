@@ -98,7 +98,9 @@ function fixture() {
             isCurrent: () => true,
             invoke: async ({ admission, context, operation, signal }) => invokeConnectedAccountAuthenticationRuntime({
                 descriptor: admission.descriptor, mode: githubConnectedAccountRuntime.authentication.modes[admission.modeId],
-                operation, context: { ...context, services, signal: signal ?? new AbortController().signal, invokedAtMs: now },
+                operation, context: { ...context, services, signal: signal ?? new AbortController().signal, invokedAtMs: now,
+                    plugin: { id: service.pluginId, version: '1.0.0' }, surface: 'cli',
+                    contribution: { id: service.localId, qualifiedId: `${service.pluginId}/connectedAccounts/${service.localId}` } },
                 signal, registerRawForRedaction: () => {}, invokeCallback: async work => work(),
             }),
         },

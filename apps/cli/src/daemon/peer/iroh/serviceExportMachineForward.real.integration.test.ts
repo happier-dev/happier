@@ -200,13 +200,15 @@ describe('real native Machine service export forwarding', () => {
         p50Ms: roundTripsMs[Math.ceil(roundTripsMs.length * .5) - 1], p95Ms: roundTripsMs[Math.ceil(roundTripsMs.length * .95) - 1] }));
       // A foreign Home cannot authorize an inner open through an existing native carrier.
       if (!activeCarrier || !lastGrantRequest) throw new Error('No admitted native carrier.');
+      const lastTunnelScope = lastGrantRequest.scope;
+      if (lastTunnelScope.kind !== 'tcp_tunnel') throw new Error('The admitted native carrier was not a TCP tunnel.');
       const foreignProof = createEphemeralPeerRouteProofHandleV2({ randomBytes: length => new Uint8Array(randomBytes(length)) });
       try {
         grantAccountId = 'foreign-account';
         const tunnelId = randomUUID();
         const foreignGrant = SignedDirectRouteGrantV2Schema.parse(await mintGrant({ ...lastGrantRequest,
           ephemeralPublicKeyBase64Url: foreignProof.publicKeyBase64Url,
-          scope: { ...lastGrantRequest.scope, tunnelId } }));
+          scope: { ...lastTunnelScope, tunnelId } }));
         const foreignKey = tweetnacl.sign.keyPair();
         foreignGrant.signature = { keyId: 'foreign-home-key', alg: 'Ed25519',
           valueBase64Url: Buffer.from(tweetnacl.sign.detached(Buffer.from(createDirectRouteGrantSigningInputV2(foreignGrant.payload)), foreignKey.secretKey)).toString('base64url') };

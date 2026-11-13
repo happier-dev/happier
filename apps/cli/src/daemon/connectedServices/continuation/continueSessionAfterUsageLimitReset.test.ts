@@ -132,7 +132,7 @@ describe('continueSessionAfterUsageLimitReset', () => {
     const run = async (value: Parameters<NonNullable<Parameters<typeof createDaemonControlApp>[0]['handleConnectedServiceRuntimeAuthFailure']>>[0] & { recoveryInvocationSource?: 'scheduler_retry' }) => {
       const intent = scheduler.readForSession(sessionId)[0];
       return await handleConnectedServiceRuntimeAuthFailureForSession({ ...value, getChildren: () => [tracked],
-        switchCoordinator: coordinator, resolveRegisteredRuntimeAuthFailureSource: () => runtime,
+        switchCoordinator: coordinator, resolveRegisteredRuntimeAuthFailureSource: async () => runtime,
         resolveCurrentRuntimeAuthFailureSource: async () => runtime,
         continueAfterRuntimeAuthSwitch: createConnectedServiceContinuationHandler({ credentials,
           interruptedOriginId: value.interruptedOriginId, resumePromptMode: 'standard', resolveInterruption: () => 'provider_failed_turn',
@@ -151,7 +151,7 @@ describe('continueSessionAfterUsageLimitReset', () => {
       stopSession: async () => ({ status: 'not_found' }), spawnSession: async () => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'unused' }),
       requestShutdown: () => {}, onHappySessionWebhook: () => {}, runtimeAuthRecoveryScheduler: scheduler,
       authorizeConnectedServiceRuntimeAuthFailure: value => authorizeConnectedServiceRuntimeAuthFailureSource({ ...value,
-        getChildren: () => [tracked], resolveRegisteredRuntimeAuthFailureSource: () => runtime,
+        getChildren: () => [tracked], resolveRegisteredRuntimeAuthFailureSource: async () => runtime,
         resolveCurrentRuntimeAuthFailureSource: async () => runtime }), handleConnectedServiceRuntimeAuthFailure: run });
     let app = createApp();
     const report = (reportId = 'adopted-A-report') => app.inject({ method: 'POST', url: '/connected-service-runtime-auth/failure',

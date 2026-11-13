@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { createSurfaceInputControl } from './inputControl';
+import { createSurfaceInputControl, type SurfaceInputCompletion } from './inputControl';
 
 describe('surface input control', () => {
   it('admits observation-independent effects without clearing observation or bypassing human recovery and confidentiality', async () => {
     const control = createSurfaceInputControl({ requireObservation: true });
     const input = { requestedBy: 'agent', requiresObservation: false,
-      effect: async () => 'navigate', classifyCompletion: () => 'known' } as const;
+      effect: async () => 'navigate', classifyCompletion: (): SurfaceInputCompletion => 'known' } as const;
     expect(await control.execute(input)).toMatchObject({ ok: true, value: 'navigate' });
     expect(control.getAdmissionFailure('agent')).toBe('observation_required');
     await control.takeOver();

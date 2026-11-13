@@ -9,7 +9,7 @@ describe('native scheduled-job parsing', () => {
         const jobs = parseCrontab(fixture('linux-crontab.txt'), '/etc/crontab', true);
         expect(jobs).toHaveLength(4);
         expect(jobs[0]).toMatchObject({ schedule: '17 * * * *', name: 'account' });
-        expect(jobs.every(job => job.command === undefined)).toBe(true);
+        expect(jobs.every(job => !('command' in job))).toBe(true);
     });
     it('distinguishes user cron and @ schedules from assignments and comments', () => {
         expect(parseCrontab('# ignored\nMAILTO=x@y\n@reboot secret-command\n*/5 * * * * echo token=secret', 'cron:user', false))

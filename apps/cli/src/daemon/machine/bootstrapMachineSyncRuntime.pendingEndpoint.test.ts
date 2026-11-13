@@ -75,7 +75,7 @@ describe('Pending recovery after Machine endpoint publication', () => {
           createConnectedApiMachine: () => transport as unknown as MachineClient,
           attachTransferRuntimeStatePublisher: target => transfer.attachApiMachine(target),
           startAutomationWorkerForMachine: machineId => heldBoundary === 'automation-read'
-            ? startAutomationWorker({ token: 'test', machineId, env: { NODE_ENV: 'test' } }) : null,
+            ? startAutomationWorker({ token: 'test', credentials: { token: 'test', encryption: null }, machineId, env: { NODE_ENV: 'test' } }) : null,
           startMemoryWorkerForMachine: async () => null, startVoiceInferenceWorkerForMachine: async () => null,
           orphanedDeadDaemonSessions: heldBoundary === 'orphan-capture' ? [{ sessionId: 'dead-session', trackingKey: legacyPidSessionTrackingKey(1234567), pid: 1234567 }] : [],
           spawnSessionForInternalResume: async () => ({ type: 'success', sessionId: 'unused' }),

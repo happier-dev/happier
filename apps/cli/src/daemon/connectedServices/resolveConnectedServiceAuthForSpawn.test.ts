@@ -234,7 +234,7 @@ function createSpawnPreflightRefreshService(input: Readonly<{
         status: 400, headers: { 'content-type': 'application/json' },
       }) as unknown as Awaited<ReturnType<typeof providerFetch>>;
     });
-    onTestFinished(() => refreshHttpFixture.mockReset());
+    onTestFinished(() => { refreshHttpFixture.mockReset(); });
   }
   return new ConnectedServiceRefreshCoordinator({
     ...input,
@@ -2225,7 +2225,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     } as unknown as ApiClient;
     const authGroupSwitchCoordinator = {
       switchBeforeTurn: vi.fn(async () => ({
-        status: 'switched',
+        status: 'switched' as const,
         activeProfileId: 'backup',
         generation: 6,
       })),
@@ -2601,7 +2601,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       // The fixture response implements the Fetch surface consumed by the HTTP owner.
       } }), { status: remainingPercent === null ? 503 : 200 }) as unknown as Awaited<ReturnType<typeof providerFetch>>;
     });
-    onTestFinished(() => providerHttp.mockReset());
+    onTestFinished(() => { providerHttp.mockReset(); });
     const result = scenario.run();
     await result.catch(() => {});
     // One admitted member needs one provider observation, including unavailable evidence.
@@ -2951,7 +2951,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     } as unknown as ApiClient;
     const authGroupSwitchCoordinator = {
       switchBeforeTurn: vi.fn(async () => ({
-        status: 'switched',
+        status: 'switched' as const,
         activeProfileId: 'backup',
         generation: 6,
       })),
@@ -3561,7 +3561,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     class BoundSwitchCoordinator {
       readonly marker = 'bound';
       readonly switchBeforeTurn = vi.fn(async () => ({
-        status: 'not_switched',
+        status: 'manual_strategy' as const,
         activeProfileId: 'primary',
         generation: 5,
       }));
@@ -3802,7 +3802,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       sessionId: 'session-stale-switch',
       authGroupSwitchCoordinator: {
         switchBeforeTurn: vi.fn(async () => ({
-          status: 'not_switched',
+          status: 'manual_strategy' as const,
           activeProfileId: 'primary',
           generation: 5,
         })),
@@ -3992,7 +3992,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       sessionId: 'session-1',
       authGroupSwitchCoordinator: {
         switchBeforeTurn: vi.fn(async () => ({
-          status: 'not_switched',
+          status: 'manual_strategy' as const,
           activeProfileId: 'narrow',
           generation: 5,
         })),
@@ -4177,7 +4177,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       sessionId: 'session-1',
       authGroupSwitchCoordinator: {
         switchBeforeTurn: vi.fn(async () => ({
-          status: 'not_switched',
+          status: 'manual_strategy' as const,
           activeProfileId: 'narrow-one',
           generation: 5,
         })),

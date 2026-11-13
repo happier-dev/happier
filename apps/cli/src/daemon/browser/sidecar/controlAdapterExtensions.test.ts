@@ -35,7 +35,7 @@ describe('browser sidecar extension views', () => {
                 actionPopup: 'popup.html', optionsPage: 'options.html' };
             await profiles.setExtension('profile', extension);
             const view = { browserSessionId: 'browser', viewId: 'content' };
-            expect(await runtime.adapter.dispatchCommand({ ...view, kind: 'openView', commandId: 'content-open', platform: 'web',
+            expect(await runtime.adapter.dispatchCommand({ ...view, kind: 'openView', commandId: 'content-open', platform: 'web', focus: true,
                 target: { kind: 'externalUrl', targetId: 'content', url: 'https://example.test' } }))
                 .toMatchObject({ status: 'dispatched' });
             await control.beginConfidentialityHold();

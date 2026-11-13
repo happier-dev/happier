@@ -9,6 +9,7 @@ import { snapshotConnectedAccountEstablishedResult } from '../../../../../../pac
 import { createAntigravityConnectedAccountRuntime } from '../../../../../../packages/plugins/antigravity/src/connectedAccounts/antigravityConnectedAccountRuntime';
 import { createConnectedAccountRequestAuthService, type ConnectedAccountRequestAuthSubject } from './ConnectedAccountRequestAuthService';
 import { parseHttpHeadersRequestAuthMaterial } from './parseHttpHeadersRequestAuthMaterial';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 
 describe('Connected Account request-auth header material', () => {
     it('carries real service headers, expiry and facts through snapshots, lookup and the strict SDK transport with one materialization', async () => {
@@ -19,10 +20,14 @@ describe('Connected Account request-auth header material', () => {
         const binding = { purpose, target: { kind: 'account' as const, account } };
         const expiresAt = Date.now() + 60_000;
         const credentials = new Map([['accessToken', 'fixture-token'], ['projectId', 'fixture-project'], ['expiresAtMs', String(expiresAt)]]);
-        const context = { account, signal: new AbortController().signal,
+        const context: Parameters<typeof runtime.materialize>[1] = { account, signal: new AbortController().signal,
+            plugin: { id: account.service.pluginId, version: '1.0.0' }, surface: 'cli', invokedAtMs: Date.now(),
+            contribution: { id: account.service.localId, qualifiedId: `${account.service.pluginId}/connectedAccounts/${account.service.localId}` },
+            // Antigravity header materialization reads only its stored credentials.
+            services: createUnavailablePluginServices(),
             credentials: { async get(key: string) { return credentials.get(key) ?? null; } },
             configuration: { target: { kind: 'account' as const, account, modeId: 'oauth-personal' }, revision: 'configuration-1', values: {}, async getSecret() { return null; } },
-        } as Parameters<typeof runtime.materialize>[1];
+        };
         let materializations = 0;
         const owner = createConnectedAccountRequestAuthService({
             resolveCurrentBinding: () => ({ account, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS' }),

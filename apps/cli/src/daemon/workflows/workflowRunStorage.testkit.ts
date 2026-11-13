@@ -506,7 +506,7 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
         for (;;) {
           waitAttempts += 1;
           await params.onBeforeWait?.(waitAttempts);
-          const conditions = operation.conditions ?? ['terminal', 'attention', 'paused'];
+          const conditions: readonly unknown[] = Array.isArray(operation.conditions) ? operation.conditions : ['terminal', 'attention', 'paused'];
           if (conditions.includes('attention') && (state === 'interrupted' || requiresAttention())) {
             return { observation: 'needs_attention', matchedCondition: 'attention', run: summary() };
           }

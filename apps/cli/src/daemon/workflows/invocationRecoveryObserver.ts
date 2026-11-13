@@ -320,7 +320,7 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
   return async function observe(input: Readonly<{
     progress: import('@happier-dev/protocol').WorkflowProgressEnvelopeV1;
     run?: Readonly<{ id: string; state?: WorkflowRunSummaryV1['state'] }>;
-    index?: Readonly<{ id: string }>;
+    index?: Readonly<Pick<import('@happier-dev/protocol').WorkflowRunInvocationIndexV1, 'id' | 'lifecycle'>>;
     terminalParent: boolean;
     cancellationRequested: boolean;
     observationOnly?: boolean;

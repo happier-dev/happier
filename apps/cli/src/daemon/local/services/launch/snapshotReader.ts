@@ -7,7 +7,7 @@ export async function createLocalServiceLauncherSnapshotReader(input: Readonly<{
     feed: Pick<LocalServiceLauncherFeed, 'getSnapshot'>;
     machineId: string;
     accountId?: string;
-    serverId?: string;
+    serverId?: string | null;
     ingress?: RpcHandlerContext;
     readScope?: 'requester_managed_services';
 }>): Promise<Pick<LocalServiceLauncherFeed, 'getSnapshot'> & Readonly<{ requesterOnly: boolean }>> {

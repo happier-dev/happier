@@ -209,6 +209,7 @@ export function createDaemonMachineBootstrapRuntime(
     acquireWorkspaceSyncMachineIngress?: BootstrapRuntime['acquireWorkspaceSyncMachineIngress'];
     acquireLocalServicePreviewApplication?: BootstrapRuntime['acquireLocalServicePreviewApplication'];
     resolveServiceExport?: BootstrapRuntime['resolveServiceExport'];
+    onServiceExportTunnelsReady?: BootstrapRuntime['onServiceExportTunnelsReady'];
     acquireServiceExportForward?: ApiMachineClientLifecycleDependencies['acquireServiceExportForward'];
     resolveLocalServicePreviewApplication?: BootstrapRuntime['resolveLocalServicePreviewApplication'];
     directTransferRegistryHost: BootstrapRuntime['directTransferRegistryHost'];
@@ -428,6 +429,7 @@ export function createDaemonMachineBootstrapRuntime(
     ...(params.mcpServers ? { mcpServers: params.mcpServers } : {}),
     ...(params.machineIrohRuntime ? { machineIrohRuntime: params.machineIrohRuntime } : {}),
     ...(params.resolveServiceExport ? { resolveServiceExport: params.resolveServiceExport } : {}),
+    ...(params.onServiceExportTunnelsReady ? { onServiceExportTunnelsReady: params.onServiceExportTunnelsReady } : {}),
     ...(params.prepareServerTransportForReconnect
       ? { prepareServerTransportForReconnect: params.prepareServerTransportForReconnect }
       : {}),

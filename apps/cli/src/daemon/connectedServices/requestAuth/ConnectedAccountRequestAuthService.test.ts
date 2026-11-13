@@ -11,6 +11,7 @@ import {
     createConnectedAccountRequestAuthService,
     type ConnectedAccountRequestAuthResolvedBinding,
     type ConnectedAccountRequestAuthSubject,
+    type HeadersMaterial,
 } from './ConnectedAccountRequestAuthService';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 
@@ -330,7 +331,7 @@ describe('ConnectedAccountRequestAuthService', () => {
     });
 
     it('single-flights one expensive cold fill while every waiter revalidates current projection', async () => {
-        const fill = deferred<Readonly<{ accessToken: string }>>();
+        const fill = deferred<HeadersMaterial>();
         let materializations = 0;
         let resolutions = 0;
         const owner = createConnectedAccountRequestAuthService({
@@ -360,7 +361,7 @@ describe('ConnectedAccountRequestAuthService', () => {
     });
 
     it('detaches a cancelled lookup waiter without cancelling the shared fill needed by another waiter', async () => {
-        const fill = deferred<Readonly<{ accessToken: string }>>();
+        const fill = deferred<HeadersMaterial>();
         let materializations = 0;
         let ownerSignal: AbortSignal | undefined;
         const owner = createConnectedAccountRequestAuthService({
@@ -531,7 +532,7 @@ describe('ConnectedAccountRequestAuthService', () => {
     });
 
     it('does not let an overlapping cold fill return a locally superseded group member', async () => {
-        const oldFill = deferred<Readonly<{ accessToken: string }>>();
+        const oldFill = deferred<HeadersMaterial>();
         let current = resolved({ accountId: 'one', revision: revision1, generation: 7 });
         const materializedAccounts: string[] = [];
         const owner = createConnectedAccountRequestAuthService({
@@ -559,7 +560,7 @@ describe('ConnectedAccountRequestAuthService', () => {
     });
 
     it('restarts an awaited lookup when group generation changes before observing a later member', async () => {
-        const oldFill = deferred<Readonly<{ accessToken: string }>>();
+        const oldFill = deferred<HeadersMaterial>();
         let resolutions = 0;
         const materializedAccounts: string[] = [];
         const owner = createConnectedAccountRequestAuthService({
@@ -658,7 +659,7 @@ describe('ConnectedAccountRequestAuthService', () => {
 
     it('does not let a retiring subject fail a current subject that needs the same cold fill', async () => {
         let retiringSubjectCurrent = true;
-        const retiringFill = deferred<Readonly<{ accessToken: string }>>();
+        const retiringFill = deferred<HeadersMaterial>();
         const materializingSubjectIds: string[] = [];
         const owner = createConnectedAccountRequestAuthService({
             resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
@@ -878,7 +879,7 @@ describe('ConnectedAccountRequestAuthService', () => {
     });
 
     it('does not let a pending fill resurrect a superseded credential lease', async () => {
-        const oldFill = deferred<Readonly<{ accessToken: string }>>();
+        const oldFill = deferred<HeadersMaterial>();
         let currentRevision = revision1;
         const materializedRevisions: string[] = [];
         const owner = createConnectedAccountRequestAuthService({

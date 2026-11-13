@@ -169,7 +169,7 @@ describe('runner native launch authority', () => {
                 local: { availability: unavailable.availability, logger: unavailable.logger, sessions: unavailable.sessions,
                     managedServices: unavailable.managedServices, machineProvisioners: unavailable.machineProvisioners,
                     exec: unavailable.exec, interactions: unavailable.interactions, targetedContributions: unavailable.targetedContributions,
-                    composerContent: unavailable.composerContent, backgroundServices: unavailable.backgroundServices },
+                    composerContent: unavailable.composerContent, backgroundServices: unavailable.backgroundServices, deploymentSource: unavailable.deploymentSource },
             });
             try {
                 const request = { executable, cwd: root, env: { KEEP: 'request' }, args: ['-e',

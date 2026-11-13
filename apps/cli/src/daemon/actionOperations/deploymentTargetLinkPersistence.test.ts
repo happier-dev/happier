@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getActionSpec } from '@happier-dev/protocol/actions';
-import { readDeploymentActionOperationRequestIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { readDeploymentActionOperationRequestIdV1, type DeploymentTargetLinkActionInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { createHostActionOperationRuntime } from './createHostActionOperationRuntime';
 import { createActionOperationRunner } from './actionOperationRunner';
@@ -77,7 +77,7 @@ describe('deployment target link operation retention', () => {
 
   it('persists admission before effect and replays the retained terminal result after restart', async () => {
     const credential = { service: { pluginId: 'example.platform', localId: 'account' }, accountId: 'connection' };
-    const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 1, requestKey: 'link-request',
+    const input: DeploymentTargetLinkActionInputV1 = { serverId: 'home', environmentId: 'environment', expectedRevision: 1, requestKey: 'link-request',
       targetId: 'runtime', role: 'runtime', targetKind: 'platform', machines: [],
       source: { kind: 'plugin', contribution: { pluginId: 'example.platform', localId: 'runtime' } },
       providerCreate: { credentialRef: credential,

@@ -30,6 +30,7 @@ describe('daemon control server: local service inventory endpoints', () => {
             refreshSnapshot: vi.fn(async () => refreshed),
             // The control server never watches; the double still satisfies the whole route contract.
             watchSnapshot: vi.fn(async () => ({ changed: false as const })),
+            watchLauncherSnapshot: vi.fn(async () => ({ changed: false as const })),
             watcherCount: vi.fn(() => 0),
             patchLabel: vi.fn(async () => ({ ok: true as const })),
         };

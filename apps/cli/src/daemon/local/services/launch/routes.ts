@@ -45,7 +45,7 @@ export function createLocalServiceLauncherRoutes<TDeclaration = unknown>(input: 
                 let complete = request;
                 if (!request.workspace || !request.declaration) {
                     const feed = await createLocalServiceLauncherSnapshotReader({
-                        feed: input.feed, machineId: request.machineId, ingress, serverId: context.serverId, readScope: 'requester_managed_services',
+                        feed: input.feed, machineId: request.machineId, ingress, serverId: context?.serverId, readScope: 'requester_managed_services',
                     });
                     complete = completeLocalServiceLauncherStartRequest(request, await feed.getSnapshot({
                         ...(request.workspace ? { workspaceRoot: request.workspace.rootPath } : { discovery: 'cached' as const }),

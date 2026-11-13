@@ -104,7 +104,7 @@ describe('qualified Connected Account deadline composition', () => {
           setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse(mode === 'demanded-quota'
             ? { usageQuotaNotificationsV1: { pace: true } } : {}), settingsVersion: 1,
             loadedAtMs: clock, settingsSecretsReadKeys, scopeKey: resolveAccountSettingsScopeKey(fixture.credentials),
-            notificationChannelCatalog: { status: 'ready', revision: 1, channels: [] } });
+            notificationChannelCatalog: { status: 'ready', revision: 1, channels: [], diagnostics: [] } });
         },
         registry, trackedSessions, getRequester: () => null, resolveQualifiedConnectedAccountV4Support: () => 'advertised' });
       await observeConnectedServiceMaterializationPhase({ agentId: 'codex', materializationKey: 'coincident-deadline' },

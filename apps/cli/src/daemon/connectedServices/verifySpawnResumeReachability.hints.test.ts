@@ -11,7 +11,7 @@ import { verifySpawnResumeReachability } from './verifySpawnResumeReachability';
 
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...actual, readdir: (...args: Parameters<typeof actual.readdir>) => actual.default.readdir(...args) };
+  return { ...actual, readdir: (...args: Parameters<typeof actual.readdir>) => actual.readdir(...args) };
 });
 
 const id = '019e7327-46cc-7dca-bb14-8473727db321';

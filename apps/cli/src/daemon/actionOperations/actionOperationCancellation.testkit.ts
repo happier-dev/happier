@@ -205,7 +205,7 @@ export async function createActionOperationCancellationFixture(input: Readonly<{
     ...(input.admittedMachineRole ? { admittedMachineRole: input.admittedMachineRole } : {}),
     ...(deploymentNativeAdmission && input.deploymentCandidateSource ? {
       deploymentCandidatePublication: createDeploymentCandidatePublicationV1({ accountId, serverIdentityId: address.serverId,
-        actionId, requestId: envelope.requestId, requestEnvelopeDigest, environmentId: deploymentNativeAdmission.environmentId,
+        actionId, requestId: encryptionBinding.requestId, requestEnvelopeDigest, environmentId: deploymentNativeAdmission.environmentId,
         source: input.deploymentCandidateSource }),
     } : {}) } });
   const sealCancellationAuthorization = (operationId: string) => {

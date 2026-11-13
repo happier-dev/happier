@@ -69,7 +69,6 @@ import { getMachineFinitePolicyV1 } from '@happier-dev/protocol/machines/machine
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { DaemonVoiceInferenceStatusResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { createWorkflowAccountRunActionOwner, materializeWorkflowAcceptedSnapshotV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
   sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1,
@@ -81,6 +80,7 @@ import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createWorkflowRunStorageTestkit, type WorkflowRunStorageTestkitOperation } from '../workflows/workflowRunStorage.testkit';
 import { createWorkflowRunRecoveryReader } from '../workflows/recovery';
 import { createWorkflowDiscussionResultPublisher } from '../workflows/workflowDiscussionPublication';
+import { buildWorkflowActionContext } from '../workflows/workflowActionContext';
 import { createDiscussionReplyReturnPublisher } from '@/discussions/discussionReplyReturnPublisher';
 import { createApprovedDiscussionAgentPublisher } from '@/discussions/approvedDiscussionAgentPublisher';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
@@ -819,6 +819,12 @@ describe('createDaemonMachineBootstrapRuntime', () => {
     expect(refreshServerFeaturesSnapshot).toHaveBeenCalledOnce();
   });
 
+  it('hands the peer service-export tunnel owner to the daemon so requester revocation can close its tunnels', () => {
+    const onServiceExportTunnelsReady = vi.fn();
+    const runtime = createDaemonMachineBootstrapRuntime(createBaseRuntimeParams({ onServiceExportTunnelsReady }));
+    expect(runtime.onServiceExportTunnelsReady).toBe(onServiceExportTunnelsReady);
+  });
+
   it('constructs workspace sync from the registered machine identity before publishing the machine client', async () => {
     const updateDaemonState = vi.fn(async (_updater: (state: DaemonState | null) => DaemonState) => {});
     const machineSyncClient = vi.fn(() => ({ updateDaemonState }));
@@ -1139,10 +1145,14 @@ describe('createDaemonMachineBootstrapRuntime', () => {
         } } };
       });
       const publish = createDiscussionReplyReturnPublisher({ credentials, machineId, serverId: 'home', serverHttpBaseUrl: serverUrl,
-        workflowAuthorization: admitted.snapshot.authorization, signal: new AbortController().signal, isCurrent: async () => true,
+        workflowActionContext: buildWorkflowActionContext({ ...admitted.snapshot, runId }),
+        signal: new AbortController().signal, isCurrent: async () => true,
         actionsSettingsProvider: { getAccountSettings: () => accountSettingsParse({}), getActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
           actions: { 'discussion.reply': { approvalRequiredSurfaces: ['agent'] } } }) },
-        postWorkflowMessage: async (publication, options) => await client.postAgentDiscussionMessage(publication, options) });
+        postWorkflowMessage: async (publication, options) => {
+          if (!client) throw new Error('Missing actual Machine client');
+          return await client.postAgentDiscussionMessage(publication, options);
+        } });
       const runtime = createDaemonMachineBootstrapRuntime(createBaseRuntimeParams({
         api: await ApiClient.create(credentials), credentials, workspaceSyncHandoffAdapter: undefined,
         isWorkflowFeatureEnabled: () => true,

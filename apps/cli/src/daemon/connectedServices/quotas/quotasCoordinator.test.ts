@@ -280,11 +280,14 @@ it.each([
     providerIdentity: { accountId: 'provider-work' }, displayName: 'Work', scopes: [],
   };
   const fixture = await createQualifiedQuotaRuntimeFixture(profile, now, hint);
+  const profileProviderAccountId = 'provider-work';
   let stored: ProviderAccountUsageSnapshotV1 | null = null;
   // Home persistence is the boundary; plugin admission, cadence and publication stay real.
-  const writeProviderAccountUsage = vi.fn(async (params: QualifiedProviderAccountUsageWriteArgs) => {
-    if (!params.write.snapshot) throw new Error('Expected plain fixture content');
-    stored = params.write.snapshot;
+  const writeProviderAccountUsage = vi.fn(async (params: Readonly<{ token: string; write: unknown }>) => {
+    // The HTTP client parses the same wire schema before writing.
+    const write = QualifiedProviderAccountUsageWriteV4Schema.parse(params.write);
+    if (!write.snapshot) throw new Error('Expected plain fixture content');
+    stored = write.snapshot;
     return { success: true as const };
   });
   const coordinator = new ConnectedServiceQuotasCoordinator({
@@ -298,7 +301,7 @@ it.each([
       readQuota: async () => stored ? {
         ref: profile.ref,
         sourceResolution: { source: { ref: profile.ref, bindingKind: 'account' as const }, recordId: stored.recordId,
-          providerAccountId: profile.providerIdentity!.accountId, fetchedAt: stored.fetchedAtMs, staleAfterMs: stored.staleAfterMs },
+          providerAccountId: profileProviderAccountId, fetchedAt: stored.fetchedAtMs, staleAfterMs: stored.staleAfterMs },
         content: { t: 'plain' as const, v: projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4({ snapshot: stored, ref: profile.ref }) },
         metadata: { fetchedAt: stored.fetchedAtMs, staleAfterMs: stored.staleAfterMs,
           status: stored.state === 'error_last_known_good' ? 'error' as const : 'unavailable' as const },
@@ -2605,7 +2608,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       },
     });
     });
-    const writeProviderAccountUsage = vi.fn(async (params: QualifiedProviderAccountUsageWriteArgs) => {
+    const writeProviderAccountUsage = vi.fn(async (params: Readonly<{ token: string; write: unknown }>) => {
       if (recoveryMode === 'persistence_timeout' && writeProviderAccountUsage.mock.calls.length === 1) {
         now += 35_000;
         throw Object.assign(new Error('timeout'), { code: 'ECONNABORTED' });
@@ -2613,6 +2616,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       committedSourceWrite = QualifiedProviderAccountUsageWriteV4Schema.parse(params.write);
       return { success: true as const };
     });
+    // The writer port takes the wire value as `unknown`; read recorded writes through the same schema.
+    const usageWrites = () => writeProviderAccountUsage.mock.calls.map(([params]) => QualifiedProviderAccountUsageWriteV4Schema.parse(params.write));
     const activeGroup = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'group-1' },
       incarnation: 'active-group-lifetime', displayName: 'Active group', activeConnectedAccountId: profile.ref.accountId,
       generation: 4, runtimeStateRevision: 0, policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
@@ -2897,7 +2902,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             return;
           }
           expect(writeProviderAccountUsage).toHaveBeenCalledTimes(1);
-          const write = writeProviderAccountUsage.mock.calls[0]![0].write;
+          const write = usageWrites()[0]!;
           expect(write).toMatchObject({ source: { ref: profile.ref, bindingKind: 'account' },
             expectedCredentialRevision: profile.credentialRevision, expectedConfigurationRevision: profile.configurationRevision,
             status: 'ok', fetchedAt: now });
@@ -2927,7 +2932,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             expectedCredentialRevision: profile.credentialRevision, expectedConfigurationRevision: profile.configurationRevision,
             status: 'unavailable', fetchedAt: 0,
           }) });
-          const write = writeProviderAccountUsage.mock.calls[0]![0].write;
+          const write = usageWrites()[0]!;
           const snapshot = write.snapshot ?? (write.sealedPayload
             ? openSealedProviderAccountUsageSnapshot({ material: requireAccountEncryptionCredentials(credentials).encryption, sealed: write.sealedPayload }) : null);
           expect(snapshot).toMatchObject({ state: 'not_loaded', fetchedAtMs: 0, meters: [], recordKey });
@@ -2997,7 +3002,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         if (recoveryMode !== 'deadline_idle') {
           // A polled reading stays current until its scheduled replacement is a whole refresh late,
           // so pool surfaces do not call it old while the next read is still on time.
-          const write = writeProviderAccountUsage.mock.calls.at(-1)?.[0].write;
+          const write = usageWrites().at(-1);
           const written = write?.snapshot ?? (write?.sealedPayload
             ? openSealedProviderAccountUsageSnapshot({ material: requireAccountEncryptionCredentials(credentials).encryption, sealed: write.sealedPayload }) : null);
           expect(written).toBeTruthy();
@@ -3099,7 +3104,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       }
 
       if (recoveryMode === 'manual_reset_after_quota_error') {
-        expect(writeProviderAccountUsage.mock.calls.at(-1)?.[0].write).toMatchObject({ snapshot: { state: 'error_last_known_good', diagnostics: [{ code: 'network' }] } });
+        expect(usageWrites().at(-1)).toMatchObject({ snapshot: { state: 'error_last_known_good', diagnostics: [{ code: 'network' }] } });
         await expect(coordinator.consumeRecoveryCreditForProfile({
           serviceId: ingressServiceId, profileId: 'account-a', idempotencyKey: 'confirmed-reset', providerCreditId: 'earliest',
         })).resolves.toMatchObject({ ok: true, receipt: { status: 'consumed', providerCreditId: 'earliest' } });
@@ -3108,7 +3113,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       }
 
       if (['quota_future', 'quota_refresh_marker', 'quota_all_unavailable', 'quota_profile_separator', 'quota_data_key', 'quota_no_provider_identity'].includes(recoveryMode)) {
-        const write = writeProviderAccountUsage.mock.calls.at(-1)?.[0].write;
+        const write = usageWrites().at(-1);
         expect(write).toBeDefined();
         const snapshot = write?.snapshot ?? (write?.sealedPayload
           ? openSealedProviderAccountUsageSnapshot({ material: requireAccountEncryptionCredentials(credentials).encryption, sealed: write.sealedPayload }) : null);
@@ -3127,14 +3132,14 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         return;
       }
       if (recoveryMode === 'quota_error_native') {
-        expect(writeProviderAccountUsage.mock.calls.at(-1)?.[0].write).toMatchObject({ status: 'error', snapshot: {
+        expect(usageWrites().at(-1)).toMatchObject({ status: 'error', snapshot: {
           state: 'error_last_known_good', diagnostics: [{ code: '-32082' }],
         } });
         return;
       }
       if (recoveryMode === 'quota_error_network') {
         expect(schedule).toEqual({ nextAutomaticRunAfterMs: 60_000 });
-        expect(writeProviderAccountUsage.mock.calls.at(-1)?.[0].write).toMatchObject({ status: 'error', snapshot: {
+        expect(usageWrites().at(-1)).toMatchObject({ status: 'error', snapshot: {
           state: 'error_last_known_good', diagnostics: [{ code: 'network', retryAtMs: now + 60_000 }],
         } });
         const first = writeProviderAccountUsage.mock.calls.length;
@@ -3146,14 +3151,14 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         expect(readCredential.mock.calls.length).toBeGreaterThan(readsBeforeReplacement);
         now += 60_000;
         expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 60_000 });
-        expect(writeProviderAccountUsage.mock.calls.at(-1)?.[0].write).toMatchObject({ snapshot: {
+        expect(usageWrites().at(-1)).toMatchObject({ snapshot: {
           diagnostics: [{ retryAtMs: now + 60_000 }],
         } });
         return;
       }
       if (recoveryMode.startsWith('quota_error')) {
         expect(schedule).toEqual({ nextAutomaticRunAfterMs: 120_000 });
-        const writes = writeProviderAccountUsage.mock.calls.map(([params]) => params.write);
+        const writes = usageWrites();
         const lastErrorWrite = writes.at(-1);
         const errorSnapshot = lastErrorWrite?.snapshot ?? (lastErrorWrite?.sealedPayload && credentials.encryption
           ? openSealedProviderAccountUsageSnapshot({ material: credentials.encryption, sealed: lastErrorWrite.sealedPayload }) : null);
@@ -3180,7 +3185,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
           coordinator.invalidateInventory({ quotaRefreshRecordIds: [previous.recordId] });
           expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 119_000 });
           expect(writeProviderAccountUsage.mock.calls.length).toBeGreaterThan(writeCount);
-          const deferred = writeProviderAccountUsage.mock.calls.at(-1)?.[0].write;
+          const deferred = usageWrites().at(-1);
           const snapshot = deferred?.snapshot ?? (deferred?.sealedPayload && credentials.encryption
             ? openSealedProviderAccountUsageSnapshot({ material: credentials.encryption, sealed: deferred.sealedPayload }) : null);
           expect(snapshot).toMatchObject({ state: 'error_last_known_good',
@@ -3232,7 +3237,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
           payloadMode: accountMode === 'e2ee' ? 'sealed_account_scoped_v1' : 'plain_json_v1',
         }),
       });
-      const written = writeProviderAccountUsage.mock.calls[0]?.[0].write;
+      const written = usageWrites()[0];
       if (accountMode === 'e2ee') expect(written?.sealedPayload?.subscription).toBeDefined();
       const writtenSnapshot = written?.snapshot ?? (written?.sealedPayload
         ? openSealedProviderAccountUsageSnapshot({ material: requireAccountEncryptionCredentials(credentials).encryption, sealed: written.sealedPayload })
@@ -3466,12 +3471,12 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             ? { used: 25, remaining: 75 } : { used: 0, remaining: 100 })],
         });
       }
-      for (const [params] of writeProviderAccountUsage.mock.calls) {
-        const snapshot = params.write.snapshot ?? (params.write.sealedPayload
-          ? openSealedProviderAccountUsageSnapshot({ material: requireAccountEncryptionCredentials(credentials).encryption, sealed: params.write.sealedPayload })
+      for (const write of usageWrites()) {
+        const snapshot = write.snapshot ?? (write.sealedPayload
+          ? openSealedProviderAccountUsageSnapshot({ material: requireAccountEncryptionCredentials(credentials).encryption, sealed: write.sealedPayload })
           : null);
         expect(snapshot?.subscription).toEqual(expectedSubscription);
-        if (accountMode === 'e2ee') expect(params.write.sealedPayload?.subscription).toBeDefined();
+        if (accountMode === 'e2ee') expect(write.sealedPayload?.subscription).toBeDefined();
       }
     } finally {
       clearActiveAccountSettingsSnapshot();

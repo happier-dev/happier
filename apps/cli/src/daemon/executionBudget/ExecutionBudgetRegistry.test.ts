@@ -8,7 +8,7 @@ import { projectMachineWorkSummary } from '@/daemon/machines/machineWorkSummary'
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 
 describe('createExecutionBudgetRegistry', () => {
-  it('keeps run and one-shot custody uncapped when retired operator env caps are set', () => {
+  it('keeps run and one-shot custody uncapped when retired operator env caps are set', async () => {
     vi.stubEnv('HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION', '1');
     vi.stubEnv('HAPPIER_ONE_SHOT_TASKS_MAX_CONCURRENT_PER_SESSION', '1');
     vi.stubEnv('HAPPIER_EXECUTION_BUDGET_MAX_CONCURRENT_TOTAL_PER_SESSION', '1');
@@ -21,12 +21,12 @@ describe('createExecutionBudgetRegistry', () => {
         expect(registry.tryAcquireOneShotTask('task-' + index, 'automation')).toBe(true);
       }
       expect(registry.getInFlightSnapshot()).toEqual({ executionRuns: 100, oneShotTasks: 100 });
-      expect(registry.getLiveWorkProducer().read().items).toHaveLength(200);
+      expect((await registry.getLiveWorkProducer().read()).items).toHaveLength(200);
       for (let index = 0; index < 100; index += 1) {
         registry.releaseExecutionRun('run-' + index);
         registry.releaseOneShotTask('task-' + index);
       }
-      expect(registry.getLiveWorkProducer().read().items).toEqual([]);
+      expect((await registry.getLiveWorkProducer().read()).items).toEqual([]);
     } finally { vi.unstubAllEnvs(); reloadConfiguration(); }
   });
 });

@@ -72,7 +72,7 @@ async function fixture(authorizedPurposes: readonly string[] = purposes) {
         local: { availability: unavailable.availability, logger: unavailable.logger, sessions: unavailable.sessions,
             managedServices: unavailable.managedServices, machineProvisioners: unavailable.machineProvisioners,
             exec: unavailable.exec, interactions: unavailable.interactions, targetedContributions: unavailable.targetedContributions,
-            composerContent: unavailable.composerContent, backgroundServices: unavailable.backgroundServices },
+            composerContent: unavailable.composerContent, backgroundServices: unavailable.backgroundServices, deploymentSource: unavailable.deploymentSource },
     });
     return { accounts: runnerServices.connectedAccounts, directAccounts: connectedAccounts, requests, async dispose() { controller.abort(); await host.dispose(); } };
 }

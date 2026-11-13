@@ -44,7 +44,7 @@ describe('key-holding quota summary maintenance', () => {
     const recordId = buildProviderAccountUsageRecordId(recordKey);
     const observations: ProviderAccountUsageSnapshotV1[] = Array.from({ length: 102 }, (_, index) => ({ v: 1, recordId, recordKey, providerId: 'test',
       accountSubject: { kind: 'providerSubject', id: 'account' }, observedAtMs: 100 + index, fetchedAtMs: 100 + index, staleAfterMs: 1000,
-      source: 'providerHttp', confidence: 'confirmed', meters: [] }));
+      source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', meters: [] }));
     const summary = buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: 0, snapshots: observations.slice(0, -1) });
     let transferred = 0;
     const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
@@ -84,7 +84,7 @@ describe('key-holding quota summary maintenance', () => {
     const recordKey = { providerId: 'test', accountSubjectId: 'account', subjectKind: 'account' as const, quotaScope: 'account' as const };
     const recordId = buildProviderAccountUsageRecordId(recordKey);
     const snapshot: ProviderAccountUsageSnapshotV1 = { v: 1, recordId, recordKey, providerId: 'test', accountSubject: { kind: 'providerSubject', id: 'account' },
-      observedAtMs: 100, fetchedAtMs: 100, staleAfterMs: 1000, source: 'providerHttp', confidence: 'confirmed', meters: [] };
+      observedAtMs: 100, fetchedAtMs: 100, staleAfterMs: 1000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', meters: [] };
     const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { success: true, source: { status: 'linked' } } });
     const get = vi.spyOn(axios, 'get').mockRejectedValue({ response: { status: 403, data: { error: 'denied' } } });
     const warning = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
@@ -105,7 +105,7 @@ describe('key-holding quota summary maintenance', () => {
     const recordId = buildProviderAccountUsageRecordId(recordKey);
     const day = 86_400_000;
     const snapshot: ProviderAccountUsageSnapshotV1 = { v: 1, recordId, recordKey, providerId: 'test', accountSubject: { kind: 'providerSubject', id: 'account' },
-      observedAtMs: day + 100, fetchedAtMs: day + 100, staleAfterMs: 1000, source: 'providerHttp', confidence: 'confirmed', meters: [] };
+      observedAtMs: day + 100, fetchedAtMs: day + 100, staleAfterMs: 1000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', meters: [] };
     const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
     const randomBytes = (n: number) => new Uint8Array(n).fill(3);
     const { sealProviderAccountUsageSnapshot } = await import('@happier-dev/protocol/connect/accountUsage');
@@ -160,7 +160,7 @@ describe('key-holding quota summary maintenance', () => {
     const recordKey = { providerId: 'test', accountSubjectId: 'account', subjectKind: 'account' as const, quotaScope: 'account' as const };
     const recordId = buildProviderAccountUsageRecordId(recordKey);
     const snapshot: ProviderAccountUsageSnapshotV1 = { v: 1, recordId, recordKey, providerId: 'test', accountSubject: { kind: 'providerSubject', id: 'account' },
-      observedAtMs: 100, fetchedAtMs: 100, staleAfterMs: 1000, source: 'providerHttp', confidence: 'confirmed', meters: [] };
+      observedAtMs: 100, fetchedAtMs: 100, staleAfterMs: 1000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', meters: [] };
     const pageSizes: number[] = [];
     const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
       if (String(url).includes('/day-summaries')) return { status: 200, data: { summaries: [], missingDays: [{ dayStartAtMs: 0, coverage: { observationCount: 2, frontier: { id: 'later', observedAtMs: 200 } } }] } };

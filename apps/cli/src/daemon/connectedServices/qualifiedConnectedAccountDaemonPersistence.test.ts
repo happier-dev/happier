@@ -1298,7 +1298,7 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
           expectedCredentialRevision: committedCredential.credentialRevision, expectedConfigurationRevision: null,
           health: { v: 1, status: 'connected', reconnectRequired: false } });
         recovered = true;
-        return { success: true, credentialRevision: committedCredential.credentialRevision, configurationRevision: null };
+        return { success: true, credentialRevision: 'csr_1234567890123456789012', configurationRevision: null };
       },
       mutateConfiguration: vi.fn(),
       secrets: {

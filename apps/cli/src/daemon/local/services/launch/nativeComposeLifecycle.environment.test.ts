@@ -410,9 +410,9 @@ describe('Environment project native activation', () => {
             signal: new AbortController().signal, isCurrent: () => current,
             async prepare() { prepared += 1; return { env: { PATH: '/tools', HOME: root, SECRET: 'native-secret', PORT: '3000', DATABASE_URL: referenceAddress },
                 secretValues: ['native-secret'], refs: [{ resourceId: 'credential', resourceRevision: 7 }],
-                referenceAddresses: [{ machineId: 'machine', installationId: 'installation', phase: 'runtime', name: 'DATABASE_URL',
-                    source: { kind: 'reference', environmentId: 'database-env', export: 'database', via: 'auto' },
-                    address: referenceAddress, route: { kind: 'iroh', observedPath: 'unknown' } }],
+                referenceAddresses: [{ machineId: 'machine', installationId: 'installation', phase: 'runtime' as const, name: 'DATABASE_URL',
+                    source: { kind: 'reference' as const, environmentId: 'database-env', export: 'database', via: 'auto' as const },
+                    address: referenceAddress, route: { kind: 'iroh' as const, observedPath: 'unknown' as const } }],
                 async recheck() {}, dispose() { disposed += 1; } }; },
         });
         let runtimePath = '';

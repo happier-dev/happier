@@ -17,8 +17,9 @@ export function createRequesterPluginSettingsSource(input: Readonly<{
       isCurrentAccount: async () => {
         input.signal?.throwIfAborted();
         if (input.isCurrent) return await input.isCurrent();
-        return await bootstrap.ensureAccountSettingsCurrent(input.signal)
-          && await waitForObservation(bootstrap.savedSecretOperationContext.isCurrent(input.signal), input.signal);
+        if (!await bootstrap.ensureAccountSettingsCurrent(input.signal)) return false;
+        const current = bootstrap.savedSecretOperationContext.isCurrent(input.signal);
+        return await (input.signal ? waitForObservation(current, input.signal) : current);
       },
     }),
     readReleasedAccountSettings: () => bootstrap.savedSecretOperationContext.readSnapshot()?.rawSettings ?? null,

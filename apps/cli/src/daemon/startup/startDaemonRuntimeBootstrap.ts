@@ -848,10 +848,8 @@ export async function startDaemonConnectedServiceRuntime(
                 expectedIncarnation,
                 expectedRuntimeStateRevision,
                 runtimeState,
-                signal,
               }) => await updateQualifiedConnectedAccountGroupRuntimeStateV4({
                 token: params.credentials.token,
-                signal,
                 patch: {
                   service,
                   groupId,

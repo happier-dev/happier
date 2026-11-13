@@ -59,7 +59,8 @@ const androidResource: SimulatorDeviceResourceV1 = {
     },
 };
 
-const androidScrcpyControlResource: SimulatorDeviceResourceV1 = {
+// `satisfies` keeps the available capture variant so derived fixtures can extend its stream controls.
+const androidScrcpyControlResource = {
     ...androidResource,
     capture: {
         status: 'available',
@@ -69,7 +70,7 @@ const androidScrcpyControlResource: SimulatorDeviceResourceV1 = {
         supportedInputKinds: ['tap', 'pinch', 'rotate'],
         streamControls: DEFAULT_SIMULATOR_STREAM_CONTROLS_V1,
     },
-};
+} satisfies SimulatorDeviceResourceV1;
 
 function runtimeArgs(
     args: Omit<RuntimeActionExecuteArgs, 'context'> & Partial<Pick<RuntimeActionExecuteArgs, 'context'>>,

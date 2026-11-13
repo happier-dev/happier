@@ -306,7 +306,7 @@ describe('qualified first-party spawn credential authority', () => {
         if (agentId === 'pi') {
           const declarations = resolveAgentSpawnPurposeDeclarations({ agentId, contributions: lease.registry.contributes })!;
           const controller = new AbortController();
-          const host = createStablePluginConnectedAccountsHost(purposeOwner.owner);
+          const host = createStablePluginConnectedAccountsHost(purposeOwner);
           const connectedAccounts = host.bind({
             plugin: { id: 'happier.agent.pi', version: '1.0.0' },
             contribution: { id: 'pi', qualifiedId: 'happier.agent.pi/agents/pi' },
@@ -347,11 +347,12 @@ else
 fi
 ` });
           const withProfile = service.pluginId === 'happier.agent.claude';
+          const profileEnvironmentVariables: Record<string, string> = withProfile ? { FIXTURE_PROFILE_MARKER: 'selected-profile' } : {};
           const launchInput = {
             happyHomeDir: directory, pluginRuntimeRegistry: lease.registry, resolvedAgentId: agentId,
             options: { directory, ...(withProfile ? { profileId: 'fixture-claude-profile' } : {}),
               backendTarget: { kind: 'backend', backendId: agentId, sourceKind: 'built_in' } },
-            profileEnvironmentVariables: withProfile ? { FIXTURE_PROFILE_MARKER: 'selected-profile' } : {},
+            profileEnvironmentVariables,
             daemonSpawnHooks: null,
             processEnv: { PATH: '', HOME: directory, HAPPIER_HOME_DIR: directory, HAPPIER_OHMYPI_PATH: command },
             connectedServiceAuth: result, logDebug() {}, logInfo() {}, logWarn() {},
@@ -590,7 +591,7 @@ fi
     const scope = declaration.authorizedPurposes.find((candidate) => candidate.purpose.purpose === purpose)!;
     const active = purposeOwner.activateSessionPurposeBindings({ sessionId, purposes: declaration.purposes, bindings: [{ purpose: scope.purpose, target: { kind: 'account', account } }] });
     const controller = new AbortController();
-    const connectedAccounts = createStablePluginConnectedAccountsHost(purposeOwner.owner).bind({
+    const connectedAccounts = createStablePluginConnectedAccountsHost(purposeOwner).bind({
       plugin: { id: 'happier.agent.opencode', version: '1.0.0' },
       contribution: { id: 'opencode', qualifiedId: 'happier.agent.opencode/agents/opencode' },
       occurrenceId: sessionId, correlationId: sessionId, surface: 'agent', session: { id: sessionId },

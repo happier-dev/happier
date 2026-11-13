@@ -172,6 +172,7 @@ describe('daemon control server quiescing producer routes', () => {
       })),
       // The control server never watches; the double still satisfies the whole route contract.
       watchSnapshot: vi.fn(async () => ({ changed: false as const })),
+      watchLauncherSnapshot: vi.fn(async () => ({ changed: false as const })),
       watcherCount: vi.fn(() => 0),
       patchLabel: vi.fn(async () => ({ ok: true as const })),
     };
@@ -183,6 +184,8 @@ describe('daemon control server quiescing producer routes', () => {
         status: 'succeeded' as const,
         auditEvents: [],
       })),
+      // The control server never restarts a service in this fixture.
+      prepareRestart: vi.fn(async () => { throw new Error('Unexpected local service restart'); }),
     };
     const simulatorPreview = {
       getSnapshot: vi.fn(),

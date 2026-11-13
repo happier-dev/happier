@@ -10,6 +10,9 @@ import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotFor
 import { resolveConnectedServiceHomeDir, resolveConnectedServiceGroupHomeDir } from '@/daemon/connectedServices/homes/resolveConnectedServiceHomeDir';
 import { resolveConnectedServiceMaterializedRootDir } from '@/daemon/connectedServices/materialize/resolveConnectedServiceMaterializedRootDir';
 import { createProviderAccountSettingsController } from './providerAccountSettings';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+
+const NO_SCOPED_VALUES: Readonly<Record<string, JsonValue>> = {};
 
 it('applies actual scoped Agent preferences to existing homes and publishes only changed confirmed reports', async () => {
   const root = await mkdtemp(join(tmpdir(), 'provider-account-settings-'));
@@ -26,7 +29,7 @@ it('applies actual scoped Agent preferences to existing homes and publishes only
     controller: pluginReloadController,
     runtimeOptions: { pluginIds: ['happier.agent.claude'], accountSettingsRecordAdapter: {
       bindOperation: async () => ({
-        readRecord: async () => ({ status: 'present', revision, values: hasScopedPolicy ? { claudeSessionRetentionV1: policy } : {} }),
+        readRecord: async () => ({ status: 'present', revision, values: hasScopedPolicy ? { claudeSessionRetentionV1: policy } : NO_SCOPED_VALUES }),
         writeRecord: async () => { throw new Error('Policy application must not rewrite Account intent'); },
       }),
       watchRecord: (_model, listener) => { const hint = () => listener({ revision }); hints.add(hint); return () => { hints.delete(hint); }; },

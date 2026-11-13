@@ -293,7 +293,7 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
         if (settled?.kind === 'unresolved' && settled.code === 'approval_required' && deps.action?.observeApproval) {
           const approval = ActionApprovalRequestCreatedResultSchema.parse(execution.output);
           const observed = await deps.action.observeApproval({ artifactId: approval.artifactId, actionRequestId,
-            authorization: startupAuthorization, signal: signal ?? new AbortController().signal });
+            ...(startupAuthorization ? { authorization: startupAuthorization } : {}), signal: signal ?? new AbortController().signal });
           if (!observed.ok) throw new WorkflowSessionCompositionError(observed.errorCode);
           return observed.result;
         }

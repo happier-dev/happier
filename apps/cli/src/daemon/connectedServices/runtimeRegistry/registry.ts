@@ -137,6 +137,8 @@ function buildExactGroupApplicationSelectionEnv(
       activeProfileId: input.profileId,
       fallbackProfileId: declared.fallbackProfileId ?? input.profileId,
       generation: input.generation,
+      // Binding metadata carries no pool policy; the child reads an absent policy as null.
+      policy: null,
       credentialRevision: input.credentialRevision,
     });
   }

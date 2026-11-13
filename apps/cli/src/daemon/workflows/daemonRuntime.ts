@@ -531,6 +531,8 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
       postWorkflowMessage?: import('./production').WorkflowProductionExecutionDeps['postWorkflowMessage'];
       machineAdmissionTransport: MachineAdmissionTransport;
       machineActionDirectTargetTransport: import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport;
+      /** Home identity for recorded-approval observation; absent fails that observation closed. */
+      serverIdentityId?: string;
     }>) {
       const storage = createWorkflowRunStorageClient({ token: params.credentials.token, machineId: input.machineId });
       const findNativeOperation = async (identity: Readonly<{ actionId: string; requestId: string; machineId: string; key: string }>,

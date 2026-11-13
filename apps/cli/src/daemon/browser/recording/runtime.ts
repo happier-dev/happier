@@ -24,6 +24,7 @@ import {
   type BrowserRecordingStartContext,
 } from './routes';
 import { createBrowserRecordingDaemonService } from './service';
+import type { BrowserRecordingSessionV1 } from '@happier-dev/protocol';
 import { type BrowserRecordingCaptureAdapter, type BrowserRecordingDaemonService, type BrowserRecordingMediaWriter, type BrowserRecordingInputControlResolver } from '../../recording/service';
 import {
   createBrowserRecordingSessionMediaWriter,
@@ -121,7 +122,7 @@ function createRuntimeCaptureAdapters(
     options.liveStreamCaptureRegistry
     && !captureAdapters.some((adapter) => adapter.captureKind === 'streamFrameCapture')
   ) {
-    captureAdapters.push(createBrowserRecordingStreamFrameCaptureAdapter({
+    captureAdapters.push(createBrowserRecordingStreamFrameCaptureAdapter<BrowserRecordingSessionV1>({
       captureRegistry: options.liveStreamCaptureRegistry,
       encoderFactory: options.streamFrameEncoderFactory
         ?? createFfmpegBrowserRecordingStreamFrameEncoderFactory({

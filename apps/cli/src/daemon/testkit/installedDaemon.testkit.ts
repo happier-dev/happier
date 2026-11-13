@@ -8,6 +8,7 @@ import { z } from 'zod/mini';
 import * as firstPartyRuntime from '@happier-dev/cli-common/firstPartyRuntime';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionRequesterInvocationV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import type { ActionExecutorContext, MachineInstallationIdentityV1 } from '@happier-dev/protocol';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { configuration, reloadConfiguration } from '@/configuration';
@@ -233,9 +234,10 @@ export async function startInstalledDaemonFixture(input: Readonly<{
             target: context.externalActionTarget ?? { kind: 'machine', machineId },
             credentials: { token: caller.token, encryption: null }, serverHttpBaseUrl: boundHome.baseUrl,
             serverIdentityId: boundHome.homeId, authority: 'present_user',
-            invocation: { caller: { kind: 'host' }, surface: 'ui', authority: 'present_user',
+            // The wire invocation admits only a complete confirmation; parse it at that boundary.
+            invocation: ExternalActionRequesterInvocationV1Schema.parse({ caller: { kind: 'host' }, surface: 'ui', authority: 'present_user',
               ...(context.presentUserConfirmation ? { presentUserConfirmation: context.presentUserConfirmation } : {}),
-            },
+            }),
             // This is the caller's affirmative confidentiality choice, not
             // execution admission: Home still refuses unsupported members.
             onRequesterSessionCredentialDisclosure: () => true,

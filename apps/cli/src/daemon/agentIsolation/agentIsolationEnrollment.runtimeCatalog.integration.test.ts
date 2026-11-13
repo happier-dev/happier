@@ -5,12 +5,13 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { publishMachineMetadataOnce, readOpenedMachineMetadataSnapshot } from '@/api/machine/machineMetadataPublication';
 import type { Machine } from '@/api/types';
+import type { MachineAgentIsolationPolicyV1 } from '@happier-dev/protocol';
 import { registerDaemonMachineAgentIsolationRpcHandlers } from '@/rpc/handlers/daemonMachineAgentIsolation';
 import { readAgentIsolationSnapshot } from './agentIsolationPolicy';
 import { createAgentIsolationEffectsBoundary } from './agentIsolationEffects.testkit';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations';
 
-it.each([
+it.each<MachineAgentIsolationPolicyV1>([
   { enabled: false },
   { enabled: true },
 ])('preserves a later isolation policy %j and running Sessions on enrolled recovery through the verified creation carrier', async laterPolicy => {

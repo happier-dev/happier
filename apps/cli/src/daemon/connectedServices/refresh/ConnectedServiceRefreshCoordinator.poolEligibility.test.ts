@@ -172,8 +172,10 @@ describe('Codex pool selection and spawn pre-turn admission', () => {
           ...(disposition === 'probe_failed' || hasAcceptedQuota ? { qualifiedConnectedAccountRuntime: {
             resolvePeerClass: () => 'advertised_v4' as const,
             establishedRuntimeOwner: harness.establishedRuntimeOwner,
+            listScheduledAccounts: async () => listed.accounts,
             listGroupQuotaTargets: async ({ accountIds }) => listed.accounts
-              .filter(profile => accountIds.includes(profile.ref.accountId))
+              // Omitted accountIds means every member, as the coordinator port documents.
+              .filter(profile => accountIds === undefined || accountIds.includes(profile.ref.accountId))
               .map(profile => ({ profile, groupGeneration: group.generation })),
             readQuota: async ({ ref }) => {
               quotaReads.push(ref.accountId);

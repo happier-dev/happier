@@ -558,9 +558,10 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
         token: 'token-1',
         establishedRuntimeOwner: {
           invokeWithReceipt,
+          invoke: async () => { throw new Error('not used by revoke'); },
         } as unknown as Pick<
           QualifiedConnectedAccountEstablishedRuntimeOwner,
-          'invokeWithReceipt' | 'readCredentialRevision'
+          'invoke' | 'invokeWithReceipt' | 'readCredentialRevision'
         >,
         resolveV4Support: () => 'absent',
         resolveRemovalReviewSupport: () => 'absent',
@@ -681,9 +682,10 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
               },
             },
           })),
+          invoke: async () => { throw new Error('not used by revoke'); },
         } as unknown as Pick<
           QualifiedConnectedAccountEstablishedRuntimeOwner,
-          'invokeWithReceipt' | 'readCredentialRevision'
+          'invoke' | 'invokeWithReceipt' | 'readCredentialRevision'
         >,
         resolveV4Support: () => 'advertised',
         resolveRemovalReviewSupport: () => 'absent',
@@ -999,9 +1001,10 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
           },
         },
       })),
+      invoke: async () => { throw new Error('not used by revoke'); },
     } as unknown as Pick<
       QualifiedConnectedAccountEstablishedRuntimeOwner,
-      'invokeWithReceipt' | 'readCredentialRevision'
+      'invoke' | 'invokeWithReceipt' | 'readCredentialRevision'
     >;
     let releaseConsequence!: () => void;
     const consequenceGate = new Promise<void>((resolve) => {

@@ -293,8 +293,9 @@ export type WorkflowActionExecutor = Readonly<{
   /** Host-owned role projection, snapshotted before effects; never an authored result policy. */
   prepareResultCapture?: (actionId: string) => Promise<((output: WorkflowJsonValue) => WorkflowJsonValue | undefined) | undefined>;
   /** Existing Artifact execution observer; it never decides or replays an effect. */
+  /** Observes a recorded approval; the accepted authorization is passed when the caller holds one. */
   observeApproval?: (params: Readonly<{ artifactId: string; actionRequestId: string; actionId?: string;
-    authorization: WorkflowAcceptedAuthorizationV1; signal: AbortSignal }>) => Promise<ActionExecuteResult>;
+    authorization?: WorkflowAcceptedAuthorizationV1; signal: AbortSignal }>) => Promise<ActionExecuteResult>;
   buildContext: (params: Readonly<{ runId: string; invocationRecordId?: string; authorization: WorkflowAcceptedAuthorizationV1;
     workDepth: number; originSessionId?: string; workspace: WorkflowWorkspaceDescriptorV1;
     origin?: WorkflowAcceptedOriginV1;
@@ -2028,9 +2029,10 @@ async function executeActionBlock(
     if (!workspace || !builtinActionId.success) return await fail('outcome_uncertain', 'outcome_uncertain');
     const observationWorkspace = workspace;
     const completionActionId = builtinActionId.data;
+    const completionExecution = row.execution;
     completed = await context.holds.track(() => resumeActionCompletionV1({ actionId: completionActionId,
       completion: frozen.actionContract!.completion, state: completionState,
-      ...(row.execution?.kind === 'action' ? { context: { input: row.execution.input } } : {}),
+      ...(completionExecution?.kind === 'action' ? { context: { input: completionExecution.input } } : {}),
       resolveDeclaration: () => getActionSpec(completionActionId).completion,
       ...(context.deps.action!.observeOperation ? { observeOperation: async (operation: ActionCompletionOperation) =>
         await context.deps.action!.observeOperation!(operation, context.signal ? { signal: context.signal } : {}) } : {}),

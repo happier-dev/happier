@@ -57,7 +57,7 @@ export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
     establishedRuntimeOwner: ReturnType<typeof createQualifiedConnectedAccountEstablishedRuntimeOwner>;
     credentials: Credentials;
     api: ApiClient;
-    readCredential: (input?: Readonly<{ ref: QualifiedConnectedAccountRef }>) => Promise<Readonly<{ credentialRevision: string; authenticationModeId: string; health?: ConnectedServiceCredentialHealthV1 }>>;
+    readCredential: (input?: Readonly<{ ref: QualifiedConnectedAccountRef }>) => Promise<Readonly<{ credentialRevision: string; authenticationModeId: string | null; health?: ConnectedServiceCredentialHealthV1 }>>;
   }>) => ReturnType<typeof createDaemonConnectedAccountPurposeBindingRuntime>;
 }> = {}) {
   const account = Object.freeze({ service, accountId: input.primaryAccountId ?? 'work' });
@@ -187,7 +187,7 @@ export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
       credentialRevision: qualifiedRevision,
     };
   });
-  const mutateCredentialHealth = vi.fn(async (input: Readonly<{ token: string; patch: unknown }>) => {
+  const mutateCredentialHealth = vi.fn(async (input: Parameters<typeof import('@/api/client/qualifiedConnectedAccountApi')['mutateQualifiedConnectedAccountCredentialHealthV4']>[0]) => {
     qualifiedHealth = QualifiedConnectedAccountCredentialHealthPatchV4Schema.parse(input.patch).health;
     return {
     success: true as const,
@@ -316,7 +316,7 @@ export async function createBuiltInQualifiedNativeRefreshHarness(
     runtimeStateRevision: 0, state: {}, createdAt: 0, updatedAt: 0,
     members: ['work', 'backup'].map((connectedAccountId) => ({ v: 1, connectedAccountId,
       priority: 100, enabled: true, state: {}, createdAt: 0, updatedAt: 0 })) });
-  let readCurrentCredential!: (input?: Readonly<{ ref: QualifiedConnectedAccountRef }>) => Promise<Readonly<{ credentialRevision: string; authenticationModeId: string; health?: ConnectedServiceCredentialHealthV1 }>>;
+  let readCurrentCredential!: (input?: Readonly<{ ref: QualifiedConnectedAccountRef }>) => Promise<Readonly<{ credentialRevision: string; authenticationModeId: string | null; health?: ConnectedServiceCredentialHealthV1 }>>;
   const listAccounts = async () => {
     const credential = await readCurrentCredential();
     const backup = await readCurrentCredential({ ref: { service, accountId: 'backup' } });

@@ -1813,7 +1813,10 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
             const relationship = snapshot?.relationships.find(candidate => candidate.relationshipId === request.operationId);
             // Native reconnect outlives the target daemon. Re-enter its existing
             // signed SOURCE preparation to restore exact READY custody first.
-            if (relationship?.enabled) await prepareRelationshipTarget(relationship, request.signal, undefined, snapshot);
+            if (relationship?.enabled) {
+              await prepareRelationshipTarget(relationship, request.signal, undefined,
+                snapshot ? { relationship, workspaceRefs: snapshot.workspaceRefs } : undefined);
+            }
             const open = input.createRequesterMachineCarrierTunnel?.({ credentials: retained.execution.credentials,
               accountId: retained.execution.accountRowsCustody.accountId });
             if (!open) throw compositionError('machine_carrier_unavailable', 'Requester Workspace Sync carrier is unavailable');

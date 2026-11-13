@@ -59,6 +59,7 @@ function qualifiedApiForRecord(record: ReturnType<typeof buildConnectedServiceCr
     getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
     getConnectedServiceCredentialPlain: vi.fn(async () => { throw new Error('V2 credential read forbidden'); }),
     getConnectedServiceCredentialSealed: vi.fn(async () => { throw new Error('V2 credential read forbidden'); }),
+    listConnectedServiceProfiles: vi.fn(async () => { throw new Error('V2 profile list forbidden'); }),
   };
 }
 

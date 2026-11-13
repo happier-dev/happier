@@ -68,7 +68,7 @@ async function serviceCase(actionId: RuntimeActionIdV1): Promise<ContractCase> {
         port: 5173, protocol: 'tcp', detectedAt: 1_000, lastSeenAt: 2_000, state: 'listening', source: 'detected',
         labels: [], diagnostics: [], confidence: 'high', processOwnershipConfidence: 'high', workspaceAssociationConfidence: 'high',
         classification: { kind: 'vite', signals: [] },
-        provenance: { process: { pid: 4321, lineagePids: [4321], redacted: true } },
+        provenance: { process: { pid: 4321, lineagePids: [4321], command: 'vite', redacted: true } },
     }] });
     const previews = createLocalServicePreviewRegistry();
     const previewRoutes = createLocalServicePreviewRoutes({ machineId, accountId, inventoryRegistry: inventory, now: () => 2_000,

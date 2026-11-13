@@ -287,7 +287,7 @@ describe('createLocalServiceActionRoutes', () => {
                 installationId: 'installation', role: 'use', encryptionMode: 'plain',
             } }, actionContext: { surface: 'cli', serverId: 'home' },
         };
-        const request = { requestId: 'guest-forget', target, action: 'forget' as const };
+        const request = { requestId: 'guest-forget', target, action: 'forget' as const, force: false };
         expect(await routes.execute(request, execution)).toMatchObject({ status: 'denied', reasonCode: 'unknown_inventory_entry' });
         expect(inventoryRegistry.getSnapshot().entries.map(entry => entry.id)).toEqual(['entry-a']);
         const ownerResult = await routes.execute(request);

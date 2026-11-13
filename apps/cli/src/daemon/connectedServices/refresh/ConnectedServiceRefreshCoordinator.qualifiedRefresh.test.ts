@@ -206,6 +206,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
       expect(persisted).toMatchObject({ credentialRevision: harness.secondRevision, health: {
         status: 'connected', reconnectRequired: false, lastRefreshSuccessAt: harness.now,
       } });
+      if (persisted.authenticationModeId === null) throw new Error('Refreshed credential lost its authentication mode');
       expect(parseQualifiedConnectedAccountCredentialPlaintextV1({
         ref: persisted.ref, authenticationModeId: persisted.authenticationModeId,
         metadata: persisted.metadata, plaintext: openQualifiedConnectedAccountContentEnvelope({

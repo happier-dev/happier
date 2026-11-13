@@ -40,7 +40,7 @@ it('cancels the original transport and preserves a prompt failure', async () => 
   let cancelled = false;
   await expect(executeLiveCliApprovalRequest({ context: { surface: 'cli' }, execute: executor.execute,
     onApprovalRequested: async () => { throw failure; },
-    run: (signal, notify) => new Promise(resolve => {
+    run: (signal, notify) => new Promise<ActionExecuteResult | null>(resolve => {
       signal.addEventListener('abort', () => {
         cancelled = true;
         resolve({ ok: false, errorCode: 'cancelled', error: 'cancelled' });
@@ -57,7 +57,7 @@ it('cancels the original transport when the prompt returns an approval failure',
   const executor = createActionExecutor({});
   await expect(executeLiveCliApprovalRequest({ context: { surface: 'cli' }, execute: executor.execute,
     onApprovalRequested: async () => failure,
-    run: (signal, notify) => new Promise(resolve => {
+    run: (signal, notify) => new Promise<ActionExecuteResult | null>(resolve => {
       signal.addEventListener('abort', () => resolve({ ok: false, errorCode: 'cancelled', error: 'cancelled' }), { once: true });
       notify({ kind: 'approval_request_created', artifactId: 'manual-approval',
         actionId: 'connectedServices.authentication.submitManual' });

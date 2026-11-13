@@ -153,9 +153,14 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     });
     let enrichmentAttempts = 0;
     let projectionPublications = 0;
-    let occurrence = 'declaration-1';
+    let occurrence = createPluginRuntimeOccurrenceId('declaration');
     const enrichedRevision = 'csr_1123456789ABCDEFGHJKMNPQRS';
-    const runtime: ConnectedAccountRuntime = { status: async () => ({ status: 'connected' }) };
+    // Only status is exercised; the remaining runtime surface refuses so an unexpected call is loud.
+    const runtime: ConnectedAccountRuntime = { status: async () => ({ status: 'connected' }),
+      refresh: async () => { throw new Error('Unexpected refresh'); },
+      revoke: async () => ({ status: 'remoteUnsupported' }),
+      materialize: async () => { throw new Error('Unexpected materialization'); },
+      authentication: { modes: {} } };
     const runtimeLease = { ref, descriptor, occurrenceId: occurrence, runtime,
       owner: 'host' as const, sourceCustody: { kind: 'host' as const }, isCurrent: () => true };
     const invoker = createConnectedAccountHostRuntimeInvoker({
@@ -209,7 +214,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       expect(stored.exportProjection?.directExportFailure).toEqual(snapshot.directExportFailure);
       await owner.readMaterialSnapshot({ account });
       expect(projectionPublications).toBe(1);
-      occurrence = 'declaration-reloaded';
+      occurrence = createPluginRuntimeOccurrenceId('declaration');
       await owner.refreshExportProjection({ account });
       expect(stored.exportProjection?.directExportFailure).toEqual(snapshot.directExportFailure);
       expect(stored.health).toMatchObject({ status: 'connected', reconnectRequired: false });
@@ -244,7 +249,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
         pkce: 'required', outcomeReconciliation: 'none', accessOnlyExport,
       }] },
     });
-    let occurrence = 'declaration-1';
+    let occurrence = createPluginRuntimeOccurrenceId('declaration');
     let stored = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
       ref: target, authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
       credentialRevision: requestAuthCredentialRevision, configurationRevision: null,
@@ -286,12 +291,12 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     await owner.refreshExportProjection({ account: target });
     expect(publications).toBe(1);
     // A fresh process or reload changes local occurrence without changing the persisted declaration contract.
-    occurrence = 'declaration-2';
+    occurrence = createPluginRuntimeOccurrenceId('declaration');
     await owner.refreshExportProjection({ account: target });
     expect(stored.exportProjection?.contributionContractVersion).toBe(originalVersion);
     expect(publications).toBe(1);
     // The next ordinary acquisition also repairs an older stored projection.
-    occurrence = 'declaration-3';
+    occurrence = createPluginRuntimeOccurrenceId('declaration');
     stored = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ...stored,
       exportProjection: { ...stored.exportProjection, contributionContractVersion: 'external.oauth:3289' } });
     allowCredentialOpening = true;
@@ -301,7 +306,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     allowCredentialOpening = false;
     current = PluginConnectedAccountDescriptorContributionV2Schema.parse({ ...current, authentication: { ...current.authentication,
       modes: current.authentication.modes.map(({ accessOnlyExport: _removed, ...mode }) => mode) } });
-    occurrence = 'declaration-4';
+    occurrence = createPluginRuntimeOccurrenceId('declaration');
     await owner.refreshExportProjection({ account: target });
     expect(stored.exportProjection).toEqual({ directExportContract: null, contributionContractVersion: expect.any(String) });
     expect(stored.exportProjection?.contributionContractVersion).not.toBe(originalVersion);
@@ -309,7 +314,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     // A declaration does not export a credential of the wrong actual kind.
     current = PluginConnectedAccountDescriptorContributionV2Schema.parse({ ...current, authentication: { ...current.authentication,
       modes: current.authentication.modes.map(mode => ({ ...mode, accessOnlyExport })) } });
-    occurrence = 'declaration-5';
+    occurrence = createPluginRuntimeOccurrenceId('declaration');
     stored = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ...stored, metadata: { ...stored.metadata, kind: 'token' } });
     await owner.refreshExportProjection({ account: target });
     expect(stored.exportProjection).toEqual({ directExportContract: null, contributionContractVersion: expect.any(String) });
@@ -482,7 +487,8 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
         if (revokeDuringSnapshot) accountCurrent = false;
         return QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ...snapshot, credentialRevision, configurationRevision, exportProjection: storedExportProjection });
       },
-      readConfiguration: async () => ({
+      // An unconfigured account has no configuration row (the Home answers 404).
+      readConfiguration: async () => configurationRevision === null ? null : ({
         target: { kind: 'account', ref: target }, authenticationModeId: 'token', revisionSemantics: 'revisioned',
         credentialRevision, configurationRevision,
         configurationContent: plainEnvelope('configuration', { values: { endpoint: 'https://provider.example' }, secretRefs: {} }),

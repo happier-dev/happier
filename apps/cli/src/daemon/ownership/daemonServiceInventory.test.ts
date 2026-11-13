@@ -126,7 +126,6 @@ describe('daemonServiceInventory', () => {
                         webappUrl: 'https://app.happier.dev',
                         createdAt: 0,
                         updatedAt: 0,
-                        lastUsedAt: 0,
                     },
                     company: {
                         id: 'company',
@@ -135,14 +134,12 @@ describe('daemonServiceInventory', () => {
                         webappUrl: 'https://app.company.test',
                         createdAt: 1,
                         updatedAt: 1,
-                        lastUsedAt: 1,
                     },
                 },
                 machineIdByServerId: {},
                 machineIdByServerIdByAccountId: {},
                 lastTokenSubByServerId: {},
                 machineIdConfirmedByServerByServerId: {},
-                lastChangesCursorByServerIdByAccountId: {},
             });
 
             const runtime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env });
@@ -333,14 +330,12 @@ describe('daemonServiceInventory', () => {
                         webappUrl: 'http://localhost:24880',
                         createdAt: 1,
                         updatedAt: 1,
-                        lastUsedAt: 1,
                     },
                 },
                 machineIdByServerId: {},
                 machineIdByServerIdByAccountId: {},
                 lastTokenSubByServerId: {},
                 machineIdConfirmedByServerByServerId: {},
-                lastChangesCursorByServerIdByAccountId: {},
             });
 
             mkdirSync(serviceCliHomeDir, { recursive: true });
@@ -462,14 +457,12 @@ describe('daemonServiceInventory', () => {
                         webappUrl: 'http://localhost:24880',
                         createdAt: 1,
                         updatedAt: 1,
-                        lastUsedAt: 1,
                     },
                 },
                 machineIdByServerId: {},
                 machineIdByServerIdByAccountId: {},
                 lastTokenSubByServerId: {},
                 machineIdConfirmedByServerByServerId: {},
-                lastChangesCursorByServerIdByAccountId: {},
             });
 
             mkdirSync(serviceCliHomeDir, { recursive: true });
@@ -579,14 +572,12 @@ describe('daemonServiceInventory', () => {
                         webappUrl: 'http://localhost:53288',
                         createdAt: 1,
                         updatedAt: 1,
-                        lastUsedAt: 1,
                     },
                 },
                 machineIdByServerId: {},
                 machineIdByServerIdByAccountId: {},
                 lastTokenSubByServerId: {},
                 machineIdConfirmedByServerByServerId: {},
-                lastChangesCursorByServerIdByAccountId: {},
             });
 
             const servicesDir = join(userHomeDir, 'Library', 'LaunchAgents');

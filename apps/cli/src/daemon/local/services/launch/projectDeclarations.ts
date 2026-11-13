@@ -345,7 +345,10 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             assertNotCancelled();
             if (!currentTargets.some(target => 'declaration' in target && target.id === request.targetId && digest(target.declaration) === digest(request.declaration))) throw new ServiceStartRefusal('launcher_target_unknown');
         }
-        const manifest = worker?.manifest ?? (await phase('local_manifest', () => readProjectManifest({ root: association.workspace.rootPath }))).document?.manifest;
+        const manifest = worker?.manifest ?? await phase('local_manifest', async () => {
+            const { document } = await readProjectManifest({ root: association.workspace.rootPath });
+            return document?.status === 'valid' ? document.manifest : undefined;
+        });
         const { environmentBindings, secretEnvironment } = await phase('requester_environment', () => resolveProjectRequesterSecretInputs(runtime, {
             project: sourceAssociation.project, requirements: manifest?.environmentVariables ?? [],
         }, signal));

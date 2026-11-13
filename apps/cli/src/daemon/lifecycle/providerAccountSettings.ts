@@ -75,7 +75,11 @@ export function createProviderAccountSettingsController(params: Readonly<{
               if (observed?.isDirectory()) targets.push({ id: root.name, directory });
             }
             for (const selection of await listExistingConnectedServiceHomeSelections(params.activeServerDir)) {
-              const directory = join(selection.directory, declaration.id, nativeHome.materializedDirectoryName);
+              // Only Claude declares Account settings today, and it names its materialized home. An Agent
+              // without one fails this Agent's report as before rather than silently skipping its homes.
+              const materializedDirectoryName = nativeHome.materializedDirectoryName;
+              if (!materializedDirectoryName) throw new Error('Agent Account settings materialized home is undeclared');
+              const directory = join(selection.directory, declaration.id, materializedDirectoryName);
               const observed = await lstat(directory).catch((error: unknown) => {
                 if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
                 throw error;

@@ -7,7 +7,8 @@ import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { buildWorkflowActionContext } from './workflowActionContext';
-import { createProductionFreshWorkflowSessionConversation } from './sessionStepExecutor';
+import { createProductionFreshWorkflowSessionConversation, type WorkflowSessionStartup } from './sessionStepExecutor';
+import type { WorkflowActionExecutor } from './coordinator';
 import { runObservedWorkflowSessionStartup } from './workflowSessionStartup';
 
 /** Real installed Action/operation owners; callers replace only Home and Machine boundaries. */
@@ -21,7 +22,7 @@ export function createAdmittedWorkflowSessionHost(
     sessionId: deps.originSessionId ?? 'workflow-test', serverId: deps.serverId, serverIdentityId: deps.serverId,
     serverHttpBaseUrl: resolveServerHttpBaseUrl(), mode: 'plain', ctx: null });
   return {
-    action: deps.action ?? { executor, buildContext: async (execution: Parameters<NonNullable<typeof deps.action>['buildContext']>[0]) => ({ ...buildWorkflowActionContext(execution),
+    action: deps.action ?? { executor, buildContext: async (execution: Parameters<WorkflowActionExecutor['buildContext']>[0]) => ({ ...buildWorkflowActionContext(execution),
       approvalProfileId: execution.approvalProfileId !== undefined ? execution.approvalProfileId
         : execution.origin?.actionPolicy?.approvalProfileId !== undefined
           ? execution.origin.actionPolicy.approvalProfileId : 'builtin:full-trust',
@@ -32,7 +33,7 @@ export function createAdmittedWorkflowSessionHost(
         callerPermissionCeiling: execution.authorization.admittedPermissionCeiling,
         workDepthLimit: (execution.workDepth ?? deps.workDepth) + 1 },
     }), observeRun: async () => { throw new Error('Session birth must not start an Execution Run'); } },
-    sessionStartup: deps.sessionStartup ?? ((input: Parameters<NonNullable<typeof deps.sessionStartup>>[0]) => runObservedWorkflowSessionStartup(input, {
+    sessionStartup: deps.sessionStartup ?? ((input: Parameters<WorkflowSessionStartup>[0]) => runObservedWorkflowSessionStartup(input, {
       serverId: deps.serverId, machineId: deps.machineId, observeExecution: operations.observeExecution, rpcContext: {},
       transport: () => ({ spawn: (request, options) => callExactMachineRpc({ credentials: deps.credentials,
         machineId: deps.machineId, method: RPC_METHODS.SPAWN_HAPPY_SESSION, request, ...options }),

@@ -7,8 +7,8 @@ import type { MachineElevationSpawn } from '@/machines/adminAccess/runElevatedEf
 import { MachineEffectInternalRequestSchema } from '@/machines/setup/effectInternalProtocol';
 import type { AgentIsolationEffectDependencies } from './agentIsolationProvisioner';
 import type { RpcHandlerContext } from '@/api/rpc/types';
-import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
-import { createAgentIsolationMemberOperations } from './createAgentIsolationMemberOperations';
+import { createHostActionOperationRuntime, type HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { createAgentIsolationMemberOperations, type AgentIsolationMemberOperations } from './createAgentIsolationMemberOperations';
 import { deriveAgentIsolationMemberIdentity, type AgentIsolationMemberRequester } from './provisioning';
 import type { AgentIsolationReadinessSystem } from './agentIsolationReadiness';
 import { readAgentLaunchFrame } from './agentLaunchFrame';
@@ -108,6 +108,31 @@ export function createAgentIsolationEffectsBoundary(input: Pick<AgentIsolationEf
   return { effects, mutations, launches, boundaryFailures, loseConfirmation: () => { loseConfirmation = true; } };
 }
 
+type AgentIsolationNativeState = { installed: Set<string>; drifted: Set<string>; accountUid: number };
+
+/** Named so declaration emit references the owners' types instead of inlining
+ * the whole operation runtime (TS7056). */
+export type AgentIsolationMemberPreparationBoundary = Omit<ReturnType<typeof createAgentIsolationEffectsBoundary>, 'effects'> & {
+  effects: AgentIsolationEffectDependencies;
+  runtime: HostActionOperationRuntime;
+  members: AgentIsolationMemberOperations;
+  prepare(options?: Readonly<{ rpcContext?: RpcHandlerContext; signal?: AbortSignal }>): ReturnType<AgentIsolationMemberOperations['prepare']>;
+  installed: Set<string>;
+  drifted: Set<string>;
+  port: MachineMetadataFieldPortV1;
+  nativeState: AgentIsolationNativeState;
+  permissionQueries: Readonly<{ command: string; args: readonly string[] }>[];
+  filesystemHome: Readonly<{ path: string; backingDirectory: string; uid: number; gid: number }>;
+  run(): ReturnType<AgentIsolationMemberOperations['prepare']>;
+  setPolicy(policy: unknown): void;
+  setHeldObservation(available: boolean): void;
+  setRootUid(value: number): void;
+  setNextAllocatedUid(value: number): void;
+  userObservations(): number;
+  daemonInspections(): number;
+  resetObservations(): void;
+};
+
 /** Real member operation/setup composition. Only native account/process facts
  * are represented here; callers provide the filesystem's native home facts. */
 export function createAgentIsolationMemberPreparationBoundary(input: Readonly<{
@@ -125,7 +150,7 @@ export function createAgentIsolationMemberPreparationBoundary(input: Readonly<{
   metadataPort?: MachineMetadataFieldPortV1;
   /** Native OS state outlives the daemon runtime in restart fixtures. */
   nativeState?: { installed: Set<string>; drifted: Set<string>; accountUid: number };
-}>) {
+}>): AgentIsolationMemberPreparationBoundary {
   const { requesterIdentity, activeServerDir, uid } = input;
   const derived = deriveAgentIsolationMemberIdentity(requesterIdentity);
   const installed = input.nativeState?.installed ?? new Set<string>();

@@ -50,7 +50,7 @@ it.skipIf(process.platform !== 'linux')('settles admitted Off on final physical 
     read: () => client.getAgentIsolationSnapshot(), effects: native.effects,
     runActionOperation: createHostActionOperationRuntime({ serverId: 'home', machineId: machine.id,
       resolveAccountId: async () => 'account' }).runActionOperation,
-    captureMetadataPort: () => ({ read: () => client.getMachineMetadataSnapshot(),
+    captureMetadataPort: () => ({ read: async () => client.getMachineMetadataSnapshot(),
       compareAndSwap: input => client.compareAndSwapMachineMetadata(input) }),
   });
   const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user', transportRequestId: 'off',
@@ -205,7 +205,7 @@ it.skipIf(process.platform !== 'linux').each([1, 2])('settles isolation publicat
   registerDaemonMachineAgentIsolationRpcHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, {
     target: () => target, read: () => client.getAgentIsolationSnapshot(), effects: native.effects,
     runActionOperation: request => client.runActionOperation(request),
-    captureMetadataPort: () => ({ read: () => client.getMachineMetadataSnapshot(),
+    captureMetadataPort: () => ({ read: async () => client.getMachineMetadataSnapshot(),
       compareAndSwap: input => client.compareAndSwapMachineMetadata(input) }),
   });
   const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user', transportRequestId: 'operation',

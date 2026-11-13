@@ -23,7 +23,7 @@ describe('buildSpawnResumeUnreachableErrorResult', () => {
   it.each(['resume_reachability_inputs_missing', 'connected_service_materialization_identity_missing'] as const)(
     'presents the actual missing continuity input (%s) on resume', reason => {
       const result = buildSpawnResumeUnreachableErrorResult(new ConnectedServiceSpawnResumeUnreachableError({
-        agentId: 'claude', vendorResumeId: null, cwd: '/tmp/project', targetMaterializedRoot: null, reason,
+        agentId: 'claude', vendorResumeId: 'claude-resume-id', cwd: '/tmp/project', targetMaterializedRoot: null, reason,
       }));
       expect(result.errorDetail).toMatchObject({ uxDiagnostic: { code: reason } });
     },

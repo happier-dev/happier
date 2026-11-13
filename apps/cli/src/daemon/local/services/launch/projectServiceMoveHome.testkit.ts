@@ -7,7 +7,7 @@ import { expect, onTestFinished, vi } from 'vitest';
 import { decodeBase64 } from 'privacy-kit';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
 import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionExecutionAuthorizationV1Schema,
-    ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+    ExternalActionRequestEnvelopeV1Schema, ExternalActionServerPrincipalV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecutorContext, createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -20,7 +20,7 @@ import type { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { prepareInstalledRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { createDaemonApprovalExecutionAuthorizationPreparer } from '@/daemon/externalActions/approvalExecutionAuthorization';
-import { executeExternalAction, type ExternalActionExecutor } from '@/daemon/externalActions/executeExternalAction';
+import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { createLightSqliteHarness, createAccountTokenForTests } from '../../../../../../../apps/server/sources/testkit/lightSqliteHarness';
 import { db } from '../../../../../../../apps/server/sources/storage/db';
@@ -50,7 +50,7 @@ export async function createProjectServiceMoveHome(input: Readonly<{
                 homeDir: '/home/owner', happyHomeDir: '/home/owner/.happier' }),
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'), metadataVersion: 1,
             installationId: machineId === 'machine' ? 'source-installation' : 'installation',
-            installationPublicKey: nacl.sign.keyPair.fromSecretKey(privateKey).publicKey } });
+            installationPublicKey: new Uint8Array(nacl.sign.keyPair.fromSecretKey(privateKey).publicKey) } });
     }
     const privateKey = input.machineInstallationKeys.get('machine');
     if (!privateKey) throw new Error('Move SOURCE installation key missing');
@@ -90,6 +90,7 @@ export async function createProjectServiceMoveHome(input: Readonly<{
                     verifyMachineAdmission: received => readMachineRpcAdmissionCurrent({ ...received, privateKey: receiverKey,
                         daemonToken: input.credentials.token, serverHttpBaseUrl: 'https://home.example' }) }, source),
                 prepareRequesterAccountContext: request => prepareInstalledRequesterAccountActionContext({ ...request,
+                    purpose: request.purpose ?? { kind: 'external_action' },
                     ownCredentials: input.credentials, machineId, serverId: 'home', serverHttpBaseUrl: 'https://home.example',
                     resolveCurrentMachineExecutionOriginContext: async () => ({ machineId, serverIdentityId: input.serverIdentityId }),
                     createExecutor: () => executor }) });
@@ -125,7 +126,7 @@ export async function createProjectServiceMoveHome(input: Readonly<{
                 try {
                     const result = await rpc.handleRequest({ method, requestId, params, machineAdmission,
                         callerAuthority: external?.context.authority ?? call.authorityCeiling ?? 'account_automation',
-                        ...(external ? { callerInputAuthorization: authorization,
+                        ...(external ? { ...(authorization ? { callerInputAuthorization: authorization } : {}),
                             originalActionEnvelope: external.context.originalActionEnvelope, workspaceSyncSourceExecution: packet } : {}) });
                     return await socketRpcCodec.decodeResult(content, { ok: true, result }, callId);
                 } finally { installation.mockReturnValue(previousInstallation); }
@@ -159,24 +160,26 @@ export async function createProjectServiceMoveHome(input: Readonly<{
                     machineId: 'machine', serverId: 'home', serverHttpBaseUrl: 'https://home.example',
                     resolveCurrentMachineExecutionOriginContext: resolveOrigin,
                     createExecutor: () => admittedExecutor });
-            const admittedExecutor: ExternalActionExecutor = { execute: (id, value, admitted) => {
+            // Root ingress and requester custody share this one executor, so it admits every Action id.
+            const admittedExecutor: Pick<ReturnType<typeof createActionExecutor>, 'execute'> = { execute: (id, value, admitted) => {
                 prepareReplay = createDaemonApprovalExecutionAuthorizationPreparer({
                     machineId: 'machine', serverId: 'home', serverBaseUrl: 'https://home.example',
                     resolveCurrentMachineExecutionOriginContext: resolveOrigin,
-                    requesterAccountContext: readRequesterAccountActionContext(admitted.externalActionExecutionAuthorization) ?? undefined,
+                    requesterAccountContext: readRequesterAccountActionContext(admitted?.externalActionExecutionAuthorization) ?? undefined,
                     prepareRequesterAccountContext,
                     daemonWorkSignal: context.signal ?? new AbortController().signal,
                 });
+                const signApprovalInput = admitted?.signExternalActionApprovalInput;
                 return executor.execute(id, value, { ...context, ...admitted,
-                    ...(admitted.signExternalActionApprovalInput ? { signExternalActionApprovalInput: signing => {
+                    ...(signApprovalInput ? { signExternalActionApprovalInput: signing => {
                         signedInputs.push(signing);
-                        return admitted.signExternalActionApprovalInput!(signing);
+                        return signApprovalInput(signing);
                     } } : {}),
                     ...(context.actionsSettings ? { actionsSettings: context.actionsSettings } : {}) });
             } };
             const binding = authorization.binding;
             if (!('authentication' in binding)) throw new Error('Move Home root must retain Account authentication');
-            const principal = { accountId: binding.accountId, authority, authentication: binding.authentication };
+            const principal = ExternalActionServerPrincipalV1Schema.parse({ accountId: binding.accountId, authority, authentication: binding.authentication });
             const result = await executeExternalAction({ actionId, envelope, principal, surface,
                 executionAuthorization: authorization, currentMachineId: 'machine', currentServerId: 'home',
                 currentServerHttpBaseUrl: 'https://home.example', currentInstallationId: 'source-installation',

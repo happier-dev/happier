@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { createWriteStream } from 'node:fs';
@@ -233,7 +234,7 @@ it.skipIf(process.env.HAPPIER_RUN_HOME_IROH_REAL_INTEGRATION !== '1')('retains a
   const execute = async (actionId: string, input: unknown,
     caller = { token: boundHome.token, accountId: boundHome.accountId }) => {
     const requestId = randomUUID();
-    const send = (actionInput: unknown, presentUserConfirmation?: ActionExecutorContext['presentUserConfirmation']) =>
+    const send = (actionInput: unknown, presentUserConfirmation?: ExternalActionRequesterInvocationV1['presentUserConfirmation']) =>
       dispatchOriginalAccountAction({ actionId, input: actionInput, requestId, target: context.externalActionTarget!,
         credentials: { token: caller.token, encryption: null }, serverHttpBaseUrl: boundHome.baseUrl,
         serverIdentityId: boundHome.homeId, authority: 'present_user',
@@ -248,7 +249,7 @@ it.skipIf(process.env.HAPPIER_RUN_HOME_IROH_REAL_INTEGRATION !== '1')('retains a
     return await send(details.review.actionArgs, { actionId: ActionIdSchema.parse(actionId),
       inputDigest: computeActionInputApprovalDigestV1(ActionIdSchema.parse(actionId), details.review.actionArgs),
       reviewDigest: details.reviewDigest, requestId, accountId: caller.accountId,
-      serverId: boundHome.homeId, target: context.externalActionTarget });
+      serverId: boundHome.homeId, target: context.externalActionTarget ?? null });
   };
   const first = await start();
   const birth = await execute('session.spawn_new', projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse({

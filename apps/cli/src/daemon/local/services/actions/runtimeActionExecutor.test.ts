@@ -203,7 +203,7 @@ describe('daemon local-services runtime action executor', () => {
         const { createLocalServicesDaemonRuntimeActionExecutor } = await import('./runtimeActionExecutor');
         const { registry: inventoryRegistry, routes: actionRoutes } = createObservedActionRoutes();
         inventoryRegistry.replaceSnapshot({ ...inventoryRegistry.getSnapshot(), entries: inventoryRegistry.getSnapshot().entries.map(entry => ({
-            ...entry, classification: { kind: 'vite' },
+            ...entry, classification: { kind: 'vite', signals: ['command:vite'] },
             endpoint: { scheme: 'http' as const, host: '127.0.0.1', port: 5173, probeState: 'ready' as const, probedAt: 2_000 },
         })) });
         const previewRegistry = createLocalServicePreviewRegistry();

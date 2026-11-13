@@ -108,6 +108,7 @@ export function createWorkspaceSyncNativeProcessTestBoundary(options: Readonly<{
               return session;
             }
             if (command.t === 'terminate') { sessions.delete(command.sessionIdentifier); return null; }
+            if (!('sessionIdentifier' in command)) throw new Error(`Unexpected native command: ${command.t}`);
             const session = sessions.get(command.sessionIdentifier);
             if (!session) throw new Error('Native session is missing');
             if (command.t === 'get_policy') return { selection: 'all_files', patterns: [], nextCursor: null };
@@ -157,7 +158,7 @@ export function createWorkspaceSyncNativeProcessTestBoundary(options: Readonly<{
 
 export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
   socketIo: Readonly<{
-    mockImplementation(implementation: () => ReturnType<typeof createApiSessionSocketStub>): unknown;
+    mockImplementation(implementation: (url: string, socketOptions?: { auth?: { token?: string } }) => ReturnType<typeof createApiSessionSocketStub>): unknown;
     mockReset(): unknown;
   }>;
   sourcePhaseUnavailable?: boolean;

@@ -518,7 +518,7 @@ describe('control adapter automation transport bridge', () => {
       settingsSecretsReadKeys: [], settings: AccountSettingsSchema.parse({}) });
     const records = new Map<string, ApprovalRequest>();
     const runtimeActionExecute = createBrowserDaemonRuntimeActionExecutor({
-      featureGate: { isEnabled: () => true }, automation: routes,
+      featureGate: { isEnabled: () => true, refresh: async () => {} }, automation: routes,
     });
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({ runtimeActionExecute,
       isActionApprovalRequired: () => false,

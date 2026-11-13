@@ -1,4 +1,5 @@
 import { InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry } from "@/daemon/connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator";
+import type { SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
@@ -43,7 +44,7 @@ describe('native public-profile bootstrap composition', () => {
       startupSource: 'manual' as const, serviceLabel: undefined, daemonLogPath: '/tmp/daemon.log', controlToken: 'control',
       publishDaemonState: () => true, happyHomeDir: '/tmp/profile-bootstrap-home', activeServerDir: '/tmp/profile-bootstrap-server',
       filesystemAccessPolicy: { kind: 'osUser' as const }, publicReleaseChannel: 'dev' as const,
-      connectedServicesRestartRequestedSessions: new Set(), trackedSessionsByKey: new Map(),
+      connectedServicesRestartRequestedSessions: new Set<SessionTrackingKey>(), trackedSessionsByKey: new Map(),
       connectedServiceAuthGroupPreTurnSwitchCoordinator: { ...healthSwitchContext, switchBeforeTurn: unsupported, applyCommittedGeneration: unsupported, applyCredentialUpdate: unsupported },
       connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
       providerAccountUsageStore: createProviderAccountUsageStore(),

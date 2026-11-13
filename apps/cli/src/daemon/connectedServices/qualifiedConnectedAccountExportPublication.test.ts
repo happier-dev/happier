@@ -55,7 +55,9 @@ describe('Muse derived export publication', () => {
     onTestFinished(async () => { restoreHttp(); await home.close(); });
     const lease = { ref: account.service, descriptor: { id: account.service.localId, ...museAccountDescriptor },
       occurrenceId: createPluginRuntimeOccurrenceId(account.service.pluginId), runtime: museConnectedAccountRuntime,
-      owner: 'host' as const, sourceCustody: { kind: 'host' as const }, isCurrent: () => true };
+      // Muse's runtime is a Plugin runtime, so it runs in the Plugin realm.
+      sourceCustody: { kind: 'managed' as const, immutableGenerationId: 'muse-fixture', installSource: 'archive' as const },
+      isCurrent: () => true };
     const invoker = createConnectedAccountHostRuntimeInvoker({ resolveRuntime: async () => lease,
       resolvePlugin: () => ({ version: '1.0.0', hostAccessRequests: [] }),
       resolveHostPolicy: () => ({ hostAccess: [], serviceBinding: createPluginInvocationServiceBinding('fixture', 'fixture') }),

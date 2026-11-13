@@ -414,7 +414,7 @@ export function readAdmittedRequesterAccountReadRuntime(input: Readonly<{
       && packet?.externalActionExecution.effectActionId === deploymentChild.actionId
       && packet.method === `${input.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`) && packet?.originalActionEnvelope
     && ingress.originalActionEnvelope && sameStrictJsonValue(packet.originalActionEnvelope, ingress.originalActionEnvelope)
-    && packet.externalActionExecution.authorization.token === authorization.token
+    && authorization !== undefined && packet.externalActionExecution.authorization.token === authorization.token
     && sameStrictJsonValue(packet.externalActionExecution.authorization.binding, authorization.binding)
     && packet.method.startsWith(`${input.machineId}:`);
   if (!admission || !authorization || !account || !http || !ingress.verifyMachineAdmissionCurrent

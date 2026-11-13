@@ -536,7 +536,7 @@ export async function readQualifiedConnectedAccountGroupV4(
 export async function setQualifiedConnectedAccountGroupActiveAccountV4(
     params: Readonly<{
         token: string;
-        mutation: unknown;
+        mutation: z.input<typeof QualifiedConnectedAccountGroupActiveAccountV4Schema>;
     }>,
 ) {
     const mutation =
@@ -565,10 +565,21 @@ export async function setQualifiedConnectedAccountGroupActiveAccountV4(
     ).group;
 }
 
+type QualifiedConnectedAccountGroupRuntimeStatePatchV4Input =
+    z.input<typeof QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema>;
+
 export async function updateQualifiedConnectedAccountGroupRuntimeStateV4(
     params: Readonly<{
         token: string;
-        patch: unknown;
+        // Callers hold readonly runtime-state snapshots; the schema parse below copies them.
+        patch: Omit<QualifiedConnectedAccountGroupRuntimeStatePatchV4Input, 'runtimeState'> & Readonly<{
+            runtimeState: Readonly<{
+                state?: QualifiedConnectedAccountGroupRuntimeStatePatchV4Input['runtimeState']['state'];
+                memberStates?: ReadonlyArray<NonNullable<
+                    QualifiedConnectedAccountGroupRuntimeStatePatchV4Input['runtimeState']['memberStates']
+                >[number]>;
+            }>;
+        }>;
     }>,
 ) {
     const patch =
@@ -598,7 +609,7 @@ export async function updateQualifiedConnectedAccountGroupRuntimeStateV4(
 }
 
 export async function updateQualifiedConnectedAccountGroupMemberV4(
-    params: Readonly<{ token: string; mutation: unknown }>,
+    params: Readonly<{ token: string; mutation: z.input<typeof QualifiedConnectedAccountGroupMemberMutationV4Schema> }>,
 ) {
     const mutation =
         QualifiedConnectedAccountGroupMemberMutationV4Schema.parse(
@@ -630,7 +641,7 @@ export async function mutateQualifiedConnectedAccountCredentialV4(
     params: Readonly<{
         token: string;
         signal?: AbortSignal;
-        mutation: unknown;
+        mutation: z.input<typeof QualifiedConnectedAccountCredentialMutationV4Schema>;
     }>,
 ) {
     const mutation =
@@ -765,7 +776,7 @@ export async function mutateQualifiedConnectedAccountCredentialHealthV4(
     params: Readonly<{
         token: string;
         signal?: AbortSignal;
-        patch: unknown;
+        patch: z.input<typeof QualifiedConnectedAccountCredentialHealthPatchV4Schema>;
     }>,
 ) {
     const patch =

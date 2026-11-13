@@ -111,6 +111,11 @@ const sharedRow = {
     relationship: 'recipient' as const,
     name: 'Shared client secret',
     kind: 'apiKey' as const,
+    // Parsed-catalog defaults (the row type is the schema output).
+    encryptionMode: null,
+    owner: null,
+    audience: null,
+    accessSources: [],
     ownerAccountId: 'owner-account',
     revision: 3,
     materialStatus: 'ready' as const,

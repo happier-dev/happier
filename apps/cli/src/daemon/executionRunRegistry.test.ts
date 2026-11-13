@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { DaemonExecutionRunMarkerSchema } from '@happier-dev/protocol/daemon/executionRuns';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { reloadConfiguration } from '@/configuration';
 import * as executionRunRegistry from './executionRunRegistry';
 import { createManagedActivityInventory } from './lifecycle/managedActivity';
@@ -747,7 +748,7 @@ describe('executionRunRegistry', () => {
     writeFileSync(priorPath, readFileSync(currentPath), { mode: 0o600 });
     await registry.writeExecutionRunMarker({ runId: state.runId, pid: process.pid, happySessionId: null,
       callId: state.callId, sidechainId: state.sidechainId, intent: state.intent,
-      backendId: state.backendId, backendTarget: state.backendTarget, permissionMode: state.permissionMode,
+      backendId: state.backendId, backendTarget: readBackendTargetRefV2(state.backendTarget), permissionMode: state.permissionMode,
       retentionPolicy: state.retentionPolicy, runClass: state.runClass, ioMode: state.ioMode,
       status: state.status, startedAtMs: state.startedAtMs, finishedAtMs: state.finishedAtMs, updatedAtMs: 2 });
     const priorMarker = join(directory, `run-${state.runId}.json`);

@@ -9,6 +9,7 @@ import { createTcpTunnelServiceExportCommitmentV1, TcpTunnelServiceExportBinding
 import { createEphemeralPeerRouteProofHandleV2 } from '@happier-dev/protocol/machines/peer/mediation/ephemeralPeerRouteProofV2';
 import { IrohMachineHandshakeV1Schema } from '@happier-dev/protocol/connectivity/iroh/machineHandshakeV1';
 import { readMachineIrohEndpointAuthorityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
+import type { IrohEndpointDescriptorV1 } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
 import { PEER_TCP_TUNNEL_OPEN_PATH_V2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/openAuthorizationV2';
 import { PeerTcpTunnelOpenResponseV1Schema } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v1';
 import { createPeerTcpTunnelStreamSession, decodePeerTcpTunnelBinarySubstreamFrame, encodePeerTcpTunnelBinaryFrameForSubstream,
@@ -89,7 +90,9 @@ export function createServiceExportMachineForward(input: Readonly<{
         initiator: grant.payload.iroh?.initiator, target: grant.payload.iroh?.target, grant, proof });
       const verified = verifyMachineCarrierHandshakeV1({ handshake, accountId: input.accountId, machineId: input.localMachineId,
         localEndpointId: input.runtime.endpoint.endpointId, role: 'initiator', trustRoots: input.resolveTrustRoots(), nowMs: (input.nowMs ?? Date.now)() });
-      const { revision: _revision, ...descriptor } = endpoint;
+      const descriptor: IrohEndpointDescriptorV1 = { endpointId: endpoint.endpointId,
+        ...(endpoint.relayUrls ? { relayUrls: [...endpoint.relayUrls] } : {}),
+        ...(endpoint.directAddresses ? { directAddresses: [...endpoint.directAddresses] } : {}) };
       carrier = await awaitMachineCarrierTunnelOpen(input.runtime.openHttpTunnel({ alpn: MACHINE_ALPN,
         remoteEndpointId: verified.remoteEndpointId, flow: 'tcp_tunnel', handshake }, descriptor), request.signal);
       if (carrier.remoteEndpointId !== verified.remoteEndpointId) throw new MachineCarrierError('transport_identity_mismatch', 'The authenticated Machine endpoint changed.');

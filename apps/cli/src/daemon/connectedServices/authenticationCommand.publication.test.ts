@@ -42,7 +42,7 @@ describe('authentication command publication', () => {
             mode: { kind: 'oauthDeviceCode', begin: async () => ({ status: 'awaitingDeviceAuthorization',
               verificationUri: 'https://provider.example/device', verificationUriComplete: 'https://provider.example/device?code=ABCD',
               userCode: 'ABCD', pollIntervalMs: 5000, expiresAtMs: 61000 }),
-              poll: async () => ({ status: 'pending' }), cancel: async () => {} },
+              poll: async () => ({ status: 'pending', retryAfterMs: 5000 }), cancel: async () => {} },
           }),
         },
       });

@@ -4436,7 +4436,6 @@ describe('runDaemonServiceCliCommand', () => {
             machineIdByServerIdByAccountId: {},
             lastTokenSubByServerId: {},
             machineIdConfirmedByServerByServerId: {},
-            lastChangesCursorByServerIdByAccountId: {},
           });
           reloadConfiguration();
           writeInstalledLinuxDaemonService({ userHomeDir: homeDir, happierHomeDir, targetMode: 'default-following' });

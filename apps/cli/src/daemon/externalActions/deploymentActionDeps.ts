@@ -26,7 +26,11 @@ export function createRequesterBoundDeploymentActionDeps(
   };
   return {
     deploymentAction: (...args) => forContext(args[2]).deploymentAction(...args),
-    deploymentRestore: (...args) => forContext(args[1]).deploymentRestore(...args),
+    // Restore carries its retained prepare step; both bind custody from their own invocation context.
+    deploymentRestore: Object.assign(
+      (...args: Parameters<DaemonDeploymentDeps['deploymentRestore']>) => forContext(args[1]).deploymentRestore(...args),
+      { prepare: (request: Parameters<DaemonDeploymentDeps['deploymentRestore']['prepare']>[0]) =>
+        forContext(request.context).deploymentRestore.prepare(request) }),
     deploymentBackupAction: (...args) => forContext(args[2]).deploymentBackupAction(...args),
     projectReadinessRead: (...args) => forContext(args[1]).projectReadinessRead(...args),
     prepareDeploymentEnvironmentCreate: request => forContext(request.context).prepareDeploymentEnvironmentCreate(request),

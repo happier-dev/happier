@@ -43,7 +43,7 @@ it('reads custodian Muse models for a Team member without impersonating requeste
     assertTargetAccountMaterializable: unexpected,
     resolveTarget: async requested => requested.kind === 'account' ? { account: requested.account, displayName: 'Muse' } : null,
   });
-  const rpc = new RpcHandlerManager({ scopePrefix: machineId, scopeKind: 'machine', localMachineId: machineId,
+  const rpc = new RpcHandlerManager({ scopePrefix: machineId, localMachineId: machineId,
     encryptionMode: 'plain', logger: () => {} });
   let nativeReads = 0;
   let nativeAvailable = true;

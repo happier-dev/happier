@@ -113,7 +113,7 @@ describe('browser sidecar product source owner', () => {
         try {
             for (const browserSessionId of ['session-a', 'session-b']) {
                 expect(await runtime.adapter.dispatchCommand({ kind: 'openView', commandId: `open:${browserSessionId}`,
-                    browserSessionId, viewId: 'view', platform: 'web',
+                    browserSessionId, viewId: 'view', platform: 'web', focus: true,
                     target: { kind: 'externalUrl', targetId: 'fixture', url: 'https://example.test' },
                 })).toMatchObject({ status: 'dispatched' });
                 expect(await execute(browserSessionId, 'clipboardRead')).toMatchObject({ status: 'succeeded',
