@@ -7,7 +7,7 @@ import type { ExternalActionIssuerRefusal } from './externalActionIssuerRefusal'
 import { ACTION_INVOKE_ACTION_ID_V1, APPROVAL_REQUEST_DECIDE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { deriveEd25519KeyPair, ED25519_PUBLIC_KEY_BYTES } from '@happier-dev/protocol/crypto/ed25519';
-import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { isMachineTerminalOpenOrRestartActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
 import { isMachineSetupPlanOrApplyActionIdV1, isManagedAccountNativeControlInvocationV1, managedAccountNativeReadEffectActionIdV1, isManagedEnrollmentRecoveryChildV1, isManagedCreationMutationActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -683,7 +683,8 @@ export function requiresOriginalAccountMachineActionProof(actionId: string, inpu
     && typeof input.sessionId === 'string' && input.sessionId.trim().length > 0;
   const detachedRunLaunch = !hasSession && (actionId === 'execution.run.start' || actionId === 'execution.run.ensure'
     || actionId === 'execution.run.send' || actionId === 'execution.run.ensure_or_start');
-  return isWorkspaceSyncRelationshipControlActionId(actionId) || Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) || actionId === 'projects.inspect'
+  return actionId.startsWith('machines.') && doesExternalActionConsumeRequesterAccountContentV1({ actionId, input })
+    || isWorkspaceSyncRelationshipControlActionId(actionId) || Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) || actionId === 'projects.inspect'
     || isWorkspaceSyncRelationshipWriteActionId(actionId)
     || sessionSpawn?.success === true && sessionSpawn.data.machineSetupPlanInput !== undefined
     || readDeploymentTargetRetentionMachineIds(actionId, input).length > 0
@@ -718,7 +719,7 @@ export function requiresOriginalAccountMachineActionProof(actionId: string, inpu
     || detachedRunLaunch
     || actionId === 'projects.worker.status' || actionId === 'projects.worker.copy.inspect' || actionId === 'projects.worker.copy.retire'
     || actionId === 'projects.execution.output.read' || actionId === 'projects.execution.output.copy'
-    || actionId === 'machines.setup.apply' || actionId === 'machines.setup.remove' || actionId === 'machines.setup.updates.apply' || isMachineTerminalActionId(actionId)
+    || actionId === 'machines.setup.remove' || actionId === 'machines.setup.updates.apply' || isMachineTerminalActionId(actionId)
     || actionId === 'machines.managed.acquire' || actionId === 'machines.managed.inspect'
     || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.credentials.install'
     || isManagedCreationMutationActionIdV1(actionId)
