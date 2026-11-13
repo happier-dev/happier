@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { accountSettingsParse } from '@happier-dev/protocol';
+import { accountSettingsParse, deriveSessionCreationTagV1 } from '@happier-dev/protocol';
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
@@ -21,6 +21,11 @@ describe('session creation target preparation transport failures', () => {
       label: 'transport unavailable',
       error: () => Object.assign(new Error('private transport detail'), { rpcErrorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE }),
       code: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE,
+    },
+    {
+      label: 'HTTP failure without an RPC code',
+      error: () => Object.assign(new Error('private HTTP response'), { response: { status: 503, data: 'private body' } }),
+      code: 'SPAWN_FAILED',
     },
     {
       label: 'target refusal',
@@ -64,10 +69,17 @@ describe('session creation target preparation transport failures', () => {
         launchError: {
           kind: 'launch_error',
           code,
-          ...(code === 'target_unavailable' ? {} : { rpcErrorCode: code }),
+          ...(code === 'target_unavailable' || code === 'SPAWN_FAILED' ? {} : { rpcErrorCode: code }),
         },
       },
     });
+    if (code === 'SPAWN_FAILED') {
+      expect(result).toMatchObject({ result: { failureCause: { phase: 'session.target_preparation',
+        errorClass: 'Error', errorCode: null, httpStatus: 503 } } });
+      expect(SessionSpawnNewResultV1Schema.parse('result' in result ? result.result : result)).toMatchObject({
+        failureCause: { phase: 'session.target_preparation', httpStatus: 503 },
+      });
+    }
     expect(JSON.stringify(result)).not.toContain('private');
   });
 });
@@ -90,7 +102,7 @@ it('keeps a typed catalog cause when the selected Agent contribution is absent',
     connectedServices: { v: 2, bindingsByServiceId: {} },
   });
   const result = await deps.sessionSpawnNew!({ ...input, actionCaller: { kind: 'host' }, callerSurface: 'cli',
-    sessionCreationTag: 'missing-agent-catalog',
+    sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: input.creationKey }),
   });
   expect(SessionSpawnNewResultV1Schema.parse(result)).toMatchObject({ type: 'error', code: 'target_unavailable', retryable: false,
     failureCause: { phase: 'session.agent_target', errorClass: 'Error', errorCode: 'agent_contribution_unavailable', httpStatus: null },

@@ -256,14 +256,17 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       const targetRpcCause = readSessionCreationTargetRpcCause(error);
       return {
         ok: false,
-        result: projectSessionSpawnFailure({
-          errorCode: targetRefusal?.code ?? targetRpcCause?.code ?? 'SPAWN_FAILED',
-          errorMessage: targetRefusal?.reason ?? targetRpcCause?.message ?? 'Session target preparation failed',
-          ...(targetRpcCause ? { errorDetail: {
-            kind: 'launch_error', code: targetRpcCause.code, message: targetRpcCause.message,
-            ...(targetRpcCause.rpcErrorCode ? { rpcErrorCode: targetRpcCause.rpcErrorCode } : {}),
-          } } : {}),
-        }),
+        result: {
+          ...projectSessionSpawnFailure({
+            errorCode: targetRefusal?.code ?? targetRpcCause?.code ?? 'SPAWN_FAILED',
+            errorMessage: targetRefusal?.reason ?? targetRpcCause?.message ?? 'Session target preparation failed',
+            ...(targetRpcCause ? { errorDetail: {
+              kind: 'launch_error', code: targetRpcCause.code, message: targetRpcCause.message,
+              ...(targetRpcCause.rpcErrorCode ? { rpcErrorCode: targetRpcCause.rpcErrorCode } : {}),
+            } } : {}),
+          }),
+          failureCause: projectActionFailureCauseV1(error, 'session.target_preparation'),
+        },
       };
     }
 
@@ -355,6 +358,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       teamCredentialBindings,
       organizationPlacement,
       placementOrigin,
+      managedTargetPlacement,
       authoringOrigin,
       agentTarget,
       modelSelection: requestedModelSelection,
@@ -1011,6 +1015,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           sessionCreationCorrespondence: correspondence,
           organizationPlacement: normalizedPlacement,
           ...(placementOrigin && placementOriginSupported ? { placementOrigin } : {}),
+          ...(managedTargetPlacement ? { managedTargetPlacement } : {}),
           ...(authoringOrigin !== undefined ? { authoringOrigin } : {}),
           ...(resolvedModelSelection ? { modelSelection: resolvedModelSelection } : {}),
           ...(profileId ? { profileId } : {}),
