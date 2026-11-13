@@ -74,7 +74,7 @@ export function readActionFailureEnvelope(
   const details = readFailureEnvelopeDetails(record);
   const goalControlFailure = SessionGoalControlFailureV1Schema.safeParse(record.goalControlFailure);
   const failureCause = record.failureCause === undefined ? undefined : readActionFailureCauseV1(record.failureCause);
-  return carryActionFailureDiagnostic({ ok: false, errorCode, error, ...(details !== undefined ? { details } : {}),
+  return carryActionFailureDiagnostic({ ok: false as const, errorCode, error, ...(details !== undefined ? { details } : {}),
     ...(failureCause === undefined ? {} : { failureCause }),
     ...(typeof record.effectAttempted === 'boolean' ? { effectAttempted: record.effectAttempted } : {}),
     ...(goalControlFailure.success ? { goalControlFailure: goalControlFailure.data } : {}) }, result);
