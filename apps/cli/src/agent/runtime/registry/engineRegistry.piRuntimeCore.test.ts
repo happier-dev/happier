@@ -19,6 +19,7 @@ import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { currentSessionHolderScope, readSessionAgentTreeRoots } from '@/subprocess/supervision/sessionHolder';
 import { PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from '../../../../../../packages/plugins/pi/src/agent/sessionFileStoreDescriptor';
 import { createResolvedContributionRegistry } from '../../../plugins/projection/registry/createResolvedContributionRegistry';
 import { resolveBuiltInContributions } from '../../../plugins/projection/registry/resolveBuiltInContributions';
@@ -63,6 +64,7 @@ describe('engineRegistry (pi runtimeCore)', () => {
         const requests = [];
         const capture = () => writeFileSync(capturePath, JSON.stringify({
           args: process.argv.slice(2),
+          pid: process.pid,
           selectedAccountMaterialized: process.env.ANTHROPIC_API_KEY === 'synthetic-selected-anthropic-key',
           commands,
           requests,
@@ -270,11 +272,15 @@ describe('engineRegistry (pi runtimeCore)', () => {
 
           try {
             const initialCapture = JSON.parse(await readFileEventually(capturePath, { timeoutMs: 5_000 })) as {
+              pid: number;
               commands: string[];
               selectedAccountMaterialized: boolean;
               requests: Array<Readonly<Record<string, unknown>>>;
             };
             expect(initialCapture.commands).not.toContain('prompt');
+            // Pi roots this Session's Agent tree, so the Session MCP endpoint admits its Happier
+            // tools bridge by kernel peer proof (S2-MCP-AUTH-01: refused as not_authenticated).
+            expect(readSessionAgentTreeRoots(currentSessionHolderScope()).agentPids).toContain(initialCapture.pid);
             expect(initialCapture.selectedAccountMaterialized).toBe(true);
             expect(initialCapture.requests.filter(request => request.type === 'set_model')).toEqual([
               expect.objectContaining({ type: 'set_model', provider: 'anthropic', modelId: 'claude-opus-5' }),

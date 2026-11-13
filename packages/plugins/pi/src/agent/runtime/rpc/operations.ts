@@ -190,6 +190,11 @@ type PiRuntimeOperationsParams = Readonly<{
   initialSessionId?: string | null;
   /** The host's `adoptsHeldAgent`: this runner adopts a held Pi that may be mid-turn. */
   adoptsHeldAgent?: boolean;
+  /**
+   * The host's native Agent launch qualifier: Pi runs in the Session holder and roots the Session's
+   * Agent tree, so the Session MCP endpoint admits its Happier tools bridge by kernel peer proof.
+   */
+  nativeLaunch?: NonNullable<Parameters<PluginServices['exec']['clients']['spawn']>[1]>['nativeLaunch'];
   resumeSessionSelector?: string | null;
   resumeProviderSessionId?: string | null;
   sessionId: string;
@@ -1524,7 +1529,10 @@ async function createPiConversationRuntimeOperations(
         ? { [PI_REQUEST_AUTH_PRODUCER_VERSION_ENV]: requestAuthProducerVersion }
         : {}),
     },
-  }, executable, modelDiscoveryExtensionPath), sessionOpenLifecycle ? { signal: sessionOpenLifecycle.signal } : undefined);
+  }, executable, modelDiscoveryExtensionPath), sessionOpenLifecycle || params.nativeLaunch ? {
+    ...(sessionOpenLifecycle ? { signal: sessionOpenLifecycle.signal } : {}),
+    ...(params.nativeLaunch ? { nativeLaunch: params.nativeLaunch } : {}),
+  } : undefined);
   const handle = sessionOpenLifecycle
     ? await sessionOpenLifecycle.waitFor(
       processSpawn,

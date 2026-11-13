@@ -322,7 +322,7 @@ describe('Pi Agent runtime', () => {
       kind: 'create', runId: 'pi-account-continuity', cwd: '/workspace',
       profile: { pluginId: 'happier.agent.pi', localId: 'default' },
       input: { text: 'Keep working.' },
-    }, boundary.context as unknown as AgentExecutionRunRuntimeContextV1);
+    }, { ...boundary.context, executionRun: { id: 'pi-account-continuity', services: {} } } as unknown as AgentExecutionRunRuntimeContextV1);
     try {
       await vi.waitFor(() => expect(boundary.spawn).toHaveBeenCalled());
       // Let the real finite host finish opening its native conversation.
