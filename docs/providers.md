@@ -271,7 +271,10 @@ Before a Provider-bound FX spawn, native status must confirm authentication,
 credential source and the selected model. A refusal retains
 `fx_provider_credential_source_mismatch` and carries a fixed verification-predicate
 code in the existing `failureCause` diagnostic; native output and credential
-values are excluded.
+values are excluded. Status failures distinguish a nonzero exit (with its numeric
+exit code), truncated output and an invalid status response. Exec launch refusals
+and cancellation retain their original cause instead of becoming authentication
+verification failures.
 
 Grok Provider-bound ACP authentication selects the advertised `xai.api_key`
 method from the admitted binding. It does not depend on seeing the key in the

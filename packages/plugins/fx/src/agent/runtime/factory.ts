@@ -1,5 +1,4 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { AgentAcpRuntimeOptions, AgentExecutionRunOpenRequest, AgentExecutionRunRuntimeContextV1, AgentRuntimeFactory, AgentSessionOpenRequest, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { FX_PERMISSION_MODE_MAPPING } from '../acp/permissionModes.js';
@@ -35,12 +34,14 @@ async function verifyProviderBinding(
   const binding = request.providerBinding;
   if (!binding) return;
   const refuse = (reason: 'unsupported_binding' | 'native_launch_unavailable' | 'native_status_failed'
-    | 'auth_not_confirmed' | 'credential_source_mismatch' | 'model_mismatch') => new PluginError({
+    | 'native_status_exit_failed' | 'native_status_truncated' | 'native_status_invalid'
+    | 'auth_not_confirmed' | 'credential_source_mismatch' | 'model_mismatch', providerErrorMessage?: string) => new PluginError({
     code: 'fx_provider_credential_source_mismatch',
     message: 'FX could not confirm the selected Provider and model in its private native settings. Retry the connection or inspect FX status.',
     // Preserve only the predicate we decided here, never native status values,
     // model IDs, output or credentials. The host already carries this envelope.
-    details: { failureCause: { phase: 'authentication', failureReason: 'unknown', providerErrorCode: `fx_provider_${reason}` } },
+    details: { failureCause: { phase: 'authentication', failureReason: 'unknown', providerErrorCode: `fx_provider_${reason}`,
+      ...(providerErrorMessage ? { providerErrorMessage } : {}) } },
   });
   if (binding.materialization.kind !== 'configFile' || binding.upstream.protocol !== 'openai-chat') throw refuse('unsupported_binding');
   const nativeLaunch = context.session
@@ -51,18 +52,17 @@ async function verifyProviderBinding(
   // native source and model before ACP so a different account is never silently
   // billed. This explicit check runs once per bound spawn, not at
   // idle or after native provider changes (configOptions owns the live route).
-  let result: PluginProcessResult;
-  try {
-    result = await context.services.exec.run({ executable: { kind: 'systemTool', id: FX_ACP_COMMAND.toolId },
-      args: FX_AUTH_STATUS_COMMAND.args, cwd: request.cwd }, { signal: context.signal, nativeLaunch });
-  } catch {
-    context.signal.throwIfAborted();
-    throw refuse('native_status_failed');
-  }
+  // Exec owns launch refusal and cancellation. Preserve its typed cause rather
+  // than relabeling an unavailable executable or working directory as auth.
+  const result = await context.services.exec.run({ executable: { kind: 'systemTool', id: FX_ACP_COMMAND.toolId },
+    args: FX_AUTH_STATUS_COMMAND.args, cwd: request.cwd }, { signal: context.signal, nativeLaunch });
   const observed = result.termination.observed;
-  const facts = parseFxStatusCommand({ ok: observed.kind === 'exit' && observed.exitCode === 0 && !result.stdoutTruncated,
-    exitCode: observed.kind === 'exit' ? observed.exitCode : null, stdout: new TextDecoder().decode(result.stdout), stderr: '' });
-  if (facts.status.state === 'unknown' && facts.status.reason === 'probe_failed') throw refuse('native_status_failed');
+  if (observed.kind !== 'exit') throw refuse('native_status_failed');
+  if (observed.exitCode !== 0) throw refuse('native_status_exit_failed', `FX status exited with code ${observed.exitCode}`);
+  if (result.stdoutTruncated) throw refuse('native_status_truncated');
+  const facts = parseFxStatusCommand({ ok: true, exitCode: observed.exitCode,
+    stdout: new TextDecoder().decode(result.stdout), stderr: '' });
+  if (facts.status.state === 'unknown' && facts.status.reason === 'probe_failed') throw refuse('native_status_invalid');
   if (facts.status.state !== 'logged_in') throw refuse('auth_not_confirmed');
   if (facts.credentialSource !== 'AI_GATEWAY_API_KEY' && facts.credentialSource !== 'configured provider') throw refuse('credential_source_mismatch');
   if (facts.model !== binding.model.id) throw refuse('model_mismatch');

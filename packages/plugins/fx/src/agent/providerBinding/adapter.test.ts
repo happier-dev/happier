@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -215,9 +216,10 @@ describe('registered FX Provider binding', () => {
   });
 
   it.each([
-    ['native_status_failed', { exitCode: 1 }],
-    ['native_status_failed', { stdoutTruncated: true }],
-    ['native_status_failed', { malformed: true }],
+    ['exec_rejected', { execError: true }],
+    ['native_status_exit_failed', { exitCode: 1 }],
+    ['native_status_truncated', { stdoutTruncated: true }],
+    ['native_status_invalid', { malformed: true }],
     ['auth_not_confirmed', { auth: 'missing' }],
     ['auth_not_confirmed', { auth_expired: true }],
     ['credential_source_mismatch', { auth: 'fx login' }],
@@ -234,15 +236,22 @@ describe('registered FX Provider binding', () => {
       // Native process status is the external boundary; its unselected data must
       // never escape with the closed predicate identifying this refusal.
       const context = { signal: new AbortController().signal, session: { services: { nativeLaunch: Object.freeze({}) } },
-        services: { exec: { run: async () => ({ termination: { observed: { kind: 'exit', exitCode: 'exitCode' in change ? change.exitCode : 0 }, requestedBy: { kind: 'none' } },
+        services: { exec: { run: async () => {
+          if ('execError' in change) throw new PluginError({ code: 'plugin_exec_cwd_unavailable',
+            message: 'Native working directory unavailable', details: { failureCause: { phase: 'client_start',
+              failureReason: 'unknown', providerErrorCode: 'plugin_exec_cwd_unavailable' } } });
+          return ({ termination: { observed: { kind: 'exit', exitCode: 'exitCode' in change ? change.exitCode : 0 }, requestedBy: { kind: 'none' } },
           stdout: new TextEncoder().encode('malformed' in change ? 'PRIVATE_NATIVE_OUTPUT' : JSON.stringify({ kind: 'status', auth: 'configured provider', auth_refreshable: false, model: 'selected-model', private: 'PRIVATE_NATIVE_OUTPUT', ...change })),
-          stderr: new TextEncoder().encode('PRIVATE_NATIVE_STDERR'), stdoutTruncated: 'stdoutTruncated' in change, stderrTruncated: false }) } },
+          stderr: new TextEncoder().encode('PRIVATE_NATIVE_STDERR'), stdoutTruncated: 'stdoutTruncated' in change, stderrTruncated: false }); } } },
         protocols: { acp: { open: async () => { throw new Error('Refused status must not open ACP'); } } } } as unknown as AgentSessionRuntimeContext;
       let caught: unknown;
       try { await runtime.sessions!.open(request, context); } catch (error) { caught = error; }
-      expect(caught).toMatchObject({ code: 'fx_provider_credential_source_mismatch' });
+      expect(caught).toMatchObject({ code: 'execError' in change ? 'plugin_exec_cwd_unavailable' : 'fx_provider_credential_source_mismatch' });
       const diagnostic = readSessionPreparationFailureDiagnostic(sanitizeNativeAgentSessionBoundaryError(caught, true));
-      expect(diagnostic.failureCause).toMatchObject({ phase: 'authentication', failureReason: 'unknown', providerErrorCode: `fx_provider_${reason}` });
+      expect(diagnostic.failureCause).toMatchObject('execError' in change
+        ? { phase: 'client_start', failureReason: 'unknown', providerErrorCode: 'plugin_exec_cwd_unavailable' }
+        : { phase: 'authentication', failureReason: 'unknown', providerErrorCode: `fx_provider_${reason}` });
+      if ('exitCode' in change) expect(diagnostic.failureCause?.providerErrorMessage).toBe('FX status exited with code 1');
       expect(JSON.stringify(diagnostic)).not.toContain('PRIVATE_NATIVE');
     } finally { await activation.dispose(); }
   });
