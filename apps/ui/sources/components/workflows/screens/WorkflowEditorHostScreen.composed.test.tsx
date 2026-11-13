@@ -3187,7 +3187,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(readSection().draft.adds).toEqual([{ clientId: 'schedule-1', trigger }]);
     });
 
-    it('adopts a serialized MCP edit receipt in the mounted editor with changed rows and Undo', async () => {
+    it.each([false, true])('adopts a serialized MCP edit receipt with history when Home push arrives first=%s', async (pushFirst) => {
         const boundary = await serveMountedDraftActionHome();
         const [{ registerHappierMcpBuiltInTools }, { createActionToolExecutorBridge },
             { createActionExecutor, createWorkflowDefinitionActions, createWorkflowActionExecutor, createRoleSourceReaderV1 },
@@ -3275,6 +3275,12 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(saved.revision).toEqual({ headerVersion: 2, bodyVersion: 2 });
         expect(saved.changedBlockIds).toEqual([editedBlockId]);
         expect(boundary.updates).toHaveLength(1);
+        if (pushFirst) {
+            const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+            await act(async () => publishHomeAccountChange(boundary.scope.serverId, [SAVED_TRIGGER_WORKFLOW_ID], { changeKinds: ['artifact'] }));
+            await vi.waitFor(() => expect(readBodyProps()!.draftStore.get().blocks[0])
+                .toMatchObject({ document: { text: 'Edited through the real MCP Action' } }));
+        }
         await act(async () => publish(2, 'user', [{ type: 'tool_result', tool_use_id: callId,
             content: receipt.content, is_error: receipt.isError }]));
         expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.draftRevision).toBeGreaterThan(originalDraftRevision);
@@ -3284,6 +3290,10 @@ describe('WorkflowEditorHostScreen composition', () => {
         await act(async () => readBodyProps()!.history!.undo());
         expect(readBodyProps()!.draftStore.get()).toEqual(original);
         expect(readBodyProps()!.saveStatus?.kind).toBe('unsaved');
+        await act(async () => readBodyProps()!.history!.redo());
+        expect(readBodyProps()!.draftStore.get().blocks[0]).toMatchObject({ document: { text: 'Edited through the real MCP Action' } });
+        await act(async () => readBodyProps()!.history!.undo());
+        expect(readBodyProps()!.draftStore.get()).toEqual(original);
         // Undo stays local; saving it uses the agent's acknowledged revision rather than stale CAS.
         expect(boundary.updates).toHaveLength(1);
         await saveDirectlyFromUi();

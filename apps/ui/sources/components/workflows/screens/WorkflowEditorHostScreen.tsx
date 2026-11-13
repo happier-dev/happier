@@ -1432,8 +1432,16 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         'definitionId' | 'revision' | 'metadata' | 'definition'>, changedBlockIds: readonly string[] | null = null) => {
         const accepted = saved?.definitionId === revision.definitionId && contentScopeKey === accountScopeKey;
         if (accepted && (revision.revision.headerVersion < saved.revision.headerVersion
-                || revision.revision.bodyVersion < saved.revision.bodyVersion
-                || pluginJsonValuesEqual(revision.revision, saved.revision))) return;
+                || revision.revision.bodyVersion < saved.revision.bodyVersion)) return;
+        if (accepted && pluginJsonValuesEqual(revision.revision, saved.revision)) {
+            // Home can publish the saved bytes before the Session receipt arrives.
+            // Adoption already recorded their history; the receipt adds attribution only.
+            if (changedBlockIds !== null) {
+                setSavedByAgent(true);
+                setHighlightedBlockIds(changedBlockIds);
+            }
+            return;
+        }
         const draft = draftStore.get();
         const incoming = buildWorkflowEditorDraftFromDefinition({
             draftId: draft?.draftId ?? randomUUID(),
@@ -1449,7 +1457,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         const before = snapshotRef.current;
         if (before !== null) {
             const after = { ...before, draft: incoming, description: nextDescription };
-            if (changedBlockIds !== null) history.record(before, after, t('workflows.editor.history.agent'));
+            if (accepted || changedBlockIds !== null) history.record(before, after,
+                t(changedBlockIds === null ? 'workflows.editor.history.edited' : 'workflows.editor.history.agent'));
             snapshotRef.current = after;
         }
         savedDraftRef.current = incoming;
