@@ -1,3 +1,4 @@
+import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { parseMcpToolWireNameV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { createMcpCatalogPermissionChoiceV1, type InteractionTransientApprovalAuthorRequestV1 } from '@happier-dev/plugin-sdk/interactions';
 import { PI_PROVIDER_ID } from '../../providerBinding.js';
@@ -299,9 +300,11 @@ function isPiRpcClientDisposedError(error: unknown): boolean {
 
 class PiRpcSubmissionOutcomeUnknownError extends Error {
   readonly kind = 'possible_write';
+  readonly failureCause: ReturnType<typeof projectSessionRuntimeFailureCause>;
 
   constructor(error: Error) {
-    super(error.message);
+    super(error.message, { cause: error });
+    this.failureCause = projectSessionRuntimeFailureCause(error, 'turn_start', 'agent.turn');
     this.name = 'PiRpcSubmissionOutcomeUnknownError';
   }
 }
@@ -312,8 +315,10 @@ function classifyPiRpcSubmissionFailure(error: Error): Error {
     : new PiRpcSubmissionOutcomeUnknownError(error);
 }
 
-function diagnostic(code: string, message: string): PluginDiagnosticData {
-  return { code, severity: 'error', message };
+function diagnostic(code: string, message: string, error?: unknown): PluginDiagnosticData {
+  const failureCause = projectSessionRuntimeFailureCause(error, 'turn_start', 'agent.turn');
+  const { providerErrorMessage: _privateMessage, ...safeCause } = failureCause ?? {};
+  return { code, severity: 'error', message, ...(failureCause ? { details: { failureCause: safeCause } } : {}) };
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -517,7 +522,7 @@ function createRuntimeOperations(params: Readonly<{
   resolveProviderNativeCommand: (prompt: string) => Promise<boolean>;
   refreshCommands?: () => void;
   refreshModels?: () => void;
-  observeUsage?: (turnId: string | null, promptCacheLastUseAtMs?: number) => void;
+  observeUsage?: (promptCacheLastUseAtMs?: number) => void;
   mcpServerNames?: readonly string[];
   cancelBlockingExtensionUiRequests: () => Promise<void>;
   adoptsHeldAgent?: boolean;
@@ -536,6 +541,7 @@ function createRuntimeOperations(params: Readonly<{
   type ProviderFailureObservation = Readonly<{
     diagnostic: PiProviderFailureDiagnostic;
     evidence: PiProviderFailureLogEvidence;
+    failureCause: ReturnType<typeof projectSessionRuntimeFailureCause>;
   }>;
   let activeTurnProviderFailure: ProviderFailureObservation | null = null;
   let retryingTurnProviderFailure: ProviderFailureObservation | null = null;
@@ -643,6 +649,7 @@ function createRuntimeOperations(params: Readonly<{
     const emittedAtMs = Date.now();
     settledTurnFailure = new Error(providerFailure?.diagnostic.sanitizedPreview
       ?? 'Pi completed the turn without returning an assistant message. Check provider credentials, model availability, and Pi logs.');
+    if (providerFailure?.failureCause) Object.assign(settledTurnFailure, { failureCause: providerFailure.failureCause });
     params.publishRuntimeEvent({
       kind: 'turn-failed',
       emittedAtMs,
@@ -652,6 +659,7 @@ function createRuntimeOperations(params: Readonly<{
         providerFailure?.diagnostic.code ?? 'pi_empty_provider_response',
         providerFailure?.diagnostic.sanitizedPreview
           ?? 'Pi completed the turn without returning an assistant message. Check provider credentials, model availability, and Pi logs.',
+        providerFailure ?? undefined,
       ),
     });
     if (providerFailure) {
@@ -740,6 +748,7 @@ function createRuntimeOperations(params: Readonly<{
           diagnostic: diagnostic(
             providerFailure.diagnostic.code,
             providerFailure.diagnostic.sanitizedPreview,
+            providerFailure,
           ),
         }
         : {}),
@@ -794,6 +803,7 @@ function createRuntimeOperations(params: Readonly<{
       ? {
         diagnostic: providerFailureDiagnostic,
         evidence: buildPiProviderFailureLogEvidence(record),
+        failureCause: projectSessionRuntimeFailureCause(record, 'turn', 'agent.turn'),
       }
       : null;
     if (
@@ -818,7 +828,7 @@ function createRuntimeOperations(params: Readonly<{
     if (projectedEvents.some((event) => (
       event.kind === 'context-compaction' && event.phase === 'completed'
     ))) {
-      params.observeUsage?.(turn?.turnId ?? null);
+      params.observeUsage?.();
     }
     if (
       replayingPromptAckFailureRecords
@@ -852,7 +862,7 @@ function createRuntimeOperations(params: Readonly<{
       return;
     }
     if (agentEndBoundary === 'final') {
-      params.observeUsage?.(turn?.turnId ?? null, resolvePromptCacheLastUseAtMs({
+      params.observeUsage?.(resolvePromptCacheLastUseAtMs({
         turnStartedAtMs,
         lastNonModelItemCompletedAtMs,
       }));
@@ -896,7 +906,7 @@ function createRuntimeOperations(params: Readonly<{
       emittedAtMs: Date.now(),
       cause: 'processExited',
       retryable: true,
-      diagnostic: diagnostic('pi_rpc_unexpected_exit', result.error.message),
+      diagnostic: diagnostic('pi_rpc_unexpected_exit', result.error.message, result.error),
     }, result.error);
   }
 
@@ -1347,10 +1357,11 @@ function createPiConversationRuntime(params: Readonly<{
           });
         }
         const reason = providerFailure
-          ? diagnostic(providerFailure.code, providerFailure.sanitizedPreview)
+          ? diagnostic(providerFailure.code, providerFailure.sanitizedPreview, error)
           : diagnostic(
             outcomeUnknown ? 'pi_input_outcome_unknown' : 'pi_input_rejected',
             error instanceof Error ? error.message : String(error),
+            error,
           );
         if (accepted) publishInputDeliveryFailed(request, reason);
         else if (outcomeUnknown) publishInputCustodyUnknown(request, reason);
@@ -1395,7 +1406,7 @@ function createPiConversationRuntime(params: Readonly<{
       } catch (error) {
         return {
           status: 'rejected',
-          diagnostic: diagnostic('pi_configuration_failed', error instanceof Error ? error.message : String(error)),
+          diagnostic: diagnostic('pi_configuration_failed', error instanceof Error ? error.message : String(error), error),
         };
       }
     },
@@ -1797,14 +1808,13 @@ async function createPiConversationRuntimeOperations(
       return availableCommandsKnown && availableExtensionCommandNames.has(name);
     },
     refreshCommands: () => { void refreshAvailableCommands(); },
-    ...(happierSessionId ? { observeUsage(turnId: string | null, promptCacheLastUseAtMs?: number) {
+    ...(happierSessionId ? { observeUsage(promptCacheLastUseAtMs?: number) {
       usageObservationChain = usageObservationChain.then(async () => {
         const response = await rpc.send({ type: 'get_session_stats' }, 30_000);
         const observedAtMs = Date.now();
         const event = projectPiSessionStatsUsage({
           stats: response.data,
           sessionId: happierSessionId,
-          turnId,
           observationId: `pi-usage-${randomUUID()}`,
           observedAtMs,
           ...(promptCacheLastUseAtMs !== undefined ? { promptCache: { lastUseAtMs: promptCacheLastUseAtMs } } : {}),

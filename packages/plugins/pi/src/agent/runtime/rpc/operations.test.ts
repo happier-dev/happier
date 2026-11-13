@@ -19,6 +19,8 @@ import { AgentSessionRuntimeEventSchema } from '@happier-dev/plugin-sdk/agents/r
 import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '@happier-dev/protocol/runtime/agentSessionLimitsV1';
 import { InteractionTransientAuthorRequestV1Schema } from '@happier-dev/plugin-sdk/interactions';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { buildUsageEventIngestRequest } from '@/usage/buildUsageEventIngestRequest';
+import { toNativeAgentUsageObservation, buildNativeAgentUsageAccountingMetadata } from '@/usage/nativeAgentUsageObservation';
 import { createAgentSessionTurnInvariant } from '@/agent/runtime/session/turn/agentSessionTurnInvariant';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import { ServerBoundPermissionRpcHandlerManager } from '@/agent/permissions/testkit/serverBoundPermissionRpcHandlerManager';
@@ -67,6 +69,7 @@ type Capture = {
   systemToolGate?: Promise<void>;
   systemToolSignal?: AbortSignal;
   spawnGate?: Promise<void>;
+  promptWriteError?: Error;
   spawnSignal?: AbortSignal;
   handleDisposeCount?: number;
 };
@@ -108,6 +111,7 @@ function createRuntimeContext(capture: Capture) {
         return;
       }
       capture.written.push(record);
+      if (isRecord(record) && record.type === 'prompt' && capture.promptWriteError) throw capture.promptWriteError;
       if (capture.acceptModelCommands && isRecord(record) && record.type === 'set_model') {
         await capture.listener?.({ type: 'response', id: record.id, command: 'set_model', success: true });
       }
@@ -337,6 +341,29 @@ function configuration(options: Readonly<Record<string, string>>): AgentSessionC
 }
 
 describe('createPiRuntimeOperations', () => {
+  it.each([
+    ['session', 'session'], ['executionRun', 'session'], ['session', 'action'], ['executionRun', 'action'], ['session', 'raw'], ['executionRun', 'raw'],
+  ] as const)('preserves typed prompt transport failures through the %s rejection (%s cause)', async (kind, causeKind) => {
+    const actionCause = { phase: 'providers.launch', errorClass: 'TypeError', errorCode: null, httpStatus: 503 } as const;
+    const rawActionCause = { phase: 'agent.turn', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    const failureCause = causeKind === 'raw'
+      ? { phase: 'turn_start', failureReason: 'unknown', providerErrorCode: 'ECONNRESET', actionCause: rawActionCause } as const
+      : causeKind === 'session'
+      ? { code: 'provider_endpoint_unavailable', phase: 'turn_start', failureReason: 'permission_denied', httpStatus: 503 } as const
+      : { code: 'provider_endpoint_unavailable', phase: 'turn_start', failureReason: 'unknown', httpStatus: 503, actionCause } as const;
+    const capture: Capture = { specs: [], written: [], promptWriteError: causeKind === 'raw' ? new TypeError('Native prompt refused', { cause: Object.assign(new Error('Native peer reset'), { code: 'ECONNRESET' }) }) : Object.assign(new Error('Native prompt refused'), {
+      code: 'provider_endpoint_unavailable', failureCause: causeKind === 'session' ? failureCause : actionCause,
+    }) };
+    const params = { ...createRuntimeContext(capture), cwd: '/tmp/pi-workspace', env: {}, initialSessionId: 'native-pi' };
+    const runtime = kind === 'session'
+      ? await createPiRuntimeOperations({ ...params, sessionId: 'typed-cause-session' })
+      : await createPiExecutionRunConversation(params);
+    try {
+      await expect(runtime.send({ inputIds: ['typed-cause-input'], input: { text: 'hello' }, delivery: { kind: 'newTurn', turnId: 'typed-cause-turn' } })).resolves.toMatchObject({
+        status: 'rejected', diagnostic: { details: { failureCause } },
+      });
+    } finally { await runtime.dispose(); }
+  });
   it.each([true, false])('replays real native delivery with complete=%s, without inventing configured zeros', async delivered => {
     const capture: Capture = { specs: [], written: [] };
     const runtime = await createPiRuntimeOperations({ ...createRuntimeContext(capture),
@@ -1997,6 +2024,48 @@ describe('createPiRuntimeOperations', () => {
     await runtime.dispose();
   });
 
+  it('publishes paid session stats through the canonical ingest request boundary', async () => {
+    const capture: Capture = { specs: [], written: [], sessionStats: {
+      sessionId: 'native-pi-paid',
+      tokens: { input: 50_000, output: 10_000, cacheRead: 40_000, cacheWrite: 5_000, total: 105_000 },
+      cost: 0.45,
+    } };
+    const runtime = await createRuntime(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    const invariant = createAgentSessionTurnInvariant({ sessionId: 'happier-session-1' });
+    const rejected: unknown[] = [];
+    runtime.watch((event) => {
+      const result = invariant.observe(event);
+      if (result.status === 'rejected') rejected.push(result.diagnostic);
+      else if (result.status === 'accepted') events.push(result.event);
+    });
+    try {
+      const prompt = sendPrompt(runtime, 'hello');
+      await waitForWrittenCount(capture, 1);
+      await ackLastCommand(capture);
+      await prompt;
+      await emit(capture, { type: 'agent_end', willRetry: false });
+      await vi.waitFor(() => expect(events.some(event => event.kind === 'usage-observed') || rejected.length > 0).toBe(true));
+      expect(rejected).toEqual([]);
+      const event = parseEvents(events).find(event => event.kind === 'usage-observed');
+      if (!event || event.kind !== 'usage-observed') throw new Error('Missing Pi usage');
+      const request = buildUsageEventIngestRequest({
+        sessionId: event.sessionId, observedAt: event.emittedAtMs,
+        turnId: event.turnId, externalKey: event.observationId,
+        observation: toNativeAgentUsageObservation(event, 'pi'),
+        metadata: buildNativeAgentUsageAccountingMetadata(event),
+      });
+      expect(request).toMatchObject({ sessionId: 'happier-session-1',
+        scope: 'session_cumulative', tokens: { total: 105_000 },
+        cost: { estimatedUsd: 0.45 },
+        metadata: { usageAccounting: { nativeSessionId: 'native-pi-paid', historyComplete: false } },
+      });
+      expect(capture.sessionStatsRequestCount).toBe(1);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
   it('gives each fetched usage snapshot a distinct identity after reopening the same Session', async () => {
     const ids: string[] = [];
     for (let reopen = 0; reopen < 2; reopen += 1) {
@@ -2961,6 +3030,7 @@ describe('createPiRuntimeOperations', () => {
   });
 
   it('publishes and logs only the normalized safe fields from a structured Provider failure', async () => {
+    const failureCause = { phase: 'turn', failureReason: 'permission_denied', providerErrorCode: 'provider_auth_failed', httpStatus: 401 } as const;
     const echoedPromptSentinel = 'PI_PROMPT_SENTINEL_ACCEPTED_TURN_9B4D';
     const capture: Capture = { specs: [], written: [], warnings: [] };
     const runtime = await createRuntime(capture);
@@ -2974,6 +3044,7 @@ describe('createPiRuntimeOperations', () => {
 
     await emit(capture, {
       type: 'message_end',
+      failureCause,
       message: {
         role: 'assistant',
         provider: 'openai-codex',
@@ -2993,6 +3064,7 @@ describe('createPiRuntimeOperations', () => {
           code: 'provider_auth_failed',
           severity: 'error',
           message: expect.stringContaining(echoedPromptSentinel),
+          details: { failureCause },
         },
       }),
     ]));
@@ -3049,6 +3121,9 @@ describe('createPiRuntimeOperations', () => {
           code: 'rate_limit_exceeded',
           severity: 'error',
           message: 'Service temporarily unavailable. Please retry.',
+          details: { failureCause: { phase: 'turn', failureReason: 'unknown', providerErrorCode: 'rate_limit_exceeded', httpStatus: 429,
+            actionCause: { phase: 'agent.turn', errorClass: 'UnknownThrownValue', errorCode: 'rate_limit_exceeded', httpStatus: 429 },
+          } },
         },
       }),
     ]));

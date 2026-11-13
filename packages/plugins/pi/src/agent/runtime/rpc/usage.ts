@@ -16,7 +16,6 @@ function readNonNegativeInteger(value: unknown): number | null {
 export function projectPiSessionStatsUsage(params: Readonly<{
   stats: unknown;
   sessionId: string;
-  turnId: string | null;
   observationId: string;
   observedAtMs: number;
   promptCache?: Extract<AgentSessionRuntimeEvent, { kind: 'usage-observed' }>['promptCache'];
@@ -37,7 +36,7 @@ export function projectPiSessionStatsUsage(params: Readonly<{
     sessionId: params.sessionId,
     emittedAtMs: params.observedAtMs,
     observationId: params.observationId,
-    ...(params.turnId ? { turnId: params.turnId } : {}),
+    // Stats are Session-wide and arrive asynchronously after the turn terminal.
     source: 'pi-session-stats',
     scope: 'session_cumulative',
     ...(params.promptCache ? { promptCache: params.promptCache } : {}),
