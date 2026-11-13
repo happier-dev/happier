@@ -26,6 +26,8 @@ export type PluginWebhookDeliveryTargetV1 = Extract<PluginWebhookClaimResultV1, 
 
 export type PluginWebhookDaemonWorkerHandleV1 = Omit<SingleFlightIntervalLoopHandle, 'stop'> & Readonly<{
   stop(): Promise<void>;
+  /** Features-snapshot wake: resumes a loop parked on a missing `plugins.webhooks` bit. */
+  capabilityChanged(): void;
 }>;
 
 export function createPluginWebhookDaemonHttpTransportV1(credentials: StoredCredentials): PluginWebhookDeliveryWorkerTransportV1 & Readonly<{
@@ -199,8 +201,9 @@ export function startPluginWebhookDaemonWorkerV1(params: Readonly<{
   const transport = createPluginWebhookDaemonHttpTransportV1(params.credentials);
   const shutdownController = new AbortController();
   let activeClaimAbort: AbortController | null = null;
-  let activeTask: Promise<void | { nextAutomaticRunAfterMs: number }> | null = null;
+  let activeTask: Promise<void | { nextAutomaticRunAfterMs: number | null }> | null = null;
   let stopping: Promise<void> | null = null;
+  let parkedForCapability = false;
   const loop = startSingleFlightIntervalLoop({
     intervalMs: params.intervalMs ?? 2_000,
     failureBackoffMs: 2_000,
@@ -209,7 +212,11 @@ export function startPluginWebhookDaemonWorkerV1(params: Readonly<{
     task: async () => {
       let claimAbort: AbortController | null = null;
       const task = (async () => {
-        if (shutdownController.signal.aborted || !params.enabled()) return;
+        if (shutdownController.signal.aborted) return;
+        // The capability bit changes only when the daemon's features snapshot refreshes,
+        // and that refresh wakes this loop; park instead of re-reading the bit on a timer.
+        parkedForCapability = !params.enabled();
+        if (parkedForCapability) return { nextAutomaticRunAfterMs: null };
         const machine = {
           machineId: params.machineId(),
           machineInstallationId: params.machineInstallationId,
@@ -273,6 +280,9 @@ export function startPluginWebhookDaemonWorkerV1(params: Readonly<{
       // is parked (idle or mid-delivery), this is only the loop trigger.
       activeClaimAbort?.abort(PLUGIN_WEBHOOK_WAKE_CLAIM_ABORT_REASON_V1);
       loop.trigger();
+    },
+    capabilityChanged: () => {
+      if (parkedForCapability) loop.trigger();
     },
     stop: () => {
       if (stopping) return stopping;

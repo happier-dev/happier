@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({
   executeContributedAction: vi.fn(),
 }));
 
-vi.mock('axios', () => ({
+// HTTP boundary: the worker posts through the credential-scoped axios client.
+vi.mock('@/api/client/credentialAxios', () => ({
   default: { post: mocks.post },
 }));
 vi.mock('@/plugins/installations/publisherProof', () => ({
@@ -393,15 +394,18 @@ describe('plugin webhook daemon HTTP transport', () => {
     }
   });
 
-  it('never claims against a server that does not advertise webhook capability, then resumes when it does', async () => {
+  it('parks without polling while the server does not advertise webhook capability, then resumes on the features wake', async () => {
     // A daemon newer than its server sees no `plugins.webhooks` bit. The worker
-    // must stay entirely off the wire rather than probing the missing route.
+    // must stay entirely off the wire and must not keep re-checking the cached
+    // bit on a timer: the bit only changes when the features snapshot refreshes,
+    // and that refresh wakes the worker.
     let serverAdvertisesWebhooks = false;
+    const enabled = vi.fn(() => serverAdvertisesWebhooks);
     const worker = startPluginWebhookDaemonWorkerV1({
       credentials,
       machineId: () => 'machine-1',
       machineInstallationId: 'installation-1',
-      enabled: () => serverAdvertisesWebhooks,
+      enabled,
       logger: { debug: vi.fn() },
       intervalMs: 5,
     });
@@ -411,10 +415,12 @@ describe('plugin webhook daemon HTTP transport', () => {
         setTimeout(resolve, 40);
       });
       expect(mocks.post).not.toHaveBeenCalled();
+      expect(enabled).toHaveBeenCalledTimes(1);
 
-      // Positive twin: the same live loop claims as soon as the server
-      // advertises the capability, so the silence above was the gate.
+      // Positive twin: the features wake resumes the same live loop, which claims
+      // because the server now advertises the capability.
       serverAdvertisesWebhooks = true;
+      worker.capabilityChanged();
       await vi.waitFor(() => expect(mocks.post).toHaveBeenCalled());
       expect(mocks.post.mock.calls[0]?.[0]).toContain('/v1/daemon/plugins/webhooks/claim');
     } finally {
