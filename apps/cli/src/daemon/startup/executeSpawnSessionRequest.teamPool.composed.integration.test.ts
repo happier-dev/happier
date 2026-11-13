@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import tweetnacl from 'tweetnacl';
 import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
-import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1,
+import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, deriveSessionCreationTagV1,
   ProviderSettingsV1Schema, splitProviderSettingsV1 } from '@happier-dev/protocol';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
@@ -88,6 +88,7 @@ import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/erro
 import { awaitTrackedRunnerAgentSessionOpen, recordTrackedRunnerAgentSessionOpenAttestation } from '../agentRuntime/runnerAgentSessionOpenAttestation';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { trackedSessionForSingleSessionProcess, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 // Only process creation is replaced. Production daemon preparation creates
 // the bootstrap/attach files; the admitted external Agent runs in this worker.
@@ -183,7 +184,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
   afterAll(async () => { await pluginReloadController.shutdown(); });
 
   const runJourney = async (brokerOnly: boolean, onTestFailed: TestContext['onTestFailed'], resumeOnly = false, uiAuthoring = false,
-    startupOutcomes?: readonly ('exited' | 'acknowledged' | 'misbound')[], pendingRestart = false) => withTempHappyCliEntrypoint(async entrypoint => {
+    startupOutcomes?: readonly ('exited' | 'acknowledged' | 'misbound')[], pendingRestart = false, preRunnerRefusalOnly = false) => withTempHappyCliEntrypoint(async entrypoint => {
     let phase = 'setup';
     let runnerFailure: string | null = null;
     const answersObserved: string[] = [];
@@ -380,7 +381,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
       registerSessionLookupByTagsRoute(app);
       sessionPendingRoutes(app);
       registerSessionArchiveRoutes(app);
-      if (pendingRestart) registerSessionTurnMutationRoute(app);
+      registerSessionTurnMutationRoute(app);
       registerTeamRoutes(app);
       app.get('/v1/features', async () => resolveServerFeaturesForGating(process.env));
       app.get('/v1/account/profile', async () => AccountProfileResponseSchema.parse({ id: recipient.id }));
@@ -405,9 +406,9 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
         const resources = await readSessionTeamCredentialResourceCatalog({ homeDomainAction, applications, teamIds: [team.id] });
         expect(applications.length).toBeGreaterThan(0);
         expect(sourceRpcFailures).toEqual([]);
-        const offered = resources.flatMap(row => row.providerModels).find(row => row.descriptor.id === 'gpt-5.5');
+        const offered = resources.flatMap(row => row.providerModels).find(row => row.descriptor.id === 'gpt-5.6-luna');
         expect(offered, JSON.stringify(resources)).toBeDefined();
-        if (!offered) throw new Error('Home did not offer the source gpt-5.5 row');
+        if (!offered) throw new Error('Home did not offer the source gpt-5.6-luna row');
         if (brokerOnly) {
           phase = 'catalog:broker-open';
           const session = await db.session.create({ data: { accountId: recipient.id, tag: crypto.randomUUID(),
@@ -449,18 +450,21 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
         for (const surface of (uiAuthoring ? ['ui'] as const : resumeOnly ? ['cli'] as const : ['cli', 'rpc'] as const)) {
         phase = `${surface}:launch`;
         const requestStart = requests.length;
-        const tracked = new Map<number, import('../types').TrackedSession>();
-        const awaiters = new Map<number, (session: import('../types').TrackedSession) => void>();
-        const resolvers = new Map<number, (result: import('@/session/shared/spawnSessionContract').SpawnSessionResult) => void>();
-        const timeouts = new Map<number, NodeJS.Timeout>();
-        const spawnResourceCleanupByPid = new Map<number, () => void | Promise<void>>();
-        const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+        const tracked = new Map<SessionTrackingKey, import('../types').TrackedSession>();
+        const awaiters = new Map<SessionTrackingKey, (session: import('../types').TrackedSession) => void>();
+        const resolvers = new Map<SessionTrackingKey, (result: import('@/session/shared/spawnSessionContract').SpawnSessionResult) => void>();
+        const timeouts = new Map<SessionTrackingKey, NodeJS.Timeout>();
+        // Production spawns mint the Session key; the controlled runner knows only its pid.
+        const trackedForPid = (pid: number | undefined) => pid === undefined ? undefined : trackedSessionForSingleSessionProcess(tracked, pid);
+        const keyForPid = (pid: number | undefined) => trackedForPid(pid)?.trackingKey as SessionTrackingKey;
+        const spawnResourceCleanupByKey = new Map();
+        const sessionAttachCleanupByKey = new Map();
         const exitTasks: Promise<void>[] = [];
-        const onChildExited = createOnChildExited({ pidToTrackedSession: tracked,
-          spawnResourceCleanupByPid, sessionAttachCleanupByPid, getApiMachineForSessions: () => null });
+        const onChildExited = createOnChildExited({ trackedSessionsByKey: tracked,
+          spawnResourceCleanupByKey, sessionAttachCleanupByKey, getApiMachineForSessions: () => null });
         const readiness = createSessionStartupReadinessHandler({
-          onHappySessionWebhook: createOnHappySessionWebhook({ pidToTrackedSession: tracked, pidToAwaiter: awaiters,
-            deviceLocalSecretStorage, spawnResourceCleanupByPid, sessionAttachCleanupByPid }),
+          onHappySessionWebhook: createOnHappySessionWebhook({ trackedSessionsByKey: tracked, spawnAwaiterByKey: awaiters,
+            deviceLocalSecretStorage }),
           reconcileCanonicalReadiness: async candidate => {
             await refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority({ happyHomeDir: configuration.happyHomeDir,
               publicReleaseRing: configuration.publicReleaseRing, httpPort: 4321, sessionId: candidate.happySessionId!, tracked: candidate,
@@ -500,7 +504,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
         const runControlledRunner: NonNullable<typeof os.runner> = (args, environment) => { runner = (async () => {
           prelaunchProjectionActive = false;
           phase = `${surface}:startup-custody`;
-          const startup = tracked.get(os.pid);
+          const startup = trackedForPid(os.pid);
           if (!startup || await startup.acceptedSpawnMarkerGate === false) throw new Error('Daemon did not accept startup custody');
           const index = args.indexOf('--existing-session'); sessionId = args[index + 1]!;
           const attachPath = environment.HAPPIER_SESSION_ATTACH_FILE;
@@ -512,7 +516,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
           }));
           expect(launch.existingSessionId).toBe(sessionId);
           expect(launch.teamCredentialBindings).toBeUndefined();
-          expect(launch.modelSelection?.ref).toMatchObject({ agentTargetKey: worker.agentTargetKey, modelId: 'gpt-5.5' });
+          expect(launch.modelSelection?.ref).toMatchObject({ agentTargetKey: worker.agentTargetKey, modelId: 'gpt-5.6-luna' });
           retainedModelSelection = launch.modelSelection;
           // The accepted slot travels in protected attach, not fresh-create argv.
           const attach = SessionAttachPayloadV2Schema.parse(JSON.parse(await readFile(attachPath, 'utf8')));
@@ -523,7 +527,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
           if (startupOutcome) {
             // Birth and protected Team binding are already committed, while
             // the real spawn owner still holds its exact pending waiter.
-            expect(awaiters.has(os.pid)).toBe(true);
+            expect(awaiters.has(keyForPid(os.pid))).toBe(true);
             expect(startup.happySessionId).toBe(sessionId);
             expect(startup.spawnOptions?.existingSessionId).toBe(sessionId);
             if (startupOutcome !== 'exited') {
@@ -533,7 +537,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
                   happyHomeDir: configuration.happyHomeDir, path: directory }) } });
               expect(response.statusCode, response.body).toBe(startupOutcome === 'misbound' ? 401 : 200);
               if (startupOutcome === 'acknowledged') return;
-              expect(awaiters.has(os.pid)).toBe(true);
+              expect(awaiters.has(keyForPid(os.pid))).toBe(true);
             }
             const child = os.child;
             if (!child) throw new Error('Missing controlled child');
@@ -657,7 +661,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
             } finally { publisher.dispose(); }
           }
           if (pendingRestart) {
-            const current = tracked.get(os.pid);
+            const current = trackedForPid(os.pid);
             const retained = worker.lease.registry.agentRuntimesByAgentId.get(worker.agentId)?.sessionRunnerFactoryBinding;
             if (!current || !retained || current.processStartTimeMs === undefined || !current.processCommandHash) {
               throw new Error('Missing current runner open authority');
@@ -691,8 +695,8 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
           // The real waiter projects the Home-created settlement already held
           // by daemon custody; a handwritten success would discard that receipt.
           if (!pendingRestart || !restartAttempt) {
-            const completed = tracked.get(os.pid);
-            const acceptWebhook = awaiters.get(os.pid);
+            const completed = trackedForPid(os.pid);
+            const acceptWebhook = awaiters.get(keyForPid(os.pid));
             if (!completed || !acceptWebhook) throw new Error('Daemon webhook custody is unavailable');
             acceptWebhook(completed);
           }
@@ -724,8 +728,8 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
         } else void runner.catch(error => {
           runnerFailure = String(error);
           phase = `${surface}:runner-refused`;
-          const timer = timeouts.get(os.pid); if (timer) clearTimeout(timer);
-          resolvers.get(os.pid)?.({ type: 'error', errorCode: 'SPAWN_FAILED', errorMessage: String(error) });
+          const timer = timeouts.get(keyForPid(os.pid)); if (timer) clearTimeout(timer);
+          resolvers.get(keyForPid(os.pid))?.({ type: 'error', errorCode: 'SPAWN_FAILED', errorMessage: String(error) });
         }); };
         os.runner = runControlledRunner;
         const spawnSession = async (options: Parameters<typeof executeSpawnSessionRequest>[0]['options']) => {
@@ -738,9 +742,9 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
             activateSessionPurposeBindings: worker.gateway!.purposeBindingOwner.activateSessionPurposeBindings,
             connectedServicesMaterializationBaseDir: join(directory, 'connected-services'), connectedServiceRefreshCoordinator: null,
             connectedServiceQuotasCoordinator: null, connectedServiceRuntimeRegistry: { registerTarget() {} },
-            pidToTrackedSession: tracked, pidToAwaiter: awaiters, pidToSpawnResultResolver: resolvers, pidToSpawnWebhookTimeout: timeouts,
-            spawnResourceCleanupByPid, sessionAttachCleanupByPid,
-            resolveCanonicalTrackedSessionId: pid => tracked.get(pid)?.happySessionId ?? '',
+            trackedSessionsByKey: tracked, spawnAwaiterByKey: awaiters, spawnResultResolverByKey: resolvers, spawnWebhookTimeoutByKey: timeouts,
+            spawnResourceCleanupByKey, sessionAttachCleanupByKey,
+            resolveCanonicalTrackedSessionId: trackingKey => tracked.get(trackingKey)?.happySessionId ?? '',
             onChildExited: (...args) => { const task = onChildExited(...args); exitTasks.push(task); return task; },
             processEnv: { ...process.env, RUN_NATIVE_API_KEY: '', HAPPIER_HOME_DIR: worker.happyHomeDir }, resolveProvidersFeatureEnabled: () => true });
           } finally { prelaunchProjectionActive = false; }
@@ -809,11 +813,51 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
             expectedResourceRevision: resource.revision, deliveryMode: 'brokered',
             providerModelSelection: { agentTargetKey: worker.agentTargetKey, modelId: offered.descriptor.id },
           }]);
+          if (preRunnerRefusalOnly) {
+            // Enter at the admitted daemon request. Home must produce the row
+            // and its accepted Team binding before the OS refuses launch.
+            os.refuseStart = true;
+            try {
+              const refused = await spawnSession({ directory, machineId: worker.machineId,
+                sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'team-pool-cold-refusal' }),
+                connectedServices: { v: 2, bindingsByServiceId: { [`${service.pluginId}/${service.localId}`]: {
+                  source: 'team_resource', resourceId: resource.id, deliveryMode: 'brokered' } } },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'acme.managed-run', localId: 'agent' } },
+                permissionMode: 'default', modelSelection: { v: 1, updatedAt: 1,
+                  ref: { agentTargetKey: worker.agentTargetKey, providerConnectionId: null, modelId: offered.descriptor.id } },
+                teamCredentialBindings: [sessionModelSelectionV2TeamBindingIntent({ v: 2, updatedAt: 1,
+                  ref: { source: 'team_resource', resourceId: offered.selection.resourceId,
+                    teamId: offered.selection.teamId, expectedResourceRevision: offered.selection.expectedResourceRevision,
+                    deliveryMode: offered.selection.deliveryMode, agentTargetKey: offered.selection.agentTargetKey,
+                    modelId: offered.selection.modelId } })],
+              });
+              expect(refused, JSON.stringify(refused)).toMatchObject({ type: 'error', errorCode: 'SPAWN_FAILED' });
+              expect(runner).toBeUndefined();
+              const rows = await db.session.findMany({ where: { accountId: recipient.id } });
+              expect(rows, JSON.stringify(refused)).toHaveLength(1);
+              const retained = rows[0]!;
+              expect(retained.latestTurnStatus).toBe('failed');
+              expect(await db.sessionTeamCredentialBinding.findMany({ where: { sessionId: retained.id } }))
+                .toEqual(expect.arrayContaining([expect.objectContaining({ slotKind: 'provider_model:brokered',
+                  resourceId: resource.id, resourceRevision: resource.revision })]));
+              expect(JSON.parse(retained.lastRuntimeIssue ?? 'null')).toMatchObject({
+                code: 'agent_session_error', source: 'agent_session_error', sanitizedPreview: expect.any(String),
+                failureCause: { providerErrorCode: 'EACCES' },
+              });
+              const cold = await fetchSessionByIdCompat({ token: credentials.token, sessionId: retained.id, reason: 'session-control' });
+              expect(cold?.lastRuntimeIssue).toMatchObject({ code: 'agent_session_error', source: 'agent_session_error',
+                failureCause: { providerErrorCode: 'EACCES' } });
+              expect(cold?.lastRuntimeIssue?.usageLimit).toBeUndefined();
+              expect(await db.sessionTurn.findMany({ where: { sessionId: retained.id }, select: { status: true } }))
+                .toContainEqual({ status: 'failed' });
+              return;
+            } finally { os.refuseStart = false; }
+          }
           const start = () => createActionExecutor(deps).execute('session.spawn_new', authoredSpawn ?? {
             creationKey: `team-pool-${surface}${startupOutcome ? `-${startupOutcome}` : ''}`, executionTarget: { serverId: configuration.activeServerId, machineId: worker.machineId },
             directory: { kind: 'path', path: directory }, agentTarget: { kind: 'agent', identity: { pluginId: 'acme.managed-run', localId: 'agent' } },
             permissionMode: 'default', modelSelection: { v: 1, updatedAt: 1,
-              ref: { agentTargetKey: worker.agentTargetKey, providerConnectionId: null, modelId: 'gpt-5.5' } },
+              ref: { agentTargetKey: worker.agentTargetKey, providerConnectionId: null, modelId: 'gpt-5.6-luna' } },
             connectedServices: { v: 2, bindingsByServiceId: { [`${service.pluginId}/${service.localId}`]: {
               source: 'team_resource', resourceId: resource.id, deliveryMode: 'brokered' } } },
             ...(pendingRestart ? {} : { initialInput: { text: 'TEAM_POOL_NATIVE_PROMPT' } }),
@@ -894,7 +938,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
             const publicSpawnResult = SessionSpawnNewActionResultV1Schema.parse(result.result);
             if (startupOutcome === 'acknowledged') {
               expect(publicSpawnResult).toMatchObject({ type: 'success', sessionId });
-              expect(tracked.get(os.pid)?.agentRuntimeDaemonServiceCapabilityHash).toEqual(expect.any(String));
+              expect(trackedForPid(os.pid)?.agentRuntimeDaemonServiceCapabilityHash).toEqual(expect.any(String));
             } else {
               expect(publicSpawnResult).toMatchObject({
                 type: 'error', code: 'spawn_failed', launchError: { code: 'CHILD_EXITED_BEFORE_WEBHOOK',
@@ -906,8 +950,8 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
               });
               await Promise.all(exitTasks);
               expect(tracked.size).toBe(0);
-              expect(spawnResourceCleanupByPid.size).toBe(0);
-              expect(sessionAttachCleanupByPid.size).toBe(0);
+              expect(spawnResourceCleanupByKey.size).toBe(0);
+              expect(sessionAttachCleanupByKey.size).toBe(0);
               expect(await db.sessionPendingMessage.count({ where: { sessionId } })).toBe(0);
             }
             expect(awaiters.size).toBe(0);
@@ -925,7 +969,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
             .toEqual({ active: true, archivedAt: null });
           expect(await db.sessionPendingMessage.count({ where: { sessionId, status: 'queued' } })).toBe(pendingRestart ? 0 : 1);
           expect(await db.session.count({ where: { accountId: recipient.id } })).toBe(completedIngresses.length + 1);
-          expect(requests.slice(requestStart)).toEqual(resumeOnly ? [] : [{ model: 'gpt-5.5', input: 'TEAM_POOL_NATIVE_PROMPT' }]);
+          expect(requests.slice(requestStart)).toEqual(resumeOnly ? [] : [{ model: 'gpt-5.6-luna', input: 'TEAM_POOL_NATIVE_PROMPT' }]);
           expect(await db.sessionTeamCredentialBinding.findMany({ where: { sessionId } })).toEqual(expect.arrayContaining([
             expect.objectContaining({ slotKind: 'provider_model:brokered', resourceId: resource.id, resourceRevision: resource.revision }),
           ]));
@@ -1056,12 +1100,12 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
               message === '[DAEMON RUN] Session spawn failed after startup preparation') })).toMatchObject({ type: 'success', sessionId });
             expect(runner).toBeDefined();
             await expect(runner).resolves.toBeUndefined();
-            expect(tracked.get(os.pid)?.spawnOptions?.teamCredentialBindings).toContainEqual(expect.objectContaining({
+            expect(trackedForPid(os.pid)?.spawnOptions?.teamCredentialBindings).toContainEqual(expect.objectContaining({
               resourceId: resource.id, teamId: team.id, deliveryMode: 'brokered',
             }));
             expect(requests.slice(requestStart)).toEqual(resumeOnly ? [] : [
-              { model: 'gpt-5.5', input: 'TEAM_POOL_NATIVE_PROMPT' },
-              { model: 'gpt-5.5', input: 'TEAM_POOL_NATIVE_PROMPT' },
+              { model: 'gpt-5.6-luna', input: 'TEAM_POOL_NATIVE_PROMPT' },
+              { model: 'gpt-5.6-luna', input: 'TEAM_POOL_NATIVE_PROMPT' },
             ]);
           }
           completedIngresses.push(surface);
@@ -1079,11 +1123,13 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
       env.restore(); launchEnv.restore(); reloadConfiguration(); await rm(directory, { recursive: true, force: true });
     }
   });
+  it('persists a committed pre-runner refusal without reset data for a fresh Session reader',
+    ({ onTestFailed }) => runJourney(false, onTestFailed, false, false, undefined, false, true));
   it('settles pre-created brokered Team startup through the real control webhook',
     ({ onTestFailed }) => runJourney(false, onTestFailed, true, false, ['exited', 'acknowledged', 'misbound']));
   it('opens the offered source catalog revision through the real Home broker route and source runtime',
     ({ onTestFailed }) => runJourney(true, onTestFailed));
-  it('runs gpt-5.5 with an answer distinct from its prompt through recipient confirmation, CLI/RPC ingress and protected attach',
+  it('runs gpt-5.6-luna with an answer distinct from its prompt through recipient confirmation, CLI/RPC ingress and protected attach',
     ({ onTestFailed }) => runJourney(false, onTestFailed));
   it('resumes a retained Team Session through normal resume admission, runner argv and the real Session launch contract',
     ({ onTestFailed }) => runJourney(false, onTestFailed, true));
