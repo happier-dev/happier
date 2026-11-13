@@ -261,6 +261,8 @@ export type CliActionDepsParams = Readonly<{
   prepareWorkspaceWritesPolicy?: RoleWorkspaceWritesPolicyPreparer;
   happyHomeDir?: string;
   resolveAutomationEventAdoptedDefinitionSet?: ResolveAutomationEventAdoptedDefinitionSetV1;
+  /** The host's server-verified Account id (a daemon's Machine connection owns it); never re-read per Action. */
+  resolveAuthenticatedAccountId?: (signal?: AbortSignal) => Promise<string>;
   acquireAutomationEventObservationRegistry?: import('@/deployments/platformFailureNotices').PlatformFailureNoticeHost['acquirePluginRuntimeRegistryLease'];
   revalidatePluginActionCallerMaterialization?: RevalidatePluginActionCallerMaterialization;
   revalidatePluginActionCallerOccurrence?: RevalidatePluginActionCallerOccurrence;

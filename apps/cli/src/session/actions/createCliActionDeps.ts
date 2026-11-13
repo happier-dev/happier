@@ -591,6 +591,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const automationConversationAction = params.credentials
     ? createAutomationConversationActionExecutor({
       credentials: params.credentials,
+      ...(params.resolveAuthenticatedAccountId ? { resolveAccountId: params.resolveAuthenticatedAccountId } : {}),
       ...(params.revalidatePluginActionCallerMaterialization
         ? { revalidateCallerMaterialization: params.revalidatePluginActionCallerMaterialization }
         : {}),
@@ -602,10 +603,12 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const automationEventAction = params.credentials && params.resolveAutomationEventAdoptedDefinitionSet
     ? createAutomationEventActionExecutor({
       credentials: params.credentials,
+      ...(params.resolveAuthenticatedAccountId ? { resolveAccountId: params.resolveAuthenticatedAccountId } : {}),
       resolveAdoptedDefinitionSet: params.resolveAutomationEventAdoptedDefinitionSet,
       onCommittedObservation: async (observation: CommittedAutomationEventObservationV1) => {
+        const noticeHomeIdentity = await resolveProjectHomeIdentity();
         const { createConfiguredHealthCheckNotices } = await import('@/deployments/deploymentServiceHealthNotices');
-        const health = await createConfiguredHealthCheckNotices({ credentials: params.credentials!, serverId: projectHomeId,
+        const health = await createConfiguredHealthCheckNotices({ credentials: params.credentials!, serverId: noticeHomeIdentity,
           serverHttpBaseUrl: todoHomeBaseUrl, machineId: observation.caller.machineId,
           executeAction: async (action, input, options) => {
             if (!params.invokeContributedAction) return { ok: false, errorCode: 'target_unavailable', effectAttempted: false };
@@ -625,7 +628,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
         if (health.kind === 'consumed') return;
         if (!params.acquireAutomationEventObservationRegistry) return;
         const { createPlatformFailureNotices } = await import('@/deployments/platformFailureNotices');
-        const consume = createPlatformFailureNotices({ credentials: params.credentials!, serverId: projectHomeId,
+        const consume = createPlatformFailureNotices({ credentials: params.credentials!, serverId: noticeHomeIdentity,
           serverHttpBaseUrl: todoHomeBaseUrl, machineId: observation.caller.machineId,
           acquirePluginRuntimeRegistryLease: params.acquireAutomationEventObservationRegistry!,
           readReceipt: async ({ environmentId, deploymentId, context }) => {
@@ -990,7 +993,9 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const launchProfilesDeps = createCliLaunchProfilesActionDeps(params, { artifactCallerContext, projectAccountAdmission, roleArtifactStore });
   const { sessionModelUnarm, sessionModelSet } = createCliSessionModelActionDeps(params, { projectHomeId, resolveServerRequestHeaders });
   const agentCatalogDeps = createCliAgentCatalogActionDeps(params, { todoHomeBaseUrl });
-  const { sessionOpen, sessionFork, sessionContinueWithReplay, sessionRollback, checkpointCodeRollback, sessionCheckpoint, sessionRestore, sessionContinuationInspect, sessionAgentTransition, sessionArchiveSet } = createCliSessionLifecycleActionDeps(params, { callMachineAction, callResolvedSessionRpc, normalizeStringValue, notSupported, readCurrentMachineControlIdentity, readTransportSessionOwnerMetadata, resolveServerRequestHeaders, resolveTransportForSession, resumeInactiveSessionTransport });
+  const { sessionOpen, sessionFork, sessionContinueWithReplay, sessionRollback, checkpointCodeRollback, sessionCheckpoint, sessionRestore, sessionContinuationInspect, sessionAgentTransition, sessionArchiveSet } = createCliSessionLifecycleActionDeps(params, { callMachineAction, callResolvedSessionRpc, normalizeStringValue, notSupported, readCurrentMachineControlIdentity, readTransportSessionOwnerMetadata, resolveServerRequestHeaders, resolveTransportForSession, resumeInactiveSessionTransport,
+    sessionStop: input => (readEffectiveDeps?.() ?? actionDeps).sessionStop!(input),
+  });
   const { sessionHandoffTargetReplacementApprovalPreflight, sessionHandoffStart, sessionHandoffStatusGet, sessionHandoffPrepareTargetResume } = createCliSessionHandoffActionDeps(params, { callMachineAction, notSupported, resolveTransportForSession });
   const { sessionStatusGet, sessionWorkStateGet, sessionWaitIdle } = createCliSessionStatusActionDeps(params, { assertProjectRequesterCurrent, callMachineAction, callResolvedSessionRpc, executionRunActionFailure, homeAccountId, isSameActionHomeId, projectAccountAdmission, projectHomeId, projectRowsAuthority, readServerFeaturesSnapshot, resolveProjectHomeIdentity, resolveServerRequestHeaders, withProjectHome, machinesAgentsList: machineInventoryDeps.machinesAgentsList!, readHomeDomainAction: () => (readEffectiveDeps?.() ?? actionDeps).homeDomainAction });
   const workspaceSyncDeps = createCliWorkspaceSyncActionDeps(params, { actionHomeId, callMachineAction, normalizeStringValue, notSupported, projectHomeAdmission, projectHomeId, readProjectRows, readRecord, resolveProjectHomeIdentity });

@@ -58,6 +58,10 @@ composer banner. Known refusals preserve the prompt and arm; the canonical Actio
 classification still blocks resend until reconciliation. No raw-RPC fallback is attempted.
 The daemon's input-permission capability follows its installed Account Action executor; it does
 not depend on the retired raw mutation handler. Session-process registration does not offer it.
+The transition uses that executor's effective `sessionStop` effect with `lifecycle_control` intent.
+An admitted requester therefore reaches the same native Stop owner as standalone Stop, without
+another raw Stop RPC to its own Machine or another Action admission. The Stop owner's existing
+confirmation predicate still decides when cutover may proceed; transition does not author an explicit-Stop hold.
 
 The request is strict: `{ v: 1, sessionId, expectedCurrentAgentId, selection, input }`. `selection`
 carries `agentId` plus optional `modelId`, `providerConnectionId`, `acpSessionModeId` and

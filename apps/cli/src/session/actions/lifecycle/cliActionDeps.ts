@@ -15,16 +15,19 @@ import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encrypti
 import type { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { readActionFailureEnvelope, readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { readSessionStopConfirmationFailure } from '@happier-dev/protocol/actions/executor/session/stopConfirmation';
+import { SessionStopResultSchema } from '@happier-dev/protocol/sessions/control/contract';
 import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machineTransport';
 import type { InactiveSessionResumeResult } from '@/session/services/requestInactiveSessionResume';
 type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionOpen' | 'sessionFork' | 'sessionContinueWithReplay' | 'sessionRollback' | 'checkpointCodeRollback' | 'sessionCheckpoint' | 'sessionRestore' | 'sessionContinuationInspect' | 'sessionAgentTransition' | 'sessionArchiveSet'> & Required<Pick<ActionExecutorDeps, 'sessionOpen' | 'sessionFork' | 'sessionRollback'>>;
 
 export function createCliSessionLifecycleActionDeps(
   params: CliActionDepsParams,
-  { callMachineAction, callResolvedSessionRpc, normalizeStringValue, notSupported, readCurrentMachineControlIdentity, readTransportSessionOwnerMetadata, resolveServerRequestHeaders, resolveTransportForSession, resumeInactiveSessionTransport }: Readonly<{
+  { callMachineAction, callResolvedSessionRpc, normalizeStringValue, notSupported, readCurrentMachineControlIdentity, readTransportSessionOwnerMetadata, resolveServerRequestHeaders, resolveTransportForSession, resumeInactiveSessionTransport, sessionStop }: Readonly<{
 
     callMachineAction: CliMachineActionCall;
+    sessionStop: NonNullable<ActionExecutorDeps['sessionStop']>;
     callResolvedSessionRpc: (sessionId: string, method: string, request: unknown, signal?: AbortSignal) => Promise<unknown>;
     normalizeStringValue: (value: unknown) => string | null;
     notSupported: () => never;
@@ -258,7 +261,21 @@ export function createCliSessionLifecycleActionDeps(
         ...(root ? { externalAction: { context: { ...context, externalActionTarget: { kind: 'session' as const, sessionId: request.sessionId } },
           effectActionId: root.binding.actionId, installationId: params.externalActionMachineInstallationId!,
           privateKey: params.externalActionMachineRequestPrivateKey! } } : {}),
-        ...(params.actionsSettingsProvider?.getAccountSettings ? { deps: { readAccountSettings: () => params.actionsSettingsProvider!.getAccountSettings!() ?? null } } : {}),
+        deps: {
+          // Consume the installed Action effect, including requester-local native
+          // Stop. Calling the service directly bypasses that host composition.
+          requestSessionStop: async ({ idOrPrefix, stopIntent }) => {
+            const stop = await sessionStop({ sessionId: idOrPrefix, stopIntent, context,
+              ...(context.signal ? { signal: context.signal } : {}) });
+            const failure = readActionFailureEnvelope(stop)
+              ?? (stop && typeof stop === 'object' && 'ok' in stop && stop.ok === false
+                ? readSessionStopConfirmationFailure(idOrPrefix, stop) : null);
+            if (failure) return { ...failure, code: failure.errorCode };
+            return { ok: true, ...SessionStopResultSchema.parse(stop) };
+          },
+          ...(params.actionsSettingsProvider?.getAccountSettings
+            ? { readAccountSettings: () => params.actionsSettingsProvider!.getAccountSettings!() ?? null } : {}),
+        },
         ...(params.machineAdmissionTransport ? { machineAdmissionTransport: params.machineAdmissionTransport } : {}),
       };
       const { runSessionAgentTransition } = await import('@/session/agentTransition/sessionAgentTransitionCoordinator');
