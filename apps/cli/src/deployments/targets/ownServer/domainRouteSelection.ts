@@ -65,8 +65,8 @@ export function selectDomainMembershipMachines(members: readonly DomainMemberIde
     const draining = new Set(drainingMachines);
     return members.filter(member => !draining.has(member.machineId)).map(({ machineId, installationId }) => ({ machineId, installationId }));
 }
-const activeDomainMembersDetails = { requiredFact: 'activeDomainMembers',
-    remedy: 'Deploy the app so it is running on this Machine, then add the domain' } as const;
+// The recovery owner (protocol deploymentFailureRecoveryV1) states this fact's one remedy, Deploy.
+const activeDomainMembersDetails = { requiredFact: 'activeDomainMembers' } as const;
 export type DomainRouteSelectionUnavailable = Readonly<{
     status: 'unavailable'; machineIds: readonly string[];
 }> & (Readonly<{ reason: 'required_fact_unavailable'; details: Readonly<{ requiredFact: string; remedy?: string }> }>

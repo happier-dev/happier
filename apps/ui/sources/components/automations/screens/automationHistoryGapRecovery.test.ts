@@ -737,10 +737,11 @@ describe('AutomationHistoryGapRecoveryAction', () => {
                 request.method === `${MACHINE_ID}:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`)).toBe(true));
             const { act } = await import('react-test-renderer');
             await act(async () => { unpublish = publishCommittedAppShellPluginUiProjection(() => null, () => facts); });
+            // The banner's one visible recovery button (DEPLOY-REACCEPT-1113 D8), enabled once the owner admits it.
             await waitForHomeGovernance(() => expect(screen.findAll(row =>
-                row.props.title === 'History gap needs attention' && typeof row.props.onPress === 'function').length).toBeGreaterThan(0));
-            await pressTestInstanceAsync(screen.find(row =>
-                row.props.title === 'History gap needs attention' && typeof row.props.onPress === 'function'), 'native recovery');
+                row.props.testID === 'automation-history-gap-recovery-run' && typeof row.props.onPress === 'function').length).toBeGreaterThan(0));
+            await pressTestInstanceAsync(screen.findAll(row =>
+                row.props.testID === 'automation-history-gap-recovery-run' && typeof row.props.onPress === 'function')[0]!, 'native recovery');
             await waitForHomeGovernance(() => expect(actionRequests).toHaveLength(1));
             expect(actionRequests[0]).toMatchObject({
                 action: { pluginId: PLUGIN_ID, localId: ACTION_LOCAL_ID },
@@ -784,10 +785,10 @@ describe('AutomationHistoryGapRecoveryAction', () => {
         }));
         await screen.pressByTestIdAsync(`gap-workflow-trigger:saved:${TRIGGER_ID}-more`);
         await screen.pressByTestIdAsync(`gap-workflow-trigger:saved:${TRIGGER_ID}-history`);
-        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('History gap needs attention'));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('automation-history-gap-recovery')).not.toBeNull());
         await waitForHomeGovernance(() => expect(screen.findAll(row =>
-            row.props.title === 'History gap needs attention' && typeof row.props.onPress === 'function').length).toBeGreaterThan(0));
-        const recovery = screen.find(row => row.props.title === 'History gap needs attention' && typeof row.props.onPress === 'function');
+            row.props.testID === 'automation-history-gap-recovery-run' && typeof row.props.onPress === 'function').length).toBeGreaterThan(0));
+        const recovery = screen.findAll(row => row.props.testID === 'automation-history-gap-recovery-run' && typeof row.props.onPress === 'function')[0]!;
         await act(async () => { recovery.props.onPress(); });
         await waitForHomeGovernance(() => expect(actionRequests).toHaveLength(1));
         expect(actionRequests[0]?.action).toEqual({ pluginId: PLUGIN_ID, localId: ACTION_LOCAL_ID });
@@ -822,7 +823,7 @@ describe('AutomationHistoryGapRecoveryAction', () => {
                 accessibilityLiveRegion: 'assertive',
             }),
         }));
-        expect(screen.getTextContent()).toContain('Source recovery needs another try');
+        expect(screen.findByTestId('automation-history-gap-recovery-retry')).not.toBeNull();
         expect(screen.getTextContent()).not.toContain('do-not-disclose');
         expect(readAutomationHistoryGapRecoveryStatus(currentAutomation, TRIGGER_ID)).toEqual(
             readEventTrigger(currentAutomation).sourceStatus,

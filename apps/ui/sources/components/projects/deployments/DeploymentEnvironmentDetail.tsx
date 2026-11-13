@@ -1407,9 +1407,11 @@ export function DeployOutcomeBanner(
   // no action, and the sentence says why instead.
   const failedDeploymentId = DeploymentExecutionFailureDetailsV1Schema.safeParse(outcome.failure?.details).data?.deploymentId;
   const leadsNowhere = typedRecovery?.nextAction.destination === 'logs' && !failedDeploymentId;
-  const recovery = leadsNowhere ? null : typedRecovery;
+  // The cure is this Environment's own Deploy, already on the page: the sentence names it, no second button.
+  const ownDeploy = typedRecovery?.nextAction.destination === 'deploy';
+  const recovery = leadsNowhere || ownDeploy ? null : typedRecovery;
   const storedRemedy = failure?.technicalDetails.find(line => line.key === 'failure-remedy')?.value;
-  const canonicalReason = failure && failure.reason !== storedRemedy && !requestSpecific ? failure.reason : null;
+  const canonicalReason = failure && failure.reason !== storedRemedy && !requestSpecific && !ownDeploy ? failure.reason : null;
   const { openRecovery } = controller;
   // A refusal whose way forward is a review needs the person, not a retry of a failure: amber, paired with that review.
   const needsReview = recovery?.nextAction.destination === 'review';
@@ -1453,7 +1455,7 @@ export function DeployOutcomeBanner(
                   machine: props.machine,
                 })
               : leadsNowhere ? t('projects.deployments.refusedBeforeLogs')
-              : recovery?.remedy ?? failure?.reason ?? refusalConsequence(outcome.code))
+              : (ownDeploy ? typedRecovery?.remedy : recovery?.remedy) ?? failure?.reason ?? refusalConsequence(outcome.code))
       }
       {...(recovery?.nextAction.destination === 'review'
         ? { action: { label: recovery.nextAction.label, onPress: controller.retry } }
@@ -1463,7 +1465,7 @@ export function DeployOutcomeBanner(
               : recovery.nextAction.destination === 'machines' && props.machineId ? { machineId: props.machineId } : undefined) } } : {})}
       // The typed code is for support; the sentence says what it left. When the typed remedy is the sentence, the
       // stored recovery line would only repeat or contradict it.
-      details={failure ? failure.technicalDetails.filter(line => !(line.key === 'failure-remedy' && recovery && !canonicalReason))
+      details={failure ? failure.technicalDetails.filter(line => !(line.key === 'failure-remedy' && (recovery || ownDeploy) && !canonicalReason))
         .map(line => `${line.label}: ${line.value}`) : [outcome.code]}
     />
   );

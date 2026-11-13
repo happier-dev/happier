@@ -204,9 +204,15 @@ describe('deployment failure recovery', () => {
             .not.toBe(readDeploymentFailureRecoveryV1('required_fact_unavailable').remedy);
     });
 
+    it('keeps one remedy for missing serving members even when an older daemon authored its own sentence', () => {
+        const current = readDeploymentFailureRecoveryV1('required_fact_unavailable', { requiredFact: 'activeDomainMembers' });
+        expect(readDeploymentFailureRecoveryV1('required_fact_unavailable', { requiredFact: 'activeDomainMembers',
+            remedy: 'Deploy the app so it is running on this Machine, then add the domain' })).toEqual(current);
+    });
+
     it.each([
         ['cloudflare_selection_required', 'domains'], ['domain_ingress_required', 'domains'],
-        ['activeDomainMembers', 'settings'], ['memberCaddyObservation', 'machines'],
+        ['activeDomainMembers', 'deploy'], ['memberCaddyObservation', 'machines'],
         ['publicCaddyObservation', 'machines'], ['edgeCaddyMachine', 'domains'],
         ['privateCaddyListener', 'domains'], ['publicCaddyListener', 'domains'],
         ['sharedTunnelOrigin', 'domains'], ['cloudflarePreparation', 'domains'],

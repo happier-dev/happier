@@ -312,7 +312,7 @@ const ProjectDeploymentsPage = React.memo(
         case 'logs':
           if (at?.deploymentId) { setSelection({ environmentId: selectionRef.current.environmentId, deploymentId: at.deploymentId }); return; }
           openEnvironmentTab({ tab: 'overview', section: null }); return;
-        case 'review':
+        case 'review': case 'deploy':
           openEnvironmentTab({ tab: 'overview', section: null }); return;
         case 'source': router.push(projectSourceRoute(props.sourceId)); return;
         // A Machine-scoped remedy (a missing tool, the build Machine) opens that Machine's Setup; Machines only when none is named.

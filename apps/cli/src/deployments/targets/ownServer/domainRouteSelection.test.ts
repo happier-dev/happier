@@ -347,7 +347,7 @@ async function observed(address: string, port: number, edge = false,
         }
         if (containerNetwork.retainedSeed !== undefined && args.includes('wait')) {
             await new Promise<void>(resolve => {
-                if (signal.aborted) resolve(); else signal.addEventListener('abort', () => resolve(), { once: true });
+                if (!signal || signal.aborted) resolve(); else signal.addEventListener('abort', () => resolve(), { once: true });
             });
             return { exitCode: 1, stdout: '', stderr: '' };
         }
@@ -510,11 +510,14 @@ it('selects a public-only Caddy placement for a draft without workload membershi
     }
 });
 
-it('provides the deployment remedy when no active Domain members can supply a route', () => {
+it('names the missing serving members and leaves their one remedy to the recovery owner', () => {
     const unavailable = { status: 'unavailable', reason: 'required_fact_unavailable',
-        details: { requiredFact: 'activeDomainMembers', remedy: expect.any(String) } };
-    expect(selectDomainCaddyPlacements({ members: [] })).toMatchObject(unavailable);
-    expect(selectPrivateCaddyOriginNetwork({ observerNetworks: [], members: [] })).toMatchObject(unavailable);
+        details: { requiredFact: 'activeDomainMembers' } };
+    // The recovery owner's sentence and its Deploy are one remedy; a second authored sentence would disagree (DEPLOY-REACCEPT-1113 D7).
+    for (const result of [selectDomainCaddyPlacements({ members: [] }), selectPrivateCaddyOriginNetwork({ observerNetworks: [], members: [] })]) {
+        expect(result).toMatchObject(unavailable);
+        expect(result.status === 'unavailable' ? result.details : undefined).not.toHaveProperty('remedy');
+    }
 });
 
 it.skipIf(process.platform === 'win32')('derives private/public placements from observed topology without confusing the public redirect with app origin', async () => {
@@ -1179,7 +1182,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                 actionRequestId: envelope.requestId, execute: async () => ActionExecuteResultSchema.parse(await execute()) });
             const details = { environmentId: input.environmentId, domainId: input.domainId, step: 'native_execution',
                 ...(removingNativeOutput ? { requiredFact: 'nativeExecutionResult', remedy: expect.stringMatching(/\S/) }
-                    : noActiveDomainMembers ? { requiredFact: 'activeDomainMembers', remedy: expect.any(String) }
+                    : noActiveDomainMembers ? { requiredFact: 'activeDomainMembers' }
                     : scenario === 'network review required' ? { requiredFact: 'reachabilityPosture', remedy: expect.any(String) }
                         : nativeOutcomeUnknown ? { ...(nativeUnknownWithFact ? { failure: nativeUnknownFailure, requiredFact: nativeUnknownFailure.requiredFact }
                             : { requiredFact: 'nativeExecutionResult' }),

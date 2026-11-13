@@ -13,7 +13,6 @@ import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDa
 import { PLUGIN_EVENT_AUTOMATION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
 import type { AutomationDefinition } from '@/sync/domains/automations/automationTypes';
 
@@ -23,6 +22,7 @@ import {
     recoverAutomationHistoryGap,
     resolveAutomationHistoryGapRecoveryExecutionOrigin,
 } from './automationHistoryGapRecovery';
+import { readHistoryGapRecoveryPresentation } from './historyGapRecoveryPresentation';
 
 /**
  * A detail-only recovery entry point. It borrows the existing cold Event
@@ -136,40 +136,29 @@ export function AutomationHistoryGapRecoveryAction(props: Readonly<{
     }, [accountLifetime, canRecover, eligibleEvent, props, resolveExecutionOrigin]);
 
     if (!status) return null;
-    const canStartRecovery = canRecover && !recovering && !recoveryFailed;
+    // One attention banner with its one recovery: resolving reads as resolving, never as unavailable then a flip.
+    const presentation = readHistoryGapRecoveryPresentation({ projectionPhase: projection.phase, canRecover, recovering, recoveryFailed });
+    const failed = presentation === 'failed';
     return (
-        <>
-            {recoveryFailed ? (
-                <HappierBanner
-                    testID="automation-history-gap-recovery-failure"
-                    tone="warning"
-                    theme={presentationTheme}
-                    title={t('settingsPlugins.eventAutomationComposer.historyGapRecoveryFailureTitle')}
-                    description={t('settingsPlugins.eventAutomationComposer.historyGapRecoveryFailureBody')}
-                    action={(
-                        <RoundButton
-                            size="small"
-                            testID="automation-history-gap-recovery-retry"
-                            title={t('common.retry')}
-                            accessibilityLabel={t('common.retry')}
-                            disabled={!canRecover || recovering}
-                            loading={recovering}
-                            onPress={canRecover && !recovering ? recover : undefined}
-                        />
-                    )}
+        <HappierBanner
+            testID={failed ? 'automation-history-gap-recovery-failure' : 'automation-history-gap-recovery'}
+            tone="warning"
+            theme={presentationTheme}
+            title={t(failed ? 'settingsPlugins.eventAutomationComposer.historyGapRecoveryFailureTitle'
+                : 'settingsPlugins.eventAutomationComposer.historyGapRecoveryTitle')}
+            description={t(failed ? 'settingsPlugins.eventAutomationComposer.historyGapRecoveryFailureBody'
+                : presentation === 'unavailable' ? 'settingsPlugins.eventAutomationComposer.historyGapRecoveryUnavailable'
+                    : 'settingsPlugins.eventAutomationComposer.historyGapRecoverySubtitle')}
+            action={presentation === 'unavailable' ? undefined : (
+                <RoundButton
+                    size="small"
+                    testID={failed ? 'automation-history-gap-recovery-retry' : 'automation-history-gap-recovery-run'}
+                    title={t(failed ? 'common.retry' : 'settingsPlugins.eventAutomationComposer.historyGapRecoveryAction')}
+                    disabled={!canRecover || recovering}
+                    loading={presentation === 'resolving' || recovering}
+                    onPress={canRecover && !recovering ? recover : undefined}
                 />
-            ) : null}
-            <Item
-                title={t('settingsPlugins.eventAutomationComposer.historyGapRecoveryTitle')}
-                subtitle={canRecover
-                    ? t('settingsPlugins.eventAutomationComposer.historyGapRecoverySubtitle')
-                    : t('settingsPlugins.eventAutomationComposer.historyGapRecoveryUnavailable')}
-                subtitleLines={0}
-                {...(canStartRecovery ? { onPress: recover } : {})}
-                mode={canStartRecovery ? undefined : 'info'}
-                loading={recovering}
-                showChevron={false}
-            />
-        </>
+            )}
+        />
     );
 }

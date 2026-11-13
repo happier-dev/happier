@@ -122,6 +122,7 @@ async function renderDomains(
   healthSetup = false,
   receipt = createDeploymentReceiptDetailV1(),
   phone = false,
+  review: Record<string, unknown> = noReview,
 ) {
   const transport: Partial<DeploymentReadTransportV1> = {
     listEnvironments: async () => ({
@@ -153,7 +154,7 @@ async function renderDomains(
         serverId="home"
         phone={phone}
         deploy={null}
-        review={noReview}
+        review={review as typeof noReview}
         onOpenReceipt={() => {}}
         destination={{ tab: 'domains', section: null }}
         domainActions={domainActions as never}
@@ -560,7 +561,25 @@ describe('Environment → Domains: Service never starts on the database (PAGE-AC
       await screen.pressByTestIdAsync(id);
       const select = (testID: string) => screen.findAllByType(DropdownMenu).find(node => node.props.testID === testID);
       expect(select(`${id}.service`)?.props.selectedId).toBe('web');
-      expect(select(`${id}.port`)?.props.selectedId).toBe('8080');
+      // One declared port is a prefilled, still editable field: a one-option menu offers no choice (DEPLOY-REACCEPT-1113 D6).
+      expect(select(`${id}.port`)).toBeUndefined();
+      expect(screen.findByTestId(`${id}.port`)?.props.value).toBe('8080');
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('offers a Port choice only when the service declares more than one port (DEPLOY-REACCEPT-1113 D6)', async () => {
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const detail = withDatabase({ kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`,
+      document: 'services:\n  app:\n    image: nginx:alpine\n    expose:\n      - "80"\n      - "443"\n',
+      profiles: [], services: ['app'], primaryService: 'app' });
+    const { screen, controller, settle } = await renderDomains(detail, [], domainActions(detail));
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      const select = (testID: string) => screen.findAllByType(DropdownMenu).find(node => node.props.testID === testID);
+      await act(async () => {
+        await vi.waitFor(() => expect(select(`${id}.port`)?.props.items.map((item: { id: string }) => item.id)).toEqual(['80', '443']));
+      });
     } finally { await screen.unmount(); controller.retire(); }
   });
 
@@ -575,8 +594,9 @@ describe('Environment → Domains: Service never starts on the database (PAGE-AC
       await screen.pressByTestIdAsync(id);
       const select = (testID: string) => screen.findAllByType(DropdownMenu).find(node => node.props.testID === testID);
       await act(async () => {
-        await vi.waitFor(() => expect(select(`${id}.port`)?.props.selectedId).toBe('80'));
+        await vi.waitFor(() => expect(screen.findByTestId(`${id}.port`)?.props.value).toBe('80'));
       });
+      expect(select(`${id}.port`)).toBeUndefined();
       expect(select(`${id}.service`)?.props.selectedId).toBe('app');
     } finally { await screen.unmount(); controller.retire(); }
   });
@@ -864,6 +884,37 @@ describe('Environment → Domains: Add domain never looks dead (UI-DOMAIN-VIEWER
       expect(banner?.props.title).toBe(t('projects.deployments.editors.domainAddFailedTitle'));
       expect(banner?.props.placement).toBe('inline');
       expect(screen.findByTestId(`${id}.host`), 'the form stays open with what was typed').not.toBeNull();
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('says a refused add needs a deploy without a second, different recovery button (DEPLOY-REACCEPT-1113 D7)', async () => {
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, content: { ...base.content, ingress: undefined } };
+    // An older daemon still authors its own sentence beside the fact; the recovery owner's one remedy wins.
+    const actions = { ...domainActions(detail), addDomain: vi.fn(async () => ({ ok: false as const, error: 'required_fact_unavailable',
+      details: { requiredFact: 'activeDomainMembers', step: 'native_execution',
+        remedy: 'Deploy the app so it is running on this Machine, then add the domain' } })) };
+    const openRecovery = vi.fn();
+    const { screen, controller, settle } = await renderDomains(detail, [], actions, false, undefined, false, { ...noReview, openRecovery });
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      await act(async () => {
+        screen.changeTextByTestId(`${id}.host`, 'app.example.test');
+        screen.changeTextByTestId(`${id}.service`, 'web');
+        screen.changeTextByTestId(`${id}.port`, '3000');
+        screen.changeTextByTestId(`${id}.check`, '/');
+        screen.changeTextByTestId(`${id}.checkStatus`, '200');
+      });
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(await settle(`${id}.outcome`)).not.toBeNull();
+      const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+      const banner = screen.findAllByType(AttentionBanner)
+        .find(node => String(node.props.testID).startsWith('project-deployments.outcome.refused'));
+      const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
+      // The cure is the Environment's own Deploy, already on the page: the sentence names it and no other route is offered.
+      expect(banner?.props.description).toBe(readDeploymentRefusalRecoveryV1('required_fact_unavailable', { requiredFact: 'activeDomainMembers' })?.remedy);
+      expect(banner?.props.action).toBeUndefined();
     } finally { await screen.unmount(); controller.retire(); }
   });
 

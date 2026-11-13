@@ -496,8 +496,9 @@ function DomainAddForm(
             />}
           </FieldItem>
           <FieldItem label={t('projects.deployments.domainFieldPort')} style={props.phone ? undefined : styles.routePort}>
-            {servicePorts.length > 0 ? (
-              <ValueFieldSelect testID="project-deployments.environment.domains.add.port"
+            {/* One declared port is prefilled into the editable field; a menu only when there is a choice. */}
+            {servicePorts.length > 1 ? (
+              <ValueFieldSelect testID="project-deployments.environment.domains.add.port" fill
                 label={t('projects.deployments.domainFieldPort')}
                 items={servicePorts.map(value => ({ id: String(value), title: String(value) }))}
                 selectedId={port || null}
