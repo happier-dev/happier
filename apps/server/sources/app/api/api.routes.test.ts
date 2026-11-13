@@ -22,6 +22,10 @@ import {
 } from "@/app/api/routes/session/sessionRoutes.testkit";
 import { enableOptionalStatics } from "@/app/api/utils/enableOptionalStatics";
 import { resolveApiRateLimitPluginOptions } from "@/app/api/utils/apiRateLimitPolicy";
+import { PERSONAL_HOME_RUNTIME_PURPOSE } from "@/app/runtime/personalHomeRuntimePurpose";
+import { startHomeSearchLifecycle } from "@/app/search/homeSearchLifecycle";
+import { registerHomeSearchRoutes } from "@/app/search/homeSearchRoutes";
+import { readHomeSearchVisibleSessionConstraints } from "@/app/search/readHomeSearchVisibleSessionConstraints";
 
 import * as apiModule from "./api";
 
@@ -47,7 +51,20 @@ describe("registerApiRoutes", () => {
         }
     });
 
-    it("mounts review comment routes on the API app", () => {
+    it("mounts review comment routes on the API app", async ({ onTestFinished }) => {
+        vi.stubEnv("HAPPIER_MANAGED_RELAY_PURPOSE", PERSONAL_HOME_RUNTIME_PURPOSE);
+        vi.stubEnv("HAPPIER_FEATURE_SEARCH__ENABLED", "1");
+        const searchRoot = await mkdtemp(join(tmpdir(), "happier-api-route-census-"));
+        const homeSearch = startHomeSearchLifecycle({
+            dbPath: join(searchRoot, "search.sqlite"),
+            homeServerIdentityId: "route-census-home",
+            storagePolicy: "plaintext_only",
+            readCanonicalMessagesPage: async () => ({ messages: [] }),
+        });
+        onTestFinished(async () => {
+            await homeSearch.stop();
+            await rm(searchRoot, { recursive: true, force: true });
+        });
         const registerApiRoutes = (apiModule as unknown as Readonly<{
             registerApiRoutes?: (app: FakeRouteApp) => void;
         }>).registerApiRoutes;
@@ -55,6 +72,12 @@ describe("registerApiRoutes", () => {
 
         const app = createFakeRouteApp();
         registerApiRoutes?.(app);
+        // Startup mounts the lifecycle-owned search routes after the API registrar.
+        registerHomeSearchRoutes(app as unknown as Fastify, {
+            service: homeSearch,
+            resolveVisibleSessions: (accountId, authentication, scope) =>
+                readHomeSearchVisibleSessionConstraints({ accountId, authentication, scope }),
+        });
 
         expect(app.routes.has("GET /v1/reviews/comments")).toBe(true);
         expect(app.routes.has("POST /v1/reviews/comments")).toBe(true);
@@ -167,10 +190,14 @@ describe("registerApiRoutes", () => {
         // The Home-family source catalog is the registration census. Handlers
         // remain explicit domain owners, but every declared method/path pair
         // must be mounted by this composition root.
+        // Parameter labels belong to each adapter; HTTP route identity is the
+        // method and path pattern (for example :sectionId and :folderId match).
+        const routePattern = (transport: string) => transport.replace(/:[^/]+/g, ":param");
+        const registeredPatterns = new Set([...app.routes.keys()].map(routePattern));
         for (const actionId of HOME_DOMAIN_ACTION_IDS_V1) {
             const spec = getActionSpec(actionId);
             const transport = `${spec.serverTransport?.method} ${spec.serverTransport?.path}`;
-            expect(app.routes.has(transport), actionId).toBe(true);
+            expect(registeredPatterns.has(routePattern(transport)), actionId).toBe(true);
         }
 
         // Lane 03 route reachability is spec-driven: public auth entry is mounted

@@ -32,7 +32,7 @@ const dbTransaction = createDbTransactionMock(() => ({
 }));
 
 installDbModuleMock(() => ({
-    db: dbTransaction.wrapDb(dbMocks.db),
+    db: dbTransaction.wrapDb({ ...dbMocks.db, ...homeConfigSnapshotPostgresQueryMock }),
 }));
 installPrismaModuleMock(async () => {
     const actual = await vi.importActual<typeof import("@/storage/prisma")>("@/storage/prisma");

@@ -16,8 +16,9 @@ const homeDb = vi.hoisted(() => ({
     log: vi.fn(),
 }));
 vi.mock("@/utils/logging/log", () => ({ log: homeDb.log }));
-vi.mock("@/storage/db", () => ({
+vi.mock("@/storage/db", async () => ({
     db: {
+        ...(await import("@/app/home/settings/homeConfigSnapshot.testkit")).homeConfigSnapshotPostgresQueryMock,
         homeSettings: { findUnique: homeDb.readSettings },
         homeGovernancePolicy: { findUnique: homeDb.readPolicy },
     },

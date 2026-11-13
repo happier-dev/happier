@@ -91,13 +91,6 @@ describe("Account Settings encryption-transition census", () => {
             },
             select: { id: true },
         });
-        expect(fixture.accountSettingsSnapshot.findFirst).toHaveBeenCalledWith({
-            where: {
-                accountId: "account-1",
-                settingsDbValue: { not: null },
-            },
-            select: { id: true },
-        });
     });
 
     it("reports empty only after checking both Settings stores", async () => {

@@ -8,13 +8,17 @@ import {
 import { sessionUpdateHandler } from "./sessionUpdateHandler";
 
 // The feature decision reads the stored Home rows (the database boundary): none is stored.
-vi.mock("@/storage/db", async (importOriginal) => ({
-    ...await importOriginal<typeof import("@/storage/db")>(),
-    db: (await import("../testkit/dbMocks")).createDbTransactionMock(() => ({
+vi.mock("@/storage/db", async (importOriginal) => {
+    const homeSnapshot = {
+        ...(await import("@/app/home/settings/homeConfigSnapshot.testkit")).homeConfigSnapshotPostgresQueryMock,
         homeSettings: { findUnique: async () => null },
         homeGovernancePolicy: { findUnique: async () => null },
-    })).wrapDb({}),
-}));
+    };
+    return {
+        ...await importOriginal<typeof import("@/storage/db")>(),
+        db: (await import("../testkit/dbMocks")).createDbTransactionMock(() => homeSnapshot).wrapDb(homeSnapshot),
+    };
+});
 
 describe("sessionUpdateHandler ephemeral Runner admission", () => {
     beforeEach(() => vi.stubEnv("HAPPIER_FEATURE_SESSIONS_FOLLOWING__ENABLED", "1"));

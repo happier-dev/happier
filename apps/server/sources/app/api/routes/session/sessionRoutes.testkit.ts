@@ -1,10 +1,12 @@
-import { vi } from "vitest";
+import { afterEach, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 import tweetnacl from "tweetnacl";
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
 import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 
 import type { SessionAccessProjectionRow } from "@/app/session/access/sessionAccess";
+import { homeConfigSnapshotPostgresQueryMock } from "@/app/home/settings/homeConfigSnapshot.testkit";
 
 import { createDbMocks, createDbTransactionMock, inTxPostgresControlStatementMock, installDbModuleMock } from "../../testkit/dbMocks";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
@@ -136,6 +138,7 @@ const sessionDbMocks = createDbMocks({
 } as const);
 
 const txDbMocks = createDbMocks({
+    accountChange: ["findUnique"],
     automationRun: ["groupBy"],
     automationTrigger: ["findMany"],
     homeSettings: ["findUnique"],
@@ -146,16 +149,17 @@ const txDbMocks = createDbMocks({
     sessionGroupGrant: ["findMany"],
     sessionTeamCredentialBinding: ["findMany"],
     userKVStore: ["findMany"],
-    accountSessionFollow: ["updateMany"],
+    accountSessionFollow: ["findMany", "updateMany"],
     sessionFollowEdge: ["findMany", "findUnique"],
-    account: ["findMany", "findUnique"],
+    account: ["findMany", "findUnique", "findUniqueOrThrow"],
     accessKey: ["findUnique"],
     ephemeralRunnerActivation: ["findFirst"],
     machine: ["findFirst"],
     session: ["create", "findFirst", "findMany", "findUnique", "update", "updateMany"],
     sessionMessage: ["findMany", "findFirst"],
+    sessionPendingMessage: ["findUnique"],
     sessionShare: ["findMany"],
-    sessionTurn: ["findFirst", "findMany", "updateMany"],
+    sessionTurn: ["findFirst", "findMany", "findUnique", "updateMany"],
     sessionPin: ["count", "deleteMany", "findMany", "findUnique", "updateMany", "upsert"],
     sessionFolderAssignment: ["deleteMany", "findMany", "updateMany", "upsert"],
     sessionOrganizationFolder: ["count", "findMany", "updateMany", "upsert"],
@@ -171,11 +175,44 @@ const txDbMocks = createDbMocks({
 } as const);
 export const txExecuteRawUnsafe = vi.fn(async (_query?: string, ..._parameters: unknown[]) => 1);
 export const dbQueryRaw = vi.fn(async (_query?: unknown, ..._parameters: unknown[]) => [] as Array<{ sessionId: string }>);
+export const accountChanges: Array<{
+    accountId: string;
+    kind: string;
+    entityId: string;
+    cursor: number;
+    hint: unknown;
+}> = [];
+
+function persistAccountChange(accountId: string, kind: string, entityId: string, hint: unknown) {
+    const cursor = Math.max(0, ...accountChanges.filter(row => row.accountId === accountId).map(row => row.cursor)) + 1;
+    const row = { accountId, kind, entityId, cursor, hint };
+    const existing = accountChanges.findIndex(current => current.accountId === accountId && current.kind === kind && current.entityId === entityId);
+    if (existing < 0) accountChanges.push(row);
+    else accountChanges[existing] = row;
+    return row;
+}
+
 // Account owner-metadata admission locks bound Account rows; the fixture database holds every requested row.
-export const txQueryRawUnsafe = vi.fn(async (_query: string, ...parameters: unknown[]) =>
-    (Array.isArray(parameters[0]) ? parameters[0] : parameters)
+export const txQueryRawUnsafe = vi.fn(async (query: string, ...parameters: unknown[]) => {
+    if (query.includes('LEFT JOIN "HomeSettings"')) {
+        return homeConfigSnapshotPostgresQueryMock.$queryRawUnsafe.call(txDbMocks.db, query, parameters[0]);
+    }
+    if (query.includes('INSERT INTO "AccountChange"')) {
+        if (query.includes('jsonb_to_recordset($1::jsonb)')) {
+            const [encodedRequests, kind, , encodedHint] = parameters;
+            if (typeof encodedRequests !== "string" || typeof kind !== "string") throw new Error("Invalid AccountChange batch fixture");
+            const requests: Array<{ accountId: string; entityId: string }> = JSON.parse(encodedRequests);
+            const hint: unknown = typeof encodedHint === "string" ? JSON.parse(encodedHint) : null;
+            return requests.map(request => persistAccountChange(request.accountId, kind, request.entityId, hint));
+        }
+        const [accountId, kind, entityId, , encodedHint] = parameters;
+        if (typeof accountId !== "string" || typeof kind !== "string" || typeof entityId !== "string") throw new Error("Invalid AccountChange fixture");
+        return [persistAccountChange(accountId, kind, entityId, typeof encodedHint === "string" ? JSON.parse(encodedHint) : null)];
+    }
+    return (Array.isArray(parameters[0]) ? parameters[0] : parameters)
         .filter((id): id is string => typeof id === "string")
-        .map(id => ({ id })));
+        .map(id => ({ id }));
+});
 const txDb = Object.assign(txDbMocks.db, {
     $queryRawUnsafe: txQueryRawUnsafe,
     $executeRawUnsafe: async (query: string, ...values: unknown[]) => {
@@ -405,6 +442,7 @@ export const txSessionSystemRecordUpdate = txDbMocks.db.sessionSystemRecord.upda
 export const txSessionSystemRecordUpdateMany = txDbMocks.db.sessionSystemRecord.updateMany;
 export const txSessionSystemRecordDeleteMany = txDbMocks.db.sessionSystemRecord.deleteMany;
 export const txAccountFindUnique = txDbMocks.db.account.findUnique;
+export const txAccountFindUniqueOrThrow = txDbMocks.db.account.findUniqueOrThrow;
 export const txDiscussionAggregate = txDbMocks.db.discussion.aggregate;
 export const txDiscussionFindMany = txDbMocks.db.discussion.findMany;
 export const txDiscussionMessageFindMany = txDbMocks.db.discussionMessage.findMany;
@@ -461,10 +499,10 @@ export function configureMaterializedRunnerCurrentnessFixture(
  */
 export function createSessionAccessProjectionRelations(): Pick<
     SessionAccessProjectionRow,
-    "account" | "shares" | "teamGrants" | "groupGrants"
+    "account" | "shares" | "teamGrants" | "groupGrants" | "teamCredentialBindings"
 > {
     // Owner-Account currentness is read from the same fresh row as access (readmission).
-    return { account: { ...TEST_E2EE_ACCOUNT_CURRENTNESS_ROW }, shares: [], teamGrants: [], groupGrants: [] };
+    return { account: { ...TEST_E2EE_ACCOUNT_CURRENTNESS_ROW }, shares: [], teamGrants: [], groupGrants: [], teamCredentialBindings: [] };
 }
 
 /**
@@ -536,22 +574,20 @@ vi.mock("@/app/session/pending/pendingMessageService", () => ({
     listQueuedExecutionRunPendingTargetsForSessions,
 }));
 
-const PRISMA_RUNTIME_MOCK = {
-    raw: (value: string) => value,
-    sql: (strings: TemplateStringsArray, ...values: unknown[]) => ({ strings, values }),
-    DbNull: Symbol.for("Prisma.DbNull"),
-    JsonNull: Symbol.for("Prisma.JsonNull"),
-    AnyNull: Symbol.for("Prisma.AnyNull"),
-};
-
 const transactionBoundary = createDbTransactionMock(() => txDb);
 installDbModuleMock({
-    db: transactionBoundary.wrapDb(Object.assign(sessionDbMocks.db, { $queryRaw: dbQueryRaw })),
+    db: transactionBoundary.wrapDb(Object.assign(sessionDbMocks.db, {
+        $queryRaw: dbQueryRaw,
+        $queryRawUnsafe: (query: string, ...parameters: unknown[]) =>
+            query.includes('LEFT JOIN "HomeSettings"')
+                ? homeConfigSnapshotPostgresQueryMock.$queryRawUnsafe.call(sessionDbMocks.db, query, parameters[0])
+                : txQueryRawUnsafe(query, ...parameters),
+    })),
     getDbProviderFromEnv: () => "postgres",
-    prismaRuntime: PRISMA_RUNTIME_MOCK,
+    prismaRuntime: Prisma,
     // Sentinel access mirrors the real provider-matched namespace; bounded JSON
     // null filters (`producerV1`) are built through it.
-    getActivePrismaRuntime: () => PRISMA_RUNTIME_MOCK,
+    getActivePrismaRuntime: () => Prisma,
     isPrismaErrorCode(error: unknown, code: string) {
         if (!error || typeof error !== "object") {
             return false;
@@ -571,7 +607,6 @@ vi.doMock("@/storage/prisma", async (importOriginal) => {
     return { ...original, getActivePrismaRuntime: () => original.prismaRuntime };
 });
 
-vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 export const markSessionInactive = vi.fn();
 vi.mock("@/app/presence/sessionCache", () => ({
     activityCache: { markSessionInactive },
@@ -610,29 +645,25 @@ export const applySessionAgentTransitionCutover = vi.fn();
 vi.mock("@/app/session/agentTransition/applySessionAgentTransitionCutover", () => ({
     applySessionAgentTransitionCutover,
 }));
-export const markAccountChanged = vi.fn(async () => 1);
-// Route specs record the terminal Account-change write. Publication scheduling and
-// cursor locks are database-side effects of the same boundary, so they are no-ops here.
-// The transaction lifecycle itself stays real over the Prisma fixture above.
-vi.mock("@/app/changes/markAccountChanged", () => ({
-    markAccountChanged,
-    beforeAccountChangePublication: vi.fn(),
-    assertAccountChangePublicationAudienceInTx: vi.fn(),
-    afterAccountChangePublication: vi.fn(),
-    enqueueAccountChangePublication: vi.fn(),
-    flushAccountChangesInTx: vi.fn(async () => {}),
-    acquireAccountChangePublicationLocksInTx: vi.fn(async () => []),
-}));
 vi.mock("@/app/account/profile/accountDisplayProfile", async (importOriginal) => ({
     ...(await importOriginal<typeof import("@/app/account/profile/accountDisplayProfile")>()),
     ACCOUNT_DISPLAY_PROFILE_SELECT: {},
     toShareUserProfile: vi.fn(),
 }));
 
+// This SQL boundary fixture implements PostgreSQL regardless of the host Stack provider.
+afterEach(() => vi.unstubAllEnvs());
+
 export function resetSessionRouteMocks(): void {
+    vi.stubEnv("HAPPIER_DB_PROVIDER", "postgres");
     vi.clearAllMocks();
     sessionDbMocks.reset();
     txDbMocks.reset();
+    accountChanges.length = 0;
+    txDb.accountChange.findUnique.mockImplementation(async (query) => {
+        const key = query.where.accountId_kind_entityId;
+        return accountChanges.find(row => row.accountId === key.accountId && row.kind === key.kind && row.entityId === key.entityId) ?? null;
+    });
     servedSessionRows.clear();
     txExecuteRawUnsafe.mockReset();
     txExecuteRawUnsafe.mockResolvedValue(1);
@@ -735,14 +766,18 @@ export function resetSessionRouteMocks(): void {
     txDbMocks.db.sessionTeamCredentialBinding.findMany.mockResolvedValue([]);
     txDbMocks.db.userKVStore.findMany.mockResolvedValue([]);
     txDbMocks.db.accountSessionFollow.updateMany.mockResolvedValue({ count: 0 });
+    txDbMocks.db.accountSessionFollow.findMany.mockResolvedValue([]);
     txDbMocks.db.sessionFollowEdge.findMany.mockResolvedValue([]);
     txSessionMessageFindMany.mockResolvedValue([]);
     txSessionMessageFindFirst.mockResolvedValue(null);
+    txDbMocks.db.sessionPendingMessage.findUnique.mockResolvedValue(null);
+    txDbMocks.db.sessionTurn.findUnique.mockResolvedValue(null);
     txSessionShareFindMany.mockResolvedValue([]);
     txSessionTurnFindFirst.mockResolvedValue(null);
     txSessionTurnFindMany.mockResolvedValue([]);
     txDbMocks.db.sessionTurn.updateMany.mockRejectedValue(new Error('Route fixture has no predecessor turns to update'));
     txAccountFindUnique.mockReset();
+    txAccountFindUniqueOrThrow.mockResolvedValue({ seq: 0 });
     txDiscussionAggregate.mockResolvedValue({ _max: { lastMessageAt: null } });
     txDiscussionFindMany.mockResolvedValue([]);
     txDiscussionMessageFindMany.mockResolvedValue([]);
