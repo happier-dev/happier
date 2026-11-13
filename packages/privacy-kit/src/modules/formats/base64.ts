@@ -8,7 +8,8 @@ export function decodeBase64(base64: string, encoding: 'base64' | 'base64url' = 
     return Uint8Array.from(b64.decode(base64));
 }
 
-export function encodeBase64(buffer: Bytes, encoding: 'base64' | 'base64url' = 'base64'): string {
+/** Encoding only reads the view, so any Uint8Array (including tweetnacl output) is accepted. */
+export function encodeBase64(buffer: Uint8Array, encoding: 'base64' | 'base64url' = 'base64'): string {
     if (encoding === 'base64url') {
         return b64.encodeURLSafe(buffer);
     }

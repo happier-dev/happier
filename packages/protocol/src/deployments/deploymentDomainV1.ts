@@ -169,6 +169,7 @@ export const DeploymentDomainAddPreparedInputV1Schema = lazyZodSchema(() => z.st
     ...addMetadata(), ...DeploymentArtifactContentReferenceV1Schema.shape, provider: z.optional(z.literal(true)),
 }).check(z.refine(input => (input.membershipDeploymentId === undefined) === (input.membershipMachines === undefined),
     { message: 'Membership reconciliation requires its accepted receipt and desired installations.' })));
+export type DeploymentDomainAddPreparedInputV1 = z.infer<typeof DeploymentDomainAddPreparedInputV1Schema>;
 export const DeploymentDomainAddInputV1Schema = lazyZodSchema(() => z.union([
     DeploymentDomainAddPreparedInputV1Schema,
     z.strictObject({ ...addMetadata(), content: DeploymentDomainContentV1Schema }).check(

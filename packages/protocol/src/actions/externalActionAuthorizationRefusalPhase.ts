@@ -8,7 +8,7 @@ export const ExternalActionAuthorizationRefusalPhaseSchema = lazyZodSchema(() =>
   'source_before_principal', 'machine_identity', 'machine_admission_before_principal', 'machine_signature',
   'principal', 'machine_admission_after_principal', 'source_after_principal',
   'outer_action', 'verification_purpose', 'credential_action_admission',
-  'reviewed_child', 'deployment_child_http', 'deployment_preparation',
+  'reviewed_child', 'deployment_child_http', 'deployment_preparation', 'deployment_domain_preparation',
   'deployment_child_routing', 'deployment_child_root_input', 'deployment_child_signature',
   'deployment_child_admission', 'deployment_child_destination',
   'deployment_setup_receiver_purpose', 'deployment_publication_child_kind', 'deployment_publication_purpose',

@@ -80,14 +80,16 @@ export function encodeBase64(bytes: Uint8Array, variant: Base64Variant = 'base64
   return base64;
 }
 
-export function decodeBase64(base64: string, variant: Base64Variant = 'base64'): Uint8Array {
+/** Every branch allocates fresh ArrayBuffer-backed bytes (never a SharedArrayBuffer view). */
+export function decodeBase64(base64: string, variant: Base64Variant = 'base64'): Uint8Array<ArrayBuffer> {
   const normalized = normalizeBase64ForDecoding(base64, variant);
   const nativeBytes = Uint8Array as typeof Uint8Array & {
-    fromBase64?: (input: string) => Uint8Array;
+    fromBase64?: (input: string) => Uint8Array<ArrayBuffer>;
   };
   if (typeof nativeBytes.fromBase64 === 'function') return nativeBytes.fromBase64(normalized);
   // Copy out of Buffer's pool: callers receive plain, independently owned bytes,
   // preserving Uint8Array.slice and avoiding exposure of unrelated backing bytes.
   if (typeof Buffer !== 'undefined') return new Uint8Array(Buffer.from(normalized, 'base64'));
-  return toByteArray(normalized);
+  // base64-js types its result as a plain Uint8Array; it always allocates a fresh `new Uint8Array(length)`.
+  return toByteArray(normalized) as Uint8Array<ArrayBuffer>;
 }

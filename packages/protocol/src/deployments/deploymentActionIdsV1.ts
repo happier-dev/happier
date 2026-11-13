@@ -45,18 +45,18 @@ export const DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 = 'deployments.publish.prep
 export const DEPLOYMENT_PREPARE_ACTION_ID_V1 = 'deployments.prepare';
 /** Prepare's reviewed Session creation or message handoff retains this role. */
 export const DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1 = 'prepare-session';
-export const DEPLOYMENT_DEPLOY_ACTION_ID_V1 = 'deployments.deploy';
+export const DEPLOYMENT_DEPLOY_ACTION_ID_V1 = 'deployments.deploy' as const;
 export const DEPLOYMENT_ROLLBACK_ACTION_ID_V1 = 'deployments.rollback';
 export const DEPLOYMENT_TEARDOWN_ACTION_ID_V1 = 'deployments.teardown';
 export const DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 = 'deployments.environments.create';
 export const DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 = 'deployments.environments.update';
 export const DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 = 'deployments.environments.moveToRepository';
 export const DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 = 'deployments.environments.list';
-export const DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 = 'deployments.environments.get';
+export const DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 = 'deployments.environments.get' as const;
 export const DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 = 'deployments.bindings.set';
 export const DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 = 'deployments.receipts.observe';
 export const DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 = 'deployments.templates.instantiate';
-export const DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 = 'deployments.domains.add';
+export const DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 = 'deployments.domains.add' as const;
 export const DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1 = 'deployments.domains.dns.create' as const;
 export const DEPLOYMENT_DOMAIN_DNS_VERIFY_ACTION_ID_V1 = 'deployments.domains.dns.verify' as const;
 export type DeploymentDomainDnsActionIdV1 = typeof DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1 | typeof DEPLOYMENT_DOMAIN_DNS_VERIFY_ACTION_ID_V1;
@@ -182,10 +182,15 @@ export function isDeploymentEnvironmentMetadataReadActionIdV1(value: string): va
   return isDeploymentDomainMetadataReadActionIdV1(value)
     || isDeploymentReceiptReadActionIdV1(value) || value === 'deployments.observation.get';
 }
-/** Existing rollout and teardown roots may reconcile their admitted runtime membership. */
-export function isDeploymentMembershipActionIdV1(value: string, admission?: DeploymentPreparationAdmissionV1): value is
+/** Existing rollout and teardown roots may reconcile their admitted runtime membership.
+ * Create and Template roots qualify only with their apply admission, so the
+ * admission-free form narrows to the unconditional roots alone. */
+export function isDeploymentMembershipActionIdV1(value: string): value is
+  'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown';
+export function isDeploymentMembershipActionIdV1(value: string, admission: DeploymentPreparationAdmissionV1 | undefined): value is
   'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown'
-  | 'deployments.templates.instantiate' | 'deployments.environments.create' {
+  | 'deployments.templates.instantiate' | 'deployments.environments.create';
+export function isDeploymentMembershipActionIdV1(value: string, admission?: DeploymentPreparationAdmissionV1): boolean {
   return deploymentOperationForRootActionV1(value, admission) !== undefined;
 }
 
@@ -264,13 +269,13 @@ export function isDeploymentNativeReadActionIdV1(value: string): value is
   return value === 'deployments.health.read' || value === 'deployments.drift.read' || value === 'deployments.logs.read';
 }
 
-export const DEPLOYMENT_DOMAIN_GET_ACTION_ID_V1 = 'deployments.domains.get';
+export const DEPLOYMENT_DOMAIN_GET_ACTION_ID_V1 = 'deployments.domains.get' as const;
 export const DEPLOYMENT_DOMAIN_LIST_ACTION_ID_V1 = 'deployments.domains.list';
 export const DEPLOYMENT_DOMAIN_VERIFY_ACTION_ID_V1 = 'deployments.domains.verify';
 export const DEPLOYMENT_DRIFT_READ_ACTION_ID_V1 = 'deployments.drift.read';
 export const DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1 = 'deployments.health.current';
 export const DEPLOYMENT_LOGS_READ_ACTION_ID_V1 = 'deployments.logs.read';
-export const DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 = 'deployments.receipts.get';
+export const DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 = 'deployments.receipts.get' as const;
 export const DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1 = 'deployments.receipts.list';
 export const DEPLOYMENT_TARGET_LINK_ACTION_ID_V1 = 'deployments.targets.link';
 
