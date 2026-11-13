@@ -653,6 +653,11 @@ async function installManagedPackageProviderCli(params: Readonly<{
     }
     const addArgs = [
       '--dir', workspaceDir, 'add', params.managedInstall.packageName,
+      // The workspace is built in scratch and renamed into place, so its tree must be
+      // relocatable. On Windows pnpm's isolated linker uses junctions, which store absolute
+      // targets into the scratch dir; the hoisted linker writes real directories instead.
+      // POSIX pnpm links are relative and already survive the rename.
+      ...(process.platform === 'win32' ? ['--config.node-linker=hoisted'] : []),
       ...(params.managedInstall.allowBuild === true
         ? [`--allow-build=${params.managedInstall.packageName}`, '--ignore-scripts=false']
         : ['--ignore-scripts']),
