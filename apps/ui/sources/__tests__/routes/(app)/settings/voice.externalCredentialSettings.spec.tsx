@@ -3,8 +3,7 @@ import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import {
   PluginContributesV2Schema} from '@happier-dev/protocol/plugins/contributions/v2';
-import { createRecipientContractDigestV1,
-  createVoiceProviderRecipientContractFromCredentialsV1} from '@happier-dev/protocol/plugins/recipientContractV1';
+import { createVoiceProviderRecipientContractFromCredentialsV1} from '@happier-dev/protocol/plugins/recipientContractV1';
 import { type VoiceProviderContribution,
 } from '@happier-dev/protocol/plugins/contributions/voice';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
@@ -17,7 +16,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { createVoiceSettingsAccountTestHarness, withVoiceSettingsCredentialResource } from '@/voice/settings/panels/voiceSettingsAccountTestHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { ModalProvider } from '@/modal';
-import { t, tLoose } from '@/text';
+import { t } from '@/text';
 
 vi.mock('socket.io-client', async original =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
@@ -32,7 +31,7 @@ installDisconnectedServerSocketBoundary();
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 const originalState = storage.getState();
 const { VoiceCredentialItem } = await import('@/voice/credentials/CredentialItem');
-const { resolveAccountVoiceCredentialApprovalDigest } = await import('@/voice/credentials/accountVoiceCredential');
+const { resolveAccountVoiceCredentialStatus } = await import('@/voice/credentials/accountVoiceCredential');
 const { refreshSavedSecretCatalog } = await import('@/sync/engine/settings/savedSecretCatalogEngine');
 const { resolveSavedSecretReference } = await import('@/sync/store/settings/savedSecretCatalogSnapshot');
 const { VoiceConversationsSettingsScreen } = await import('@/voice/settings/screens/VoiceConversationsSettingsScreen');
@@ -151,7 +150,6 @@ const recipientContract = createVoiceProviderRecipientContractFromCredentialsV1(
   },
   presentation: { title: declaration.title },
 });
-const recipientContractDigest = createRecipientContractDigestV1(recipientContract);
 
 async function activateCredentialProvider() {
   const { createExternalVoiceProviderActivationScope } = await import('@/voice/registry/externalVoiceProviderActivation.testkit');
@@ -223,7 +221,7 @@ describe('VoiceSettingsScreen external provider credentials', () => {
     expect(credential.props).not.toHaveProperty('machineId');
   });
 
-  it('reports ready only for the exact account binding and ignores the selected-daemon override', async () => {
+  it('reports an owner-linked account binding ready without another approval and ignores the selected-daemon override', async () => {
     await activateCredentialProvider();
     const account = await createVoiceSettingsAccountTestHarness(routeSettings({}));
     onTestFinished(account.dispose);
@@ -251,44 +249,23 @@ describe('VoiceSettingsScreen external provider credentials', () => {
         byMachineId: { 'selected-daemon-that-must-not-own-client-credentials': { api_key: machineEntry.ref } },
       },
     }]);
-    const providerRowTestId = `settings.voice.provider.${encodeURIComponent(providerId)}.default`;
-    // The credential state is the service tile's readiness line in the Service gallery.
-    const serviceTileStatus = () => screen.findAll((node) => Array.isArray(node.props?.tiles))[0]
-      ?.props.tiles.find((tile: { testID: string }) => tile.testID === providerRowTestId)?.status;
-    // The tile's full prerequisite is its accessible detail; the visible text is a short status.
-    const serviceStatus = () => { const status = serviceTileStatus(); return status?.detail ?? status?.text; };
-    expect(serviceStatus()).toBe(t('settingsVoice.externalCredentials.reviewRequired'));
-    const requiredDigest = screen.tree.findByType(VoiceCredentialItem).props.recipientContractDigest;
-    if (typeof requiredDigest !== 'string') throw new Error('Activated provider recipient contract is unavailable');
-    const approvedDigest = resolveAccountVoiceCredentialApprovalDigest({
-      requiredRecipientContractDigest: requiredDigest,
-      savedSecret: resolveSavedSecretReference(account.scope, account.settings.secrets, accountEntry.ref),
+    const credentialStatus = () => resolveAccountVoiceCredentialStatus({
+      settings: account.settings,
+      contribution: { pluginId: 'acme.voice', localId: 'conversation' },
+      credentialSlotId: 'api_key',
+      resolveSavedSecret: ref => resolveSavedSecretReference(account.scope, account.settings.secrets, ref),
     });
-    if (!approvedDigest) throw new Error('Admitted Account credential has no approvable fingerprint');
-    await act(async () => {
-      // The real row approves its already-bound credential before any enter-new gesture.
-      screen.pressByTestId('settings.voice.externalCredential.acme.voice%2Fconversation.api_key');
-    });
-    await vi.waitFor(async () => {
-      await act(async () => undefined);
-      expect(screen.findHostByTestId('web-modal-confirm')).toBeTruthy();
-    });
-    expect(account.persistedSettings.voiceSettingsV1.credentialBindings[0]?.approvedRecipientContractDigest).not.toBe(approvedDigest);
-    await screen.pressByTestIdAsync('web-modal-confirm');
-    await act(async () => {
-      await vi.waitFor(() => expect(account.persistedSettings.voiceSettingsV1.credentialBindings).toMatchObject([{
-        approvedRecipientContractDigest: approvedDigest,
-        credentialBindings: { account: { api_key: accountEntry.ref } },
-      }]));
-    });
-    expect(serviceStatus()).toBe(t('settingsVoice.externalCredentials.ready'));
+    // Linking the owner's Saved Secret supplies approval at the canonical
+    // credential owner; readiness must not ask for the retired digest review.
+    expect(credentialStatus()).toMatchObject({ status: 'ready', reference: { secretId: accountRef, source: 'account' } });
+    expect(screen.getTextContent()).toContain(t('settingsVoice.local.voiceCredential.setOnAccount'));
+    expect(screen.findHostByTestId('web-modal-confirm')).toBeNull();
 
     const machineOnlySettings = routeSettings({
       credentialBindings: [{
         contribution: { pluginId: 'acme.voice', localId: 'conversation' },
         credentialSlotId: 'api_key',
         credentialSource: { kind: 'savedSecret' },
-        approvedRecipientContractDigest: recipientContractDigest,
         credentialBindings: {
           byMachineId: {
             'selected-daemon-that-must-not-own-client-credentials': { api_key: machineEntry.ref },
@@ -300,8 +277,8 @@ describe('VoiceSettingsScreen external provider credentials', () => {
       account.replaceSettings(machineOnlySettings);
     });
 
-    expect(serviceStatus()).toContain(t('settingsVoice.externalCredentials.missing'));
-    expect(serviceStatus()).toContain(tLoose('voice.readiness.credential_missing'));
+    expect(credentialStatus()).toMatchObject({ status: 'missing', reference: null });
+    expect(screen.getTextContent()).toContain(t('settingsVoice.local.voiceCredential.notSetOnAccount'));
     expect(screen.tree.findByType(VoiceCredentialItem).props)
       .not.toHaveProperty('machineId');
   });

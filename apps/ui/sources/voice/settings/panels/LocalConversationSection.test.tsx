@@ -449,7 +449,12 @@ describe('LocalConversationSection', () => {
       props => props.teamCredentialResources.some((resource: TeamCredentialResourceCatalogEntryV1) => resource.providerModels.length > 0)
         && props.teamCredentialResourceStatusByKey.get('voice-team:voice-shared')?.kind === 'current');
     const picker = screen.tree.findByType(SessionModelPicker);
-    const options = buildSessionModelPickerSections({ ...picker.props, hiddenNativeModelKeys: new Set<string>() }).flatMap(section => section.options);
+    // React Test Renderer erases component props at its external inspection boundary.
+    const pickerProps = picker.props as React.ComponentProps<typeof SessionModelPicker>;
+    const declarationContext = pickerProps.declarationContext;
+    if (!declarationContext) throw new Error('Expected the Voice model picker declaration context');
+    const options = buildSessionModelPickerSections({ ...pickerProps, declarationContext,
+      hiddenNativeModelKeys: new Set<string>() }).flatMap(section => section.options);
     expect(options.some(option => !option.disabled && option.value?.modelId === 'm1'
       && 'kind' in option.value && option.value.kind === 'team_credential_provider_model')).toBe(true);
     await act(async () => picker.props.onSelectTeamCredentialModel(selection));
@@ -460,7 +465,7 @@ describe('LocalConversationSection', () => {
       kind => kind === 'current');
     await act(async () => screen.tree.findByType(SessionModelPicker).props.onSelectTeamCredentialModel(selection));
     expect(readLocalConversationVoiceSettings(setVoice.mock.lastCall![0]).agent.commitModelSelection).toEqual(selection);
-    await act(async () => screen.findByTestId('voice-realtime-connected-services-codex').props.onPress());
+    await screen.pressByTestIdAsync('voice-realtime-connected-services-codex');
     await waitForTestEvent(screen.subscribe, () => screen.tree.findByType(NewSessionConnectedServicesSelectionContent).props.teamCredentialResourceStatusByKey.get('voice-team:voice-shared')?.kind,
       kind => kind === 'current');
     const accounts = screen.tree.findByType(NewSessionConnectedServicesSelectionContent);
@@ -480,6 +485,7 @@ describe('LocalConversationSection', () => {
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
     for (const intent of ['default', 'read-only']) {
       const option = screen.findByTestId(`settings.voice.local.mediatorPermissionPolicy:${intent}`);
+      if (!option) throw new Error(`Expected the ${intent} Voice permission option`);
       expect(option.props.accessibilityState.checked).toBe(intent === (permissionIntent ?? 'default'));
     }
     expect(setVoice).not.toHaveBeenCalled();

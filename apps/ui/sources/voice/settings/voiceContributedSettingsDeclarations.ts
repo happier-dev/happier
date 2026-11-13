@@ -31,7 +31,7 @@ function providerFieldBinding(
     entry: VoiceProviderRegistryEntry,
     path: string,
     preparesEndpoint: boolean,
-    presentation: RealtimeSettingsFieldDescriptor | undefined,
+    requiresConsent: boolean,
     registry: VoiceProviderRegistry,
 ): SettingStorageBinding | undefined {
     const descriptor = entry.providerSettings;
@@ -43,8 +43,7 @@ function providerFieldBinding(
     const { parse, mutate } = storage;
     return {
         ...storage,
-        prepare: preparesEndpoint || presentation && (presentation.kind === 'privacy_opt_in' || presentation.requiresOptIn === true
-            || presentation.kind === 'model' && presentation.movingAliasRequiresOptIn === true) ? async (settings, value, _services, context) => {
+        prepare: preparesEndpoint || requiresConsent ? async (settings, value, _services, context) => {
             const parsed = parse(value);
             if (!parsed.success) return null;
             const { storage } = await import('@/sync/domains/state/storage');
@@ -60,7 +59,7 @@ function providerFieldBinding(
                 const intent = await prepareSpeechEndpointSettingChange({ entry, settings, value: parsed.value, isCurrent, signal: context?.signal });
                 return intent ? (latest) => isCurrent() ? intent(latest) : null : null;
             }
-            if (presentation) {
+            if (requiresConsent) {
                 const { confirmRealtimeProviderSettingChange } = await import('./panels/realtime/confirmRealtimeProviderSettingChange');
                 const normalized = parseRealtimeSettingsDescriptor(entry.providerId, descriptor.presentation)?.fields.flatMap(field => [field, ...(field.subfields as readonly RealtimeSettingsFieldDescriptor[] | undefined ?? [])]).find(field => field.path === path);
                 if (!normalized || !await confirmRealtimeProviderSettingChange({ field: normalized, value: decode(parsed.value), isCurrent, signal: context?.signal })) return null;
@@ -91,6 +90,7 @@ export function getVoiceContributedSettingsDeclarations(
         const entry = registry.get(typeof providerId === 'string' ? providerId : buildQualifiedPluginContributionKey(row.contribution));
         if (!entry) continue;
         const descriptor = entry.providerSettings;
+        const declaration = 'declaration' in entry ? entry.declaration : undefined;
         const path = row.storage?.options?.[1];
         const field: { -readonly [K in keyof SettingDeclaration]: SettingDeclaration[K] } = { titleKey: 'settingsVoice.providerSectionTitle', title: row.title,
             ...(row.description ? { description: row.description } : {}), contribution: row.contribution,
@@ -100,10 +100,9 @@ export function getVoiceContributedSettingsDeclarations(
             const speech = speechDeclarations.get(entry.providerId);
             // Normalize UI consent details only when the person invokes a field requiring consent.
             const raw = row.providerFieldPresentation;
-            const requiresConsent = raw && (raw.kind === 'privacy_opt_in' || raw.requiresOptIn === true
+            const requiresConsent = !!raw && (raw.kind === 'privacy_opt_in' || raw.requiresOptIn === true
                 || raw.kind === 'model' && raw.movingAliasRequiresOptIn === true);
-            const presentation = requiresConsent ? { ...raw, pathSegments: path.split('.') } : undefined;
-            field.storage = providerFieldBinding(entry, path, speech?.endpointConsent?.baseUrlFieldId === path, presentation, registry);
+            field.storage = providerFieldBinding(entry, path, speech?.endpointConsent?.baseUrlFieldId === path, requiresConsent, registry);
         }
         const operation = row.operation;
         if (operation) field.operation = operation.kind === 'interaction'
@@ -119,7 +118,7 @@ export function getVoiceContributedSettingsDeclarations(
                             return (await import('./voiceCatalogSettingsOperation')).invokeVoiceCatalogSettingsOperation(entry, registry, action, context);
                         }
                         case 'voiceProviderSettingsAction': {
-                            const action = entry.declaration?.settings?.actions?.find(action => action.id === operation.options?.[1]);
+                            const action = declaration?.settings?.actions?.find(action => action.id === operation.options?.[1]);
                             if (!descriptor || !action || !context.isCurrent() || registry.get(entry.providerId)?.providerSettings !== descriptor) return { status: 'unavailable', reason: 'provider_retired' };
                             return (await import('./voiceProviderSettingsActionInvoker')).invokeVoiceProviderSettingsAction({ providerId: entry.providerId, declaration: action,
                                 signal: context.signal, isCurrent: context.isCurrent,
@@ -137,7 +136,7 @@ export function getVoiceContributedSettingsDeclarations(
             };
         const key = `${row.pageId}.${entry.providerId}`;
         const page = pages.get(key) ?? { pageId: row.pageId, section: `provider.${entry.providerId}`,
-            title: entry.declaration ? label(entry, entry.declaration.title) : '', fields: {} };
+            title: declaration ? label(entry, declaration.title) : '', fields: {} };
         page.fields[row.anchor.slice(row.pageId.length + 1)] = field;
         pages.set(key, page);
     }
