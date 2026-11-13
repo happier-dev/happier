@@ -1787,7 +1787,7 @@ describe('workflow trigger Automation composition', () => {
   });
 
   it('requires a selected or single linked PR before writing a scoped PR trigger', async () => {
-    const { deps, rows } = fixture();
+    const { deps, rows, executor } = fixture();
     let links: { provider: 'github'; repository: string; number: number; url: string }[] = [];
     const actions = createWorkflowTriggerActions({ ...deps,
       resolveSession: async () => ({ project, nativeGoalOwner: false }),
@@ -1795,6 +1795,12 @@ describe('workflow trigger Automation composition', () => {
     });
     const request = { sessionId: 'session-one', target: { kind: 'workflow' as const, ref: workflow },
       trigger: { kind: 'prComment' as const, enabled: true } };
+    const actionExecutor = executor(actions);
+    for (const kind of ['prComment', 'ciFailed'] as const) {
+      expect(await actionExecutor.execute('session.trigger.add', {
+        ...request, trigger: { kind, enabled: true },
+      }, ownCaller)).toMatchObject({ ok: false, errorCode: 'pull_request_link_required' });
+    }
     await expect(actions.sessionAdd(request)).rejects.toMatchObject({ code: 'pull_request_link_required' });
     expect(rows.size).toBe(0);
     links = [{ provider: 'github', repository: 'happier-dev/happier', number: 42, url: 'https://github.com/happier-dev/happier/pull/42' }];

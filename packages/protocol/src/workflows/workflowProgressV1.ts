@@ -862,7 +862,7 @@ const WORKFLOW_OPERATION_ERROR_CODES_WITHOUT_DETAILS_V1 = [
   'ineligible_state', 'custody_pending', 'requester_custody_unavailable',
   'source_unavailable',
   'history_not_readable', 'encryption_setup_required', 'waiting_for_keys', 'storage_unavailable',
-  'native_goal_owner', 'session_already_started',
+  'native_goal_owner', 'session_already_started', 'pull_request_link_required',
 ] as const;
 
 export const WORKFLOW_OPERATION_ERROR_CODES_V1 = [
