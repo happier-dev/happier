@@ -14,6 +14,7 @@ import (
 	cliproxy "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 )
 
 type CatalogModel struct {
@@ -123,6 +124,11 @@ func newGateway(
 	}
 	service, err := cliproxy.NewBuilder().
 		WithConfig(upstreamConfig).
+		WithHooks(cliproxy.Hooks{OnBeforeStart: func(*sdkconfig.Config) {
+			// The SDK installs its empty dynamic-plugin host during startup. The
+			// managed service owns codecs and has no dynamic plugins/config watcher.
+			sdktranslator.SetPluginHooks(mcpNamespaceTranslation{})
+		}}).
 		WithConfigPath(filepath.Join(config.RuntimeDir, "managed-config-not-persisted.yaml")).
 		WithCoreAuthManager(manager).
 		WithTokenClientProvider(emptyTokenClientProvider{}).

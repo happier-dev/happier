@@ -1870,7 +1870,10 @@ the refusal instead of retrying an impossible publication prerequisite. A withdr
 Team grant produces `team_access_removed` in Pending and
 `session_input_unauthorized` from a waiting Send. Publication alone does not prove
 whether a native/direct Agent already acted, so Pending retains conservative
-effect-uncertainty recovery. This adds no authorization read or retry policy.
+effect-uncertainty recovery. A committed user row proves transcript custody;
+waiting Send still observes Pending until delivery settles. The refused original
+stays visible and is never automatically retried, while fresh input after regrant
+can advance past it. This adds no authorization read or retry policy.
 
 Home checks an admitted Run through its existing daemon attestation on the next
 request. It has no Run-end publication to the broker custodian: Home does not
@@ -2372,6 +2375,15 @@ and refresh owner: SDK entries contain registration sentinels, skip Claude profi
 lookup, and treat upstream 401s as request-scoped failures so a later daemon lease
 is usable. The SDK key-value store is disabled; no SDK credential store is enabled.
 The catalog is compatibility evidence, not Account entitlement.
+
+For native Codex Responses clients, the development managed codec presents MCP
+namespace children, including deferred tool-search catalogs, as ordinary
+`mcp__<server>__<tool>` functions on the Codex-wire upstream route. It translates continuation calls and explicit tool selection to
+the same names, then restores the offered `namespace` and child `name` on returned
+calls before Codex decodes them. This keeps compatible models from interpreting
+a namespace as a dotted function name. Other namespaces retain their protocol
+shape; the dispatcher gains no alias. The codec is installed after SDK plugin
+initialization and before the managed listener starts.
 
 The managed-family owner is the plugin's
 `src/provider/managedContract.ts`. Its executable rows generate Go executor descriptors,
