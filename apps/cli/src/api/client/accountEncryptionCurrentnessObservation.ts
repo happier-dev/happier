@@ -156,6 +156,14 @@ export function isRequesterAccountEncryptionCurrentnessObserved(scope: Scope, ex
 }
 
 /** One exact Account/Home observation shared by live finite and Session custody. */
+/** Every follow reader below classifies only Account, Session and Share rows. */
+const FOLLOW_CHANGE_KINDS: ReadonlySet<string> = new Set(['account', 'session', 'share']);
+
+function isAccountWakeOutsideFollowKinds(body: unknown): boolean {
+    const kinds = body && typeof body === 'object' && 'changeKinds' in body ? body.changeKinds : undefined;
+    return Array.isArray(kinds) && kinds.length > 0 && kinds.every(kind => typeof kind === 'string' && !FOLLOW_CHANGE_KINDS.has(kind));
+}
+
 export function acquireRequesterAccountEncryptionCurrentness(scope: Scope): Observation {
     const key = scopeKey(scope);
     let shared = observations.get(key);
@@ -507,8 +515,13 @@ function createObservation(scope: Scope): SharedObservation {
                 if (body && typeof body === 'object' && 't' in body) {
                     if (body.t === 'account-change') {
                         const parsed = UpdateContainerSchema.safeParse(raw);
-                        if (parsed.success) syncFollowChanges(Number.isSafeInteger(parsed.data.seq) && parsed.data.seq >= 0
-                            ? parsed.data.seq : undefined);
+                        // A wake routed only to kinds no follow reader classifies (for example first-boot
+                        // plugin availability claims) carries nothing here; the cursor stays where it is,
+                        // and the next relevant wake reads from it. Unrouted wakes stay coarse.
+                        if (parsed.success && !isAccountWakeOutsideFollowKinds(parsed.data.body)) {
+                            syncFollowChanges(Number.isSafeInteger(parsed.data.seq) && parsed.data.seq >= 0
+                                ? parsed.data.seq : undefined);
+                        }
                     } else if (body.t === 'update-account' && 'id' in body && body.id === scope.accountId && 'settingsV2' in body) {
                         publishSettings({ kind: 'settings', update: UpdateContainerSchema.safeParse(raw).success ? body.settingsV2 : undefined });
                     } else if (body.t === 'account-settings-changed') {
