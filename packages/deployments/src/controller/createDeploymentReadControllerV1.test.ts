@@ -1,3 +1,4 @@
+import { readDeploymentDatabaseSizesV1 } from '../projection/deploymentDatabaseSize.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createDeploymentEnvironmentCollectionV1, createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createDeploymentReadControllerV1 } from './createDeploymentReadControllerV1.js';
@@ -27,6 +28,37 @@ function networkBoundary() {
 }
 
 describe('deployment demand read controller', () => {
+    it('retains database growth in the page owner and does no native reads while hidden', async () => {
+        const base = networkBoundary();
+        const detail = base.environmentDetail;
+        const link = detail.targetLinks[0]!.targetLink;
+        let bytes = 4096;
+        let now = 1000;
+        const native = vi.fn(async () => ({ ok: true, columns: [{ name: 'size_bytes' }], rows: [[bytes]], complete: true }));
+        const environment = { ...base.environment, runtimeTargetLinkId: link.id };
+        const content: typeof detail.content = { ...detail.content, template: { ...detail.content.template!, services: ['postgres'],
+            data: [{ service: 'postgres', engine: 'postgres' }] } };
+        const listDataServicePage: NonNullable<DeploymentReadTransportV1['listDataServicePage']> = async (_scope, _query, options) => ({
+            ok: true, value: { nextCursor: null, items: [{ environment, title: 'Database', content,
+                databaseSizes: await readDeploymentDatabaseSizesV1({ environment, content,
+                    readTargetLinks: async () => [link], run: native, now: () => now,
+                    previous: options.previousItems?.[0]?.databaseSizes }) }] } });
+        const controller = createDeploymentReadControllerV1({ scope, transport: { ...base.transport, listDataServicePage } });
+        const lease = controller.acquireDataServicePage({}, hidden);
+        await lease.refresh();
+        expect(native).not.toHaveBeenCalled();
+        lease.setDemand(active); await lease.refresh();
+        expect(native).toHaveBeenCalledTimes(1);
+        expect(lease.getSnapshot().value?.items[0]?.databaseSizes?.[0]?.size).toMatchObject({ status: 'available', bytes: 4096 });
+        lease.setDemand(hidden); bytes = 8192; now = 2000;
+        controller.invalidate({ environmentId: environment.id }); await controller.refreshDemanded();
+        expect(native).toHaveBeenCalledTimes(1);
+        lease.setDemand(active); await lease.refresh();
+        expect(native).toHaveBeenCalledTimes(2);
+        expect(lease.getSnapshot().value?.items[0]?.databaseSizes?.[0]?.growth)
+            .toEqual({ status: 'available', bytes: 4096, fromMs: 1000, toMs: 2000 });
+        lease.release(); controller.retire();
+    });
     it.each(['acquireDomainPage', 'acquireDataServicePage'] as const)('opens %s once per demanded page without detail fanout', async method => {
         const base = networkBoundary();
         const read = vi.fn(async (_scope: unknown, query: { cursor?: string }) => ({ ok: true as const,

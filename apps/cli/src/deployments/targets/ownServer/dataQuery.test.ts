@@ -1,3 +1,5 @@
+import { readDeploymentDatabaseSizesV1 } from '@happier-dev/deployments';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { describe, expect, it, vi } from 'vitest';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -199,6 +201,20 @@ it.skipIf(!existsSync(join(postgresBin, 'initdb')))('real PostgreSQL rejects wri
             return { exitCode: result.status ?? 1, stdout: result.stdout, stderr: result.stderr, stdoutTruncated: false };
         } };
         await bootstrapOwnServerReadOnlyDataRoleForHost({ ...base, database: 'postgres' }, native);
+        const sizeDetail = createDeploymentEnvironmentDetailV1();
+        const sizeLink = sizeDetail.targetLinks[0]!.targetLink;
+        const sizes = await readDeploymentDatabaseSizesV1({
+            environment: { ...sizeDetail.environment, runtimeTargetLinkId: sizeLink.id },
+            content: { ...sizeDetail.content, template: { ...sizeDetail.content.template!,
+                services: ['postgres'], data: [{ service: 'postgres', engine: 'postgres' }] } },
+            readTargetLinks: async () => [{ ...sizeLink, targetKind: 'ownServer', activeDeploymentId: 'live' }],
+            run: async statement => ({ ok: true, ...await executeOwnServerReadOnlyDataQuery({ ...base,
+                database: 'postgres', sql: statement.sql, params: statement.params }, native) }),
+        });
+        expect(sizes[0]?.size.status).toBe('available');
+        if (sizes[0]?.size.status === 'available') {
+            expect(sizes[0].size.bytes).toBe(Number(psql('SELECT pg_database_size(current_database())').stdout.trim()));
+        }
         const payload = "hello'; DELETE FROM query_fixture; --\n\\! echo unsafe";
         await expect(executeOwnServerReadOnlyDataQuery({ ...base, database: 'postgres', sql: "SELECT :'value' AS value",
             params: { value: payload } }, native)).resolves.toMatchObject({ rows: [[payload]], complete: true });
