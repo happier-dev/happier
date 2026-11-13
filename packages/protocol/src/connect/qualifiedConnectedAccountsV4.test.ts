@@ -1357,6 +1357,8 @@ describe('qualified connected-account V4 wire contract', () => {
       ['POST', '/v4/connect/qualified/provider-account-usage'],
       ['GET', '/v4/connect/qualified/provider-account-usage/history'],
       ['PUT', '/v4/connect/qualified/provider-account-usage/history'],
+      ['GET', '/v4/connect/qualified/provider-account-usage/day-summaries'],
+      ['PUT', '/v4/connect/qualified/provider-account-usage/day-summaries'],
       ['GET', '/v4/connect/qualified/provider-account-usage/record'],
       ['DELETE', '/v4/connect/qualified/provider-account-usage/record'],
       ['POST', '/v4/connect/qualified/provider-account-usage/record/refresh'],
