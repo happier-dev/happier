@@ -267,6 +267,18 @@ native contract is upstream source `481104f`; loaded native verification remains
 required. The exact Vercel contribution, template and URL retain FX's native
 Vercel gateway route.
 
+Before a Provider-bound FX spawn, native status must confirm authentication,
+credential source and the selected model. A refusal retains
+`fx_provider_credential_source_mismatch` and carries a fixed verification-predicate
+code in the existing `failureCause` diagnostic; native output and credential
+values are excluded.
+
+Grok Provider-bound ACP authentication selects the advertised `xai.api_key`
+method from the admitted binding. It does not depend on seeing the key in the
+request environment: the host supplies the credential in the finalized native
+launch environment. Native Connected Account authentication keeps its selected
+subscription or API-key method.
+
 Devin retains its vendor-managed login. Its documented
 [authentication](https://docs.devin.ai/cli/enterprise/devin-auth) uses a Devin
 account and vendor credential file; the current public contract supplies no
@@ -680,6 +692,13 @@ Machine-check snapshot. Endpoint access describes the configured route, not proo
 of reachability. Older observations without a cause remain readable and use the
 Provider error-code fallback. This additive development shape requires matching
 strict-schema UI and daemon peers; it does not change the runtime-state version.
+
+In 0.3 development, an explicit Account connection model refresh awaits the
+existing manual-refresh probe and projects its new observation. Static and
+manual model rows remain available alongside observed rows. A failed refresh
+returns its typed endpoint cause even when older rows remain available for an
+ordinary catalog read. A placed gateway uses the same admitted probe and model
+reader on its hub.
 
 In 0.3 development, draft Test admits a missing SavedSecret reference even when
 the template requires a key. The Machine draft-probe owner returns the existing

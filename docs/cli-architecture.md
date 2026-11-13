@@ -1077,6 +1077,11 @@ between its substeps. Credential release, credential writes and final promotion
 keep their separate authority checks; preparation does not retain an admission
 result for later effects.
 
+In 0.3 development, transformed config copies create their destination parent
+with POSIX mode `0700`. The config-copy owner also repairs that direct parent
+on an unchanged replay, without changing the native source directory. Windows
+retains its existing ACL semantics.
+
 Execution Runs keep the native home separate from their disposable request-auth
 root. Fresh admission consumes the materializer's `requestAuthMaterializedRoot`;
 restart adoption resolves that same per-Run root through the existing Run-root
