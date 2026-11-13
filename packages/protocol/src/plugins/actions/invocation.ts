@@ -1124,6 +1124,7 @@ export function createPluginActionInvocation(params: Readonly<{
             message: projectPluginActionFailureMessage(
               error instanceof Error ? error.message : 'Plugin action execution failed',
             ),
+            data: { failureCause: { ...projectActionFailureCauseV1(error, 'action.handler') } },
           });
         }
         if (resultSchemas === null) return Object.freeze({ status: 'executed', value: null });

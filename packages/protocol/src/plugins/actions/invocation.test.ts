@@ -1222,15 +1222,16 @@ describe('createPluginActionInvocation', () => {
       },
     });
 
-    // An ordinary Error has no contract behind it, so nothing but the host
-    // taxonomy and its message crosses.
+    // Ordinary exceptions retain only the content-free canonical cause, never
+    // arbitrary details or the nested Error payload.
     expect(genericResult).toEqual({
       status: 'failed',
       code: 'plugin_action_execution_failed',
       message: 'upstream credential is secret',
+      data: { failureCause: { phase: 'action.handler', errorClass: 'Error', errorCode: null, httpStatus: null } },
     });
     expect(genericResult).not.toHaveProperty('cause');
-    expect(genericResult).not.toHaveProperty('data');
+    expect(JSON.stringify(genericResult)).not.toContain('"credential"');
   });
 
   it('projects canonical PluginError code and multibyte message text through the stable public boundary', async () => {
@@ -1310,6 +1311,7 @@ describe('createPluginActionInvocation', () => {
       status: 'failed',
       code: 'plugin_action_execution_failed',
       message: 'provider credential is secret',
+      data: { failureCause: { phase: 'action.handler', errorClass: 'Error', errorCode: 'fixture_provider_failed', httpStatus: null } },
     });
   });
 });
