@@ -209,10 +209,17 @@ describe('Projects → All deployments', () => {
         environment('env-maria', 'source-maria', 'maria-db', { projectSourceName: 'maria-db', liveVersionTitle: 'maria-db' }),
         environment('env-pgb', 'source-pgb', 'pgbouncer', { projectSourceName: 'pgbouncer' }),
         environment('env-shop-staging', 'source-shop', 'Staging', { projectSourceName: 'storefront' }),
+        environment('env-redis', 'source-redis', 'redis-cache', { projectSourceName: 'redis-cache' }),
       ]),
     );
     const screen = await render(controller, 'all-deployments');
     const text = screen.getTextContent();
+    // Untitled rows lead the page in one sheet: one placed below a titled group would read as part of it.
+    const rowsIn = (key: string) => screen.findByTestId(`all-deployments.project.${key}`)!
+      .findAll((node) => typeof node.props.testID === 'string' && /^all-deployments\.row\.[^.]+$/.test(node.props.testID))
+      .map((node) => node.props.testID as string).filter((id, index, all) => all.indexOf(id) === index);
+    expect(rowsIn('source-maria')).toEqual(['all-deployments.row.env-maria', 'all-deployments.row.env-pgb', 'all-deployments.row.env-redis']);
+    expect(text.indexOf('redis-cache')).toBeLessThan(text.indexOf('storefront'));
     expect(text.split('maria-db').length - 1).toBe(1);
     expect(text.split('pgbouncer').length - 1).toBe(1);
     // A Project whose Environment has its own name keeps its header.

@@ -274,7 +274,8 @@ function AllDeploymentsGroups(
   // Projects keep the page's own order: the first Environment of each Project places its group. The name is the
   // admitted Source name the read carries; Projects whose name is unavailable or withdrawn share one last group,
   // so one placeholder is never repeated down the page. A Project whose only Environment carries its name needs no
-  // header to say it again: it shares one untitled sheet with its neighbours like it, in the page's order.
+  // header to say it again: all such Projects share one untitled sheet that leads the page, because an untitled
+  // sheet below a titled group reads as part of that group.
   const groups = React.useMemo(() => {
     const named = new Map<string, { title: string; rows: typeof rows }>();
     const unnamed: typeof rows = [];
@@ -285,13 +286,13 @@ function AllDeploymentsGroups(
       else named.set(row.projectSourceId, { title: row.projectName, rows: [row] });
     }
     const list: { key: string; title: string | undefined; rows: typeof rows }[] = [];
+    let untitled: { key: string; title: undefined; rows: typeof rows } | null = null;
     for (const [key, group] of named) {
-      const selfNamed = group.rows.length === 1 && isSameDeploymentName(group.rows[0]!.title, group.title);
-      const previous = list[list.length - 1];
-      if (!selfNamed) list.push({ key, ...group });
-      else if (previous && previous.title === undefined) previous.rows = [...previous.rows, ...group.rows];
-      else list.push({ key, title: undefined, rows: group.rows });
+      if (!(group.rows.length === 1 && isSameDeploymentName(group.rows[0]!.title, group.title))) list.push({ key, ...group });
+      else if (untitled) untitled.rows.push(...group.rows);
+      else untitled = { key, title: undefined, rows: [...group.rows] };
     }
+    if (untitled) list.unshift(untitled);
     return unnamed.length ? [...list, { key: 'unnamed', title: t('projects.deployments.allOtherProject'), rows: unnamed }] : list;
   }, [rows]);
   return (

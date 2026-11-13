@@ -201,10 +201,12 @@ afterEach(async () => {
   await homes.reset();
 });
 
-function environment() {
+function environment(declared: Readonly<{ domains?: readonly unknown[];
+  template?: ReturnType<typeof createDeploymentEnvironmentDetailV1>['content']['template'] }> = {}) {
   const base = createDeploymentEnvironmentDetailV1();
   const detail = {
     ...base,
+    content: declared.template ? { ...base.content, template: declared.template } : base.content,
     environment: createDeploymentEnvironmentHeaderV1({
       ...base.environment,
       serverId,
@@ -222,7 +224,7 @@ function environment() {
   const transport: DeploymentReadTransportV1 = {
     listDomains: async () => ({
       ok: true,
-      value: { items: [], nextCursor: null },
+      value: { items: (declared.domains ?? []) as never, nextCursor: null },
     }),
     listEnvironments: async () => ({
       ok: true,
@@ -370,6 +372,36 @@ describe('Environment service row ⋯ (P1 §3)', () => {
         controller.retire();
       });
     }
+  });
+
+  it('names the domains a service serves and the volumes it stores data in, on that service\'s row only (#23)', async () => {
+    const receipt = createDeploymentReceiptDetailV1();
+    const service = receipt.content.ownServer?.approvedInputBasis.services[0] ?? receipt.content.images[0]!.service;
+    const domain = (id: string, hostname: string, target: Record<string, unknown>) => ({
+      domain: { v: 1, id, environmentId: 'environment-staging', targetLinkId: 'target-a', revision: 1, state: 'active',
+        contentArtifactId: `content-${id}`, contentHeaderVersion: 1, contentBodyVersion: 1, createdByAccountId: accountId,
+        createdAtMs: 1, updatedAtMs: 1 },
+      title: hostname, content: { hostname, target: { containerPort: 3000, ...target }, healthCheck: { path: '/', expectStatus: 200 } } });
+    const base = createDeploymentEnvironmentDetailV1();
+    const { detail, controller } = environment({
+      // The Environment-level domain names no service: it is not attached to a row by inference.
+      domains: [domain('served', 'app.example.test', { service }), domain('loose', 'loose.example.test', {})],
+      template: { templateRef: { sourceId: 'apps', itemId: 'app', version: '1', ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+        definition: base.content.definition, services: [service],
+        volumes: [{ id: 'storage', service, target: '/data', persistent: true, backup: true }] },
+    });
+    answerServices(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [] }));
+    const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller}
+      environmentId={detail.environment.id} demand={{ mounted: true, visible: true, focused: true }} accountId={accountId}
+      serverId={serverId} phone={false} deploy={null} review={{ pendingId: null, request: () => {}, open: () => {} }}
+      onOpenReceipt={() => {}} />);
+    const line = `project-deployments.environment.services.${service}.connections`;
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId(line)?.props.children).toContain('app.example.test'));
+      const text = String(screen.findByTestId(line)!.props.children);
+      expect(text).toContain('/data');
+      expect(text).not.toContain('loose.example.test');
+    } finally { await act(async () => { controller.retire(); }); }
   });
 
   it('shows Runtime logs for the row the Environment list knows, the same list the rows read (PAGE-ACCEPT-100 D6b)', async () => {
