@@ -61,6 +61,23 @@ beforeEach(async () => {
 afterEach(() => standardCleanup());
 
 describe('TeamCreateScreen creation policy link', () => {
+    it.each(['self_service', 'managed_only', 'disabled'] as const)('projects the %s creation answer truthfully', async (policy) => {
+        const home = await harness.addHome({ name: 'Studio', serverUrl: 'https://studio.example', accountId: 'member-a', teamsEnabled: true });
+        await harness.selectHomes([home]);
+        harness.answer(home, ELIGIBILITY_PATH, { body: {
+            teamsEnabled: true, createTeam: policy === 'self_service', createTeamForChosenAccount: false, teamCreationPolicy: policy,
+        } });
+        const screen = await renderCreate();
+        const expected = policy === 'self_service' ? 'teams-create-submit'
+            : policy === 'disabled' ? 'teams-create-off' : 'teams-create-managed-only';
+        await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain(expected));
+        if (policy !== 'self_service') {
+            expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('teams-create-submit');
+            expect(screen.getTextContent()).toContain(policy === 'disabled'
+                ? 'teams.directory.createOff' : 'teams.directory.createAdministeredUnnamed');
+        }
+    });
+
     it('lets an administrator of managed creation open the policy that would let everyone create Teams', async () => {
         const home = await harness.addHome({
             name: 'Studio', serverUrl: 'https://studio.example', accountId: 'admin-a', teamsEnabled: true,

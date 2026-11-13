@@ -14,6 +14,7 @@ import { TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHA
 import type { ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 
 import { runTeamAction, type HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
+import { subscribeAccountCatalogInvalidation } from '@/sync/engine/settings/accountCatalogInvalidation';
 import { getTeamGroup, listTeamGroups } from '@/sync/ops/teams/teamGroupOperations';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import {
@@ -30,7 +31,7 @@ import {
 } from '@/sync/engine/scope/scopedSnapshotLoader';
 import { loadTeamPageRange } from '@/sync/engine/teams/loadTeamPageRange';
 import { listTeamMembers } from '@/sync/ops/teams/teamMemberReadOperations';
-import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { isHomeAdministrationAccountChange, subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import {
     getTeamCredentialResource,
     discoverEntitledTeamCredentialResources,
@@ -137,6 +138,10 @@ function toSnapshotError(failure: HomeDomainFailure): ScopedSnapshotError {
 }
 
 const loader = createScopedSnapshotLoader<TeamsDirectoryTarget>({
+    // A settled directory keeps its Teams wake and admission retirement across navigation, so a
+    // consumer that remounts (every Session switch remounts the composer's credential catalog)
+    // reads the retained rows; only an actual Teams change or retirement reads again.
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
     load: async ({ scope, input, queryKey }, loadContext) => {
         beginTeamsDirectoryLoad(scope, queryKey);
         // A refresh always re-reads the first page: a cursor names a position in
@@ -228,7 +233,8 @@ const teamLoader = createScopedSnapshotLoader<TeamTarget>({
     invalidateTarget: ({ scope, address }) => {
         invalidateTeamSnapshot(scope, address);
     },
-    matchesWake: (event) => event.entityIds === undefined
+    // Home defaults are part of teams.get, so the same demanded projection must refresh.
+    matchesWake: (event) => isHomeAdministrationAccountChange(event)
         || event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1),
 });
 
@@ -724,6 +730,8 @@ function credentialResourceCatalogTargetFor(
 }
 
 const credentialResourceCatalogLoader = createScopedSnapshotLoader<TeamCredentialResourceCatalogTarget>({
+    // Same retention as the directory: a catalog changes only through its Teams/credential wake.
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
     loadGroupKey: ({ scope, application, executionMachineId }) => JSON.stringify([serverAccountScopeKeySuffix(scope), application ?? null, executionMachineId ?? null]),
     loadMany: async (loads, signal) => {
         const group = loads.filter(load => !load.context.signal.aborted);

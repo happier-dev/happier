@@ -9,6 +9,9 @@ import {
     type TeamSummaryV1,
 } from '@happier-dev/protocol/teams';
 
+import { resolveTeamsCreateGuidance } from './collection/teamsCreateGuidance';
+import { teamsCreateRefusalText } from './collection/teamsCreateGuidanceText';
+
 import type { HomeAccountPickerRowV1 } from '@happier-dev/protocol/home/governance';
 
 import { useUnistyles } from 'react-native-unistyles';
@@ -537,11 +540,21 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
             : t('teams.unavailable.offline');
     const administrationUnavailable = administrationView?.kind === 'unavailable';
     const administrationError = administrationView?.kind === 'unavailable' ? administrationView.error : null;
-    /** Only a Home that answered "Teams on, creation not yours" is described as administered. */
-    const creationAdministeredByHome = administrationServerId === null && candidateHomes.some((home) => {
-        const answer = eligibility.snapshotsByServerId.get(home.scope.serverId)?.data;
-        return answer?.teamsEnabled === true && !answer.createTeam;
+    const creationGuidance = resolveTeamsCreateGuidance({
+        homesInView: candidateHomes.length,
+        answers: candidateHomes.flatMap((home) => {
+            const answer = eligibility.snapshotsByServerId.get(home.scope.serverId)?.data;
+            return answer?.teamsEnabled ? [{ serverId: home.scope.serverId, homeName: home.homeName, eligibility: answer }] : [];
+        }),
     });
+    const creationRefusal = administrationServerId !== null && creationRefused && governance
+        ? resolveTeamsCreateGuidance({ homesInView: 1, answers: [{
+            serverId: administrationServerId,
+            homeName: selected?.homeName ?? '',
+            eligibility: { teamsEnabled: governance.teamsEnabled, createTeam: governance.capabilities.createTeam,
+                createTeamForChosenAccount: false, teamCreationPolicy: governance.policy.teamCreationPolicy },
+        }] }).refusal
+        : creationGuidance.refusal;
     const teamsTurnedOff = admission.homes.some((home) => home.state === 'disabled')
         || candidateHomes.some((home) => eligibility.snapshotsByServerId.get(home.scope.serverId)?.data?.teamsEnabled === false);
 
@@ -634,7 +647,7 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
         );
     }
 
-    if (administrationServerId === null && homes.length === 0 && !creationAdministeredByHome) {
+    if (administrationServerId === null && homes.length === 0 && !creationRefusal) {
         // No Home is eligible and none said creation is administered: say why Teams is unavailable.
         return conditionPage(
             <SurfaceStateCard
@@ -658,11 +671,11 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
         // a mysterious disabled control.
         return conditionPage(
             <SurfaceStateCard
-                testID="teams-create-managed-only"
+                testID={creationRefusal?.kind === 'off' ? 'teams-create-off' : 'teams-create-managed-only'}
                 kind="unavailable"
                 scene="notAllowed"
-                title={t('teams.create.managedOnlyTitle')}
-                reason={t('teams.create.managedOnlyBody')}
+                title={creationRefusal?.kind === 'administered' ? t('teams.create.managedOnlyTitle') : t('teams.create.title')}
+                reason={creationRefusal ? teamsCreateRefusalText(creationRefusal) : t('teams.errors.forbidden')}
             />,
         );
     }

@@ -1,4 +1,4 @@
-import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     teamDirectoryQueryKeyV1,
@@ -6,7 +6,7 @@ import {
     type TeamsListInputV1,
 } from '@happier-dev/protocol/teams';
 
-import { standardCleanup, teamSummaryFixture } from '@/dev/testkit';
+import { renderHook, standardCleanup, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 const home = createHomeGovernanceHarness();
@@ -30,6 +30,8 @@ const {
     resetTeamsDirectoryEngineForTests,
 } = await import('./teamsDirectoryEngine');
 
+const { useManagedSessionDefaults } = await import('@/hooks/teams/useManagedSessionDefaults');
+
 const listInput: TeamsListInputV1 = { v: 1, scope: 'member', archived: 'active' };
 const queryKey = teamDirectoryQueryKeyV1(listInput);
 
@@ -45,8 +47,8 @@ function requestedBodies(): TeamsListInputV1[] {
     return runtimeFetchMock.mock.calls.map(([input]) => JSON.parse(String(input?.init?.body ?? '{}')));
 }
 
-async function addHome(name: string, serverUrl: string): Promise<string> {
-    const serverId = await home.addHome({ serverUrl, name, accountId: 'account', teamsEnabled: true });
+async function addHome(name: string, serverUrl: string, accountId = 'account'): Promise<string> {
+    const serverId = await home.addHome({ serverUrl, name, accountId, teamsEnabled: true });
     for (const path of ['/v1/teams/list', '/v1/teams/get']) home.answer(serverId, path, {
         select: async (_input, request) => {
             const response = await runtimeFetchMock(request);
@@ -72,6 +74,32 @@ afterEach(async () => {
 });
 
 describe('teamsDirectoryEngine', () => {
+    it.each(['admin', 'member'])('pushes Home defaults clearing to the mounted composer defaults for %s', async (accountId) => {
+        const serverId = await addHome('Home', 'https://home-defaults.example', accountId);
+        await setActiveServerId(serverId, { scope: 'device' });
+        const key = 'agent:claude/claude';
+        let projection = team('t1');
+        projection = { ...projection, policy: { ...projection.policy, homeDefaults: {
+            permissionModeByAgentTargetKey: { [key]: 'safe-yolo' },
+            modelByAgentTargetKey: { [key]: { v: 1, ref: {
+                agentTargetKey: key, providerConnectionId: null, modelId: 'sonnet-4.6',
+            }, updatedAt: 1 } },
+        } } };
+        runtimeFetchMock.mockImplementation(async () => new Response(JSON.stringify(projection), { status: 200 }));
+        const hook = await renderHook(() => useManagedSessionDefaults({ serverId, teamId: 't1', agentTargetKey: key }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().read).toMatchObject({
+            status: 'ready', defaults: { permissionMode: { value: 'safe-yolo' }, model: { value: { ref: { modelId: 'sonnet-4.6' } } } },
+        }));
+        const initialReads = runtimeFetchMock.mock.calls.length;
+        projection = { ...projection, policy: { ...projection.policy, homeDefaults: null } };
+        publishHomeAccountChange(serverId, [HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+        await waitForHomeGovernance(() => expect(hook.getCurrent().read).toMatchObject({
+            status: 'ready', defaults: { permissionMode: { value: undefined }, model: { value: undefined } },
+        }));
+        // One read for the demanded Team, shared by its mounted consumers.
+        expect(runtimeFetchMock.mock.calls.length - initialReads).toBe(1);
+    });
+
     it('loads one Team through teams.get under its exact Home and Account address', async () => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await setActiveServerId(homeA, { scope: 'device' });
@@ -254,6 +282,32 @@ describe('teamsDirectoryEngine', () => {
         expect(getTeamsDirectorySnapshot(scopeB, queryKey)).toBe(snapshotB);
         releaseA();
         releaseB();
+    });
+
+    it('serves a remount without a wake from the retained directory with no read, and reads once after a Teams change', async () => {
+        const homeA = await addHome('Home A', 'https://home-a.example');
+        await setActiveServerId(homeA, { scope: 'device' });
+        const scope = createServerAccountScope(homeA, 'account')!;
+        runtimeFetchMock.mockImplementation(async () => page([team('t1')], null));
+        const first = observeTeamsDirectory(scope, listInput);
+        await waitForHomeGovernance(() => expect(getTeamsDirectorySnapshot(scope, queryKey)?.status).toBe('ready'));
+        const retained = getTeamsDirectorySnapshot(scope, queryKey);
+        // A Session switch: the only consumer leaves and the next one arrives, with no Teams change between.
+        first();
+        const second = observeTeamsDirectory(scope, listInput);
+        await Promise.resolve(); await Promise.resolve();
+        expect(runtimeFetchMock, 'a remount with no Teams change re-read the directory').toHaveBeenCalledTimes(1);
+        expect(getTeamsDirectorySnapshot(scope, queryKey), 'the retained directory keeps its identity').toBe(retained);
+        second();
+        // A real change while nobody observes is read once, by the next consumer.
+        publishHomeAccountChange(homeA, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+        await Promise.resolve();
+        expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
+        runtimeFetchMock.mockImplementation(async () => page([team('t1', 'Renamed')], null));
+        const third = observeTeamsDirectory(scope, listInput);
+        await waitForHomeGovernance(() => expect(getTeamsDirectorySnapshot(scope, queryKey)?.data?.[0]?.name).toBe('Renamed'));
+        expect(runtimeFetchMock).toHaveBeenCalledTimes(2);
+        third();
     });
 
     it('retains an unobserved wake as staleness and refreshes the exact Home on remount', async () => {
