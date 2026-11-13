@@ -108,4 +108,13 @@ describe('command autocomplete suggestions', () => {
         ]);
         expect(suggestionViewModuleImports.count).toBe(0);
     });
+
+    it("keeps the composer's admitted compaction availability for the slash list", async () => {
+        searchCommandsMock.mockResolvedValue([]);
+        const { getCommandSuggestions } = await import('./commandSuggestions');
+
+        await getCommandSuggestions('s1', '/comp', { compactionAvailability: { status: 'unsupported', reason: 'unsupported' } });
+
+        expect(searchCommandsMock.mock.calls[0]?.[2]).toMatchObject({ compactionAvailability: { status: 'unsupported' } });
+    });
 });
