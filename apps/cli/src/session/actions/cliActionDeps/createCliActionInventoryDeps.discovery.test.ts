@@ -32,6 +32,7 @@ describe('native Action configuration discovery', () => {
       expect(result).toMatchObject({ ok: true, result: { source: 'dynamic' } });
       if (!result.ok) throw new Error('Model inventory refused');
       const parsed = PUBLIC_ACTION_OUTPUT_SCHEMAS['agents.models.list'].parse(result.result);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Expected model inventory object');
       expect(parsed.items).toContainEqual({ id: 'model-0', label: 'Model 0' });
       expect(parsed.items).toHaveLength(count);
     }

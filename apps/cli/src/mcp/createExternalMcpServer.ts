@@ -10,6 +10,7 @@ import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/featu
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { REGISTRY_ACTION_IDS_V1 } from '@happier-dev/protocol/registries';
 import { DeploymentActionInputSchemasV1, type ActionId } from '@happier-dev/protocol';
+import { executeDeploymentAction } from '@happier-dev/protocol/actions/executor/deploymentAction';
 
 import type { StoredCredentials } from '@/persistence';
 import { listHappierMcpToolNames, registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
@@ -237,20 +238,16 @@ export function createExternalMcpServer(params: Readonly<{
             if (isControllerDeploymentMutationAction(actionId, input)) {
               const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
               if (!parsed.success) return { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-              const deploymentAction = deps.deploymentAction;
-              if (!deploymentAction) return { ok: false as const, errorCode: 'deployment_executor_unavailable', error: 'deployment_executor_unavailable' };
+              if (!deps.deploymentAction) return { ok: false as const, errorCode: 'deployment_executor_unavailable', error: 'deployment_executor_unavailable' };
               // The Environment controller prepares and admits the original
               // intent; local admission would create an unprepared Ask first.
-              const result = await deploymentAction(actionId, parsed.data, {
+              // The shared deployment owner projects the domain result.
+              return await executeDeploymentAction(actionId, parsed.data, {
                 ...context,
                 surface: 'mcp',
                 authority: 'account_automation',
                 actionRequestId: context?.actionRequestId ?? randomUUID(),
-              });
-              if ('errorCode' in result) return result;
-              if ('kind' in result) return { ok: true as const, result };
-              if (!result.ok) return { ok: false as const, errorCode: result.error, error: result.error, details: result };
-              return { ok: true as const, result };
+              }, deps);
             }
             const builtInActionId = ActionIdSchema.safeParse(actionId);
             const syncWrite = builtInActionId.success && isWorkspaceSyncRelationshipWriteActionId(builtInActionId.data);

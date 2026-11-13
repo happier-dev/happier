@@ -41,7 +41,7 @@ it('reads and cancels an admitted install job at its receiving Action owner with
   }] }) });
   const machineAdmission = { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'selected',
     installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const };
-  const manager = new RpcHandlerManager({ scopePrefix: 'selected', localMachineId: 'selected', scopeKind: 'machine', encryptionMode: 'plain', logger: () => {},
+  const manager = new RpcHandlerManager({ scopePrefix: 'selected', localMachineId: 'selected', encryptionMode: 'plain', logger: () => {},
     authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, { machineId: 'selected',
       resolveInstallationId: () => 'installation', resolveCustodianAccountId: async () => 'owner',
       resolveHomeServerIdentityId: async () => 'home', verifyMachineAdmission: async () => true }, source) });

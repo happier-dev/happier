@@ -77,6 +77,22 @@ describe('runSessionAgentTransition — the recorded machine is not a gate', () 
   });
 });
 
+describe('runSessionAgentTransition — admitted reopen authority', () => {
+  it('reopens the target Session under the admitted invocation authority', async () => {
+    const harness = createTransitionDepsHarness();
+    const result = await runSessionAgentTransition({
+      credentials: TEST_CREDENTIALS,
+      request: buildTransitionRequest(),
+      deps: harness.deps,
+      executionAuthority: 'account_automation',
+    });
+
+    expect(result).toEqual({ type: 'accepted', localId: TEST_LOCAL_ID });
+    expect(harness.deps.requestInactiveSessionResume).toHaveBeenCalledWith(
+      expect.objectContaining({ executionAuthority: 'account_automation' }));
+  });
+});
+
 describe('runSessionAgentTransition — pre-stop failures leave the source untouched (QA-T-03)', () => {
   it.each(['unrecognized-permission', '', 42])('rejects invalid authored permission %j before every source effect', async (permissionMode) => {
     const harness = createTransitionDepsHarness();

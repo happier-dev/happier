@@ -58,6 +58,7 @@ describe('Pi native account model publication', () => {
       const factory = plugin.registration('agents', 'pi')?.factory;
       if (!factory) throw new Error('Public Pi registration missing');
       const runtime = await factory({ plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version }, agent: { id: 'pi' }, signal });
+      if (!runtime.sessions) throw new Error('Public Pi runtime has no Session surface');
       session = await runtime.sessions.open({ kind: 'create', sessionId: 'selected-session', cwd: directory,
         launchEnvironment: { values: { PI_CODING_AGENT_DIR: directory, [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV]: join(directory, 'request-auth.json') }, unset: [] },
         configuration: { model: { value: 'openai-codex/selected', updatedAtMs: 1 }, mode: { value: null, updatedAtMs: 1 },

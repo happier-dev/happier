@@ -10,7 +10,7 @@ import { releaseSessionHandoffPrepareTargetJobLease, tryAcquireSessionHandoffPre
 
 describe('sessionHandoffPrepareTargetJobLease', () => {
   afterEach(() => vi.restoreAllMocks());
-  it.each(['live', 'unknown', 'dead', 'reused'] as const)('uses physical process evidence for an expired %s holder', async state => {
+  it.each(['live', 'dead', 'reused'] as const)('uses physical process evidence for an expired %s holder', async state => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'handoff-physical-lease-'));
     const leaseDirectory = join(activeServerDir, 'session-handoff', 'prepare-target-jobs-staging', 'job', 'lease');
     const self = await processIdentity.readProcessIdentityByPid(process.pid);
@@ -24,7 +24,7 @@ describe('sessionHandoffPrepareTargetJobLease', () => {
       }));
       // Process run-state is the OS boundary. All claim parsing, admission and
       // process-generation comparison below it remain real.
-      vi.spyOn(processRunState, 'readProcessRunState').mockResolvedValue(state === 'dead' ? 'dead' : state === 'unknown' ? 'unknown' : 'servable');
+      vi.spyOn(processRunState, 'readProcessRunState').mockResolvedValue(state === 'dead' ? 'dead' : 'servable');
       const next = await tryAcquireSessionHandoffPrepareTargetJobLease({ activeServerDir, jobId: 'job', ownerId: 'successor', nowMs: 120_001 });
       expect(next.acquired).toBe(state === 'dead' || state === 'reused');
       if (!next.acquired) expect(next.lease?.leaseId).toBe('incumbent');

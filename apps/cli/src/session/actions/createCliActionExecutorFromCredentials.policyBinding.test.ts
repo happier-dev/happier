@@ -269,8 +269,6 @@ describe('credentialed Action policy binding before settings bootstrap', () => {
         parentTokenId: null, activeChildCount: 0, embedConfig: null }] : [] }),
       resolveCurrentPluginOccurrenceId: async id => senderController
         ? readAuthoritativePluginSlotOccurrence(id, { controller: senderController })?.occurrenceId ?? null : null,
-      resolveCurrentPluginSourceCustody: async id => senderController
-        ? readAuthoritativePluginSlotOccurrence(id, { controller: senderController })?.sourceCustody ?? null : null,
       isMediatedSourceCurrent: async () => false });
     const mutations: string[] = [];
     const provider = createActionSettingsProvider({ scopeKey });

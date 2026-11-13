@@ -501,7 +501,7 @@ describe('CLI Session target composition', () => {
     });
     const deps = createCliActionDeps({ token: 'token', credentials,
       sessionId, ...material, serverIdentityId: 'srv_target_home',
-      ...(serverHttpBaseUrl ? { serverId: 'srv_target_home', serverHttpBaseUrl } : {}),
+      ...(serverHttpBaseUrl ? { serverId: 'srv_target_home', serverHttpBaseUrl } : { serverId: undefined, serverHttpBaseUrl: undefined }),
       ...(requester ? { externalActionMachineRequestPrivateKey: requester.privateKey,
         externalActionMachineInstallationId: requester.installationId } : {}),
     });

@@ -9,14 +9,21 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistryTypes';
-import type { CliSessionAttachEligibility } from '@/session/attach/evaluateCliSessionAttachEligibility';
 import type {
+  CliSessionAttachEligibility,
+  CliSessionAttachEligibilityParams,
+} from '@/session/attach/evaluateCliSessionAttachEligibility';
+import type {
+  SessionForkBackendTargetParams,
   SessionForkBackendTargetResolution,
 } from '@/session/fork/backendTarget';
 import type {
   ContinueWithReplayBackendTargetResolution,
 } from '@/session/replay/resolveContinueWithReplayBackendTarget';
-import type { SessionHandoffEligibility } from '@/session/handoff/resolveSessionHandoffEligibility';
+import type {
+  SessionHandoffEligibility,
+  SessionHandoffEligibilityInput,
+} from '@/session/handoff/resolveSessionHandoffEligibility';
 import type {
   CanonicalizedExternalSessionSourceResult,
 } from './externalSessionSourceCanonicalization';
@@ -52,25 +59,17 @@ export interface SessionHostBridgeContract {
     }>,
   ): Promise<void>;
   evaluateAttachEligibility(
-    params: Omit<
-      Parameters<(typeof import('@/session/attach/evaluateCliSessionAttachEligibility'))['evaluateCliSessionAttachEligibility']>[0],
-      'resolveExecutionSurfaces'
-    >,
+    params: Omit<CliSessionAttachEligibilityParams, 'resolveExecutionSurfaces'>,
   ): Promise<CliSessionAttachEligibility>;
   resolveSessionHandoffEligibility(
-    params: Omit<
-      Parameters<
-        (typeof import('@/session/handoff/resolveSessionHandoffEligibility'))['resolveSessionHandoffEligibility']
-      >[0],
-      'resolveCurrentExecutionSurfacesForAgent'
-    >,
+    params: Omit<SessionHandoffEligibilityInput, 'resolveCurrentExecutionSurfacesForAgent'>,
   ): Promise<SessionHandoffEligibility>;
   resolveContinueWithReplayBackendTarget(params: Readonly<{
     agent?: string;
     backendTarget?: BackendTargetRefV2Input | null;
   }>): ContinueWithReplayBackendTargetResolution;
   resolveSessionForkBackendTarget(
-    params: Parameters<(typeof import('@/session/fork/backendTarget'))['resolveSessionForkBackendTarget']>[0],
+    params: SessionForkBackendTargetParams,
   ): Promise<SessionForkBackendTargetResolution>;
   resolveExternalSessionLinkIdentity(params: Readonly<{
     agentId: ExternalSessionsAgentId;

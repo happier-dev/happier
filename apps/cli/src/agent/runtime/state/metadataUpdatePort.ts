@@ -24,13 +24,13 @@ export function createCliSessionStateMetadataUpdatePort(params: Readonly<{
   credentials: StoredCredentials;
 }>): MetadataUpdatePort {
   return {
-    update: async (sessionId, updater, opts) => {
+    update: async (sessionId, updater) => {
       try {
         const result = await updateSessionMetadataForTarget({
           credentials: params.credentials,
           idOrPrefix: sessionId,
-          updater,
-          ...(typeof opts.maxAttempts === 'number' ? { maxAttempts: opts.maxAttempts } : {}),
+          // The port's updater observes the committed revision; the write owner passes a context.
+          updater: (prev, context) => updater(prev, context?.metadataRevision),
         });
         if (result.ok) {
           return { ok: true, version: result.version };

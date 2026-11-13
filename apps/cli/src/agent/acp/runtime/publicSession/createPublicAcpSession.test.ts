@@ -1435,6 +1435,7 @@ describe('createPublicAcpSession', () => {
             rootPath: dir, relativePaths: ['provider.mjs'] } };
         await writeFile(path.join(dir, 'provider.mjs'), 'export default function() {}', { mode: 0o600 });
         try {
+          if (!runtime.sessions) throw new Error('ACP runtime has no Session surface');
           const opening = kind === 'executionRun'
             ? runtime.sessions.executionRunContextV1!.open({ kind: 'create', runId: 'member-run', cwd: dir,
               profile: { pluginId: 'happier.agent.ohmypi', localId: 'default' }, input: { text: 'Run once' }, providerBinding }, context)

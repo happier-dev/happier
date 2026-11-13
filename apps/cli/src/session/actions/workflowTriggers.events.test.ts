@@ -20,6 +20,7 @@ import {
 } from '@happier-dev/protocol';
 import { getRandomBytes } from '@/api/encryption';
 import { createCliWorkflowTriggerActions } from './workflowTriggers';
+import { WorkflowTriggerAddRequestV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { normalizeWorkflowActionThrownError } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
 import { enrollPlatformFailureSource } from '@/deployments/platformFailureEnrollment';
 import { createPlatformFailureNoticeFixture } from '@/deployments/platformFailureNotices.testkit';
@@ -27,6 +28,12 @@ import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDepl
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { ArtifactDocumentV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+
+/** Fixture source configs are JSON objects; spread only after proving that shape. */
+function sourceConfigObject(value: unknown): Readonly<Record<string, unknown>> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected object source config');
+  return Object.fromEntries(Object.entries(value));
+}
 
 const network = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), request: vi.fn() }));
 // HTTP is the external boundary; authoring and crypto remain real.
@@ -137,11 +144,11 @@ describe('configured Event source writer consistency', () => {
         if (typeof child.action !== 'string') {
           setupInput.push(child.input);
           return { ok: true, result: { v: 1, sourceInstanceId: 'platform:target-link', sourceContractVersion: 1,
-            sourceConfig: { ...fixture.definition.sourceConfig, baseline }, displayLabel: 'Production platform' } };
+            sourceConfig: { ...sourceConfigObject(fixture.definition.sourceConfig), baseline }, displayLabel: 'Production platform' } };
         }
         if (child.action !== 'workflow.trigger.add') throw new Error('Unexpected enrollment Action');
         triggerInputs.push(child.input);
-        return { ok: true, result: await f.actions.add(child.input) };
+        return { ok: true, result: await f.actions.add(WorkflowTriggerAddRequestV1Schema.parse(child.input)) };
       };
       const request = { serverId: 'home', environment, targetLinkId: 'target-link',
         event: { identity: fixture.definition.eventRef, automation: { v: 1 as const, eligible: true as const, source: {
@@ -163,9 +170,9 @@ describe('configured Event source writer consistency', () => {
       expect(openAutomationTriggerDefinitionStoredEnvelopeV1({
         ...(mode === 'plain' ? { mode: 'plain' as const } : { mode: 'e2ee' as const, material: snapshot.material }),
         binding: { v: 1, automationId: row.id, triggerId: trigger.id, triggerRevision: trigger.revision,
-          triggerKind: 'pluginEvent', eventRef: trigger.eventRef, sourceSelectorId: trigger.sourceSelectorId },
+          triggerKind: 'pluginEvent', eventRef: trigger.eventRef, sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(trigger.sourceSelectorId) },
         envelope: JSON.parse(trigger.triggerDefinitionEnvelope),
-      })).toMatchObject({ kind: 'available', definition: { sourceConfig: { ...fixture.definition.sourceConfig, baseline: 'initial' } } });
+      })).toMatchObject({ kind: 'available', definition: { sourceConfig: { ...sourceConfigObject(fixture.definition.sourceConfig), baseline: 'initial' } } });
       expect(triggerInputs).toHaveLength(2);
     });
 
@@ -351,8 +358,8 @@ describe('configured Event source writer consistency', () => {
     let baseline = 'initial';
     const context: import('@happier-dev/protocol').ActionExecutorContext = { hostReviewedChild: { async invoke(child) {
       if (typeof child.action !== 'string') return { ok: true, result: { v: 1, sourceInstanceId: 'platform:target-link', sourceContractVersion: 1,
-        sourceConfig: { ...fixture.definition.sourceConfig, baseline }, displayLabel: 'Production' } };
-      return { ok: true, result: await f.actions.add(child.input) };
+        sourceConfig: { ...sourceConfigObject(fixture.definition.sourceConfig), baseline }, displayLabel: 'Production' } };
+      return { ok: true, result: await f.actions.add(WorkflowTriggerAddRequestV1Schema.parse(child.input)) };
     } } };
     const input = { serverId: 'home', environmentId: environment.environment.id, expectedRevision: environment.environment.revision,
       requestKey: 'production-link', role: 'runtime', targetId: 'platform', source: row.targetLink.source,
@@ -373,9 +380,9 @@ describe('configured Event source writer consistency', () => {
     expect(trigger.observation).toMatchObject({ kind: 'checkpointedPull', watcher: fixture.caller });
     expect(openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
       binding: { v: 1, automationId: enrolled.id, triggerId: trigger.id, triggerRevision: trigger.revision,
-        triggerKind: 'pluginEvent', eventRef: trigger.eventRef, sourceSelectorId: trigger.sourceSelectorId },
+        triggerKind: 'pluginEvent', eventRef: trigger.eventRef, sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(trigger.sourceSelectorId) },
       envelope: JSON.parse(trigger.triggerDefinitionEnvelope),
-    })).toMatchObject({ kind: 'available', definition: { sourceConfig: { ...fixture.definition.sourceConfig, baseline: 'initial' } } });
+    })).toMatchObject({ kind: 'available', definition: { sourceConfig: { ...sourceConfigObject(fixture.definition.sourceConfig), baseline: 'initial' } } });
   });
 });
 const event = {

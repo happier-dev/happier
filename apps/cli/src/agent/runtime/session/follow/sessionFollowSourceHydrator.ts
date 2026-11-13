@@ -558,15 +558,12 @@ export function createSessionFollowSourceHydrator(input: Readonly<{
         if (!ownerState) return undefined;
         const event = classifyWorkerUpdateEventV1({ workerKind: 'session', ownerState });
         if (!event) return undefined;
-        const issue = ownerState === 'failed' && rawSession.latestTurnId === observation.observed.turn?.id
-          ? SessionRuntimeIssueV1Schema.safeParse(rawSession.lastRuntimeIssue) : null;
         const result = publishedReport ?? workerText;
         const wake = resolveWorkerUpdateWakeV1(event);
         const headline = composeSessionWorkerUpdateHeadlineV1({ ownerState, wake });
         return WorkerUpdateV1Schema.parse({
           v: 1, workerKind: 'session', workerId: observation.sourceSessionId, ownerState,
           wake,
-          ...(issue?.success ? { runtimeIssueV1: issue.data } : {}),
           headline, ...(result ? { result: result.text } : {}),
           ...(publishedReport?.deliverables ? { deliverables: publishedReport.deliverables } : {}),
           ...(workerText?.agentId ? { engine: { agentId: workerText.agentId } } : {}),

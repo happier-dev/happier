@@ -254,19 +254,19 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       ]);
       const targetRefusal = error instanceof MachineRpcTargetNotCurrentError ? error : null;
       const targetRpcCause = readSessionCreationTargetRpcCause(error);
+      const failure = projectSessionSpawnFailure({
+        errorCode: targetRefusal?.code ?? targetRpcCause?.code ?? 'SPAWN_FAILED',
+        errorMessage: targetRefusal?.reason ?? targetRpcCause?.message ?? 'Session target preparation failed',
+        ...(targetRpcCause ? { errorDetail: {
+          kind: 'launch_error', code: targetRpcCause.code, message: targetRpcCause.message,
+          ...(targetRpcCause.rpcErrorCode ? { rpcErrorCode: targetRpcCause.rpcErrorCode } : {}),
+        } } : {}),
+      });
       return {
         ok: false,
-        result: {
-          ...projectSessionSpawnFailure({
-            errorCode: targetRefusal?.code ?? targetRpcCause?.code ?? 'SPAWN_FAILED',
-            errorMessage: targetRefusal?.reason ?? targetRpcCause?.message ?? 'Session target preparation failed',
-            ...(targetRpcCause ? { errorDetail: {
-              kind: 'launch_error', code: targetRpcCause.code, message: targetRpcCause.message,
-              ...(targetRpcCause.rpcErrorCode ? { rpcErrorCode: targetRpcCause.rpcErrorCode } : {}),
-            } } : {}),
-          }),
-          failureCause: projectActionFailureCauseV1(error, 'session.target_preparation'),
-        },
+        // The strict update-required refusal carries no lower-layer cause.
+        result: failure.code === 'update_required' ? failure
+          : { ...failure, failureCause: projectActionFailureCauseV1(error, 'session.target_preparation') },
       };
     }
 

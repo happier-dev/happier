@@ -416,7 +416,8 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
         }
         let requestState: ReturnType<typeof AgentStateSchema.parse> | null = null;
         if ('sourceRequests' in occurrence && source.ownerAccountId === input.accountId
-          && source.agentStateVersion >= occurrence.sourceRequests.agentStateVersion && typeof source.agentState === 'string') {
+          && source.agentStateVersion !== undefined && source.agentStateVersion >= occurrence.sourceRequests.agentStateVersion
+          && typeof source.agentState === 'string') {
           const mode = resolveSessionStoredContentEncryptionMode(source);
           const ctx = mode === 'plain' ? null : resolveSessionEncryptionContextFromCredentials(input.credentials, source);
           const state = await openSessionStateValue(mode === 'plain' ? { mode: 'plain' } : {
@@ -465,7 +466,8 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
         if (!preparedSource) return;
         const { agentStateVersion, origin, requests } = preparedSource;
         if (agentStateVersion !== occurrence.sourceRequests.agentStateVersion) {
-          if (!requests || !occurrence.sourceRequests.requests.some(original => {
+          // Without a delivered Agent-state version there is no request map to carry.
+          if (!requests || agentStateVersion === undefined || !occurrence.sourceRequests.requests.some(original => {
             const pending = requests.get(original.requestId);
             return pending?.createdAt === original.createdAt && pending.turnId === original.turnId;
           })) return;
@@ -549,7 +551,8 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
           candidate.relations.push(route.relation === 'manager'
             // The route response schema requires this attachment for managers.
             ? { relation: route.relation, attachedAt: route.attachedAt! }
-            : { relation: route.relation, ...(route.attachedAt === undefined ? {} : { attachedAt: route.attachedAt }) });
+            // The same schema forbids a follower attachment.
+            : { relation: route.relation });
           candidates.set(route.destinationSessionId, candidate);
         }
         // Assignment belongs to the original question, not to permanent W → G

@@ -228,7 +228,7 @@ export function createCliMachineActionTransport(
       && normalSyncRoot && isWorkspaceSyncRelationshipWriteActionId(normalSyncRoot.binding.actionId)
       && normalSyncRoot.binding.machineId === direct.machineId && input.context) {
       return direct.workspaceSyncPreflightTarget(HandoffTargetReplacementPreflightV1Schema.parse(input.request), {
-        signal: input.signal ?? input.context.abortSignal ?? new AbortController().signal,
+        signal: input.signal ?? input.context.signal ?? new AbortController().signal,
         machineAdmission: input.context.machineAdmission,
         verifyMachineAdmissionCurrent: input.context.verifyMachineAdmissionCurrent,
         callerAuthority: input.authority ?? input.context.authority,

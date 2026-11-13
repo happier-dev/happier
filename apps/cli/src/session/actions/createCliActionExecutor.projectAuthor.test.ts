@@ -140,7 +140,8 @@ function serviceControl(action: 'stop_managed' | 'restart_managed') {
     const request = LocalServiceActionRequestV1Schema.parse({ requestId: `author-${action}`, action, target: { kind: 'managed_service' as const,
         machineId: workspace.machineId, managedServiceId: 'actual-instance', cwd: workspace.rootPath,
         declaration: { workspaceRefId: workspace.workspaceId, selection: { kind: 'manifest' as const, name: 'web' } } } });
-    return { ...request, confirmationNonce: createLocalServiceActionConfirmationNonceV1(request) };
+    if (request.target.kind !== 'managed_service') throw new Error('Expected a managed service target');
+    return { ...request, target: request.target, confirmationNonce: createLocalServiceActionConfirmationNonceV1(request) };
 }
 
 describe('public Project author Actions through the real CLI host', () => {

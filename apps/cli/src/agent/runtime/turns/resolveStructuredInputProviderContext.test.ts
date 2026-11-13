@@ -741,8 +741,10 @@ describe('resolveStructuredInputProviderContext', () => {
       ...references,
     });
 
-    expect(resolved.structuredInput?.skillMentions?.[0]?.description).toBe('skill-context '.repeat(75).trim());
-    expect(resolved.structuredInput?.vendorPluginMentions?.[0]?.label).toBe('vendor-context '.repeat(75).trim());
+    expect(resolved.structuredInput).toMatchObject({
+      skillMentions: [{ description: 'skill-context '.repeat(75).trim() }],
+      vendorPluginMentions: [{ label: 'vendor-context '.repeat(75).trim() }],
+    });
     expect(renderPromptContext(resolved)).toContain('source-session');
   });
 
@@ -776,8 +778,10 @@ describe('resolveStructuredInputProviderContext', () => {
     expect(prepared.requiredPrompt).toContain('path="selected-happier.file"');
     expect(prepared.requiredPrompt).toContain('workflow_id="selected-happier.workflow"');
     expect(prepared.requiredPrompt).toContain('widget_id="selected-happier.widget"');
-    expect(prepared.structuredInput?.skillMentions?.[0]?.path).toBe(SKILL_ITEM.path);
-    expect(prepared.structuredInput?.vendorPluginMentions?.[0]?.vendorPluginRef).toBe(VENDOR_ITEM.vendorPluginRef);
+    expect(prepared.structuredInput).toMatchObject({
+      skillMentions: [{ path: SKILL_ITEM.path }],
+      vendorPluginMentions: [{ vendorPluginRef: VENDOR_ITEM.vendorPluginRef }],
+    });
     // workflowInput is an identity-only, inert kind in the dispatch owner.
     expect(prepared.requiredPrompt).not.toContain('further reference(s) omitted');
   });

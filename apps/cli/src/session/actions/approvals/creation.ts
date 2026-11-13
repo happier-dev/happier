@@ -302,8 +302,9 @@ export function createCliApprovalCreation(params: Readonly<{
           ]);
         }
         const existing = subject.request;
-        const sameRequest = existing.executionOriginV1.requestId === request.executionOriginV1.requestId;
-        if (sameRequest) assertApprovalRequestCreationBinding(existing, request);
+        // A matched subject implies a v2 request; the check keeps that narrowing explicit inside this closure.
+        const sameRequest = request.v === 2 && existing.executionOriginV1.requestId === request.executionOriginV1.requestId;
+        if (sameRequest && request.v === 2) assertApprovalRequestCreationBinding(existing, request);
         return { state: sameRequest || existing.status === 'open' || existing.status === 'approved' || existing.status === 'executing'
           ? 'rejoin' : 'terminal', request: existing };
       };

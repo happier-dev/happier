@@ -1,4 +1,5 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { evaluateFollowRulePreviewV1, type FollowRulePreviewCandidateV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRulePreviewV1';
 import { projectSessionListFilterAfterHomeQueryV1, projectSessionListFilterHomeQueriesV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterQueryV1';
 import { SESSION_LIST_PAGE_MAX_LIMIT, supportsSessionListProjectSelectionV1 } from '@happier-dev/protocol/sessions/listing/query';
@@ -80,7 +81,8 @@ export function createSessionFollowPreview(params: Readonly<{
         scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [], includeAttention: false } },
       { serverId: homeServerId, viewerAccountId, filters: [filter], collect: candidate => candidates.push(candidate) },
       workspaceRefs, sourceSessionId);
-      if ('ok' in page && page.ok === false) return page;
+      const failure = readActionFailureEnvelope(page);
+      if (failure) return failure;
       if (!await isAccountCurrent()) return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
       signal?.throwIfAborted();
       return evaluateFollowRulePreviewV1({ filter, candidates, coverage: context.sessionListAccess === 'current_session'
@@ -89,7 +91,9 @@ export function createSessionFollowPreview(params: Readonly<{
     for (const home of queries) {
       const page = await read({ context, query: home.query, includeSystem: false, signal },
         { serverId: home.serverId, viewerAccountId, filters: [filter], collect: candidate => candidates.push(candidate) }, workspaceRefs);
-      if ('ok' in page && page.ok === false) return page;
+      const failure = readActionFailureEnvelope(page);
+      if (failure) return failure;
+      if (typeof page !== 'object' || page === null) continue;
       if ('hasNext' in page && (page.hasNext || 'attentionHasNext' in page && page.attentionHasNext)
         || 'metadataUpgradeRequiredCount' in page && Number(page.metadataUpgradeRequiredCount) > 0) coverage = 'partial';
     }

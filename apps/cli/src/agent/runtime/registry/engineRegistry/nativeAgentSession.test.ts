@@ -1,5 +1,6 @@
 import { describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { ChildProcess, spawn, spawnSync } from 'node:child_process';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import { createTerminalLauncherFixture } from '@/testkit/process/terminalLauncher';
 import { launchBorrowedTerminalProcess } from '@/terminal/host/borrowedTerminalProcess';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
@@ -824,7 +825,7 @@ describe('native Agent session host adapter', () => {
                     })));
                 }
                 const descriptor = await resolveRunnerAgentSessionDescriptorForLease({
-                    target: { sourceKind: 'built_in', backendId: 'codex' }, lease: admitted.lease,
+                    target: { kind: 'backend', sourceKind: 'built_in', backendId: 'codex' }, lease: admitted.lease,
                 });
                 if (!descriptor) throw new Error('Real Codex runner descriptor missing');
                 const retainedAgent = admitted.registry.agentRuntimesByAgentId.get('codex')?.sessionRunnerFactoryBinding;
@@ -1299,7 +1300,8 @@ describe('native Agent session host adapter', () => {
                     await terminateProcessTree(native.child, { ownedProcessGroup: true });
                     api.panes.clear();
                     await expect(superviseDisconnectedTerminalHostCandidate({
-                        candidate: { sessionId: session.sessionId, pid: process.pid, happyHomeDir: launchPreparation.happyHomeDir,
+                        candidate: { sessionId: session.sessionId, trackingKey: legacyPidSessionTrackingKey(process.pid),
+                            pid: process.pid, happyHomeDir: launchPreparation.happyHomeDir,
                             attachmentId: attachment.attachmentId, handle: attachment.handle, terminalMode: 'herdr' },
                         terminalHostAdapters: { herdr: createHerdrTerminalHostAdapter({ binary: herdrPath,
                             sessionName: 'selected-optional', socketPath: api.socketPath,
@@ -5473,7 +5475,7 @@ describe('native Agent session host adapter', () => {
                     try {
                         await goalEvidence;
                         return context.signal.aborted
-                            ? { status: 'unavailable', retryable: false, diagnostic: { code: 'native_goal_control_unavailable' },
+                            ? { status: 'unavailable', retryable: false, diagnostic: { code: 'native_goal_control_unavailable', severity: 'error' },
                                 goalControlFailure: { phase: 'native_effect' } }
                             : { status: 'unchanged', revision: 'current' };
                     } finally { context.signal.removeEventListener('abort', releaseGoal); }
@@ -6949,7 +6951,7 @@ describe('native Agent session host adapter', () => {
             backend: { ...contributions.backend, pluginId: 'happier.agent.codex', provenance: 'first_party', source: { kind: 'bundled' } },
             agent: { ...contributions.agent, pluginId: 'happier.agent.codex', provenance: 'first_party', source: { kind: 'bundled' },
                 richDefinition: { ...contributions.agent.richDefinition, provenance: 'first_party' } },
-            sessionCapabilities: { open: ['create'], delivery: ['newTurn'] },
+            sessionCapabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
             createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
             attestSessionOpen: async input => { attestations.push(input); },
             sessionInput: buildPluginSessionBindingInput({ credentials, directory: '/repo',

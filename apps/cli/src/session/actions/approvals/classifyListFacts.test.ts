@@ -10,7 +10,7 @@ function createStore(rows: Map<string, { header: Record<string, unknown>; body: 
   const store: ApprovalListFactsClassificationStore = {
     list: async options => {
       const items = [...rows].filter(([, row]) => options.kinds.includes(String(row.header.kind))
-        && options.approvalStates.includes(String(row.header.approvalStatus)) && options.headerFilter(row.header))
+        && options.approvalStates.some(state => state === row.header.approvalStatus) && options.headerFilter(row.header))
         .map(([artifactId, row]) => { counts.bodiesRead++; return { artifactId, header: row.header, body: row.body }; });
       return { items, coverage: 'complete' as const };
     },

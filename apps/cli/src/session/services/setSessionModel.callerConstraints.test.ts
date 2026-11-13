@@ -97,6 +97,8 @@ describe('setSessionModel caller constraints at the effective selection boundary
       if (!applied.ok) throw new Error(applied.error);
       if (applied.result === null || typeof applied.result !== 'object' || Array.isArray(applied.result)) throw new Error('Expected model result');
       const output = getActionSpec('session.model.set').outputSchema;
+    if (!output) throw new Error('session.model.set must declare its output schema');
+      if (!output) throw new Error('session.model.set must declare its output schema');
       expect(output.parse(applied.result)).toEqual(applied.result);
       expect(output.safeParse({ ...applied.result, unexpected: true }).success).toBe(false);
       const result = applied.result as { reversal: unknown };
@@ -145,6 +147,7 @@ describe('setSessionModel caller constraints at the effective selection boundary
     if (!result.ok) throw new Error(result.error);
     if (result.result === null || typeof result.result !== 'object' || Array.isArray(result.result)) throw new Error('Expected model result');
     const output = getActionSpec('session.model.set').outputSchema;
+    if (!output) throw new Error('session.model.set must declare its output schema');
     expect(output.parse(result.result)).toEqual(result.result);
     expect(result.result).toMatchObject({ status, sessionId, modelId: activeSelection.modelId, activeSelection });
     expect(sessionRpc.callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
@@ -185,6 +188,8 @@ describe('setSessionModel caller constraints at the effective selection boundary
       if (!result.ok) throw new Error(result.error);
       if (result.result === null || typeof result.result !== 'object' || Array.isArray(result.result)) throw new Error('Expected model result');
       const output = getActionSpec('session.model.set').outputSchema;
+    if (!output) throw new Error('session.model.set must declare its output schema');
+      if (!output) throw new Error('session.model.set must declare its output schema');
       expect(output.parse(result.result)).toEqual(result.result);
       expect(output.safeParse({ ...result.result, unexpected: true }).success).toBe(false);
     });

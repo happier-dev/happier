@@ -56,7 +56,7 @@ function createPromptRoleInventoryBoundary(onRead?: () => void) {
         costs.pages++;
         onRead?.();
         const start = Number(options?.cursor ?? 0);
-        const pageRoleIds = roleIds.slice(start, start + (options.limit ?? roleIds.length));
+        const pageRoleIds = roleIds.slice(start, start + (options?.limit ?? roleIds.length));
         costs.bodies += pageRoleIds.length;
         const next = start + pageRoleIds.length;
         return { coverage: 'complete' as const, items: pageRoleIds.map(artifact),
@@ -258,7 +258,8 @@ describe('session role prompt-plan context', () => {
       read: async artifactId => {
         selectedReads++;
         return { artifactId, ownerAccountId: 'account', access: 'owner', header: { kind: 'role.v1' },
-          body: JSON.stringify({ ...BUILT_IN_ROLES_V1.builder, instructions }), revision: { headerVersion: 1, bodyVersion: selectedReads } };
+          body: JSON.stringify({ ...BUILT_IN_ROLES_V1.builder, instructions }), revision: { headerVersion: 1, bodyVersion: selectedReads },
+          seq: selectedReads, createdAt: 1, updatedAt: selectedReads };
       },
       list: async () => {
         reads++;

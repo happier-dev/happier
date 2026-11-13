@@ -1,6 +1,7 @@
 import axios from 'axios';
 import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { API_TOKEN_FULL_GRANT_V1, type ActionExecutorContext } from '@happier-dev/protocol';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
@@ -109,7 +110,7 @@ describe('CLI grant source attribution', () => {
     });
     const daemonToken = `header.${Buffer.from(JSON.stringify({ sub: 'custodian' })).toString('base64url')}.signature`;
     const deps = createCliActionDeps({ token: daemonToken, credentials: { token: daemonToken, encryption: null },
-      sessionId: 'bound-session', mode: 'plain', ctx: null, serverId, serverIdentityId: serverId, admittedAccountEncryptionMode: 'plain',
+      sessionId: 'bound-session', mode: 'plain', ctx: null, serverId, serverHttpBaseUrl: resolveServerHttpBaseUrl(), serverIdentityId: serverId, admittedAccountEncryptionMode: 'plain',
       externalActionMachineRequestPrivateKey: keys.secretKey, externalActionMachineInstallationId: 'installation' });
     const read = await invokeHostReviewedChildV1({ parent: { actionId, input: envelope.input }, context,
       child: { action: 'memory.remember', role: 'memory:rule',
@@ -200,7 +201,7 @@ describe('CLI grant source attribution', () => {
     const deps = createCliActionDeps({ token: daemonToken, credentials: { token: daemonToken, encryption: null },
       sessionId: 'bound-session', mode: 'plain', ctx: null, serverIdentityId: 'home', admittedAccountEncryptionMode: 'plain',
       externalActionMachineRequestPrivateKey: keys.secretKey, externalActionMachineInstallationId: 'installation' });
-    expect(await deps.sessionCapabilities!.resolveItem({ kind: 'skill', id: 'new-skill' }, reviewedContext!)).toBe('new-skill');
+    expect(await deps.sessionCapabilities!.resolveItem({ kind: 'skill', id: 'new-skill', sessionId: 'bound-session' }, reviewedContext!)).toBe('new-skill');
     expect(skillReads.length).toBeGreaterThan(0);
     for (const read of skillReads) {
       expect(read.headers).not.toHaveProperty('Authorization');

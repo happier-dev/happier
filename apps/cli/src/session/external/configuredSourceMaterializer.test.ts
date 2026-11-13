@@ -3311,7 +3311,7 @@ describe('configured external-session source materializer', () => {
       if (result.status !== 'following') throw new Error('expected follow');
       const disposal = result.subscription.dispose();
       let settled = false;
-      void disposal.finally(() => { settled = true; }).catch(() => undefined);
+      void Promise.resolve(disposal).finally(() => { settled = true; }).catch(() => undefined);
       await vi.advanceTimersByTimeAsync(6_001);
       expect(settled).toBe(false);
       finishCleanup();

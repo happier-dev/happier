@@ -306,7 +306,7 @@ describe('selected account native model catalog provenance', () => {
         providerBinding: null, sessionBindingMetadata: null, runtimeBindingBasis: null, revalidateBeforeEffect: async () => true };
       const authorize = createSessionModelTransitionAuthorizer({ sessionId: 'model-session', machineId: 'fixture',
         agentId, agentTargetKey, nativeModelApplyPolicy, readActiveTarget: () => active });
-      let runtimeOutcome: Awaited<ReturnType<typeof operations.updateSessionRuntimeConfig>>;
+      let runtimeOutcome: Awaited<ReturnType<typeof operations.updateSessionRuntimeConfig>> | undefined;
       const coordinator = createSessionModelTransitionCoordinator({ runId: 'original-run', agentTargetKey,
         initialActiveTarget: authorize.bindCurrentAuthorizationProof(active), initialActiveTargetConfirmed: true,
         readModelSelectionIntent: () => readSessionModelSelectionV2FromMetadata(metadata),
@@ -591,6 +591,7 @@ describe('FX model selection through the public ACP owner', () => {
           setCurrentPermissionMode() {}, setCurrentPermissionModeUpdatedAt() {}, formatPromptErrorMessage: String,
           registerProviderAcceptedEffect: () => undefined,
           onPromptFailure: (error, context) => {
+            if (!context) throw new Error('Prompt failure must carry its startup context');
             issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error, startupPhase: context.startupPhase });
           },
         });

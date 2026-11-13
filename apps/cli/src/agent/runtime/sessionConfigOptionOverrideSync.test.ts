@@ -6,7 +6,7 @@ import { PluginAgentContributionV2Schema, ProviderConnectionIdSchema } from '@ha
 
 import type { Metadata } from '@/api/types';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
-import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { createMutableApiSessionClientFixture, type MutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createSessionConfigOptionOverrideSynchronizer, resolveApplicableSessionConfigOptionOverridesFromMetadataSnapshot, resolveSessionConfigOptionOverridesFromMetadataSnapshot } from './sessionConfigOptionOverrideSync';
 import { createNativeAgentSessionInteractionOperations } from './registry/engineRegistry/nativeAgentSession';
 import { readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
@@ -131,7 +131,7 @@ describe('createSessionConfigOptionOverrideSynchronizer', () => {
     const native = await factory.sessions.open({ kind: 'resume', sessionId: 'haiku-effort-replay', cwd: '/tmp/project',
       providerSessionId: 'native-haiku', configuration }, context);
     const readModelSource = () => modelSource;
-    let metadataSession: ReturnType<typeof createMutableApiSessionClientFixture> | undefined;
+    let metadataSession: MutableApiSessionClientFixture | undefined;
     let publisher: ReturnType<typeof createSessionRuntimeModelsPublisher> | undefined;
     try {
       const operations = createNativeAgentSessionInteractionOperations({ session: native, sessionId: 'haiku-effort-replay',

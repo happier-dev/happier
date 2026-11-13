@@ -205,7 +205,7 @@ it.each(([
                 } } });
                 const persisted = await runWithServerHttpBaseUrl(origin, () =>
                     createCredentialedAccountArtifactStore(credentials).read('delete-approval'));
-                expect(persisted && approvalArtifactBodyMatchesHeaderV1(persisted.header, persisted.body)).toMatchObject({
+                expect(persisted && approvalArtifactBodyMatchesHeaderV1(persisted.header, typeof persisted.body === 'string' ? persisted.body : null)).toMatchObject({
                     family: 'built_in', request: { status: 'failed', execution: {
                         ok: false, effectAttempted: false, errorCode: 'credential_scope_denied',
                     } },
@@ -220,7 +220,7 @@ it.each(([
                 const persisted = await runWithServerHttpBaseUrl(origin, () =>
                     createCredentialedAccountArtifactStore(credentials).read('delete-approval'));
                 expect(persisted).not.toBeNull();
-                expect(persisted && approvalArtifactBodyMatchesHeaderV1(persisted.header, persisted.body)).toMatchObject({
+                expect(persisted && approvalArtifactBodyMatchesHeaderV1(persisted.header, typeof persisted.body === 'string' ? persisted.body : null)).toMatchObject({
                     family: 'built_in', request: { status: 'failed',
                         execution: { ok: false, effectAttempted: false, errorCode: 'RPC_FORBIDDEN' } } });
                 expect(paths.some(path => path.endsWith('/teardown'))).toBe(false);

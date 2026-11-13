@@ -238,7 +238,7 @@ describe('resolveBackendRuntimeCore Session-owned Execution Run scope', () => {
       const controller = { kind: 'backend', backend: runtime, cancelled: false, runtimeId, turnInFlight: false } as unknown as
         Extract<ExecutionRunController, { kind: 'backend' }>;
       const publicRun = projectExecutionRunPublicState(state, controller);
-      expect(publicRun.lifecycle.state).toBe('current');
+      expect(publicRun.lifecycle?.state).toBe('current');
       expect(resolveExecutionRunInteractionAffordances(publicRun)).toMatchObject({
         canSend: true, canSteer: false, canFollowUp: false,
       });

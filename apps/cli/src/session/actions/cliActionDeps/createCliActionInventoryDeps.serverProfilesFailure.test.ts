@@ -12,6 +12,7 @@ describe('createCliActionInventoryDeps server profile failures', () => {
   it('keeps a profile-store failure typed instead of presenting an empty inventory', async () => {
     listServerProfiles.mockRejectedValueOnce(new Error('profile store unavailable'));
     const inventory = createCliActionInventoryDeps({ token: 'fixture-token', sessionId: '', mode: 'plain', ctx: null });
+    if (!inventory.serversList) throw new Error('CLI inventory deps must provide the server list');
     await expect(inventory.serversList({})).rejects.toThrow('profile store unavailable');
   });
 });

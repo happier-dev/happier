@@ -30,7 +30,7 @@ describe('Machine capability observation during unsigned approval replay', () =>
     expect(normalizeActionExecutorThrownError(thrown)).toMatchObject({ errorCode: 'admission_unavailable', effectAttempted: false });
   });
   it('preserves which combined target refused planning and its original typed cause', async () => {
-    const params = { credentials: { token: 'fixture', encryption: null, credentialProvenance: 'stored_session' as const },
+    const params = { token: 'fixture', credentials: { token: 'fixture', encryption: null, credentialProvenance: 'stored_session' as const },
       serverId: 'home', serverIdentityId: 'home' };
     const deps = createCliMachineActionDeps(params, createCliMachineActionTransport(params));
     vi.spyOn(machineRpc, 'callExactMachineRpc').mockRejectedValue(new RpcError('Machine access was refused.', 'permission_denied'));
@@ -81,6 +81,32 @@ describe('Machine capability observation during unsigned approval replay', () =>
       await expect(result).rejects.toMatchObject({ rpcErrorCode: 'not_authenticated' });
       expect(invoke).not.toHaveBeenCalled();
     }
+  });
+
+  it('passes the caller context signal to the installed workspace-sync preflight owner', async () => {
+    const target = { kind: 'machine' as const, machineId: 'machine' };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-admission', binding: {
+      accountId: 'guest', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 },
+      accountEncryptionMode: 'plain', serverIdentityId: 'home', actionId: 'workspace.sync.relationship.create', requestId: 'root-sync',
+      machineId: 'machine', installationId: 'installation', target, requestEnvelopeDigest: 'a'.repeat(43),
+    } });
+    const caller = new AbortController();
+    const context = { surface: 'cli', authority: 'present_user', serverId: 'home', actionRequestId: 'root-sync',
+      signal: caller.signal,
+      machineAdmission: { actorAccountId: 'guest', custodianAccountId: 'owner', machineId: 'machine',
+        installationId: 'installation', role: 'use', encryptionMode: 'plain' },
+      externalActionExecutionAuthorization: authorization, externalActionTarget: target } satisfies RpcActionExecutorContext;
+    // Only the installed preflight owner is substituted; the real transport routes to it.
+    const workspaceSyncPreflightTarget = vi.fn<NonNullable<MachineActionDirectTargetTransport['workspaceSyncPreflightTarget']>>(
+      async () => ({ type: 'not_required' as const }));
+    const transport = createCliMachineActionTransport({ serverId: 'home', serverIdentityId: 'home',
+      externalActionMachineInstallationId: 'installation', externalActionMachineRequestPrivateKey: new Uint8Array(64),
+      machineActionDirectTargetTransport: { machineId: 'machine', invoke: vi.fn(), workspaceSyncPreflightTarget } });
+    await transport.callMachineAction({ machineId: 'machine', method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT,
+      effectActionId: 'workspace.sync.relationship.create', context,
+      request: { v: 1, serverId: 'home', machineId: 'machine', operationId: 'op-1', targetPath: '/work/target' } });
+    expect(workspaceSyncPreflightTarget).toHaveBeenCalledTimes(1);
+    expect(workspaceSyncPreflightTarget.mock.calls[0]?.[1].signal).toBe(caller.signal);
   });
 
   it.each([RPC_METHODS.DAEMON_BROWSER_PROFILE_LOGIN_SOURCES, RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIE_SOURCE_READ,

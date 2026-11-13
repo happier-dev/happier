@@ -4,7 +4,7 @@ import { afterAll, afterEach, expect, it, vi } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { ActionApprovalRequestCreatedResultSchema, buildWorktreeRelativePath, createActionExecutor,
   readActionOperationTerminalResultV1 } from '@happier-dev/protocol';
-import { ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { join } from 'node:path';
@@ -183,7 +183,7 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'approval-r
             });
             expect(typeof request.rpcContext?.verifyMachineAdmissionCurrent).toBe('function');
             expect(request.rpcContext?.externalActionExecutionAuthorization).toBeUndefined();
-            expect(request.rpcContext?.externalActionCredential).toBeUndefined();
+            expect(request.rpcContext ?? {}).not.toHaveProperty('externalActionCredential');
           }
           return operations.observePluginExecution(request);
         },
@@ -233,7 +233,7 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'approval-r
         expect(post.mock.calls).toHaveLength(0);
         return;
       }
-      let result = ActionExecuteResultSchema.parse(shape.startsWith('owner-')
+      let result: ActionExecuteResult = ActionExecuteResultSchema.parse(shape.startsWith('owner-')
         ? { ok: true, result: await service.execute('scm.reviewWorkspace.materializePrepared', input) }
         : await rpc.handleRequest(packet));
       const targetPath = shape.endsWith('verify') ? root : join(root, buildWorktreeRelativePath('source'));

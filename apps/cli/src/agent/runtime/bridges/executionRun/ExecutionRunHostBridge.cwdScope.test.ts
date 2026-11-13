@@ -10,7 +10,7 @@ import type { PluginDaemonModuleNamespace } from '@/plugins/runtime/types';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveCliEngineRegistry } from '@/agent/runtime/registry/engineRegistry';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
-import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { createMutableApiSessionClientFixture, type MutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import { ExecutionRunHostBridge } from './ExecutionRunHostBridge';
 import { createNativeSessionBoundary } from './testkit/nativeSessionContext';
@@ -47,7 +47,7 @@ it('retains each hosted Session directory for omitted-cwd Runs and preserves exp
   const agent = { pluginId: plugin.manifest.id, localId: 'agent' };
   const agentId = `${agent.pluginId}/${agent.localId}`;
   const managers: ExecutionRunHostBridge[] = [];
-  const sessions: ReturnType<typeof createMutableApiSessionClientFixture>[] = [];
+  const sessions: MutableApiSessionClientFixture[] = [];
   let fixture: Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>> | undefined;
   try {
     fixture = await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: home, controller: pluginReloadController,

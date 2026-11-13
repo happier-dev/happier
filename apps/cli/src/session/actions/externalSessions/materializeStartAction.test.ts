@@ -242,7 +242,7 @@ describe('external-session materialize start intent', () => {
     }));
     const executor = createDefaultExternalSessionMaterializeStartActionExecutor({
       activeServerDir: '/tmp/happier-materialize-start-admitted-read',
-      materialize: { start } as ExternalSessionMaterializeActionExecutor,
+      materialize: { start },
     });
 
     await executor.start({ request: intent });
@@ -270,7 +270,7 @@ describe('external-session materialize start intent', () => {
     const executor = createDefaultExternalSessionMaterializeStartActionExecutor({
       activeServerDir: '/tmp/happier-materialize-start-captured-account',
       machineId: 'machine-1',
-      materialize: { start } as ExternalSessionMaterializeActionExecutor,
+      materialize: { start },
     });
 
     await executor.start({ request: intent }, forwarded ? {

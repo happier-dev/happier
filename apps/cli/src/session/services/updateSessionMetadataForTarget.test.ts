@@ -3,6 +3,7 @@ import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSess
 import { applySessionMemoryCeilingOverrideToMetadata } from '@happier-dev/protocol/machines/guard/sessionGuardStateV1';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
 import { updateSessionMetadataForTarget } from './updateSessionMetadataForTarget';
+import { createCliSessionStateMetadataUpdatePort } from '@/agent/runtime/state/metadataUpdatePort';
 
 // HTTP adapters are the network boundary; resolution, encryption and CAS remain real.
 const http = vi.hoisted(() => ({ fetch: vi.fn(), lookup: vi.fn(), patch: vi.fn(), currentness: vi.fn() }));
@@ -14,6 +15,28 @@ vi.mock('@/api/client/connectedServiceCredentialApi', () => ({ fetchAccountEncry
 afterEach(() => vi.resetAllMocks());
 
 describe('exact inactive Session metadata mutation', () => {
+  it('passes the observed CAS revision to runtime state updates through the metadata port', async () => {
+    const credentials = { token: 'token', encryption: null };
+    http.currentness.mockResolvedValue({ mode: 'plain', version: 1, updatedAt: 1,
+      signingKeyFingerprint: null, contentKeyFingerprint: null });
+    const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain',
+      storedContentMode: 'plain', metadata: { path: '/repo', host: 'host', machineId: 'machine-1' }, agentState: null });
+    http.fetch.mockResolvedValue({ id: 'requested-session', encryptionMode: 'plain', metadataLayoutVersion: 1,
+      metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata,
+      metadataVersion: 1, agentState: null, agentStateVersion: 0, dataEncryptionKey: null,
+      effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+        capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) } });
+    http.patch.mockResolvedValue({ success: true, metadataLayoutVersion: 1,
+      sharedMetadata: { version: 2 }, agentState: { version: 1 } });
+    const port = createCliSessionStateMetadataUpdatePort({ credentials });
+    let observedRevision: unknown;
+    await expect(port.update('requested-session', (metadata, revision) => {
+      observedRevision = revision;
+      return { ...metadata, summary: { text: 'Updated', updatedAt: 1 } };
+    }, { reason: 'reconciliation' })).resolves.toEqual({ ok: true, version: 2 });
+    expect(observedRevision).toBe(1);
+  });
+
   it('refuses a prefix-resolved different Session before any metadata mutation', async () => {
     const credentials = { token: 'token', encryption: null };
     http.currentness.mockResolvedValue({ mode: 'plain', version: 1, updatedAt: 1,

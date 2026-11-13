@@ -13,7 +13,7 @@ import type { StoredCredentials } from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
-import { SessionFollowObserveSourceRoutesRequestV1Schema, SessionFollowObserveSourceRoutesResponseV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
+import { SessionFollowObserveSourceRoutesRequestV1Schema, SessionFollowObserveSourceRoutesResponseV1Schema, type SessionFollowSessionPendingObservationV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
 import { SESSION_FOLLOW_SOURCES_HTTP_PATHS_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourcesApi';
 export { readSessionFollowSemanticSourceEvent, captureSemanticSessionFollowRuleSourceEvidence };
 export type SessionFollowAccountOccurrence = SessionFollowOriginalOccurrenceV1;
@@ -63,7 +63,13 @@ export async function readSessionFollowOriginalRoutes(input: SourceReadContext &
     headers: { Authorization: `Bearer ${input.credentials.token}` }, signal: input.signal, validateStatus: () => true });
   if (response.status !== 200 || !await input.isCurrent()) return null;
   const parsed = SessionFollowObserveSourceRoutesResponseV1Schema.safeParse(response.data);
-  return parsed.success && parsed.data.ok && parsed.data.sourceSessionId === occurrence.sourceSessionId ? parsed.data : null;
+  if (!parsed.success || !parsed.data.ok || parsed.data.sourceSessionId !== occurrence.sourceSessionId) return null;
+  // Original routes are the ordinary follower/manager edges; stalled-rule observations never answer this read.
+  return { ...parsed.data, routes: parsed.data.routes.filter(isOrdinarySessionFollowRoute) };
+}
+
+function isOrdinarySessionFollowRoute(route: SessionFollowSessionPendingObservationV1): route is Exclude<SessionFollowSessionPendingObservationV1, { relation: 'rule' }> {
+  return route.relation !== 'rule';
 }
 
 /** Opens one already-authorized committed row; callers own paging and current predicate facts. */

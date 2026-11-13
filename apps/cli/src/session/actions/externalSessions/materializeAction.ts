@@ -445,7 +445,7 @@ async function writeRecord(
 async function mutateRecordAtRevision(
   activeServerDir: string,
   operationId: string,
-  expectedRevision: number,
+  expectedRevision: number | undefined,
   mutate: (
     current: ExternalSessionOperationRecordV1,
   ) => ExternalSessionOperationRecordV1,

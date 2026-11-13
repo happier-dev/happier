@@ -3,6 +3,7 @@ import type { CliActionDepsParams } from './types';
 import type { postWebhookJsonAsync, WebhookDestinationAdmissionError } from '@/notifications/activity/sendWebhookActivityNotification';
 import { randomUUID } from 'node:crypto';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { fetchSessionById } from '@/session/transport/http/sessionsHttp';
@@ -79,7 +80,9 @@ export function createCliNotificationCatalogForHost(params: CliNotificationCatal
     throw error;
   };
   const readChannels = async (context: Parameters<NonNullable<ActionExecutorDeps['notificationChannelsList']>>[0],
-    options?: Readonly<{ maintainSource?: false }>) => {
+    options?: Readonly<{ maintainSource?: false }>): Promise<Readonly<{
+      items: Awaited<ReturnType<typeof listActivityNotificationChannels>>;
+    }> | ActionExecuteFailure> => {
       if (!params.credentials) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       context.signal?.throwIfAborted();
       try {

@@ -47,7 +47,7 @@ describe('createProviderCliAttachSurface', () => {
                     ...(environmentSource === 'explicit' ? { env: { ...process.env, ATTACH_SCOPE_MARKER: expected } } : {}),
                 });
                 return runAddedHostedSession({ environment, workingDirectory: process.cwd(), end() {} }, async () => {
-                    const availability = await surface.evaluateAvailability!({ sessionId, metadata: {}, depth: 'live' });
+                    const availability = await surface.evaluateAvailability!({ operation: 'attach', sessionId, metadata: {}, depth: 'live' });
                     const attached = await surface.attach({ sessionId, metadata: {} });
                     return { expected, availability, attached, native: fixture.readSpec() };
                 });

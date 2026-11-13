@@ -36,7 +36,8 @@ it.skipIf(process.platform !== 'linux')('makes shared and member Session sockets
       });
       servers.push(server);
       await transport.listen(server);
-      const context = transport.localContext!;
+      const context = transport.localContext;
+      if (!context || !('socketPath' in context)) throw new Error('missing Session socket context');
       // Every ancestor above the private Session leaf must be traversable by
       // the isolated UID; granting only the leaf cannot fix a private TMPDIR.
       for (let parent = dirname(dirname(context.socketPath)); ; parent = dirname(parent)) {
@@ -61,7 +62,8 @@ it.skipIf(process.platform !== 'linux')('makes shared and member Session sockets
   } finally {
     for (const server of servers) await new Promise<void>(resolve => server.close(() => resolve()));
     for (const transport of transports) {
-      const socket = transport.localContext?.socketPath;
+      const context = transport.localContext;
+      const socket = context && 'socketPath' in context ? context.socketPath : undefined;
       await transport.retire();
       expect(transport.localContext).toBeUndefined();
       if (socket) await expect(stat(socket)).rejects.toMatchObject({ code: 'ENOENT' });

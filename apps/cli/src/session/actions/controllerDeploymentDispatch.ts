@@ -14,18 +14,23 @@ export function readControllerDeploymentDispatch(
   const previewCreate = authored?.success === true && authored.data.preview !== undefined;
   const semanticRoot = actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
     || actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 || previewCreate;
-  if (!semanticRoot && !isControllerDeploymentMutationAction(actionId, input)) return null;
+  const dispatchActionId = actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
+    || actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
+    || actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
+    || (actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && previewCreate)
+    || isControllerDeploymentMutationAction(actionId, input) ? actionId : null;
+  if (!dispatchActionId) return null;
   if ((actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 ? params.deploymentTemplateInstantiate
     : actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 ? params.deploymentMoveToRepository : params.deploymentAction)
     || context.externalActionExecutionAuthorization || context.externalActionCredential || context.rpcSessionAuthorization) return null;
   if (context.actionCaller?.kind === 'workflowRun'
-    && context.executionRunWorkflowRunId === context.actionCaller.runId) return { actionId, caller: 'workflow' };
+    && context.executionRunWorkflowRunId === context.actionCaller.runId) return { actionId: dispatchActionId, caller: 'workflow' };
   if (params.credentials && (context.surface === undefined || context.surface === 'cli')
     && (!context.actionCaller || context.actionCaller.kind === 'host')
     && (semanticRoot || !params.machineId)
     && (!context.externalActionTarget || previewCreate) && !context.causalPermissionAuthority
     && !context.approvedActionReplay && !context.presentUserApproval
     && typeof input === 'object' && input !== null
-    && (actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 || !('contentArtifactId' in input))) return { actionId, caller: 'host' };
+    && (actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 || !('contentArtifactId' in input))) return { actionId: dispatchActionId, caller: 'host' };
   return null;
 }

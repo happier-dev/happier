@@ -132,7 +132,11 @@ async function connectRemoteClient(config: RemoteBridgeConfig): Promise<Client> 
     const lookup = async () => {
       try {
         const lease = await requestAuth.lookupConnectedAccountRequestAuth({ purpose: MCP_REQUEST_AUTH_PURPOSE, signal });
-        outputRedaction.add([lease.accessToken, JSON.stringify(lease.accessToken).slice(1, -1)]);
+        // The lease carries the complete declared request-auth headers (the
+        // Authorization bearer included); redact each credential and its JSON form.
+        const credentials = Object.entries(lease.headers).flatMap(([name, value]) => readCredentialRedactionValues(
+          name.toLowerCase() === 'authorization' ? { authorizationValue: value } : { rawCredential: value }));
+        outputRedaction.add(credentials.flatMap(value => [value, JSON.stringify(value).slice(1, -1)]));
         return lease;
       }
       catch (error) { if (signal?.aborted) throw error; throw new Error('Sign in to this MCP server in Happier.'); }
@@ -140,11 +144,10 @@ async function connectRemoteClient(config: RemoteBridgeConfig): Promise<Client> 
     const send = async (lease: Awaited<ReturnType<typeof lookup>>) => {
       const requestHeaders = new Headers(init?.headers);
       const privateHeaderNames = new Set(configuredPrivateHeaderNames);
-      for (const [name, value] of Object.entries(lease.requiredHeaders ?? {})) {
+      for (const [name, value] of Object.entries(lease.headers)) {
         requestHeaders.set(name, value);
         privateHeaderNames.add(name.toLowerCase());
       }
-      requestHeaders.set('Authorization', `Bearer ${lease.accessToken}`);
       return await fetchWithCredentialRedirectRefusal(target, { ...init, headers: requestHeaders }, undefined, privateHeaderNames);
     };
     let lease = await lookup();

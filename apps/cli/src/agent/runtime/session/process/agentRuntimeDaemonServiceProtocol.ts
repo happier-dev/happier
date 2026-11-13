@@ -15,7 +15,7 @@ import { SessionEnvOverlayV1Schema } from '@happier-dev/protocol/spawn/envOverla
 import { SessionInputEnqueueResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { SessionPendingEnqueueByMachineRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
 import { SessionPendingExecutionRunEnqueueByMachineRequestV2Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
-import { ProviderBrokerConsumerV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { ProviderBrokerRuntimeConsumerV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { ProviderRuntimeBindingBasisV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { QualifiedConnectedAccountPurposeV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
 import { QualifiedConnectedAccountPurposeBindingV1Schema, QualifiedConnectedAccountPurposeBindingTargetV1Schema } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
@@ -161,187 +161,225 @@ export type AgentRuntimeDaemonServiceSessionOpenAttestationV1 =
     typeof AgentRuntimeDaemonServiceSessionOpenAttestationV1Schema
   >;
 
-export const AgentRuntimeDaemonServiceRequestV1Schema = z.strictObject({
-  v: z.literal(1),
-  context: z.strictObject({
-    token: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
-    sessionId: asHostProtocolZod(SessionIdSchema),
-    executionRunSnapshotId: z.optional(z.uuid()),
+const AgentRuntimeDaemonServiceRequestContextV1Schema = z.strictObject({
+  token: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+  sessionId: asHostProtocolZod(SessionIdSchema),
+  executionRunSnapshotId: z.optional(z.uuid()),
+});
+
+// The request's operations are grouped into named tuples so its declaration
+// stays within the compiler's serialization limit (TS7056): the exported schema
+// is annotated with `AgentRuntimeDaemonServiceRequestV1`, which names each group.
+const SESSION_IDENTITY_OPERATIONS = [
+  z.strictObject({ kind: z.literal('connected_account.identity.observe'),
+    observation: asHostProtocolZod(AgentSessionConnectedAccountIdentityObservedEventV1Schema) }),
+  z.strictObject({ kind: z.literal('native_realtime.input.admit'), admission: NativeRealtimeInputAdmissionV1Schema }),
+  z.strictObject({ kind: z.literal('native_realtime.input.retire'), admission: NativeRealtimeInputAdmissionV1Schema }),
+  z.strictObject({ kind: z.literal('agent_start.policy.read') }),
+  z.strictObject({ kind: z.literal('execution_run.review_plugin_authority.resolve_v1'),
+    pluginId: asHostProtocolZod(PluginIdSchema) }),
+] as const;
+
+const SESSION_TURN_OPERATIONS = [
+  z.strictObject({
+    kind: z.literal('action.execute'),
+    surface: z.optional(z.enum(['agent', 'mcp'])),
+    reviewCommentPrincipal: z.optional(asHostProtocolZod(ReviewCommentPrincipalHeaderV1Schema)),
+    executionRun: z.optional(z.strictObject({ runId: OpaqueIdSchema, occurrenceId: OpaqueIdSchema })),
+    /** Host-selected Session/Run workspace, separate from authored SCM input. */
+    scmWorkspace: z.optional(asHostProtocolZod(WorkflowProjectTargetV1Schema)),
+    requestId: OpaqueIdSchema,
+    actionId: asHostProtocolZod(ActionIdSchema),
+    input: z.unknown(),
+    witness: AgentRuntimeDaemonServiceTurnWitnessV1Schema,
+    toolCallId: z.optional(OpaqueIdSchema),
+  }).check(z.refine((operation) => Object.prototype.hasOwnProperty.call(operation, 'input'), {
+    path: ['input'],
+    message: 'Action input must be present',
+  })),
+  z.strictObject({
+    kind: z.literal('session.open.attest'),
+    requestId: OpaqueIdSchema,
+    phase: z._default(z.enum(['prepare', 'commit', 'refused']), 'commit'),
+    failure: z.optional(SessionOpenConstructionFailureV1Schema),
+    request: AgentRuntimeDaemonSessionOpenRequestV1Schema,
+    providerSessionId: z.nullable(OpaqueIdSchema),
   }),
+  z.strictObject({
+    kind: z.literal('turn.admission.authorize'),
+    requestId: OpaqueIdSchema,
+    witness: AgentRuntimeDaemonServiceTurnWitnessV1Schema,
+  }),
+  z.strictObject({
+    kind: z.literal('turn_contributions.resolve'),
+    requestId: OpaqueIdSchema,
+    request:
+      AgentRuntimeDaemonTurnContributionRequestV1Schema,
+  }),
+  z.strictObject({
+    kind: z.literal('session.input.admit'),
+    requestId: OpaqueIdSchema,
+    request: z.union([asHostProtocolZod(SessionPendingEnqueueByMachineRequestV1Schema), asHostProtocolZod(SessionPendingExecutionRunEnqueueByMachineRequestV2Schema)]),
+  }),
+  z.strictObject({
+    kind: z.literal('model_transition.authorize'),
+    requestId: OpaqueIdSchema,
+    selection:
+      AgentRuntimeDaemonProviderConnectionModelRefV1Schema,
+  }),
+] as const;
+
+const PROVIDER_BINDING_OPERATIONS = [
+  z.strictObject({
+    kind: z.literal('provider_managed.purpose.resolve'),
+    requestId: OpaqueIdSchema,
+    expectedAccountSettingsScopeKey: z.string().check(z.minLength(1)),
+    purpose: asHostProtocolZod(QualifiedConnectedAccountPurposeV1Schema),
+    target: asHostProtocolZod(QualifiedConnectedAccountPurposeBindingTargetV1Schema),
+    serviceRefs: z.array(asHostProtocolZod(PluginContributionIdentityV1Schema)),
+  }),
+  z.strictObject({
+    kind: z.literal('provider_managed.binding.open'),
+    requestId: OpaqueIdSchema,
+    ...ManagedProviderBindingProofShape,
+  }),
+  z.strictObject({
+    kind: z.literal('provider_managed.binding.read'),
+    requestId: OpaqueIdSchema,
+    ...ManagedProviderBindingProofShape,
+    bindingId: z.optional(OpaqueIdSchema),
+  }),
+  z.strictObject({
+    kind: z.literal('provider_managed.binding.close'),
+    requestId: OpaqueIdSchema,
+    bindingId: OpaqueIdSchema,
+  }),
+  z.strictObject({
+    kind: z.literal('provider_broker.binding.open'),
+    requestId: OpaqueIdSchema,
+    resourceId: OpaqueIdSchema,
+    expectedResourceRevision: z.number().check(z.int(), z.nonnegative()),
+    agentTargetKey: OpaqueIdSchema,
+    modelId: OpaqueIdSchema,
+    consumer: z.optional(asHostProtocolZod(ProviderBrokerRuntimeConsumerV1Schema)),
+    /**
+     * An Execution Run's own accepted selection (`PLAN.md` §2.3): its Team
+     * and route travel with it, because a Run selected from the Home-wide
+     * catalog need not share its parent Session's binding. Only an
+     * `execution_run` consumer may carry them, and only together; a Session,
+     * or a Run that selected nothing, is bound by its tracked Session.
+     */
+    teamId: z.optional(OpaqueIdSchema),
+    deliveryMode: z.optional(TeamCredentialRouteV1Schema),
+    /**
+     * The Agent an `execution_run` consumer runs, which need not be its
+     * parent Session's; required for every Run and refused for a Session,
+     * which always materializes for the daemon-retained Agent.
+     */
+    agentId: z.optional(OpaqueIdSchema),
+  }),
+  z.strictObject({
+    kind: z.literal('provider_broker.binding.close'),
+    requestId: OpaqueIdSchema,
+    bindingId: OpaqueIdSchema,
+  }),
+  z.strictObject({
+    kind: z.literal('provider_broker.refusal.read'),
+    requestId: OpaqueIdSchema,
+    turnId: OpaqueIdSchema,
+  }),
+] as const;
+
+const MANAGED_SERVER_OPERATIONS = [
+  z.strictObject({
+    kind: z.literal('managed_server.supervision.authorize'),
+    requestId: OpaqueIdSchema,
+    contributionId: OpaqueIdSchema,
+    operationClaimId: z.optional(OpaqueIdSchema),
+    serverId: OpaqueIdSchema,
+    executable: ManagedExecutableRefSchema,
+    environmentKeys: EnvironmentKeysSchema,
+  }),
+  z.strictObject({
+    kind: z.literal('managed_server.endpoint.publish'),
+    requestId: OpaqueIdSchema,
+    projection: SessionRunnerManagedServiceEndpointProjectionInputV1Schema,
+  }),
+  z.strictObject({
+    kind: z.literal('managed_server.endpoint.release'),
+    requestId: OpaqueIdSchema,
+    pluginId: OpaqueIdSchema,
+    instanceId: OpaqueIdSchema,
+    projectionToken: ProjectionTokenSchema,
+  }),
+  z.strictObject({
+    kind: z.literal('managed_server.endpoint.resolve'),
+    requestId: OpaqueIdSchema,
+    witness: AgentRuntimeDaemonServiceTurnWitnessV1Schema,
+    selector: z.strictObject({
+      kind: z.literal('projectionToken'),
+      projectionToken: ProjectionTokenSchema,
+    }),
+  }),
+  z.strictObject({
+    kind: z.literal('managed_server.endpoint.read.claim'),
+    requestId: OpaqueIdSchema,
+    projectionToken: ProjectionTokenSchema,
+  }),
+  /**
+   * Host-private, operation-scoped read of one declared managed-service
+   * secret. The runner never holds device-local secret key material: the
+   * current daemon owns the retained-generation declaration, the canonical
+   * custody router, and the revision this operation reports. `revalidate`
+   * rechecks the same declaration against `expectedRevision` immediately
+   * before the runner dispatches a credential-bearing request.
+   */
+  z.strictObject({
+    kind: z.literal('managed_server.secret.read'),
+    requestId: OpaqueIdSchema,
+    phase: z._default(z.enum(['read', 'revalidate']), 'read'),
+    secretId: OpaqueIdSchema,
+    canonicalOrigin: CanonicalOriginSchema,
+    expectedRevision: z.optional(OpaqueIdSchema),
+  }),
+] as const;
+
+type OperationOf<Group extends readonly z.core.$ZodType[]> = z.infer<Group[number]>;
+
+export type AgentRuntimeDaemonServiceOperationV1 =
+  | OperationOf<typeof SESSION_IDENTITY_OPERATIONS>
+  | OperationOf<typeof RUNNER_EXECUTION_RUN_SNAPSHOT_OPERATIONS>
+  | z.infer<typeof McpRequestAuthOpenV1Schema>
+  | z.infer<typeof McpRequestAuthCloseV1Schema>
+  | OperationOf<typeof RUNNER_PLUGIN_MCP_OPERATIONS>
+  | OperationOf<typeof RUNNER_AGENT_DAEMON_FACET_OPERATION_SCHEMAS>
+  | OperationOf<typeof RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS>
+  | OperationOf<typeof SESSION_TURN_OPERATIONS>
+  | OperationOf<typeof PROVIDER_BINDING_OPERATIONS>
+  | OperationOf<typeof MANAGED_SERVER_OPERATIONS>;
+
+export type AgentRuntimeDaemonServiceRequestV1 = {
+  v: 1;
+  context: z.infer<typeof AgentRuntimeDaemonServiceRequestContextV1Schema>;
+  operation: AgentRuntimeDaemonServiceOperationV1;
+};
+
+export const AgentRuntimeDaemonServiceRequestV1Schema: z.ZodMiniType<AgentRuntimeDaemonServiceRequestV1> = z.strictObject({
+  v: z.literal(1),
+  context: AgentRuntimeDaemonServiceRequestContextV1Schema,
   operation: z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('connected_account.identity.observe'),
-      observation: asHostProtocolZod(AgentSessionConnectedAccountIdentityObservedEventV1Schema) }),
-    z.strictObject({ kind: z.literal('native_realtime.input.admit'), admission: NativeRealtimeInputAdmissionV1Schema }),
-    z.strictObject({ kind: z.literal('native_realtime.input.retire'), admission: NativeRealtimeInputAdmissionV1Schema }),
-    z.strictObject({ kind: z.literal('agent_start.policy.read') }),
-    z.strictObject({ kind: z.literal('execution_run.review_plugin_authority.resolve_v1'),
-      pluginId: asHostProtocolZod(PluginIdSchema) }),
+    ...SESSION_IDENTITY_OPERATIONS,
     ...RUNNER_EXECUTION_RUN_SNAPSHOT_OPERATIONS,
     McpRequestAuthOpenV1Schema,
     McpRequestAuthCloseV1Schema,
     ...RUNNER_PLUGIN_MCP_OPERATIONS,
     ...RUNNER_AGENT_DAEMON_FACET_OPERATION_SCHEMAS,
     ...RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS,
-    z.strictObject({
-      kind: z.literal('action.execute'),
-      surface: z.optional(z.enum(['agent', 'mcp'])),
-      reviewCommentPrincipal: z.optional(asHostProtocolZod(ReviewCommentPrincipalHeaderV1Schema)),
-      executionRun: z.optional(z.strictObject({ runId: OpaqueIdSchema, occurrenceId: OpaqueIdSchema })),
-      /** Host-selected Session/Run workspace, separate from authored SCM input. */
-      scmWorkspace: z.optional(asHostProtocolZod(WorkflowProjectTargetV1Schema)),
-      requestId: OpaqueIdSchema,
-      actionId: asHostProtocolZod(ActionIdSchema),
-      input: z.unknown(),
-      witness: AgentRuntimeDaemonServiceTurnWitnessV1Schema,
-      toolCallId: z.optional(OpaqueIdSchema),
-    }).check(z.refine((operation) => Object.prototype.hasOwnProperty.call(operation, 'input'), {
-      path: ['input'],
-      message: 'Action input must be present',
-    })),
-    z.strictObject({
-      kind: z.literal('session.open.attest'),
-      requestId: OpaqueIdSchema,
-      phase: z._default(z.enum(['prepare', 'commit', 'refused']), 'commit'),
-      failure: z.optional(SessionOpenConstructionFailureV1Schema),
-      request: AgentRuntimeDaemonSessionOpenRequestV1Schema,
-      providerSessionId: z.nullable(OpaqueIdSchema),
-    }),
-    z.strictObject({
-      kind: z.literal('turn.admission.authorize'),
-      requestId: OpaqueIdSchema,
-      witness: AgentRuntimeDaemonServiceTurnWitnessV1Schema,
-    }),
-    z.strictObject({
-      kind: z.literal('turn_contributions.resolve'),
-      requestId: OpaqueIdSchema,
-      request:
-        AgentRuntimeDaemonTurnContributionRequestV1Schema,
-    }),
-    z.strictObject({
-      kind: z.literal('session.input.admit'),
-      requestId: OpaqueIdSchema,
-      request: z.union([asHostProtocolZod(SessionPendingEnqueueByMachineRequestV1Schema), asHostProtocolZod(SessionPendingExecutionRunEnqueueByMachineRequestV2Schema)]),
-    }),
-    z.strictObject({
-      kind: z.literal('model_transition.authorize'),
-      requestId: OpaqueIdSchema,
-      selection:
-        AgentRuntimeDaemonProviderConnectionModelRefV1Schema,
-    }),
-    z.strictObject({
-      kind: z.literal('provider_managed.purpose.resolve'),
-      requestId: OpaqueIdSchema,
-      expectedAccountSettingsScopeKey: z.string().check(z.minLength(1)),
-      purpose: asHostProtocolZod(QualifiedConnectedAccountPurposeV1Schema),
-      target: asHostProtocolZod(QualifiedConnectedAccountPurposeBindingTargetV1Schema),
-      serviceRefs: z.array(asHostProtocolZod(PluginContributionIdentityV1Schema)),
-    }),
-    z.strictObject({
-      kind: z.literal('provider_managed.binding.open'),
-      requestId: OpaqueIdSchema,
-      ...ManagedProviderBindingProofShape,
-    }),
-    z.strictObject({
-      kind: z.literal('provider_managed.binding.read'),
-      requestId: OpaqueIdSchema,
-      ...ManagedProviderBindingProofShape,
-      bindingId: z.optional(OpaqueIdSchema),
-    }),
-    z.strictObject({
-      kind: z.literal('provider_managed.binding.close'),
-      requestId: OpaqueIdSchema,
-      bindingId: OpaqueIdSchema,
-    }),
-    z.strictObject({
-      kind: z.literal('provider_broker.binding.open'),
-      requestId: OpaqueIdSchema,
-      resourceId: OpaqueIdSchema,
-      expectedResourceRevision: z.number().check(z.int(), z.nonnegative()),
-      agentTargetKey: OpaqueIdSchema,
-      modelId: OpaqueIdSchema,
-      consumer: z.optional(asHostProtocolZod(ProviderBrokerConsumerV1Schema)),
-      /**
-       * An Execution Run's own accepted selection (`PLAN.md` §2.3): its Team
-       * and route travel with it, because a Run selected from the Home-wide
-       * catalog need not share its parent Session's binding. Only an
-       * `execution_run` consumer may carry them, and only together; a Session,
-       * or a Run that selected nothing, is bound by its tracked Session.
-       */
-      teamId: z.optional(OpaqueIdSchema),
-      deliveryMode: z.optional(TeamCredentialRouteV1Schema),
-      /**
-       * The Agent an `execution_run` consumer runs, which need not be its
-       * parent Session's; required for every Run and refused for a Session,
-       * which always materializes for the daemon-retained Agent.
-       */
-      agentId: z.optional(OpaqueIdSchema),
-    }),
-    z.strictObject({
-      kind: z.literal('provider_broker.binding.close'),
-      requestId: OpaqueIdSchema,
-      bindingId: OpaqueIdSchema,
-    }),
-    z.strictObject({
-      kind: z.literal('provider_broker.refusal.read'),
-      requestId: OpaqueIdSchema,
-      turnId: OpaqueIdSchema,
-    }),
-    z.strictObject({
-      kind: z.literal('managed_server.supervision.authorize'),
-      requestId: OpaqueIdSchema,
-      contributionId: OpaqueIdSchema,
-      operationClaimId: z.optional(OpaqueIdSchema),
-      serverId: OpaqueIdSchema,
-      executable: ManagedExecutableRefSchema,
-      environmentKeys: EnvironmentKeysSchema,
-    }),
-    z.strictObject({
-      kind: z.literal('managed_server.endpoint.publish'),
-      requestId: OpaqueIdSchema,
-      projection: SessionRunnerManagedServiceEndpointProjectionInputV1Schema,
-    }),
-    z.strictObject({
-      kind: z.literal('managed_server.endpoint.release'),
-      requestId: OpaqueIdSchema,
-      pluginId: OpaqueIdSchema,
-      instanceId: OpaqueIdSchema,
-      projectionToken: ProjectionTokenSchema,
-    }),
-    z.strictObject({
-      kind: z.literal('managed_server.endpoint.resolve'),
-      requestId: OpaqueIdSchema,
-      witness: AgentRuntimeDaemonServiceTurnWitnessV1Schema,
-      selector: z.strictObject({
-        kind: z.literal('projectionToken'),
-        projectionToken: ProjectionTokenSchema,
-      }),
-    }),
-    z.strictObject({
-      kind: z.literal('managed_server.endpoint.read.claim'),
-      requestId: OpaqueIdSchema,
-      projectionToken: ProjectionTokenSchema,
-    }),
-    /**
-     * Host-private, operation-scoped read of one declared managed-service
-     * secret. The runner never holds device-local secret key material: the
-     * current daemon owns the retained-generation declaration, the canonical
-     * custody router, and the revision this operation reports. `revalidate`
-     * rechecks the same declaration against `expectedRevision` immediately
-     * before the runner dispatches a credential-bearing request.
-     */
-    z.strictObject({
-      kind: z.literal('managed_server.secret.read'),
-      requestId: OpaqueIdSchema,
-      phase: z._default(z.enum(['read', 'revalidate']), 'read'),
-      secretId: OpaqueIdSchema,
-      canonicalOrigin: CanonicalOriginSchema,
-      expectedRevision: z.optional(OpaqueIdSchema),
-    }),
+    ...SESSION_TURN_OPERATIONS,
+    ...PROVIDER_BINDING_OPERATIONS,
+    ...MANAGED_SERVER_OPERATIONS,
   ]),
 });
-
-export type AgentRuntimeDaemonServiceRequestV1 =
-  z.infer<typeof AgentRuntimeDaemonServiceRequestV1Schema>;
 
 export const AgentRuntimeDaemonServiceResponseV1Schema =
   z.discriminatedUnion('ok', [

@@ -23,20 +23,20 @@ import type {
   ProviderMessageMetaEnricher,
 } from '@happier-dev/agents';
 import type {
-  evaluateCliSessionAttachEligibility,
   CliSessionAttachEligibility,
+  CliSessionAttachEligibilityParams,
 } from '@/session/attach/evaluateCliSessionAttachEligibility';
 import {
   resolveContinueWithReplayBackendTarget,
   type ContinueWithReplayBackendTargetResolution,
 } from '@/session/replay/resolveContinueWithReplayBackendTarget';
 import type {
-  resolveSessionForkBackendTarget,
+  SessionForkBackendTargetParams,
   SessionForkBackendTargetResolution,
 } from '@/session/fork/backendTarget';
 import type {
-  resolveSessionHandoffEligibility,
   SessionHandoffEligibility,
+  SessionHandoffEligibilityInput,
 } from '@/session/handoff/resolveSessionHandoffEligibility';
 import type {
   CanonicalizedExternalSessionSourceResult,
@@ -376,7 +376,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
   }
 
   async evaluateAttachEligibility(
-    params: Omit<Parameters<typeof evaluateCliSessionAttachEligibility>[0], 'resolveExecutionSurfaces'>,
+    params: Omit<CliSessionAttachEligibilityParams, 'resolveExecutionSurfaces'>,
   ): Promise<CliSessionAttachEligibility> {
     const { evaluateCliSessionAttachEligibility } = await import('@/session/attach/evaluateCliSessionAttachEligibility');
     return await evaluateCliSessionAttachEligibility({
@@ -386,10 +386,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
   }
 
   async resolveSessionHandoffEligibility(
-    params: Omit<
-      Parameters<typeof resolveSessionHandoffEligibility>[0],
-      'resolveCurrentExecutionSurfacesForAgent'
-    >,
+    params: Omit<SessionHandoffEligibilityInput, 'resolveCurrentExecutionSurfacesForAgent'>,
   ): Promise<SessionHandoffEligibility> {
     const { resolveSessionHandoffEligibility } = await import('@/session/handoff/resolveSessionHandoffEligibility');
     return await resolveSessionHandoffEligibility({
@@ -407,7 +404,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
   }
 
   async resolveSessionForkBackendTarget(
-    params: Parameters<typeof resolveSessionForkBackendTarget>[0],
+    params: SessionForkBackendTargetParams,
   ): Promise<SessionForkBackendTargetResolution> {
     const { resolveSessionForkBackendTarget } = await import('@/session/fork/backendTarget');
     return await resolveSessionForkBackendTarget(params);

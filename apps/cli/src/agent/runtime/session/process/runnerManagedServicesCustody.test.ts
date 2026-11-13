@@ -221,12 +221,17 @@ const spec = Object.freeze({
     healthCheck: Object.freeze({ kind: 'none' as const }),
 }) satisfies ManagedServiceSpec;
 
+// Supervision fixtures author only the members they exercise; workload
+// observation stays the canonical unavailable owner.
 function supervisionAdmission(
-    services: ManagedServices,
+    services: Omit<ManagedServices, 'observeWorkload'> & Partial<Pick<ManagedServices, 'observeWorkload'>>,
     revision = 0,
 ) {
     return Object.freeze({
-        services,
+        services: Object.freeze({
+            observeWorkload: createUnavailableManagedServices().observeWorkload,
+            ...services,
+        }),
         providerPluginHardRevocationRevisionAtAdmission: revision,
     });
 }
@@ -368,6 +373,17 @@ describe('runner managed-services Provider custody', () => {
             custodyScope: scope,
             snapshot: snapshot('gateway'),
         });
+    });
+
+    it('carries every managed-service handle stop status across the result wire', () => {
+        const statuses = ['stopped', 'detached', 'accepted', 'unsupported', 'termination_incomplete'] as const;
+        const accepted = statuses.filter(status => RunnerManagedServicesCustodyResultV1Schema.safeParse({
+            v: 1,
+            kind: 'stop',
+            result: { status },
+            snapshot: snapshot('gateway'),
+        }).success);
+        expect(accepted).toEqual(statuses);
     });
 
     it('routes requests only to the exact custody handle and aborts them when currentness is fenced', async () => {

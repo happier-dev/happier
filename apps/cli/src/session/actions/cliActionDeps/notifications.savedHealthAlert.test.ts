@@ -12,7 +12,7 @@ const network = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock('@/session/transport/rpc/machineRpc', () => ({ callExactMachineRpc: network.call }));
 afterEach(() => vi.clearAllMocks());
 
-it.each(['ui_button', 'agent'] as const)('discloses the exact saved destination and controller before a %s Test confirmation', async surface => {
+it.each(['ui', 'agent'] as const)('discloses the exact saved destination and controller before a %s Test confirmation', async surface => {
     const input = { serverId: 'home', machineId: 'controller', sourceInstanceId: 'saved-source',
         channelId: 'happier.channel.slack/alerts', channelIndex: 0, expectedSourceRevision: 'source-revision' };
     const destination = { connectionId: 'production-slack', endpoint: { kind: 'shared', audience: 'shared', id: 'C1', label: 'Production alerts' } };

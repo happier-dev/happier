@@ -83,7 +83,7 @@ it('serves Environment alert-defaults preview for a plugin caller while retainin
             savedSecretOperationContext: operationContext });
         const context = { surface: 'plugin', authority: 'account_automation', runtimeAccountId: 'owner',
             actionRequestId: 'health-defaults', actionCaller: { kind: 'plugin', pluginId: 'happier.machine.services',
-                contribution: { id: 'health/setup', qualifiedId: 'happier.machine.services/health/setup' }, occurrenceId: 'current' },
+                contributionLocalId: 'health/setup', contributionQualifiedId: 'happier.machine.services/health/setup', occurrenceId: 'current' },
         } satisfies ActionExecutorContext;
         const input = { serverId: 'srv_home', environmentId: environment.id, expectedRevision: environment.revision,
             contentArtifactId: environment.contentArtifactId, contentHeaderVersion: environment.contentHeaderVersion,
@@ -105,7 +105,7 @@ it('serves Environment alert-defaults preview for a plugin caller while retainin
         const origin = { serverIdentityId: 'srv_home', machineId };
         const runtime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: [pluginId],
             externalActionHomeBinding: { serverId: profileId, serverIdentityId: 'srv_home' },
-            resolveCurrentMachineId: () => machineId, resolveCurrentMachineExecutionOriginContext: () => origin,
+            resolveCurrentMachineId: () => machineId, resolveCurrentMachineExecutionOriginContext: async () => origin,
             scopedActionRuntime: { credentials, savedSecretOperationContext: operationContext, actionsSettingsProvider: createActionSettingsProvider({
                 getAccountSettings: () => null, allowEnvironmentOverride: false }) },
         } });

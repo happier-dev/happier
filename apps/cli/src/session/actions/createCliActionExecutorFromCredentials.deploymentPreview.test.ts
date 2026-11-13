@@ -221,7 +221,7 @@ it.each([
             getChildren: () => [], stopSession: async () => ({ status: 'not_found' }),
             spawnSession: async () => ({ type: 'success', sessionId: 'session' }), requestShutdown: () => {}, onHappySessionWebhook: () => {},
             externalActionApi: { currentServerId: configuration.activeServerId, currentAccountId: 'owner',
-                verifyPat: async () => null, resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
+                verifyPat: async () => ({ ok: false, code: 'invalid_token' }) as const, resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
                 executor: createActionExecutor(createCliActionDeps({ token, credentials, sessionId: '', mode: 'plain', ctx: null,
                     serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: 'https://home.test',
                     actionsSettingsProvider: createActionSettingsProvider({ accountSettings }) })) } });

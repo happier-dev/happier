@@ -38,10 +38,14 @@ export type SessionForkBackendTargetResolution =
       errorMessage: string;
     }>;
 
-export async function resolveSessionForkBackendTarget(params: Readonly<{
+export type SessionForkBackendTargetParams = Readonly<{
   parentMetadata: Record<string, unknown>;
   credentials: StoredCredentials;
-}>): Promise<SessionForkBackendTargetResolution> {
+}>;
+
+export async function resolveSessionForkBackendTarget(
+  params: SessionForkBackendTargetParams,
+): Promise<SessionForkBackendTargetResolution> {
   const linkedSessionResolution = resolveLinkedExternalSessionMetadataV1(
     params.parentMetadata,
     'stored',

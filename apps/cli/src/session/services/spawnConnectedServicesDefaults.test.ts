@@ -180,7 +180,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
       serverId: 'home-a',
       accountId: 'recipient-account',
       resources: [{
-        id: 'resource-a', teamId: 'team-a', displayName: 'Shared Codex account',
+        id: 'resource-a', teamId: 'team-a', displayName: 'Shared Codex account', sourceOwnerDisplayName: null,
         resourceRevision: 7, readiness: { kind: 'available' as const }, recoveryAction: null,
         mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered' as const,
         sessionUsePolicy: 'personal_allowed' as const, providerModels: [],
@@ -285,7 +285,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
       serverId: 'home-a',
       accountId: 'recipient-account',
       resources: [{
-        id: 'resource-a', teamId: 'team-a', displayName: 'Shared Codex account',
+        id: 'resource-a', teamId: 'team-a', displayName: 'Shared Codex account', sourceOwnerDisplayName: null,
         resourceRevision: 7, readiness: { kind: 'available' as const }, recoveryAction: null,
         mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered' as const,
         sessionUsePolicy: 'personal_allowed' as const, providerModels: [],
@@ -343,7 +343,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
       serverId: 'home-a',
       accountId: 'recipient-account',
       resources: [{
-        id: 'resource-a', teamId: 'team-a', displayName: 'Shared Codex account',
+        id: 'resource-a', teamId: 'team-a', displayName: 'Shared Codex account', sourceOwnerDisplayName: null,
         resourceRevision: 9, readiness: { kind: 'available' as const }, recoveryAction: null,
         mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered' as const,
         sessionUsePolicy: 'personal_allowed' as const, providerModels: [],
@@ -426,7 +426,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
     const resource = {
       id: binding.resourceId,
       teamId: binding.teamId,
-      displayName: 'Shared Codex account',
+      displayName: 'Shared Codex account', sourceOwnerDisplayName: null,
       resourceRevision: binding.expectedResourceRevision,
       readiness: { kind: 'available' as const },
       recoveryAction: null,

@@ -3,6 +3,7 @@ import { accountSettingsParse, FeaturesResponseSchema } from '@happier-dev/proto
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createHappierMcpServer } from './createHappierMcpServer';
+import type { HappyMcpSessionClient } from './startHappyServer';
 import { createSessionDaemonAuthorityFixture } from './runtime/sessionDaemonAuthority.testkit';
 
 it('retains the native realtime caller refusal at the native Action tool entry', async () => {
@@ -11,15 +12,17 @@ it('retains the native realtime caller refusal at the native Action tool entry',
     agentStartPolicy: accountSettingsParse({}),
     execute: async () => { throw new Error('Invalid caller must not reach Action execution'); },
   });
-  const session = createMutableApiSessionClientFixture({ sessionId, metadata: createTestMetadata(), overrides: {
+  // The live MCP client owns the admission witness; ApiSessionClient does not.
+  const session = Object.assign(createMutableApiSessionClientFixture({ sessionId, metadata: createTestMetadata(), overrides: {
     getServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated',
       features: FeaturesResponseSchema.parse({ features: { workflows: { enabled: true } }, capabilities: {} }) }),
+  } }), {
     getActiveTurnAdmissionWitness: () => ({ turnId: 'native-turn', inputId: 'different-input',
       nativeRealtimeAdmission: { admissionId: 'admitted-input', occurrenceId: 'provider-occurrence', attemptId: 'live-attempt' },
       userMessageSeq: null, userMessageSeqs: [], signal: new AbortController().signal,
       agentStartCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
     }),
-  } });
+  } satisfies Pick<HappyMcpSessionClient, 'getActiveTurnAdmissionWitness'>);
   const runtime = createHappierMcpServer(session, { sessionCredentials: { token: 'test-session-transport', encryption: null } });
   try {
     // Native host tools use this same public dispatcher. External MCP auth is

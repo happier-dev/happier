@@ -483,7 +483,7 @@ export async function exerciseMcpOAuthSocketRequestAuth(options?: Readonly<{ tes
     try {
       const client = await createConnectedAccountRequestAuthClient({ capabilityFile: admitted.capabilityFile });
       expect(await client.lookupConnectedAccountRequestAuth({ purpose: MCP_REQUEST_AUTH_PURPOSE }))
-        .toMatchObject({ accessToken: 'access-1' });
+        .toMatchObject({ headers: { authorization: 'Bearer access-1' } });
     } finally { await admitted.cleanup(); }
     await expect(stat(admitted.capabilityFile)).rejects.toMatchObject({ code: 'ENOENT' });
     const testInput = { t: 'byId', machineId: machine.id, serverId: 'server-one', directory: harness.baseDir };
@@ -532,7 +532,7 @@ export async function exerciseMcpOAuthSocketRequestAuth(options?: Readonly<{ tes
   const capability = await issueMcpRequestAuthCapability({ serverId: 'server-one', resource, materializationId: 'composed-bridge' }, issuance, new AbortController().signal);
   cleanup.push(() => subjects.retireSessionCapabilities({ parentSessionId: issuance.parentSessionId, materializationId: 'composed-bridge' }));
   const requestClient = await createConnectedAccountRequestAuthClient({ capabilityFile: capability.capabilityFile });
-  expect(await requestClient.lookupConnectedAccountRequestAuth({ purpose: MCP_REQUEST_AUTH_PURPOSE })).toMatchObject({ accessToken: 'access-1' });
+  expect(await requestClient.lookupConnectedAccountRequestAuth({ purpose: MCP_REQUEST_AUTH_PURPOSE })).toMatchObject({ headers: { authorization: 'Bearer access-1' } });
   await expect(issueMcpRequestAuthCapability({ serverId: 'server-one', resource: `${resource}/other`, materializationId: 'wrong-resource' }, issuance,
     new AbortController().signal)).rejects.toThrow('mcp_resource_mismatch');
   const runnerCapabilities = new Map<string, string>();

@@ -330,7 +330,7 @@ describe('target Session input authoring through HTTP', () => {
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId, mode: 'plain', ctx: null,
       machineActionDirectTargetTransport: createLocalMachineActionTransportFixture('machine-a'),
       machineAdmissionTransport: async (request, options) => {
-        expect(options.callerInputAuthorization?.binding.requestId).toBe('alias-send');
+        expect(options?.callerInputAuthorization?.binding.requestId).toBe('alias-send');
         const admitted = SessionPendingEnqueueByMachineRequestV1Schema.parse(request);
         machineInputs.push(admitted);
         return { status: 'accepted', localId: admitted.localId };
@@ -480,7 +480,7 @@ describe('target Session input authoring through HTTP', () => {
     });
     const deps = createCliActionDeps({ token: credentials.token, credentials: retainedCredentials, sessionId, mode: 'plain', ctx: null });
     const result = await deps.sessionSendMessage!({ context: cliActionContext, sessionId,
-      localId: 'input-a', message: 'Reply OK', wait: true, timeoutSeconds: 1 });
+      localId: 'input-a', message: 'Reply OK', requestedAction: { v: 1, kind: 'enqueue' }, wait: true, timeoutSeconds: 1 });
     if (outcome === 'failed') expect(result).toEqual({ status: 'failed', code: 'session_input_turn_failed', localId: 'input-a' });
     else expect(result).toMatchObject({ ok: false, errorCode: 'timeout' });
   });
@@ -522,7 +522,7 @@ describe('target Session input authoring through HTTP', () => {
     });
     const senderCredentials = mode === 'plain' ? { token: credentials.token, encryption: null } : credentials;
     const deps = createCliActionDeps({ token: credentials.token, credentials: senderCredentials, sessionId,
-      mode, ctx: mode === 'plain' ? null : ctx });
+      ...(mode === 'plain' ? { mode: 'plain' as const, ctx: null } : { mode: 'e2ee' as const, ctx }) });
     const result = await createActionExecutor({ ...deps, isActionApprovalRequired: () => false }).execute('session.message.send', {
       sessionId, localId: input.localId, message: 'No tools. Reply SWITCH_OK.', wait: true, timeoutSeconds: 1,
     }, { surface: 'mcp', authority: 'present_user', defaultSessionId: null });
@@ -787,7 +787,7 @@ describe('target Session input authoring through HTTP', () => {
       message: 'Next prompt', ...(target ? { recipient: target } : {}), wait: true, timeoutMs: 1000 });
     expect(result).toMatchObject({ ok: false, code: 'wait_failed',
       admissionResult: { status: 'rejected', code: 'session_input_unauthorized' } });
-    expect(result.message).toContain('Team access');
+    expect(result).toMatchObject({ message: expect.stringContaining('Team access') });
   });
 
   it.each([

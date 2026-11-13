@@ -52,7 +52,7 @@ describe('CLI model transition recovery', () => {
   it('retains the unavailable model owner phase through an RPC failure', async () => {
     callSessionRpc.mockRejectedValue(new Error('RPC target unavailable'));
     const deps = createCliSessionModelActionDeps({
-      token: 'fixture-token', credentials: { token: 'fixture-token', encryption: null },
+      token: 'fixture-token', credentials: { token: 'fixture-token', encryption: null }, sessionId: '', mode: 'plain', ctx: null,
     }, { projectHomeId: 'fixture-home', resolveServerRequestHeaders: () => null });
 
     const result = await deps.sessionModelSet!({ sessionId, modelId: requestedSelection.modelId,
@@ -77,6 +77,7 @@ describe('CLI model transition recovery', () => {
       const deps = createCliSessionModelActionDeps({
         token: 'fixture-token',
         credentials: { token: 'fixture-token', encryption: null },
+        sessionId: '', mode: 'plain', ctx: null,
       }, { projectHomeId: 'fixture-home', resolveServerRequestHeaders: () => null });
 
       const result = await deps.sessionModelSet!({ sessionId, modelId: requestedSelection.modelId,
@@ -84,7 +85,7 @@ describe('CLI model transition recovery', () => {
 
       expect(result).toMatchObject({ ok: false, errorCode: status,
         details: { status, activeSelection, requestedSelection,
-          ...(status === 'apply_failed' ? { failureCause: transition.failureCause } : {}),
+          ...(status === 'apply_failed' && 'failureCause' in transition ? { failureCause: transition.failureCause } : {}),
         } });
       const presented = normalizeActionExecuteResult({ ok: true, result });
       expect(presented.ok).toBe(false);

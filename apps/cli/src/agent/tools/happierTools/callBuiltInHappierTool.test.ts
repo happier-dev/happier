@@ -6,6 +6,7 @@ function createMockResolvedContributionRegistry(params?: Readonly<{
 }>): ResolvedContributionRegistry {
   return {
     agents: [],
+    backupDestinations: [],
     actions: params?.actions ?? [],
     resources: [],
     activationTargets: [],

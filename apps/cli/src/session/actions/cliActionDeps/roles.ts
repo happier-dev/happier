@@ -162,7 +162,9 @@ export function createCliRolesActionDeps(
         } : undefined;
         if (appliedChildSelection?.status !== 'applied') throw new RoleActionRefusalV1('target_unavailable');
         const { defaultEngine } = readCliSessionEngineBaselineV1({ backendTarget: target, appliedChildSelection });
-        const inventory = await readEffectiveDeps().agentsBackendsList({ includeDisabled: false });
+        const effectiveDeps = readEffectiveDeps();
+        if (!effectiveDeps.agentsBackendsList) throw new RoleActionRefusalV1('target_unavailable');
+        const inventory = await effectiveDeps.agentsBackendsList({ includeDisabled: false });
         context.signal?.throwIfAborted();
         return { defaultEngine, availableAgentTargetKeys: inventory.items.filter(item => item.enabled).map(item => item.targetKey) };
       },

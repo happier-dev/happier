@@ -373,7 +373,7 @@ it('rejoins only the original completed Workflow turn when retained reply anchor
   const recover = createWorkflowInvocationRecoveryObserver({ credentials: { token: 'token', encryption: null },
     machineId: 'machine-1', now: () => 0, actionExecutor: { execute: async () => { throw new Error('No detached Run'); } } });
   await expect(recover({ terminalParent: true, cancellationRequested: true,
-    run: { id: workflowInvocation.runId, state: 'cancelled' }, index: { id: workflowInvocation.invocationRecordId },
+    run: { id: workflowInvocation.runId, state: 'cancelled' }, index: { id: workflowInvocation.invocationRecordId, lifecycle: 'running' },
     progress: WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: 'step',
       invocationPath: { blockId: 'child', scope: [{ kind: 'workflow', blockId: 'nested' }] }, attempt: '0',
       logicalInvocationRecordId: workflowInvocation.invocationRecordId,

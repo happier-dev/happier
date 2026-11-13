@@ -90,6 +90,7 @@ describe('attached Voice Run signed Session transport', () => {
     expect(packet.externalActionExecution, 'runner must receive the existing signed Account authorization').toBeDefined();
     const execution = packet.externalActionExecution!;
     expect(execution.authorization).toEqual(authorization);
+    if (!packet.requestId) throw new Error('Signed Machine RPC must carry its request id');
     expect(verifyExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token, effectActionId: actionId,
       requesterAccountContext: execution.authorization.requesterAccountContext,
       target, installationId, event: SOCKET_RPC_EVENTS.CALL, method: packet.method, requestId: packet.requestId,

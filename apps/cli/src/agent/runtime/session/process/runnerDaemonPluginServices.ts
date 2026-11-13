@@ -2835,14 +2835,16 @@ export async function prepareRunnerDaemonPluginServices(
         },
         async authorizeResolvedAgentNativeLaunch(launch, options) {
             assertAvailable('exec');
-            const { stdin, release: _release, ...tuple } = launch;
+            const { stdin, release: _release, requiredFiles, ...tuple } = launch;
             const raw = parseObjectResult(await dispatch<unknown>({
                 kind: 'plugin_exec.resolved_agent_launch.authorize_v1', ...requestBase(),
                 agentLaunchKind: options?.agentLaunchKind ?? 'exec',
                 ...(options?.sessionMcpContext ? { sessionMcpContext: options.sessionMcpContext } : {}),
                 ...(options?.mcpLaunchMaterial ? { mcpLaunchMaterial: { ...options.mcpLaunchMaterial,
                     selectedMaterials: [...options.mcpLaunchMaterial.selectedMaterials] } } : {}),
-                launch: { ...tuple, args: [...tuple.args], ...(stdin === undefined ? {} : { stdin: Buffer.from(stdin).toString('base64') }) },
+                launch: { ...tuple, args: [...tuple.args],
+                    ...(requiredFiles === undefined ? {} : { requiredFiles: [...requiredFiles] }),
+                    ...(stdin === undefined ? {} : { stdin: Buffer.from(stdin).toString('base64') }) },
             }, options), 'plugin_exec_launch_authorization_invalid', 'Daemon returned an invalid process launch authorization');
             return readAuthorizedExecLaunch(raw);
         },
@@ -3426,6 +3428,8 @@ export async function prepareRunnerDaemonPluginServices(
         managedServices,
         machineProvisioners: input.local.machineProvisioners,
         deploymentSource: input.local.deploymentSource,
+        // Deployment exec environments are daemon-admitted; runner invocations refuse them.
+        deploymentExecEnv: PLUGIN_SERVICE_DESCRIPTORS.deploymentExecEnv.createUnavailable(),
         sessions,
         resources,
         mcp,

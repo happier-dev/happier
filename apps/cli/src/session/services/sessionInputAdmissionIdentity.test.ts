@@ -418,7 +418,7 @@ describe('host-caller first input provenance (D15)', () => {
     { name: 'an unattended Account over RPC', actionCaller: { kind: 'host' }, callerSurface: 'rpc', callerAuthority: 'account_automation' },
     { name: 'a descendant of another request', actionCaller: { kind: 'host' }, callerSurface: 'rpc', callerAuthority: 'present_user',
       actionRequestAttributionV1: requester },
-  ] satisfies ReadonlyArray<Parameters<typeof buildSessionSpawnInitialInputAdmissionForLocalIdV1>[0] & { name: string }>)(
+  ] satisfies ReadonlyArray<Omit<Parameters<typeof buildSessionSpawnInitialInputAdmissionForLocalIdV1>[0], 'localId'> & { name: string }>)(
     'keeps host provenance for first input from $name', ({ name: _name, ...params }) => {
       const first = buildSessionSpawnInitialInputAdmissionForLocalIdV1({ ...params, localId: 'spawn-first-turn:host' });
       expect(settle(first.inputAdmission, params.actionRequestAttributionV1 ? machine : owner))

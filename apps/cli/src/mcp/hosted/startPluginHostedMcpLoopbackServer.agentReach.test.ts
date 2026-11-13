@@ -129,7 +129,7 @@ describe('plugin-hosted loopback MCP bearer and the Agent', () => {
       out.cleanup();
 
       const payload = buildOutboundSessionMessagePayload(
-        { mode: 'plain' },
+        { mode: 'plain', ctx: null },
         {
           role: 'agent',
           content: {

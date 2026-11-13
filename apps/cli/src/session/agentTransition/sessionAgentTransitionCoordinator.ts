@@ -572,6 +572,7 @@ async function activateTargetAndAdmitInput(params: Readonly<{
   inputAdmission: SessionAgentTransitionParams['inputAdmission'];
   callerInputAuthorization: SessionAgentTransitionParams['callerInputAuthorization'];
   externalAction: SessionAgentTransitionParams['externalAction'];
+  executionAuthority?: SessionAgentTransitionParams['executionAuthority'];
   resolveAuthorizationHeaders?: Parameters<typeof sendSessionMessage>[0]['resolveAuthorizationHeaders'];
   admissionFence: Readonly<{ serviceId: string; groupId: string; epochId: string }>;
   inputAdmissionTimeoutMs: number;
@@ -671,6 +672,7 @@ async function reconcileAlreadyTargetedSession(params: Readonly<{
   inputAdmission: SessionAgentTransitionParams['inputAdmission'];
   callerInputAuthorization: SessionAgentTransitionParams['callerInputAuthorization'];
   externalAction: SessionAgentTransitionParams['externalAction'];
+  executionAuthority?: SessionAgentTransitionParams['executionAuthority'];
   resolveAuthorizationHeaders?: Parameters<typeof sendSessionMessage>[0]['resolveAuthorizationHeaders'];
   admissionFence: Readonly<{ serviceId: string; groupId: string; epochId: string }>;
   inputAdmissionTimeoutMs: number;
@@ -705,6 +707,7 @@ async function reconcileAlreadyTargetedSession(params: Readonly<{
     inputAdmission: params.inputAdmission,
     callerInputAuthorization: params.callerInputAuthorization,
     externalAction: params.externalAction,
+    ...(params.executionAuthority ? { executionAuthority: params.executionAuthority } : {}),
     ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
     admissionFence: params.admissionFence,
     inputAdmissionTimeoutMs: params.inputAdmissionTimeoutMs,
@@ -856,6 +859,7 @@ export async function runSessionAgentTransition(
       inputAdmission: params.inputAdmission,
       callerInputAuthorization: params.callerInputAuthorization,
       externalAction: params.externalAction,
+      ...(params.executionAuthority ? { executionAuthority: params.executionAuthority } : {}),
       ...(resolveAuthorizationHeaders ? { resolveAuthorizationHeaders } : {}),
       admissionFence,
       inputAdmissionTimeoutMs,
@@ -1219,6 +1223,7 @@ export async function runSessionAgentTransition(
     inputAdmission: params.inputAdmission,
     callerInputAuthorization: params.callerInputAuthorization,
     externalAction: params.externalAction,
+    ...(params.executionAuthority ? { executionAuthority: params.executionAuthority } : {}),
     ...(resolveAuthorizationHeaders ? { resolveAuthorizationHeaders } : {}),
     admissionFence,
     inputAdmissionTimeoutMs,

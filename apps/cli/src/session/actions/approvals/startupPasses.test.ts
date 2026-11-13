@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { logger } from '@/ui/logger';
 import { runApprovalStartupPasses } from './startupPasses';
 
-const complete = { groups: 0, canceled: 0, unclassified: 0, failed: 0, coverage: 'complete' as const };
+const complete = { groups: 0, canceled: 0, alreadySettled: 0, unclassified: 0, failed: 0, coverage: 'complete' as const };
 
 afterEach(() => vi.restoreAllMocks());
 

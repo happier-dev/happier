@@ -1,5 +1,5 @@
-import { QualifiedConnectedAccountCredentialHealthPatchV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountCredentialMutationSupersededV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
-import { QualifiedConnectedAccountCredentialSnapshotV4Schema, type QualifiedConnectedAccountCredentialSnapshotV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { QualifiedConnectedAccountCredentialHealthPatchV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountCredentialMutationSupersededV4Schema, type QualifiedConnectedAccountCredentialSnapshotV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { z } from 'zod/mini';

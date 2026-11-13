@@ -57,8 +57,8 @@ type ForkInheritedMetadataOverrides = Pick<
   | 'acpConfigOptionOverridesV1'
   | 'connectedServices'
   | 'connectedServicesUpdatedAt'
+  | 'modelSelectionIntentV1'
 > & {
-  modelSelectionIntentV1?: unknown;
   connectedServiceMaterializationIdentityV1?: ConnectedServiceMaterializationIdentityV1;
 };
 

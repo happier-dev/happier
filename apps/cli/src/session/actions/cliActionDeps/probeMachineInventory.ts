@@ -39,7 +39,7 @@ export function createMachineInventoryProbe(params: Pick<Parameters<typeof creat
             machineId: input.args.machineId, serverId: input.args.serverId ?? input.context?.serverId ?? params.serverId,
             method: RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION,
             request: { machineId: input.args.machineId, agentTargetKey, connectedServices: probe.connectedServices,
-              ...(probe.currentOnly ? { refreshPolicy: 'current_only' } : probe.bypassCache ? { forceRefresh: true } : {}), mode: 'picker' },
+              ...(probe.bypassCache ? { forceRefresh: true } : {}), mode: 'picker' },
             context: input.context, effectActionId: 'agents.models.list', ...(signal ? { signal } : {}),
             ...(transportTimeoutMs === undefined ? {} : { timeoutMs: transportTimeoutMs }),
           }));

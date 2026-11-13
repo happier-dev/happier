@@ -4,6 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { ConnectedAccountAttemptResponseSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import { startHappyServer } from './startHappyServer';
+import type { HappyMcpSessionClient } from './startHappyServer';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createPortableConnectedAccountAuthenticationHttpFixture } from '@/testkit/connectedAccountAuthentication';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -27,16 +28,16 @@ it.each([false, true])('retains authored Account manual authentication across MC
         getServerFeaturesSnapshot: () => ({ status: 'ready', features }),
         getWorkDepth: () => 0,
         getHostTurnWorkDepth: () => 0,
+    } }), {
         getActiveTurnAdmissionWitness: () => ({ turnId: 'portable-authentication-turn', inputId: 'portable-authentication-input',
             userMessageSeq: 1, userMessageSeqs: [1], callerPermissionMode: 'default',
             causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
             agentStartCaller: { kind: 'session', sessionId: 'mcp-portable-authentication', starterDepth: 0, turnDepth: 0 },
         }),
-    } }), {
         getActiveTurnPermissionWitness: () => ({ turnId: 'portable-authentication-turn',
             causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'default' as const },
         }),
-    });
+    } satisfies Pick<HappyMcpSessionClient, 'getActiveTurnAdmissionWitness' | 'getActiveTurnPermissionWitness'>);
     const client = new Client({ name: 'portable-account-authentication', version: '1' });
     let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
     let server: Awaited<ReturnType<typeof startHappyServer>> | undefined;

@@ -829,7 +829,7 @@ describe('updateSessionMetadataWithRetry', () => {
       agentTargetKey: teamIntent.ref.agentTargetKey, providerConnectionId: null, modelId: teamIntent.ref.modelId,
     } };
     const metadata = createTestMetadata(buildCommittedLaunchMetadata({ directory: '/repo', options: {
-      directory: '/repo', modelSelection, teamCredentialBindings: [includesTeam ? acceptedTeamCredentialBinding
+      modelSelection, teamCredentialBindings: [includesTeam ? acceptedTeamCredentialBinding
         : { v: 1, slot: { kind: 'provider_model' }, resourceId: 'resource-1', expectedResourceRevision: 7, deliveryMode: 'brokered' }],
     } }));
     const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain',
@@ -867,7 +867,7 @@ describe('updateSessionMetadataWithRetry', () => {
     } };
     const { teamId: _teamId, ...launchBinding } = binding;
     const metadata = createTestMetadata(buildCommittedLaunchMetadata({ directory: '/repo', options: {
-      directory: '/repo', modelSelection, teamCredentialBindings: [launchBinding],
+      modelSelection, teamCredentialBindings: [launchBinding],
     } }));
     const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain',
       metadata, agentState: null, storedContentMode: 'plain' });

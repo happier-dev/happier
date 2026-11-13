@@ -52,10 +52,10 @@ describe('native permission mode application through Session capabilities', () =
     let rejectNative = true;
     const live = {
       scopeId: Symbol('native-mode-live'), permissionHandler: handler, readPermissionMode: () => 'default',
-      applyPermissionModeIntent: async (permissionMode: string) => {
+      applyPermissionModeIntent: async (permissionMode: Parameters<typeof applyPermissionModeIntentSessionMetadata>[1]['permissionMode']) => {
         effects.push('metadata-start');
         await metadataSaved.promise;
-        session.metadata = applyPermissionModeIntentSessionMetadata(session.metadata, { permissionMode, updatedAt: 1 });
+        session.metadata = applyPermissionModeIntentSessionMetadata(session.metadata, { v: 1, permissionMode, updatedAt: 1 });
         effects.push('metadata-saved');
       },
     };

@@ -267,7 +267,7 @@ export function createDefaultExternalSessionMaterializeStartActionExecutor(
   input: Readonly<{
     activeServerDir: string;
     machineId?: string;
-    materialize: ExternalSessionMaterializeActionExecutor;
+    materialize: Pick<ExternalSessionMaterializeActionExecutor, 'start'>;
   }>,
 ): ExternalSessionMaterializeStartActionExecutor {
   return createExternalSessionMaterializeStartActionExecutor({

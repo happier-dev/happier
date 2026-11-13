@@ -408,7 +408,7 @@ export function createCliActionExecutor(
     // A managed controller keeps its own Account custody. The verified Home
     // root plus exact installed codec preserves the requester's direct click;
     // neither the custodian credential nor a raw UI label supplies that cause.
-    let managedControllerUiBinding: typeof ordinaryAccountHostBinding = null;
+    let managedControllerUiBinding: NonNullable<typeof authorization>['binding'] | null = null;
     if (authorization
       && readExternalActionBindingAuthority(authorization.binding) === 'present_user'
       && isManagedControllerCodecActionV1(authorization.binding)

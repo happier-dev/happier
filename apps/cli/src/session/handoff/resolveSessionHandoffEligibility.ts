@@ -51,7 +51,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-export async function resolveSessionHandoffEligibility(input: Readonly<{
+export type SessionHandoffEligibilityInput = Readonly<{
   metadata: HandoffExportSessionMetadataV1;
   sourceMachineId: unknown;
   externalSessionLinkAuthority: LinkedExternalSessionAuthorityV1;
@@ -59,7 +59,11 @@ export async function resolveSessionHandoffEligibility(input: Readonly<{
   sessionAgentId?: CatalogAgentId | null;
   /** Host-owned native Session identity derived before Agent metadata projection. */
   sessionProviderSessionId?: string | null;
-}> & HandoffRuntimeResolution): Promise<SessionHandoffEligibility> {
+}> & HandoffRuntimeResolution;
+
+export async function resolveSessionHandoffEligibility(
+  input: SessionHandoffEligibilityInput,
+): Promise<SessionHandoffEligibility> {
   const metadata = asRecord(input.metadata);
   if (!metadata) {
     return { eligible: false, reasonCode: 'agent_unknown' };

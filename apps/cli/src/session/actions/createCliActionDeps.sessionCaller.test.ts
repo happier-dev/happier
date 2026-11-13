@@ -751,6 +751,7 @@ describe('daemon Account Action Session caller context', () => {
     let engineInventoryReads = 0;
     let enabledAgentTargetKeys: string[] = [];
     const readEngineInventory = baseDeps.agentsBackendsList;
+    if (!readEngineInventory) throw new Error('CLI deps must provide the Agent backend inventory');
     const deps = { ...baseDeps, agentsBackendsList: async (args: Parameters<typeof readEngineInventory>[0]) => {
       engineInventoryReads += 1;
       const real = await readEngineInventory(args);

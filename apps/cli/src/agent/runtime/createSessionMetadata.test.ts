@@ -40,7 +40,7 @@ describe('createSessionMetadata', () => {
     });
     it('keeps the selected approval profile in private owner runtime metadata at birth', () => {
         for (const approvalProfileId of ['builtin:apply-safe', null]) {
-            const metadata = buildCommittedLaunchMetadata({ options: { directory: '/repo', approvalProfileId }, directory: '/repo' });
+            const metadata = buildCommittedLaunchMetadata({ options: { approvalProfileId }, directory: '/repo' });
             const owner = createSessionOwnerMetadataV1({ metadata });
             if (!owner.ok) throw new Error(owner.unsupportedFields.join(','));
             expect(owner.ownerMetadata.runtime).toMatchObject({ approvalProfileId });
@@ -65,14 +65,14 @@ describe('createSessionMetadata', () => {
     it('marks a managed directory at birth, before any runner starts', () => {
         // A Bot whose runner never starts (a refused first turn) keeps only its birth metadata; without
         // the marker its private allocation reads as a user folder named by its 64-hex digest.
-        const managed = buildCommittedLaunchMetadata({ options: { directory: '/state/session-directories/a', directoryKind: 'managed' }, directory: '/state/session-directories/a' });
+        const managed = buildCommittedLaunchMetadata({ options: { directoryKind: 'managed' }, directory: '/state/session-directories/a' });
         expect(managed).toMatchObject({ path: '/state/session-directories/a', sessionDirectoryV1: { v: 1, kind: 'managed' } });
         const owner = createSessionOwnerMetadataV1({ metadata: managed });
         if (!owner.ok) throw new Error(owner.unsupportedFields.join(','));
         expect(projectSessionOwnerCompatibilityViewV1({ sharedMetadata: projectSessionSharedMetadataV1({ metadata: managed }), ownerMetadata: owner.ownerMetadata }))
             .toMatchObject({ sessionDirectoryV1: { v: 1, kind: 'managed' } });
 
-        const path = buildCommittedLaunchMetadata({ options: { directory: '/repo', directoryKind: 'path' }, directory: '/repo' });
+        const path = buildCommittedLaunchMetadata({ options: { directoryKind: 'path' }, directory: '/repo' });
         expect(path).not.toHaveProperty('sessionDirectoryV1');
     });
     it('keeps actual checkout branch private at birth and preserves detached observations on attach', () => {
@@ -84,7 +84,7 @@ describe('createSessionMetadata', () => {
                     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
                     checkout: { kind: 'git_worktree', finalDirectory: '/checkout', baseRef: 'main', branchMode: 'new', branchName } },
             });
-            const metadata = buildCommittedLaunchMetadata({ options: { directory: '/checkout', sessionCreationCorrespondence: correspondence }, directory: '/checkout' });
+            const metadata = buildCommittedLaunchMetadata({ options: { sessionCreationCorrespondence: correspondence }, directory: '/checkout' });
             expect(metadata.machineId).toBe('machine-1');
             expect(metadata).toHaveProperty('branch', branchName);
             const owner = createSessionOwnerMetadataV1({ metadata });
@@ -107,7 +107,7 @@ describe('createSessionMetadata', () => {
                 next: { ...createTestMetadata(), path: '/replacement-checkout' }, mode: 'attach', nowMs: 1,
                 attachMetadataIdentityPolicy: 'replace_with_runtime_identity' })).not.toHaveProperty('branch');
         }
-        expect(buildCommittedLaunchMetadata({ options: { directory: '/ordinary' }, directory: '/ordinary' })).not.toHaveProperty('branch');
+        expect(buildCommittedLaunchMetadata({ options: {}, directory: '/ordinary' })).not.toHaveProperty('branch');
     });
     it('preserves the observation through equivalent Windows and sandbox paths, not another physical checkout', () => {
         const current = createTestMetadata({ machineId: 'machine-1', path: '~\\repo', homeDir: 'C:\\Users\\Alice', branch: 'feature/actual' });
@@ -528,7 +528,7 @@ describe('createSessionMetadata', () => {
         const mcp = { v: 1 as const, managedServersEnabled: false, forceIncludeServerIds: ['server-a'], forceExcludeServerIds: ['server-b'] };
         const skills = { v: 1 as const, forceIncludeSkillIds: ['lint'], forceExcludeSkillIds: ['review'], excludeNativeSkillNames: ['native'] };
         const metadata = buildCommittedLaunchMetadata({
-            directory: '/project', options: { directory: '/project', machineId: 'machine-1', capabilitySelection: { mcp, skills } },
+            directory: '/project', options: { machineId: 'machine-1', capabilitySelection: { mcp, skills } },
         });
         expect(metadata).toMatchObject({ machineId: 'machine-1', mcpSelectionV1: mcp, skillSelectionV1: skills });
         expect(metadata).not.toHaveProperty('mcpSelectionRestartRequiredV1');
@@ -540,7 +540,7 @@ describe('createSessionMetadata', () => {
             guestInstallationId: 'guest-installation', bindingKey: 'binding', placeholderRef: 'placeholder',
             sourceRevision: 'source-1', providerTicket: 't'.repeat(43) };
         const current = createTestMetadata(buildCommittedLaunchMetadata({ directory: '/project', options: {
-            directory: '/project', modelSelection: { v: 1, updatedAt: 123,
+            modelSelection: { v: 1, updatedAt: 123,
                 ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-6-luna' } },
             teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: 'resource', teamId: 'team',
                 expectedResourceRevision: 1, deliveryMode: 'vendor-native', nativeDelivery }],
@@ -550,7 +550,7 @@ describe('createSessionMetadata', () => {
         expect(mergeSessionMetadataForStartup({ current, next, mode: 'attach', nowMs: 124 }))
             .toMatchObject({ modelSelectionIntentV2: { ref: { source: 'team_resource', nativeDelivery } } });
         const pending = createTestMetadata(buildCommittedLaunchMetadata({ directory: '/project', options: {
-            directory: '/project', modelSelection: { v: 1, updatedAt: 123,
+            modelSelection: { v: 1, updatedAt: 123,
                 ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-6-luna' } },
             teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: 'resource', teamId: 'team',
                 expectedResourceRevision: 1, deliveryMode: 'vendor-native' }],
@@ -574,7 +574,7 @@ describe('createSessionMetadata', () => {
             },
         } };
         const current = createTestMetadata(buildCommittedLaunchMetadata({ directory: '/project', options: {
-            directory: '/project', connectedServices, connectedServicesUpdatedAt: 123,
+            connectedServices, connectedServicesUpdatedAt: 123,
         } }));
         expect(current).toMatchObject({ connectedServices, connectedServicesUpdatedAt: 123 });
         const next = createMetadata({ flavor: 'claude', machineId: 'machine-1' }).metadata;

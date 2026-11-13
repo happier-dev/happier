@@ -17,6 +17,7 @@ import {
   buildSessionSpawnInitialInputLocalIdV1,
   deriveSessionCreationTagV1,
   SessionCreationCorrespondenceV1Schema,
+  SessionCreationKeyV1Schema,
   SessionInitialTriggerAdmissionV1Schema,
   SPAWN_SESSION_ERROR_CODES,
   createActionExecutor,
@@ -712,7 +713,7 @@ describe('canonical Session creation admission', () => {
     const targetHome = await mkdtemp(join(tmpdir(), 'managed-trigger-target-'));
     onTestFinished(async () => { await rm(custodyHome, { recursive: true, force: true }); await rm(targetHome, { recursive: true, force: true }); });
     const { prepareSessionCreationTarget } = await import('@/session/creation/prepareSessionCreationTarget');
-    const creationKey = 'managed-template-with-trigger';
+    const creationKey = SessionCreationKeyV1Schema.parse('managed-template-with-trigger');
     const tag = deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey });
     const expectedTarget = await prepareSessionCreationTarget({
       request: { directory: { kind: 'managed' }, sessionCreationTag: tag }, activeServerDir: targetHome,

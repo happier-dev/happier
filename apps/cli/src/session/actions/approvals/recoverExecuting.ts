@@ -25,6 +25,8 @@ export async function recoverExecutingApprovals(input: Readonly<{
     const parsed = typeof artifact.body === 'string'
       ? approvalArtifactBodyMatchesHeaderV1(artifact.header, artifact.body) : null;
     if (!parsed || parsed.family === 'execution_run_host_action') { failed++; continue; }
+    // Only current (v2) built-in requests resolve to a daemon executor; legacy rows are never replay claims.
+    if (parsed.family === 'built_in' && parsed.request.v !== 2) continue;
     const executor = resolveApprovalExecutor(parsed.request);
     // A restart cannot retire an app or original Session/CLI invocation.
     if (parsed.request.status !== 'executing' || executor.kind !== 'daemon'

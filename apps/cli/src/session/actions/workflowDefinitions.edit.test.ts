@@ -131,7 +131,7 @@ describe('workflow.definition.edit through the real Action and Artifact owners',
       ? { status: 'applied', backendTarget: agentTarget, modelId: null, connectedServices: null }
       : { status: 'unavailable' };
     const roles = createSessionRoleContext({ readMetadata: () => sessionMetadata,
-      readOrganization: async () => ({ manager: null, origin: { kind: 'none' } }),
+      readOrganization: async () => ({ manager: undefined, origin: { kind: 'none' } }),
       readRoleSources: createRoleSourceReader({}),
       readAccountRoleOverrides: () => ({ status: 'ready', overrides: {} }), readAppliedChildSelection,
     });

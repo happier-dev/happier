@@ -189,7 +189,7 @@ function buildTerminalAttachEligibility(params: Readonly<{
   };
 }
 
-export async function evaluateCliSessionAttachEligibility(params: Readonly<{
+export type CliSessionAttachEligibilityParams = Readonly<{
   credentials: StoredCredentials;
   rawSession: RawSessionListRow | RawSessionRecord;
   accountEncryptionMode: AccountEncryptionCurrentnessResponse['mode'];
@@ -199,7 +199,11 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
   insideTmux: boolean;
   currentTmuxSocketPath?: string | null;
   resolveExecutionSurfaces: (backendId: string) => Promise<BackendExecutionSurfaces>;
-}>): Promise<CliSessionAttachEligibility> {
+}>;
+
+export async function evaluateCliSessionAttachEligibility(
+  params: CliSessionAttachEligibilityParams,
+): Promise<CliSessionAttachEligibility> {
   if (resolveArchivedAt(params.rawSession) !== null) {
     return {
       eligible: false,

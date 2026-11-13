@@ -16,7 +16,7 @@ it.each(['throw', 'response'] as const)('reports unavailable run hosts through s
             new RpcError('RPC method not available', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE), 'notSent'));
         else callSessionRpc.mockResolvedValueOnce({ ok: false, error: 'RPC method not available',
             errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
-        const result = await operation({ sessionId: 'unavailable-host', mode: 'plain', request: { runId: 'run' } });
+        const result = await operation({ token: 'token', sessionId: 'unavailable-host', mode: 'plain', ctx: null, request: { runId: 'run' } });
         expect(result).toMatchObject({ ok: false, code: 'execution_run_target_unavailable' });
         expect(callSessionRpc).toHaveBeenCalledTimes(1);
     }
@@ -26,6 +26,6 @@ it('keeps a positively missing method distinct from an unavailable target', asyn
     callSessionRpc.mockReset();
     callSessionRpc.mockRejectedValueOnce(markRpcRequestDisposition(
         new RpcError('Method not found', RPC_ERROR_CODES.METHOD_NOT_FOUND), 'notSent'));
-    expect(await startExecutionRun({ sessionId: 'old-host', mode: 'plain', request: {} }))
+    expect(await startExecutionRun({ token: 'token', sessionId: 'old-host', mode: 'plain', ctx: null, request: {} }))
         .toMatchObject({ ok: false, code: 'execution_run_protocol_unsupported' });
 });

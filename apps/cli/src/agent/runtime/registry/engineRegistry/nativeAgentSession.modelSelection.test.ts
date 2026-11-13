@@ -182,7 +182,7 @@ describe('native model selection provenance', () => {
     });
 
     it('preserves the real model-intent writer output as an explicit choice', async () => {
-        const metadata = applyModelIntentSessionMetadata({}, { selection, updatedAt: 9 });
+        const metadata = applyModelIntentSessionMetadata({}, { v: 1, selection, updatedAt: 9 });
         expect((await readOpenedConfiguration(metadata)).model).toEqual({
             value: selection.modelId, updatedAtMs: 9, selectionSource: 'explicit',
         });
@@ -195,7 +195,7 @@ describe('native model selection provenance', () => {
     });
 
     it('keeps the effective legacy override inherited when it supersedes a canonical native choice', async () => {
-        const metadata = applyModelIntentSessionMetadata({}, { selection, updatedAt: 9 });
+        const metadata = applyModelIntentSessionMetadata({}, { v: 1, selection, updatedAt: 9 });
         expect((await readOpenedConfiguration({ ...metadata,
             modelOverrideV1: { v: 1, modelId: 'foreign-model', updatedAt: 999 },
         })).model).toEqual({ value: 'foreign-model', updatedAtMs: 999, selectionSource: 'inherited' });

@@ -7,6 +7,7 @@ import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolv
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createHappierMcpServer } from './createHappierMcpServer';
+import type { HappyMcpSessionClient } from './startHappyServer';
 
 it('retains explicit Account authentication review and original cancellation before a portable provider effect', async () => {
     const origin = 'http://mcp-portable-review.test';
@@ -16,20 +17,22 @@ it('retains explicit Account authentication review and original cancellation bef
         'connectedServices.authentication.beginConnect': { approvalRequiredSurfaces: ['agent'] },
     } });
     const accountSettings = { ...fixture.settings, actionsSettingsV1: policy };
-    const session = createMutableApiSessionClientFixture({ sessionId: 'portable-review-session', overrides: {
+    // The live MCP client owns the permission witness; ApiSessionClient does not.
+    const session = Object.assign(createMutableApiSessionClientFixture({ sessionId: 'portable-review-session', overrides: {
         getServerBinding: () => ({ serverId: 'portable-review-home', serverUrl: origin }),
         getServerFeaturesSnapshot: () => ({ status: 'ready', features: fixture.features }),
         getWorkDepth: () => 0,
         getHostTurnWorkDepth: () => 0,
-        getActiveTurnPermissionWitness: () => ({ turnId: 'portable-review-turn',
-            causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
-        }),
+    } }), {
         getActiveTurnAdmissionWitness: () => ({ turnId: 'portable-review-turn', inputId: 'portable-review-input',
             userMessageSeq: 1, userMessageSeqs: [1], callerPermissionMode: 'default',
             causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
             agentStartCaller: { kind: 'session', sessionId: 'portable-review-session', starterDepth: 0, turnDepth: 0 },
         }),
-    } });
+        getActiveTurnPermissionWitness: () => ({ turnId: 'portable-review-turn',
+            causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'default' as const },
+        }),
+    } satisfies Pick<HappyMcpSessionClient, 'getActiveTurnAdmissionWitness' | 'getActiveTurnPermissionWitness'>);
     let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
     let runtime: ReturnType<typeof createHappierMcpServer> | undefined;
     let interceptor: number | undefined;

@@ -246,7 +246,7 @@ export type RunnerManagedServicesCustodyResultV1 =
     | Readonly<{
         v: 1;
         kind: 'stop';
-        result: Readonly<{ status: 'stopped' | 'detached' }>;
+        result: Awaited<ReturnType<ManagedServiceHandle['stop']>>;
         snapshot: ManagedServiceSnapshot;
     }>
     | Readonly<{
@@ -683,8 +683,9 @@ export const RunnerManagedServicesCustodyResultV1Schema:
         z.strictObject({
             v: z.literal(1),
             kind: z.literal('stop'),
+            // Every status the exact handle's stop can report, unchanged.
             result: z.strictObject({
-                status: z.enum(['stopped', 'detached']),
+                status: z.enum(['stopped', 'detached', 'accepted', 'unsupported', 'termination_incomplete']),
             }),
             snapshot: ManagedServiceSnapshotSchema,
         }),
