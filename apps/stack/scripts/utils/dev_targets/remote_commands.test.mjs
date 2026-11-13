@@ -3132,6 +3132,10 @@ test('source snapshot remote commands retain the QA stack home and start source 
       'both remote launchers carry the parent pending-start identity');
     const refreshInvocation = buildRemoteStackCommand(target, { ...options, refreshSourceRuntime: true });
     const refreshCommand = target.platform === 'windows' ? Buffer.from(refreshInvocation.split(' ').at(-1), 'base64').toString('utf16le') : refreshInvocation;
+    const cutoffInvocation = buildRemoteStackCommand(target, { ...options, sourceCapturedAfter: '2026-11-13T09:50:03Z' });
+    const cutoffCommand = target.platform === 'windows' ? Buffer.from(cutoffInvocation.split(' ').at(-1), 'base64').toString('utf16le') : cutoffInvocation;
+    assert.match(cutoffCommand, /--source-after=.*2026-11-13T09:50:03Z/);
+    assert.doesNotMatch(command, /--source-after=/, 'ordinary starts keep last-green adoption');
     assert.match(refreshCommand, /--restart/, 'a crashed source worker enters preparation before retirement');
     assert.doesNotMatch(refreshCommand, /--reuse-source-runtime|--prepared-source-reload/);
   }

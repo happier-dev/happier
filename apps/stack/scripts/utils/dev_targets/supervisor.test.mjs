@@ -1963,6 +1963,7 @@ test('source snapshot supervisor builds on each mirror without native transfer o
   const controller = await startStackDevTargets({
     stackName, stackBaseDir: join(root, 'consumer'), syncStackBaseDir, sourceDir: repoDir,
     sourceSnapshot: true, credentialPath, localServerPort: 3005, publicServerUrl: 'http://127.0.0.1:3005',
+    ...(admission === 'ready' ? { sourceCapturedAfter: '2026-11-13T09:50:03Z' } : {}),
     canonicalServerUrl: 'http://happier-agent-qa.localhost:3005',
     remoteServerRuntimeConfig: remoteLightSqliteRuntimeConfig,
     targetPlans: targets.map(target => ({ target, services: { server: target.name === 'server', daemon: target.name === 'daemon', expo: false } })),
@@ -1997,6 +1998,7 @@ test('source snapshot supervisor builds on each mirror without native transfer o
     spawnProcess: input => {
       const child = { ...input, pid: process.pid, exitCode: null }; spawned.push(child);
       if (input.command === 'ssh' && input.args.at(-1).includes('stack start')) {
+        if (admission === 'ready') assert.match(input.args.at(-1), /--source-after=.*2026-11-13T09:50:03Z/);
         assert.ok(input.args.at(-1).includes('--source-load-sentinel-passes='),
           'ordinary source starts must carry controller sentinel facts to worker reload preparation');
         const target = targets.find(target => input.args.includes(target.ssh));

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import { mkdir, readFile, writeFile, symlink, chmod, readdir, lstat, rm, utimes } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -249,6 +250,39 @@ test('an explicit daemon-only reload boundary captures unchanged source again', 
   const lastGreen = await native.build({ repoDir, stackBaseDir: stacks[1], component: 'daemon', env, requireLastGreen: true });
   assert.equal(lastGreen.entrypoint, first.entrypoint, 'a newer unverified capture of unchanged inputs must retain the prior green capture');
   assert.deepEqual((await readFile(compilers, 'utf8')).trim().split('\n'), ['repo-producer', 'repo-producer']);
+});
+
+test('an explicit-cutoff remote server start prepares without a last-green capture', { skip: process.platform !== 'linux' }, async t => {
+  const { native, repoDir, env, stacks } = await createProducerFixture(t);
+  const serverDir = join(repoDir, 'apps/server');
+  for (const path of ['sources', 'scripts', 'node_modules']) await mkdir(join(serverDir, path), { recursive: true });
+  await writeFile(join(serverDir, 'package.json'), JSON.stringify({ name: '@happier-dev/server', type: 'module' }));
+  await writeFile(join(serverDir, 'tsconfig.json'), '{}');
+  await writeFile(join(serverDir, 'sources/main.light.ts'), `
+    import { createServer } from 'node:http';
+    createServer((request,response) => { response.setHeader('content-type','application/json'); response.end(JSON.stringify({status:'ok',service:'happier-server'})); }).listen(Number(process.env.PORT),process.env.HOST);
+  `);
+  await writeFile(join(serverDir, 'scripts/migrate.sqlite.deploy.ts'), 'export async function runSqliteMigrationDeploy() {}');
+  await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(serverDir, 'node_modules/esbuild'), 'dir');
+  const { buildRemoteStackCommand, resolveRemoteServerRuntimeConfig } = await import('../utils/dev_targets/remote_commands.mjs');
+  const sourceCapturedAfter = new Date().toISOString();
+  const command = buildRemoteStackCommand({ name: 'fixture', platform: 'posix', repoDir, cliHomeDir: join(stacks[0], 'cli') }, {
+    stackName: 'qa-one', runtimeMode: 'source-snapshot', sourceCapturedAfter, sourceUi: 'disabled',
+    services: { server: true, daemon: false, expo: false }, remoteServerPort: 45454,
+    publicServerUrl: 'http://happier-qa-one.localhost:45454',
+    remoteServerRuntimeConfig: resolveRemoteServerRuntimeConfig({ serverComponentName: 'happier-server-light', env: {} }),
+    env: { HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'repo-producer' },
+  });
+  // Read only the preparation flags from the real remote command. The SSH/OS
+  // boundary is omitted; no Stack lifecycle is started by this regression.
+  const script = execFileSync('/bin/bash', ['-c', `printf '%s' ${command.slice('exec bash -lc '.length)}`], { encoding: 'utf8' });
+  const startArgs = script.split(' stack start ')[1].split(';')[0];
+  const args = execFileSync('/bin/bash', ['-c', `set -- ${startArgs}; printf '%s\\n' "$@"`], { encoding: 'utf8' }).trim().split('\n');
+  let capture;
+  await native.prepareReload({ repoDir, stackName: 'qa-one', stackBaseDir: stacks[0], onHost: true, args,
+    env: { ...env, HAPPIER_STACK_DAEMON: '0', HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light' },
+    onPrepared({ sourceCaptures }) { capture = sourceCaptures.server; } });
+  assert.ok(Date.parse(capture.capturedAt) >= Date.parse(sourceCapturedAfter));
 });
 
 test('real source reload adopts a coherent producer pair and waits for activation before selection', { skip: process.platform !== 'linux' }, async t => {

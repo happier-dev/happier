@@ -2581,6 +2581,7 @@ function resolveRemoteStackStartInvocation(target, {
   sourceUiLaunch = null,
   preparedSourceReload = false,
   sourceStartRequestId,
+  sourceCapturedAfter,
   loadSentinelPasses,
 }) {
   const normalizedServices = {
@@ -2672,6 +2673,7 @@ function resolveRemoteStackStartInvocation(target, {
       // Leave automatic selection to the serving host's shared publication.
       // Explicit export continues to request finite producer work.
       ...(runtimeMode === 'source-snapshot' && normalizedServices.server && sourceUi === 'export' ? ['--ui=export'] : []),
+      ...(runtimeMode === 'source-snapshot' && sourceCapturedAfter != null ? [`--source-after=${sourceCapturedAfter}`] : []),
       ...(runtimeMode === 'source-snapshot' && sourceStartRequestId ? [`--source-start-request-id=${sourceStartRequestId}`] : []),
       ...(runtimeMode === 'source-snapshot' ? ['--restart'] : []),
       ...(runtimeMode === 'source-snapshot' && reuseSourceRuntime && !refreshSourceRuntime ? ['--reuse-source-runtime',
