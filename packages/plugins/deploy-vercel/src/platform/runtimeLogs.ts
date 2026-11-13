@@ -1,3 +1,4 @@
+import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetLogsResultV1ProtocolSchema as output,
   PluginError, isPluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext, PluginActionDeclaration, PluginActionDefinition, PluginActionReadObserver } from '@happier-dev/plugin-sdk/actions';
@@ -8,13 +9,16 @@ type RuntimeLogEntry = Readonly<{ timestampInMs: number; rowId: string; level: s
 
 async function openRuntimePages(raw: JsonValue, context: PluginAccountActionContext): Promise<AsyncGenerator<ReturnType<typeof output.parse>>> {
     const input = raw as unknown as ReturnType<typeof inputs['logs.runtime']['parse']>;
-    const fail = (code: string): never => { throw new PluginError({ code, retryable: false, details: { phase: 'runtime' } }); };
+    const fail = (code: string): never => {
+      const error = new PluginError({ code, retryable: false, details: { phase: 'runtime' } });
+      throw code === 'deployment_unavailable' ? withActionFailureDiagnostic(error, { phase: 'deployment.vercel.logs.runtime', causeKind: 'not_found' }) : error;
+    };
     if (!context.services.http) return fail('client_required');
     if (!input.providerDeploymentId) return fail('deployment_content_unavailable');
     const sourceRevision = input.providerDeploymentId;
-    if (input.cursor) return (async function* () {
-      yield input.cursor!.sourceRevision !== sourceRevision ? { kind: 'source-changed' as const, sourceRevision }
-        : { kind: 'unavailable' as const, reason: 'unsupported' as const };
+    if (input.cursor) return (async function* (): AsyncGenerator<ReturnType<typeof output.parse>> {
+      if (input.cursor!.sourceRevision !== sourceRevision) yield { kind: 'source-changed', sourceRevision };
+      else yield { kind: 'unavailable', reason: 'unsupported' };
     })();
     context.signal.throwIfAborted();
     // Official CLI c628be7 util/logs.ts:162–193 requests this NDJSON representation.
