@@ -251,12 +251,10 @@ export function registerPluginPermissionGrantRoutes(
                     },
                 });
             }
-            if (request.authAuthority !== "present_user") {
-                // Do not infer denial from the reply adapter's return value:
-                // some compatible adapters return `undefined` after sending.
-                // Authority is the authenticated request fact itself.
-                return await requirePresentUser(request, reply);
-            }
+            // The credential guard owns admission, including ceiling-lowered
+            // terminal calls. Its undefined result means admission, not refusal.
+            await requirePresentUser(request, reply);
+            if (reply.sent) return;
             return await operations.revoke({
                 accountId: userId,
                 userId,

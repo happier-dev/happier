@@ -87,8 +87,9 @@ describe("plugin permission grant routes", () => {
             } as never,
         });
         const entry = app.routes.get("POST /v1/plugins/permissions/grants/revoke");
-        const send = vi.fn(() => undefined);
+        const send = vi.fn(() => { reply.sent = true; return undefined; });
         const reply = {
+            sent: false,
             code: vi.fn(() => ({ send })),
         };
 
