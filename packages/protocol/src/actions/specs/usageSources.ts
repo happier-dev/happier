@@ -44,9 +44,9 @@ function spec<K extends UsageSourceActionId>(id: K, title: string, summary: stri
 function createUsageSourceActionSpecs() {
   return [
   spec('usage.sources.discover', 'Find usage records on a machine',
-    'Look for usage records that agents keep on a machine, such as token counts. Nothing is collected yet.', true),
+    'Look for usage records that agents keep on a machine, such as token counts. Nothing is collected yet. Agent and MCP results summarize source statuses and include source IDs; use usage.sources.get with sourceId for exact detail.', true),
   spec('usage.sources.get', 'Read usage source',
-    'See whether Happier collects usage from one source and how far it has got.', true),
+    'See whether Happier collects usage from one source and how far it has got. Agent and MCP reads without sourceId summarize the inventory; select one returned sourceId for exact detail.', true),
   spec('usage.sources.dismiss', 'Dismiss a found usage source',
     'Hide a usage source Happier found, without collecting from it.'),
   spec('usage.sources.consent.set', 'Allow or stop usage collection', USAGE_SOURCE_CONSENT_DISCLOSURE),

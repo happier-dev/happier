@@ -1,12 +1,59 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeUsageQuery } from '../inputs/usageQuery.js';
 import { measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '../actions/externalActionLimits.js';
-import { UsageAnalyticsQueryResponseSchema } from './usageAnalyticsContracts.js';
+import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema } from './usageAnalyticsContracts.js';
+import { projectUsageAnalyticsSummary } from './usageSummary.js';
+import { projectUsageAccountingSessionIds, projectUsageAccountingSessionMembership } from './usageAccountingMembership.js';
 import { resolveUsagePageAggregation, resolveUsageComparisonQuery, UsageQueryBatchResultSchema } from './resolveUsagePageAggregation.js';
 import { projectUsageQueryDelivery } from './projectUsageQueryDelivery.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../actions/actionExecutor.js';
+import { composeUsageRecap } from './composeUsageRecap.js';
+import { UsageRecapPrivateComposeInputSchema } from './usageRecap.js';
 
 describe('agent Usage coverage delivery', () => {
+  it('delivers retained accounting summaries without repeating calendar and repricing operands', () => {
+    const endMs = 7 * 86_400_000;
+    const tokens = { input: 10, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 12 };
+    const contributions = Array.from({ length: 2_077 }, (_, index) => ({ id: `row-${index}`,
+      observedAtMs: Math.floor(index * endMs / 2_077), sessionId: `session-${index % 160}`,
+      turnId: `turn-${index}`, agentId: `agent-${index % 4}`, modelId: null, machineId: null,
+      projectKey: null, workspaceId: null, source: 'runtime', eventCount: 1, tokens,
+      cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }));
+    const accounting = projectUsageAnalyticsSummary(UsageAnalyticsQueryResponseSchema.parse({ v: 1,
+      totals: { eventCount: contributions.length, tokens: { ...tokens, input: 10 * contributions.length,
+        output: 2 * contributions.length, total: 12 * contributions.length },
+        cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }, contributions,
+      sessionIds: projectUsageAccountingSessionIds(contributions),
+      sessionMembership: projectUsageAccountingSessionMembership(contributions),
+      coverage: { status: 'partial', reasons: ['incomplete_history'], missingDimensions: [], ranked: [],
+        range: { startMs: 0, endMs, complete: false },
+        sources: Array.from({ length: 288 }, (_, index) => ({ source: `source-${index}`, path: 'runtime',
+          status: 'partial', eventCount: 1, asOfMs: endMs, historyComplete: false })) },
+      activity: { calendarDays: Array.from({ length: 7 }, (_, index) => ({
+        date: `1970-01-${String(index + 1).padStart(2, '0')}`, eventCount: 1 })),
+        weekdayHourBuckets: Array.from({ length: 168 }, (_, index) => ({
+          weekday: Math.floor(index / 24), hour: index % 24, eventCount: 1 })) },
+    }), UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs }, includeActivity: true }));
+    expect(accounting.summary?.accountingCalendar).toBeDefined();
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs }, includeActivity: true, includeComparison: false });
+    const rich = resolveUsagePageAggregation({ queries: [query],
+      accounting: [{ query, value: accounting, status: 'available' }] });
+    for (const surface of ['agent', 'mcp'] as const) {
+      const delivered = projectUsageQueryDelivery(rich, surface);
+      expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(delivered)).toBeLessThan(50 * 1024);
+      const slice = UsageQueryBatchResultSchema.parse(delivered).results[0]!;
+      expect(slice.accounting?.totals).toEqual(rich.results[0]!.accounting!.totals);
+      expect(slice.accounting?.sessionMembership).toBeUndefined();
+      console.info('[Usage retained summary delivery]', { surface,
+        bytes: measureExternalActionResultResponseEnvelopeUtf8BytesV1(delivered) });
+    }
+    expect(projectUsageQueryDelivery(rich).results[0]?.accounting?.summary?.accountingCalendar).toBeDefined();
+    expect(projectUsageQueryDelivery(rich).results[0]?.accounting?.sessionMembership).toEqual(accounting.sessionMembership);
+    const recap = composeUsageRecap({ input: UsageRecapPrivateComposeInputSchema.parse({ query }), snapshot: rich.results[0]! });
+    expect(recap.kind).toBe('composed');
+    expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(recap)).toBeLessThan(50 * 1024);
+    console.info('[Usage default private recap delivery]', { bytes: measureExternalActionResultResponseEnvelopeUtf8BytesV1(recap) });
+  });
   it('delivers source status/kind counts through Usage Actions below the Pi tool budget, with CLI facts and Session recovery', async () => {
     // Reload 157: 288 coverage sources / 54,688 B, 142 Sessions / 2,077
     // contributions. Preserve that shape with synthetic content-free identities.

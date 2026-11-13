@@ -12,6 +12,34 @@ import type { UsageSourceV1 } from '../usage/usageSources.js';
 import { describeApprovalRequestFields, projectApprovalRequestForPublicRead } from './actionApprovalPresentation.js';
 
 describe('Usage source Action admission', () => {
+  it('keeps grouped source status and pending counts with exact selector recovery', async () => {
+    const first: UsageSourceV1 = { serverId: 'home', machineId: 'machine', sourceId: 'first',
+      agent: { pluginId: 'happier.agent.claude', localId: 'claude' }, root: { kind: 'default', path: '/private/source' },
+      consent: 'enabled', status: 'ready', coverage: 'partial', pendingCount: 3, asOfMs: 100, discoveredFileCount: 2 };
+    const sources = [first, { ...first, sourceId: 'second', pendingCount: 4, discoveredFileCount: 4 }];
+    const executor = createActionExecutor({
+      usageSourceAction: createUsageSourceActionPort({ serverId: 'home', assertCurrent() {},
+        // Machine RPC is the only mocked boundary.
+        rpc: async request => {
+          const sourceId = request.actionId === 'usage.sources.get' ? request.input.sourceId : undefined;
+          return { sources: sourceId ? sources.filter(source => source.sourceId === sourceId) : sources };
+        },
+      }),
+    });
+    expect(await executor.execute('usage.sources.get', { serverId: 'home', machineId: 'machine' },
+      { surface: 'agent', authority: 'present_user' })).toEqual({ ok: true, result: { sources: [], summary: {
+        sourceCount: 2, groups: [{ agent: first.agent, consent: 'enabled', status: 'ready', coverage: 'partial',
+          sourceCount: 2, pendingCount: 7, sources: [{ sourceId: 'first', discoveredFileCount: 2 },
+            { sourceId: 'second', discoveredFileCount: 4 }] }],
+      } } });
+    expect(await executor.execute('usage.sources.get', { serverId: 'home', machineId: 'machine', sourceId: 'second' },
+      { surface: 'agent', authority: 'present_user' })).toEqual({ ok: true, result: { sources: [sources[1]] } });
+    sources.length = 0;
+    expect(await executor.execute('usage.sources.get', { serverId: 'home', machineId: 'machine' },
+      { surface: 'agent', authority: 'present_user' })).toEqual({ ok: true,
+        result: { sources: [], summary: { sourceCount: 0, groups: [] } } });
+  });
+
   it.each(['claude', 'codex'] as const)('approves %s consent from admitted operands and refuses a different Account decision', async agent => {
     const source: UsageSourceV1 = { serverId: 'home', machineId: 'machine', sourceId: agent + '-root',
       agent: { pluginId: 'happier.agent.' + agent, localId: agent }, root: { kind: 'default', path: '/private/source' },

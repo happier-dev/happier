@@ -72,6 +72,24 @@ export type UsageSourcesActionResultById = {
             discoveredFileCount?: number | undefined;
             errorCode?: string | undefined;
         }[];
+        summary?: undefined | {
+            sourceCount: number;
+            groups: {
+                agent: {
+                    pluginId: string;
+                    localId: string;
+                };
+                consent: 'disabled' | 'enabled';
+                status: 'error' | 'found' | 'reading' | 'ready' | 'stopped' | 'unavailable' | 'unsupported';
+                coverage: 'complete' | 'partial' | 'unknown' | 'unsupported';
+                sourceCount: number;
+                pendingCount: number;
+                sources: {
+                    sourceId: string;
+                    discoveredFileCount?: number | undefined;
+                }[];
+            }[];
+        };
     };
     readonly "usage.sources.get": {
         sources: {
@@ -97,6 +115,24 @@ export type UsageSourcesActionResultById = {
             discoveredFileCount?: number | undefined;
             errorCode?: string | undefined;
         }[];
+        summary?: undefined | {
+            sourceCount: number;
+            groups: {
+                agent: {
+                    pluginId: string;
+                    localId: string;
+                };
+                consent: 'disabled' | 'enabled';
+                status: 'error' | 'found' | 'reading' | 'ready' | 'stopped' | 'unavailable' | 'unsupported';
+                coverage: 'complete' | 'partial' | 'unknown' | 'unsupported';
+                sourceCount: number;
+                pendingCount: number;
+                sources: {
+                    sourceId: string;
+                    discoveredFileCount?: number | undefined;
+                }[];
+            }[];
+        };
     };
     readonly "usage.sources.dismiss": {
         status: 'dismissed' | 'unavailable';

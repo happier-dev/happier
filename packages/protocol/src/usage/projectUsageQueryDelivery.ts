@@ -7,10 +7,17 @@ const bytes = (value: unknown) => measureSerializedValidatedStrictPluginJsonUtf8
 type Accounting = NonNullable<UsageQueryResultSlice['accounting']>;
 type SourceGroup = NonNullable<NonNullable<Accounting['coverage']>['sourceSummary']>['groups'][number];
 
-function projectAccounting(value: Accounting, includeRows: boolean, summarizeSources = false): Accounting {
-  const { priceCatalog: _catalog, contributions, ...facts } = value;
+function projectAccounting(value: Accounting, includeRows: boolean, summaryDelivery = false): Accounting {
+  const { priceCatalog: _catalog, contributions, sessionIds, sessionMembership, ...facts } = value;
+  // These are Resource repricing/calendar operands, not additional Action facts.
+  // A broad agent read needs the admitted totals, not a second copy of every
+  // hourly cell and its tariff population. Selected Session reads retain detail.
+  if (summaryDelivery && facts.summary) {
+    const { pricing: _pricing, rankedPricing: _ranked, accountingCalendar: _calendar, ...summary } = facts.summary;
+    facts.summary = summary;
+  }
   const coverage = facts.coverage;
-  if (summarizeSources && coverage && !coverage.sourceSummary) {
+  if (summaryDelivery && coverage && !coverage.sourceSummary) {
     const groups = new Map<string, SourceGroup>();
     for (const row of coverage.sources) {
       const key = JSON.stringify([row.path, row.status, row.captureKind]);
@@ -29,7 +36,11 @@ function projectAccounting(value: Accounting, includeRows: boolean, summarizeSou
     } };
   }
   // Work conserves these exact rows. Summary/comparison facts do not need them.
-  return includeRows && contributions !== undefined ? { ...facts, contributions } : facts;
+  return { ...facts,
+    ...(!summaryDelivery && sessionIds !== undefined ? { sessionIds } : {}),
+    ...(!summaryDelivery && sessionMembership !== undefined ? { sessionMembership } : {}),
+    ...(includeRows && contributions !== undefined ? { contributions } : {}),
+  };
 }
 
 function omitEvidence(slice: UsageQueryResultSlice, section: EvidenceSection): UsageQueryResultSlice {

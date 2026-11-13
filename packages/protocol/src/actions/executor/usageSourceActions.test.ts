@@ -10,6 +10,17 @@ const source: UsageSourceV1 = { serverId: 'home', machineId: 'machine', sourceId
   coverage: 'unknown', pendingCount: 0, asOfMs: null };
 
 describe('admitted Usage source transport', () => {
+  it('requires full native inventory before any Action summary projection', async () => {
+    const port = createUsageSourceActionPort({ serverId: 'home', assertCurrent() {},
+      rpc: async () => ({ sources: [], summary: { sourceCount: 1, groups: [{ agent: source.agent, consent: 'disabled',
+        status: 'found', coverage: 'unknown', sourceCount: 1, pendingCount: 0, sources: [{ sourceId: source.sourceId }] }] } }),
+    });
+    for (const actionId of ['usage.sources.discover', 'usage.sources.get'] as const) {
+      expect(await port({ actionId, input: { serverId: 'home', machineId: 'machine' } }, { surface: 'agent' }))
+        .toMatchObject({ ok: false, errorCode: 'usage_source_response_invalid' });
+    }
+  });
+
   it.each([RPC_ERROR_CODES.FORBIDDEN, RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED, RPC_ERROR_CODES.TEAM_AUTHENTICATION_UNAVAILABLE])(
     'preserves an actual RPC authority refusal and disallows retaining its private sources (%s)', async errorCode => {
       const port = createUsageSourceActionPort({ serverId: 'home', assertCurrent: () => {},

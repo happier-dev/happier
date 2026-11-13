@@ -25427,7 +25427,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `usage.prices.get`
 
-**Read model prices** — Read the current public standard API price catalog and its provenance. Account data is never sent to the price source.
+**Read model prices** — Read public standard API prices and provenance. Agent/MCP reads return modelCount and provenance by default; supply modelIds to read exact catalog entries. Unknown model ids remain absent. UI/CLI reads without selectors return the full catalog. Account data is never sent to the price source.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `none` result; `deferred` flow.
@@ -25437,11 +25437,11 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `modelIds` (text_list): Exact model ids
 
 ## `usage.prices.refresh`
 
-**Refresh model prices** — Fetch and cache the fixed public LiteLLM catalog when server configuration permits it. No Account or session data is sent; failure retains cached or bundled prices with visible provenance.
+**Refresh model prices** — Fetch and cache the fixed public LiteLLM catalog when server configuration permits it. Agent/MCP reads return modelCount and provenance by default; supply modelIds to read exact catalog entries. Unknown model ids remain absent. No Account or session data is sent; failure retains cached or bundled prices with visible provenance.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
@@ -25451,7 +25451,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `modelIds` (text_list): Exact model ids
 
 ## `usage.query`
 
@@ -25597,7 +25597,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `usage.sources.discover`
 
-**Find usage records on a machine** — Look for usage records that agents keep on a machine, such as token counts. Nothing is collected yet.
+**Find usage records on a machine** — Look for usage records that agents keep on a machine, such as token counts. Nothing is collected yet. Agent and MCP results summarize source statuses and include source IDs; use usage.sources.get with sourceId for exact detail.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -25629,7 +25629,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `usage.sources.get`
 
-**Read usage source** — See whether Happier collects usage from one source and how far it has got.
+**Read usage source** — See whether Happier collects usage from one source and how far it has got. Agent and MCP reads without sourceId summarize the inventory; select one returned sourceId for exact detail.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.

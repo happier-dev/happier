@@ -6,10 +6,10 @@ import { UsageExportInputSchema, UsageFileResultSchema } from '../../usage/usage
 import { UsageRecapPrivateComposeInputSchema, UsageRecapPublicComposeInputSchema, UsageRecapComposeResultSchema, UsageRecapExportResultSchema, UsageRecapPrivateDeliveryInputSchema, UsageRecapPublicDeliveryInputSchema, UsageRecapDeliveryResultSchema, USAGE_RECAP_STYLES, USAGE_RECAP_FORMATS } from '../../usage/usageRecap.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { UsageCalendarExportInputSchema } from '../../usage/usageCalendarExport.js';
-import { UsageModelPriceCatalogSchema } from '../../usage/usageModelPriceSchemas.js';
-import { z } from '../../zodRuntimePolicy.js';
-import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { UsageModelPriceReadInputSchema, UsageModelPriceReadResultSchema } from '../../usage/usageModelPriceDelivery.js';
 import type { InputFieldHint } from '../../inputs/inputFields.js';
+import type { z } from '../../zodRuntimePolicy.js';
+import type { UsageActionId } from '../../usage/usageActionIdsV1.js';
 
 export { USAGE_ACTION_IDS, type UsageActionId } from '../../usage/usageActionIdsV1.js';
 
@@ -33,7 +33,29 @@ const publicRecapFields = [{ path: 'source', title: 'Public source', widget: 'js
 const recapDeliveryField = { path: 'intent', title: 'Delivery', widget: 'select', required: true,
   options: ['copy', 'save', 'share'].map(value => ({ value, label: value })) } satisfies InputFieldHint;
 
-function createUsageActionSpecs() {
+type UsageActionSpec<Id extends UsageActionId, Input extends z.ZodMiniType, Output extends z.ZodMiniType> =
+  Omit<PreNormalizedActionSpec, 'id' | 'inputSchema' | 'outputSchema' | 'surfaceBindings'> & Readonly<{
+    id: Id; inputSchema: Input; outputSchema: Output;
+  }>;
+
+// Keep per-id schema correlations without expanding schema implementations into
+// the factory's inferred declaration, matching the Execution Run spec boundary.
+export type UsageActionSpecs = readonly [
+  UsageActionSpec<typeof USAGE_HISTORY_ACTION_IDS.read, typeof UsageHistoryReadInputSchema, typeof UsageHistoryReadStateSchema>,
+  UsageActionSpec<'usage.recap.deliver', typeof UsageRecapPublicDeliveryInputSchema, typeof UsageRecapDeliveryResultSchema>,
+  UsageActionSpec<'usage.recap.private.deliver', typeof UsageRecapPrivateDeliveryInputSchema, typeof UsageRecapDeliveryResultSchema>,
+  UsageActionSpec<'usage.prices.get', typeof UsageModelPriceReadInputSchema, typeof UsageModelPriceReadResultSchema>,
+  UsageActionSpec<'usage.prices.refresh', typeof UsageModelPriceReadInputSchema, typeof UsageModelPriceReadResultSchema>,
+  UsageActionSpec<'usage.calendar.export', typeof UsageCalendarExportInputSchema, typeof UsageFileResultSchema>,
+  UsageActionSpec<'usage.recap.export', typeof UsageRecapPublicComposeInputSchema, typeof UsageRecapExportResultSchema>,
+  UsageActionSpec<'usage.recap.private.export', typeof UsageRecapPrivateComposeInputSchema, typeof UsageRecapExportResultSchema>,
+  UsageActionSpec<'usage.recap.compose', typeof UsageRecapPublicComposeInputSchema, typeof UsageRecapComposeResultSchema>,
+  UsageActionSpec<'usage.recap.private.compose', typeof UsageRecapPrivateComposeInputSchema, typeof UsageRecapComposeResultSchema>,
+  UsageActionSpec<'usage.query', typeof UsageQueryBatchInputSchema, typeof UsageQueryBatchResultSchema>,
+  UsageActionSpec<'usage.export', typeof UsageExportInputSchema, typeof UsageFileResultSchema>,
+];
+
+function createUsageActionSpecs(): UsageActionSpecs {
   return [
   { ...common, id: USAGE_HISTORY_ACTION_IDS.read, approval: { result: 'none' }, title: 'Read Usage history',
     sideEffectClass: 'write', executionPlacement: 'client',
@@ -54,14 +76,14 @@ function createUsageActionSpecs() {
     inputHints: { fields: [...privateRecapFields, recapDeliveryField] } },
   { ...common, id: 'usage.prices.get', approval: {result: 'none'}, title: 'Read model prices',
     serverTransport: { method: 'GET', path: '/v1/account/usage/prices' },
-    description: 'Read the current public standard API price catalog and its provenance. Account data is never sent to the price source.',
-    bindings: { mcpToolName: 'usage_prices_get' }, inputSchema: lazyZodSchema(() => z.strictObject({})), outputSchema: UsageModelPriceCatalogSchema,
-    inputHints: { fields: [] } },
+    description: 'Read public standard API prices and provenance. Agent/MCP reads return modelCount and provenance by default; supply modelIds to read exact catalog entries. Unknown model ids remain absent. UI/CLI reads without selectors return the full catalog. Account data is never sent to the price source.',
+    bindings: { mcpToolName: 'usage_prices_get' }, inputSchema: UsageModelPriceReadInputSchema, outputSchema: UsageModelPriceReadResultSchema,
+    inputHints: { fields: [{ path: 'modelIds', title: 'Exact model ids', widget: 'text_list', listSeparator: 'newline' }] } },
   { ...common, id: 'usage.prices.refresh', approval: {result: 'none'}, title: 'Refresh model prices', sideEffectClass: 'write',
     serverTransport: { method: 'POST', path: '/v1/account/usage/prices/refresh' },
-    description: 'Fetch and cache the fixed public LiteLLM catalog when server configuration permits it. No Account or session data is sent; failure retains cached or bundled prices with visible provenance.',
-    bindings: { mcpToolName: 'usage_prices_refresh' }, inputSchema: lazyZodSchema(() => z.strictObject({})), outputSchema: UsageModelPriceCatalogSchema,
-    inputHints: { fields: [] } },
+    description: 'Fetch and cache the fixed public LiteLLM catalog when server configuration permits it. Agent/MCP reads return modelCount and provenance by default; supply modelIds to read exact catalog entries. Unknown model ids remain absent. No Account or session data is sent; failure retains cached or bundled prices with visible provenance.',
+    bindings: { mcpToolName: 'usage_prices_refresh' }, inputSchema: UsageModelPriceReadInputSchema, outputSchema: UsageModelPriceReadResultSchema,
+    inputHints: { fields: [{ path: 'modelIds', title: 'Exact model ids', widget: 'text_list', listSeparator: 'newline' }] } },
   { ...common, id: 'usage.calendar.export', approval: {result: 'none'}, title: 'Export usage calendar',
     description: 'Return calendar file bytes for explicitly selected admitted quota resets and subscription renewals. This does not connect to or write a calendar service.',
     bindings: { mcpToolName: 'usage_calendar_export' }, inputSchema: UsageCalendarExportInputSchema, outputSchema: UsageFileResultSchema,
@@ -94,4 +116,4 @@ function createUsageActionSpecs() {
 ] as const satisfies readonly PreNormalizedActionSpec[];
 }
 
-export const USAGE_ACTION_SPECS: ReturnType<typeof createUsageActionSpecs> = lazyActionSpecArray(createUsageActionSpecs);
+export const USAGE_ACTION_SPECS: UsageActionSpecs = lazyActionSpecArray(createUsageActionSpecs);

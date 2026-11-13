@@ -4,7 +4,7 @@ import { UsageExportInputSchema, buildUsageFileResult } from '../../usage/usageE
 import type { ActionExecuteFailure, ActionExecuteResult } from '../actionExecutionResult.js';
 import type { ActionExecutorContext } from './types.js';
 import type { UsageActionId } from '../specs/usage.js';
-import { USAGE_HISTORY_ACTION_IDS } from '../../usage/usageActionIdsV1.js';
+import { USAGE_HISTORY_ACTION_IDS, USAGE_PRICE_ACTION_IDS, isUsagePriceActionIdV1 } from '../../usage/usageActionIdsV1.js';
 import { UsageHistoryReadInputSchema, UsageHistoryReadStateSchema, type UsageHistoryReadInput, type UsageHistoryReadState } from '../../inputs/usageQuery.js';
 import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
 import { UsageRecapPrivateComposeInputSchema, UsageRecapPublicComposeInputSchema, UsageRecapExportResultSchema,
@@ -17,6 +17,7 @@ import { UsageCalendarExportInputSchema, buildUsageCalendarFileResult } from '..
 import { ConnectedServiceQuotaGetResultV1Schema, type ConnectedServiceQuotaGetInputV1, type ConnectedServiceQuotaGetResultV1 } from '../../connect/providerAccountUsageHistory.js';
 import { sameQualifiedConnectedAccountRef } from '../../connect/qualifiedConnectedAccountPersistence.js';
 import { UsageModelPriceCatalogSchema, type UsageModelPriceCatalog } from '../../usage/usageModelPriceSchemas.js';
+import { projectUsageModelPriceDelivery, UsageModelPriceReadInputSchema } from '../../usage/usageModelPriceDelivery.js';
 import { PublicProfileReadResultV1Schema, type PublicProfileReadResultV1 } from '../../account/publicProfilePublication.js';
 import { composePublicUsageRecap } from '../../usage/composePublicUsageRecap.js';
 import { projectUsageQueryDelivery } from '../../usage/projectUsageQueryDelivery.js';
@@ -57,14 +58,16 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
     const parsed = UsageHistoryReadStateSchema.safeParse(raw);
     return parsed.success ? { ok: true, result: parsed.data } : failure('usage_history_result_invalid');
   }
-  if (actionId === 'usage.prices.get' || actionId === 'usage.prices.refresh') {
+  if (isUsagePriceActionIdV1(actionId)) {
     if (!ports.prices) return failure('unsupported_action');
-    const raw = await ports.prices[actionId === 'usage.prices.get' ? 'get' : 'refresh'](context);
+    const request = UsageModelPriceReadInputSchema.parse(value);
+    const raw = await ports.prices[actionId === USAGE_PRICE_ACTION_IDS.get ? 'get' : 'refresh'](context);
     if (context.signal?.aborted) return failure('cancelled');
     const refusal = readActionFailureEnvelope(raw);
     if (refusal) return refusal;
     const parsed = UsageModelPriceCatalogSchema.safeParse(raw);
-    return parsed.success ? { ok: true, result: parsed.data } : failure('usage_price_catalog_invalid');
+    return parsed.success ? { ok: true, result: projectUsageModelPriceDelivery(parsed.data, request, context.surface) }
+      : failure('usage_price_catalog_invalid');
   }
   const read = async (input: UsageQueryBatchInput): Promise<UsageQueryBatchResult | ActionExecuteFailure> => {
     const { queries } = normalizeUsageQueryBatchInput(input);
