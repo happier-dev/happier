@@ -11,6 +11,7 @@ import {
   type FirstPartyComponentId,
 } from '../../firstPartyRuntime/componentCatalog.js';
 import { quoteRemotePathWithHomeExpansion, safeBashSingleQuote } from '../../ssh/shellQuote.js';
+import { buildRemoteFirstPartyStagingCleanupCommand } from './remoteFirstPartyStagingCleanup.js';
 import {
   buildRemoteFirstPartyPromotionCommand,
   normalizeRemoteFirstPartyHomeDir,
@@ -107,7 +108,7 @@ export function buildRemoteSelfDownloadFirstPartyInstallCommand(params: Readonly
     'if command -v sha256sum >/dev/null 2>&1; then sha256_file() { sha256sum "$1" | awk \'{print $1}\'; }; elif command -v shasum >/dev/null 2>&1; then sha256_file() { shasum -a 256 "$1" | awk \'{print $1}\'; }; else echo "missing required command: sha256sum or shasum" >&2; exit 127; fi',
     `mkdir -p ${quoteRemotePathWithHomeExpansion(layout.remoteHomeDir)}`,
     `stage="$(mktemp -d ${quoteRemotePathWithHomeExpansion(`${layout.remoteHomeDir}/bootstrap-self-download.XXXXXX`)})"`,
-    'cleanup() { rm -rf "$stage"; }',
+    `cleanup() { ${buildRemoteFirstPartyStagingCleanupCommand('"$stage"')}; }`,
     'trap cleanup EXIT',
     'archive_path="$stage/archive"',
     `download ${safeBashSingleQuote(params.archive.url)} "$archive_path"`,

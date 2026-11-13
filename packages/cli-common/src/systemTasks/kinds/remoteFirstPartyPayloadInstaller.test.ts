@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { cp, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, cp, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -10,14 +10,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { installRemoteFirstPartyComponent, installRemoteFirstPartyComponentPayload, normalizeRemoteReleaseArch } from './remoteFirstPartyPayloadInstaller.js';
 import { buildRemoteSelfDownloadFirstPartyInstallCommand, resolveRemoteSelfDownloadFirstPartyInstallPlan } from '../ssh/remoteSelfDownloadFirstPartyInstallCommand.js';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { createCliPayloadFixture as createPayloadRootFixture } from '../testkit/createCliPayloadFixture.js';
 
 // Filesystem IO is the system boundary; all payload/archive logic stays real.
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...actual, copyFile: vi.fn(actual.copyFile) };
+  return { ...actual, copyFile: vi.fn(actual.copyFile), lstat: vi.fn(actual.lstat) };
 });
 
 const execFileAsync = promisify(execFile);
@@ -44,11 +44,45 @@ async function extractTarFixture(params: Readonly<{ archivePath: string }>): Pro
 describe('installRemoteFirstPartyComponent', () => {
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
+  it('archives a full-size installed payload without requiring a second uncompressed copy', async () => {
+    const fixture = await createPayloadRootFixture();
+    // The incident's installed payload contains 1,278,760,198 bytes. Model the
+    // exhausted scratch filesystem at its copy boundary, retaining real tar IO.
+    const payloadBytes = 1_278_760_198;
+    const data = await open(join(fixture.payloadRoot, 'runtime-data'), 'w');
+    await data.truncate(payloadBytes);
+    // Keep the sparse fixture below tar's decompression-ratio security boundary.
+    await data.write(randomBytes(2 * 1024 * 1024));
+    await data.close();
+    vi.mocked(copyFile).mockRejectedValue(Object.assign(new Error('Disk quota exceeded'), { code: 'EDQUOT' }));
+    let delivered = false;
+    try {
+      vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', fixture.payloadRoot);
+      await installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli' }, {
+        resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+        runRemoteText: async () => ({ status: 0, stdout: '', stderr: '' }),
+        copyLocalDirectoryToRemote: async ({ localPath }) => {
+          const { list } = await import('tar');
+          let deliveredSize = 0;
+          await list({ file: join(localPath, 'payload-root.tar.gz'), onReadEntry: entry => {
+            if (entry.path === 'payload-root/runtime-data') deliveredSize = entry.size;
+          } });
+          expect(deliveredSize).toBe(payloadBytes);
+          delivered = true;
+        },
+      });
+      expect(delivered).toBe(true);
+    } finally {
+      vi.mocked(copyFile).mockReset();
+      await fixture.cleanup();
+    }
+  }, 120_000);
+
   it('preserves the typed archive preparation cause without exposing filesystem content', async () => {
     const fixture = await createPayloadRootFixture();
     const archiveFailure = Object.assign(new Error('private filesystem path'), { code: 'EACCES' });
     // Real filesystem boundary: retain the actual payload selection and archive preparation path.
-    vi.mocked(copyFile).mockRejectedValueOnce(archiveFailure);
+    vi.mocked(lstat).mockRejectedValueOnce(archiveFailure);
     try {
       vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', fixture.payloadRoot);
       const failure = await installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli' }, {
@@ -61,7 +95,7 @@ describe('installRemoteFirstPartyComponent', () => {
       expect(failure.cause).toBe(archiveFailure);
       expect(failure.message).not.toContain('private filesystem path');
     } finally {
-      vi.mocked(copyFile).mockReset();
+      vi.mocked(lstat).mockReset();
       await fixture.cleanup();
     }
   });
@@ -346,6 +380,88 @@ describe('installRemoteFirstPartyComponent', () => {
     },
   );
 
+  it.skipIf(process.platform === 'win32').each([
+    { strategy: 'scp-upload', cleanupFails: false },
+    { strategy: 'remote-self-download', cleanupFails: false },
+    { strategy: 'scp-upload', cleanupFails: true },
+    { strategy: 'remote-self-download', cleanupFails: true },
+  ] as const)('installs read-only staging over $strategy without failing on cleanup (refused: $cleanupFails)', async ({ strategy, cleanupFails }) => {
+    const home = await mkdtemp(join(tmpdir(), 'happier readonly staging-'));
+    const fixture = await createPayloadRootFixture();
+    let promotionStderr = '';
+    try {
+      const nested = join(fixture.payloadRoot, 'readonly');
+      await mkdir(nested);
+      await writeFile(join(nested, 'data'), 'retained payload', { mode: 0o444 });
+      await chmod(nested, 0o555);
+      await chmod(fixture.payloadRoot, 0o555);
+      const archive = join(home, 'payload.tar.gz');
+      await execFileAsync('tar', ['-czf', archive, '-C', join(fixture.payloadRoot, '..'), basename(fixture.payloadRoot)]);
+      if (cleanupFails) {
+        const tools = join(home, 'tools');
+        await mkdir(tools);
+        const nativeRm = (await execFileAsync('/bin/sh', ['-c', 'command -v rm'])).stdout.trim();
+        // OS boundary: simulate a removal refusal after the real install succeeds.
+        await writeFile(join(tools, 'rm'), `#!/bin/sh
+case "$2" in */bootstrap-staging/happier-cli-1.2.3-123|*/bootstrap-self-download.*) exit 73;; esac
+exec "${nativeRm}" "$@"
+`, { mode: 0o755 });
+        vi.stubEnv('PATH', `${tools}:${process.env.PATH}`);
+      }
+      const plan = {
+        binaryPath: '$HOME/.happier/cli/current/happier', versionId: '1.2.3', source: 'fixture',
+        command: buildRemoteSelfDownloadFirstPartyInstallCommand({
+          componentId: 'happier-cli', versionId: '1.2.3',
+          archive: { name: 'payload.tar.gz', url: pathToFileURL(archive).href },
+          expectedSha256: createHash('sha256').update(await readFile(archive)).digest('hex'),
+        }),
+      };
+      await installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', strategy }, {
+        now: () => 123,
+        resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+        runRemoteText: async ({ remoteCommand }) => {
+          try {
+            const result = await execFileAsync('/bin/sh', ['-c', remoteCommand], { env: { ...process.env, HOME: home } });
+            if (remoteCommand.includes('tar -xf')) promotionStderr = result.stderr;
+            return { status: 0, ...result };
+          } catch (error) {
+            if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'number') throw error;
+            if (remoteCommand.includes('tar -xf')) {
+              expect(await readFile(join(home, '.happier', 'cli', 'current', 'readonly', 'data'), 'utf8')).toBe('retained payload');
+              if (!cleanupFails) expect(String('stderr' in error ? error.stderr : '')).toContain('Permission denied');
+            }
+            return { status: error.code, stdout: '', stderr: String('stderr' in error ? error.stderr : '') };
+          }
+        },
+        copyLocalDirectoryToRemote: async ({ localPath, remotePath }) => {
+          await cp(localPath, join(home, remotePath, basename(localPath)), { recursive: true });
+        },
+        resolveSelfDownloadInstallPlan: async () => plan,
+        preparePayload: async () => ({ componentId: 'happier-cli', channel: 'stable', versionId: '1.2.3', payloadRoot: fixture.payloadRoot, source: null, cleanup: async () => {} }),
+      });
+      const current = join(home, '.happier', 'cli', 'current');
+      expect(await readFile(join(current, 'readonly', 'data'), 'utf8')).toBe('retained payload');
+      expect(await realpath(current)).toBe(join(home, '.happier', 'cli', 'versions', '1.2.3'));
+      expect((await lstat(fixture.payloadRoot)).mode & 0o777).toBe(0o555);
+      const remoteHome = join(home, '.happier');
+      const staging = strategy === 'scp-upload'
+        ? await readdir(join(remoteHome, 'bootstrap-staging'))
+        : (await readdir(remoteHome)).filter(name => name.startsWith('bootstrap-self-download.'));
+      if (cleanupFails) {
+        expect(staging).toHaveLength(1);
+        expect(promotionStderr).toMatch(/warning.*cleanup/iu);
+      } else {
+        expect(staging).toEqual([]);
+        expect(promotionStderr).toBe('');
+      }
+    } finally {
+      // Restore only these test-owned scratch trees so a RED cannot mask itself during teardown.
+      await execFileAsync('chmod', ['-R', 'u+w', fixture.payloadRoot, home]);
+      await fixture.cleanup();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('preserves the transfer failure when remote staging cleanup is unreachable', async () => {
     const fixture = await createPayloadRootFixture();
     const failure = new Error('fixture transfer failure');
@@ -353,7 +469,7 @@ describe('installRemoteFirstPartyComponent', () => {
       await expect(installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli' }, {
         resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
         runRemoteText: async ({ remoteCommand }) => {
-          if (remoteCommand.startsWith('rm -rf ')) throw new Error('fixture cleanup transport unavailable');
+          if (remoteCommand.includes('rm -rf ')) throw new Error('fixture cleanup transport unavailable');
           return { status: 0, stdout: '', stderr: '' };
         },
         copyLocalDirectoryToRemote: async () => { throw failure; },

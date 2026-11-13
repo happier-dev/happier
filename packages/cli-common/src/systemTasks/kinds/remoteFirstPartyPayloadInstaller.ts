@@ -35,6 +35,7 @@ import {
   type RemoteSelfDownloadFirstPartyInstallPlan,
 } from '../ssh/remoteSelfDownloadFirstPartyInstallCommand.js';
 import { normalizeScpRemotePath } from '../ssh/scpRemotePath.js';
+import { buildRemoteFirstPartyStagingCleanupCommand } from '../ssh/remoteFirstPartyStagingCleanup.js';
 
 export {
   normalizeRemoteReleaseArch,
@@ -269,6 +270,7 @@ export async function installRemoteFirstPartyComponentPayload(
       throw error;
     });
     const stageParent = `${remoteHomeDir}/bootstrap-staging/${sanitizeRemoteFirstPartyPathSegment(params.componentId)}-${sanitizeRemoteFirstPartyPathSegment(prepared.versionId)}-${resolvedDeps.now()}`;
+    const cleanupStagingCommand = buildRemoteFirstPartyStagingCleanupCommand(quoteRemotePathWithHomeExpansion(stageParent));
     try {
       await pruneRemoteVersions();
       const stageParentForScp = normalizeScpRemotePath(stageParent);
@@ -299,7 +301,7 @@ export async function installRemoteFirstPartyComponentPayload(
       const promotionResult = await resolvedDeps.runRemoteText({
         remoteCommand: [
           'set -eu',
-          `cleanup() { rm -rf ${quoteRemotePathWithHomeExpansion(stageParent)}; }`,
+          `cleanup() { ${cleanupStagingCommand}; }`,
           'trap cleanup EXIT',
           `rm -rf ${quoteRemotePathWithHomeExpansion(remoteExtractRoot)}`,
           `mkdir -p ${quoteRemotePathWithHomeExpansion(remoteExtractRoot)}`,
@@ -320,7 +322,7 @@ export async function installRemoteFirstPartyComponentPayload(
       // Promotion's remote trap cannot clean a transfer that never reaches it.
       // Cleanup must survive cancellation and preserve the original failure.
       await resolvedDeps.runRemoteText({
-        remoteCommand: `rm -rf ${quoteRemotePathWithHomeExpansion(stageParent)}`,
+        remoteCommand: cleanupStagingCommand,
       }).catch(() => undefined);
       throw error;
     } finally {
