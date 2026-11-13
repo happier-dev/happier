@@ -347,7 +347,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
     const noChoicesLine = !noChoices ? null
         : usageLimitWait ?? (unavailableMachine !== null
             ? t('workflows.recovery.choicesOnReconnect', { machine: unavailableMachine.name })
-            : resolveNoChoicesLine(failureCause, runAgainShown ? null : props.noChoicesNext ?? null));
+            : resolveNoChoicesLine(recovery, runAgainShown ? null : props.noChoicesNext ?? null));
     // A failed step's own result is the detail of what went wrong; it waits one quiet tap away in its card.
     const failureDetails = props.lifecycle === 'failed' && props.finalResult == null && props.waitPrompt == null
         ? props.progress?.result : undefined;
@@ -1037,15 +1037,15 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
 
 /**
  * The card's one line when the step has no recovery choice: why (when the cause says it) and what the
- * person can do on this page. A target that stopped answering leaves no proof the step stopped, so the
- * recovery owner withholds Start fresh (no duplicate effects); the line says so instead of "cannot be
- * continued", and points at the Run's own action.
+ * person can do on this page. Follow the recovery owner's typed reason rather than treating every
+ * unavailable target as an execution whose stop is unconfirmed.
  */
 function resolveNoChoicesLine(
-    failureCause: WorkflowInvocationRecoveryPresentation['failureCause'],
+    recovery: WorkflowInvocationRecoveryPresentation,
     next: 'stop' | 'run_again' | 'open_workflow' | null,
 ): string {
-    const why = failureCause?.kind === 'reported_failure' && failureCause.code === 'target_unavailable'
+    const why = recovery.failureCause?.kind === 'reported_failure' && recovery.failureCause.code === 'target_unavailable'
+        && recovery.unavailableReasons.reattach !== 'execution_not_admitted'
         ? t('workflows.recovery.unconfirmedStop')
         : t('workflows.recovery.noChoices');
     const then = next === 'stop' ? t('workflows.recovery.nextStop')
