@@ -42,6 +42,14 @@ export function readCurrentIntentMismatchFieldV1(value: unknown): CurrentIntentM
   return currentIntentMismatchFields.find(field => field === value);
 }
 
+/** A terminal keeps its automation floor while spending its exact in-flow confirmation. */
+function isStandaloneTerminalCliConfirmation(context: ActionExecutorContext): boolean {
+  const binding = context.externalActionExecutionAuthorization?.binding;
+  return context.surface === 'cli' && !!binding && 'authentication' in binding
+    && binding.authentication.kind === 'terminal' && !binding.sessionActionOrigin
+    && !binding.workflowActionOrigin && !binding.nativeCredentialSpawnChild;
+}
+
 function confirmationMismatch(actionId: ActionId, input: unknown, context: ActionExecutorContext,
   inputDigest?: string): CurrentIntentMismatchV1 | null {
   const confirmation = context.presentUserConfirmation;
@@ -51,8 +59,7 @@ function confirmationMismatch(actionId: ActionId, input: unknown, context: Actio
     || binding && binding.accountId !== context.runtimeAccountId) return { field: 'account' };
   if (context.externalActionCredential || context.rpcSessionAuthorization
     || binding && !((readExternalActionBindingAuthority(binding) === 'present_user'
-        || 'authentication' in binding && binding.authentication.kind === 'terminal' && context.surface === 'cli'
-          && !binding.sessionActionOrigin && !binding.workflowActionOrigin)
+        || isStandaloneTerminalCliConfirmation(context))
       && binding.requestId === context.actionRequestId
       && binding.actionId === actionId && sameStrictJsonValue(binding.target, context.externalActionTarget))
     || !context.actionRequestId || confirmation.requestId !== context.actionRequestId
@@ -65,7 +72,8 @@ function confirmationMismatch(actionId: ActionId, input: unknown, context: Actio
 /** Consume the host's completed confirmation for this exact normalized invocation. */
 export function admitPresentUserConfirmationV1(actionId: ActionId, input: unknown,
   context: ActionExecutorContext): NonNullable<ActionExecutorContext['presentUserApproval']> | null {
-  if (!isPresentUserHostInvocation({ ...context, externalActionExecutionAuthorization: undefined })
+  if ((!isPresentUserHostInvocation({ ...context, externalActionExecutionAuthorization: undefined })
+      && !isStandaloneTerminalCliConfirmation(context))
     || context.actionCaller?.kind !== 'host' || confirmationMismatch(actionId, input, context)) return null;
   consumedConfirmations.add(context.presentUserConfirmation!);
   return recordPresentUserApprovalV1({ actionId, input, requestId: context.actionRequestId!,

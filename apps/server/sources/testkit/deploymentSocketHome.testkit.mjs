@@ -19,6 +19,7 @@ import { registerExternalActionRoutes } from '../app/api/routes/actions/register
 import { registerPluginAvailabilityRoutes } from '../app/plugins/availability/routes.ts';
 import { createSignedAccountContentBinding } from './accountEncryption.ts';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { startSocket } from '../app/api/socket.ts';
 import { auth } from '../app/auth/auth.ts';
 import { createArtifact } from '../app/artifacts/artifactWriteService.ts';
@@ -31,7 +32,7 @@ import { readHomeConnectionDescriptor } from '../app/features/homeConnectionDesc
 import { createEphemeralTlsServerFixture } from '../../../../packages/tests/src/testkit/tls/ephemeralTlsServerFixture.mjs';
 
 /** Real storage/auth/Socket boundary. No CLI source is imported into the server. */
-export async function createDeploymentSocketHome({ encryptionMode = 'plain', prepareMachineContent, configureApp,
+export async function createDeploymentSocketHome({ encryptionMode = 'plain', credentialVariant = 'dataKey', prepareMachineContent, configureApp,
     serverId = `srv_${randomUUID().replaceAll('-', '')}` } = {}) {
     const harness = await createLightSqliteHarness({
         tempDirPrefix: 'happier-deployment-socket-home-', initAuth: true, initEncrypt: true,
@@ -72,7 +73,10 @@ export async function createDeploymentSocketHome({ encryptionMode = 'plain', pre
         // The harness restores the original environment when it closes.
         process.env.NODE_EXTRA_CA_CERTS = tls.caCertificatePath;
         home = createAuthenticatedTestApp({ authentication: 'real', https: { cert, key } });
-        const contentKeys = encryptionMode === 'e2ee' ? nacl.box.keyPair() : null;
+        const legacySecret = encryptionMode === 'e2ee' && credentialVariant === 'legacy' ? nacl.randomBytes(32) : null;
+        const contentKeys = encryptionMode === 'e2ee' ? legacySecret
+            ? nacl.box.keyPair.fromSecretKey(deriveAccountMachineKeyFromRecoverySecret(legacySecret))
+            : nacl.box.keyPair() : null;
         const account = await db.account.create({ data: { encryptionMode,
             ...(contentKeys ? createSignedAccountContentBinding(contentKeys.publicKey) : {}) } });
         const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user',
@@ -121,8 +125,10 @@ export async function createDeploymentSocketHome({ encryptionMode = 'plain', pre
         return {
             baseDir: harness.baseDir, baseUrl,
             accountId: account.id, serverId, machineId: machine.id, token, keys, installationId, encryptionMode,
-            machineEncryptionKey, encryption: contentKeys ? { type: 'dataKey', machineKey: new Uint8Array(contentKeys.secretKey),
-                publicKey: new Uint8Array(contentKeys.publicKey) } : null,
+            machineEncryptionKey, encryption: contentKeys ? legacySecret
+                ? { type: 'legacy', secret: legacySecret, publicKey: new Uint8Array(contentKeys.publicKey) }
+                : { type: 'dataKey', machineKey: new Uint8Array(contentKeys.secretKey),
+                    publicKey: new Uint8Array(contentKeys.publicKey) } : null,
             async prepareControllerProvisioner(rawManifest) {
                 // The already installed controller is the fixture precondition;
                 // managed admission, allocation and guest registration remain live.

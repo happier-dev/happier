@@ -17,7 +17,8 @@ export interface DeploymentSocketHomeFixture {
     readonly keys: Readonly<{ publicKey: Uint8Array; secretKey: Uint8Array }>;
     readonly encryptionMode: 'plain' | 'e2ee';
     readonly machineEncryptionKey: Uint8Array | null;
-    readonly encryption: Readonly<{ type: 'dataKey'; machineKey: Uint8Array; publicKey: Uint8Array }> | null;
+    readonly encryption: Readonly<{ type: 'dataKey'; machineKey: Uint8Array; publicKey: Uint8Array }>
+        | Readonly<{ type: 'legacy'; secret: Uint8Array; publicKey: Uint8Array }> | null;
     prepareControllerProvisioner(manifest: unknown): Promise<void>;
     setControllerProvisionerFiniteOnly(finiteOnly: boolean): Promise<void>;
     readManagedEnrollment(machineId: string): Promise<Readonly<{
@@ -28,6 +29,7 @@ export interface DeploymentSocketHomeFixture {
 }
 export function createDeploymentSocketHome(options?: Readonly<{
     encryptionMode?: 'plain' | 'e2ee';
+    credentialVariant?: 'dataKey' | 'legacy';
     serverId?: string;
     prepareMachineContent?: (key: Uint8Array, metadata: Readonly<Record<string, unknown>>) => string | Promise<string>;
     configureApp?: (app: Fastify) => void | Promise<void>;

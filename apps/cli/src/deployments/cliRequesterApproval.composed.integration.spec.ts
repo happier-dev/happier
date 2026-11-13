@@ -2,6 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ActionIdSchema, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
+import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { projectExternalActionExecutionResultV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { ProjectSourcesCreateOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
@@ -23,27 +25,61 @@ import { configuration } from '@/configuration';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { sealSavedSecretResourceRecipientEnvelopeV1, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { handleActionsCommand } from '@/cli/commands/actions';
-import { writeStoredCredentialsForServerId } from '@/persistence';
+import { writeDaemonState, writeStoredCredentialsForServerId } from '@/persistence';
+import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
+import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
+import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
+import { startDaemonControlServer } from '@/daemon/controlServer';
+import { createDaemonPatVerifier } from '@/daemon/auth/daemonPatVerifier';
+import { createAccountServerPatIntrospector } from '@/daemon/auth/accountServerPatIntrospector';
+import { resolveLiveDaemonControlTargetForServer } from '@/daemon/multiDaemon';
 
 afterEach(() => vi.restoreAllMocks());
 
-// Both fixtures share the server process's canonical Home identity cache.
+// The fixtures share the server process's canonical Home identity cache.
 const serverId = `srv_${randomUUID().replaceAll('-', '')}`;
 
-it.each(['controller', 'targeted-cli', 'targeted-terminal'] as const)('retains the %s binding review through its canonical approval decision', async entry => withConfiguredDaemonTestHome({
+it.each([
+    ['controller', 'plain', 'dataKey'], ['targeted-cli', 'plain', 'dataKey'], ['targeted-terminal', 'plain', 'dataKey'],
+    ['controller-terminal', 'plain', 'dataKey'],
+    ['targeted-terminal', 'e2ee', 'dataKey'], ['targeted-terminal', 'e2ee', 'legacy'],
+    ['targeted-terminal-local', 'e2ee', 'legacy'],
+] as const)('retains the %s binding review through its canonical approval decision (%s, %s)', async (entry, encryptionMode, credentialVariant) => withConfiguredDaemonTestHome({
     prefix: 'happier-cli-binding-review-', env: { HAPPIER_ACTIVE_SERVER_ID: 'cli-review-profile' },
 }, async () => {
-    const home = await createDeploymentSocketHome({ encryptionMode: 'plain', serverId });
+    const home = await createDeploymentSocketHome({ encryptionMode, credentialVariant, serverId,
+        ...(encryptionMode === 'e2ee' ? { prepareMachineContent: (key: Uint8Array, metadata: Readonly<Record<string, unknown>>) =>
+            createMachineContentCodec({ encryptionMode: 'e2ee', encryptionKey: key,
+                encryptionVariant: 'dataKey' }).encodeStored(metadata) } : {}) });
     let daemon: Awaited<ReturnType<typeof createS0DeploymentDaemonIngress>> | undefined;
+    let control: Awaited<ReturnType<typeof startDaemonControlServer>> | undefined;
     const lifetime = new AbortController();
     try {
         vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockImplementation(
             () => installationBoundary.getStore() ?? readS0Installation(home));
         const credentials = readS0ControllerCredentials(home);
+        expect(credentials.encryption?.type ?? null).toBe(encryptionMode === 'plain' ? null : credentialVariant);
+        const daemonToken = entry === 'targeted-terminal-local'
+            ? await auth.createToken(home.accountId, undefined, { kind: 'terminal', authority: 'account_automation' }) : home.token;
+        const daemonCredentials = readS0ControllerCredentials({ ...home, token: daemonToken });
+        if (entry === 'targeted-terminal-local') {
+            expect(readAuthTokenProvenance(decodeJwtPayload(daemonToken), { allowLegacyHome: false })?.provenance)
+                .toMatchObject({ kind: 'terminal', authority: 'account_automation' });
+        }
+        const artifactStore = createCredentialedAccountArtifactStore(credentials);
+        const createContentArtifact = async (content: { body: string }, kind: typeof DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1
+            | typeof DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1) => {
+            if (encryptionMode === 'plain') return home.createContentArtifact(content, kind);
+            const artifact = await runWithServerHttpBaseUrl(home.baseUrl,
+                () => artifactStore.create({ header: { kind, title: 'Deployment content' }, body: content.body }));
+            return { contentArtifactId: artifact.artifactId, contentHeaderVersion: artifact.revision.headerVersion,
+                contentBodyVersion: artifact.revision.bodyVersion };
+        };
         await adoptServerProfileHomeConnectionDescriptor({ observation: 'exact', createIfMissing: true,
             expectedProfileId: configuration.activeServerId, descriptor: {
             v: 1, homeServerIdentityId: home.serverId, canonicalServerUrl: home.baseUrl,
@@ -56,18 +92,47 @@ it.each(['controller', 'targeted-cli', 'targeted-terminal'] as const)('retains t
             const requester = await authority.resolveActionRequester!(context);
             try { return requester.identity; } finally { await requester.dispose(); }
         };
-        const runtime = createOwnServerDeploymentRuntimeForHost({ credentials, serverId: home.serverId,
+        const runtime = createOwnServerDeploymentRuntimeForHost({ credentials: daemonCredentials, serverId: home.serverId,
             resolveRequesterIdentity, acquirePluginRuntimeRegistryLease: () => pluginReloadController.acquireRuntimeRegistry(),
             serverHttpBaseUrl: home.baseUrl, machineId: home.machineId, signal: lifetime.signal });
-        daemon = await createS0DeploymentDaemonIngress({ home, resolveDeploymentRequesterIdentity: resolveRequesterIdentity,
+        daemon = await createS0DeploymentDaemonIngress({ home: { ...home, daemonToken }, resolveDeploymentRequesterIdentity: resolveRequesterIdentity,
             createDeploymentActionDeps: (requester, operations) => createRequesterBoundDeploymentActionDeps({
-                credentials: requester?.credentials ?? credentials, serverId: home.serverId,
+                credentials: requester?.credentials ?? daemonCredentials, serverId: home.serverId,
                 serverHttpBaseUrl: home.baseUrl, machineId: home.machineId, runtime,
                 resolveRequesterIdentity,
                 runActionOperation: operations.runActionOperation,
                 acquirePluginRuntimeRegistryLease: () => pluginReloadController.acquireRuntimeRegistry(),
                 ...(requester ? { savedSecretOperationContext: requester.savedSecretOperationContext } : {}),
             }) });
+        if (entry === 'targeted-terminal-local') {
+            const resolveOrigin = createCurrentMachineExecutionOriginContextResolver({ serverUrl: home.baseUrl,
+                resolveCurrentMachineId: () => home.machineId, resolveCurrentServerIdentityId: () => home.serverId });
+            const controlToken = randomUUID();
+            control = await startDaemonControlServer({ machineId: home.machineId, controlToken,
+                getChildren: () => [], stopSession: async () => ({ status: 'stopped' }),
+                spawnSession: async () => ({ type: 'success', sessionId: 'unused' }),
+                requestShutdown: () => {}, onHappySessionWebhook: () => {}, externalActionApi: {
+                    ...daemon.externalActionIngressOwner, currentAccountId: home.accountId,
+                    resolveInstallationId: () => home.installationId,
+                    resolvePluginExecutionOriginContext: resolveOrigin,
+                    acquirePluginRuntimeRegistryLease: () => pluginReloadController.acquireRuntimeRegistry(),
+                    verifyPat: createDaemonPatVerifier({ accountId: home.accountId,
+                        introspect: createAccountServerPatIntrospector({ daemonConnectionToken: daemonCredentials.token,
+                            serverBaseUrl: home.baseUrl }) }),
+                    executeOriginalAccountAction: request => dispatchOriginalAccountAction({ credentials: daemonCredentials,
+                        serverHttpBaseUrl: home.baseUrl, serverIdentityId: home.serverId,
+                        actionId: request.actionId, input: request.input,
+                        requestId: request.actionRequestId ?? randomUUID(),
+                        target: request.target ?? { kind: 'machine', machineId: home.machineId },
+                        invocation: { caller: { kind: 'host' }, surface: request.surface ?? 'cli', authority: request.authority },
+                        authority: request.authority, signal: request.signal }),
+                } });
+            writeDaemonState({ pid: process.pid, httpPort: control.port, startedAt: Date.now(),
+                startedWithCliVersion: 'test', controlToken, machineId: home.machineId, accountId: home.accountId });
+            const publication = await resolveLiveDaemonControlTargetForServer(configuration.activeServerId);
+            expect({ machineId: publication?.machineId, accountId: publication?.accountId, port: publication?.httpPort })
+                .toEqual({ machineId: home.machineId, accountId: home.accountId, port: control.port });
+        }
         const caller = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
             externalActionClient: true, machineId: home.machineId,
             serverId: home.serverId, serverIdentityId: home.serverId, serverApiUrl: home.baseUrl });
@@ -96,18 +161,20 @@ it.each(['controller', 'targeted-cli', 'targeted-terminal'] as const)('retains t
         const source = ProjectSourcesCreateOutputV1Schema.parse(await sourceResponse.json());
         if (!source.ok) throw new Error(source.error);
         const document = 'services:\n  database:\n    image: postgres:17\n';
+        const definition = { kind: 'stored' as const, contentRevision: 1, document,
+            composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`,
+            profiles: [], services: ['database'] };
         const created = await fetch(`${home.baseUrl}/v1/deployments/environments`, {
             method: 'POST', headers: { Authorization: `Bearer ${home.token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({
             serverId: home.serverId, projectSourceId: source.source.id, requestKey: randomUUID(),
             protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
             controllerMachineId: home.machineId, buildMachineId: home.machineId,
-            ...await home.createContentArtifact({ body: JSON.stringify({ name: 'CLI custody', retainPreviousDeployments: 1,
-                definition: { kind: 'stored', contentRevision: 1, document,
-                    composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`,
-                    profiles: [], services: ['database'] }, bindings: [] }) }, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1),
+            ...await createContentArtifact({ body: JSON.stringify({ name: 'CLI custody', retainPreviousDeployments: 1,
+                definition, bindings: [],
+            }) }, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1),
             firstTargetLink: { machines: [{ machineId: home.machineId, installationId: home.installationId }],
-                ...await home.createContentArtifact({ body: '{}' }, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1) },
+                ...await createContentArtifact({ body: '{}' }, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1) },
         }) });
         const environment = DeploymentEnvironmentCreateResultV1Schema.parse(await created.json());
         if (!environment.ok) throw new Error(environment.error);
@@ -116,9 +183,19 @@ it.each(['controller', 'targeted-cli', 'targeted-terminal'] as const)('retains t
         const detail = DeploymentEnvironmentGetResultV1Schema.parse(opened.result);
         if (!detail.ok) throw new Error(detail.error);
         const resourceId = randomUUID();
+        const resourceDataKey = crypto.getRandomValues(new Uint8Array(32));
+        const secretContent = { v: 1 as const, name: 'Binding credential', kind: 'token' as const, value: randomUUID() };
         const saved = await invokeSettled('secrets.shared.create', { resourceId, displayName: 'Binding credential', kind: 'token',
-            encryptionMode: 'plain', storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
-                content: { v: 1, name: 'Binding credential', kind: 'token', value: randomUUID() } }), keyEnvelopes: [] });
+            ...(home.encryption ? { encryptionMode: 'e2ee',
+                storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'e2ee', resourceDataKey,
+                    content: secretContent, randomBytes: length => crypto.getRandomValues(new Uint8Array(length)) }),
+                keyEnvelopes: [{ recipientAccountId: home.accountId,
+                    ...sealSavedSecretResourceRecipientEnvelopeV1({ resourceDataKey,
+                        recipientContentPublicKey: home.encryption.publicKey,
+                        randomBytes: length => crypto.getRandomValues(new Uint8Array(length)) }) }] }
+                : { encryptionMode: 'plain', storedContent: sealSavedSecretResourceStoredContentV1({ resourceId,
+                    mode: 'plain', content: secretContent }), keyEnvelopes: [] }) });
+        resourceDataKey.fill(0);
         expect(saved.ok).toBe(true);
         const approvals: string[] = [];
         const resolveServerFeaturesSnapshot = () => fetchServerFeaturesSnapshot({
@@ -132,25 +209,27 @@ it.each(['controller', 'targeted-cli', 'targeted-terminal'] as const)('retains t
             approvals.push(artifactId);
             return decide('approve');
         };
-        const targetedCredentials = entry === 'targeted-terminal' ? readS0ControllerCredentials({ ...home,
+        const terminal = entry === 'targeted-terminal' || entry === 'targeted-terminal-local';
+        const controller = entry === 'controller' || entry === 'controller-terminal';
+        const targetedCredentials = terminal || entry === 'controller-terminal' ? readS0ControllerCredentials({ ...home,
             token: await auth.createToken(home.accountId, undefined, { kind: 'terminal', authority: 'account_automation' }) }) : credentials;
-        const executor = entry !== 'controller'
+        const executor = !controller
             ? createCliActionExecutorFromCredentials({ credentials: targetedCredentials, readCredentials: async () => targetedCredentials,
                 externalActionClient: true, machineId: home.machineId,
                 serverId: home.serverId, serverIdentityId: home.serverId, serverApiUrl: home.baseUrl,
                 actionsSettingsProvider, onApprovalRequested })
-            : createCliActionExecutor({ token: home.token, credentials,
+            : createCliActionExecutor({ token: targetedCredentials.token, credentials: targetedCredentials,
             sessionId: 'cli-global', mode: 'plain', ctx: null, actionsSettingsProvider,
             serverId: home.serverId, serverIdentityId: home.serverId, serverHttpBaseUrl: home.baseUrl,
             machineId: home.machineId,
-            isApprovalExecutionOriginCurrent: createHostApprovalOriginCurrentness({ credentials,
+            isApprovalExecutionOriginCurrent: createHostApprovalOriginCurrentness({ credentials: targetedCredentials,
                 serverId: home.serverId, serverApiUrl: home.baseUrl, resolveServerFeaturesSnapshot, checkDaemonOrigin }),
             onApprovalRequested });
         const bindingInput = { serverId: home.serverId,
             environmentId: environment.environmentId, expectedRevision: detail.environment.revision,
             set: [{ purpose: 'dataRole', service: 'database', role: 'readOnlyPassword',
                 source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } }], remove: [] };
-        if (entry === 'targeted-terminal') {
+        if (terminal) {
             expect(configuration.activeServerId).not.toBe(home.serverId);
             await writeStoredCredentialsForServerId(configuration.activeServerId, targetedCredentials);
             const output: string[] = [];
@@ -169,7 +248,9 @@ it.each(['controller', 'targeted-cli', 'targeted-terminal'] as const)('retains t
                 if (event && typeof event === 'object' && 'data' in event && event.data
                     && typeof event.data === 'object' && 'kind' in event.data
                     && event.data.kind === 'approval_request_created' && 'artifactId' in event.data
-                    && typeof event.data.artifactId === 'string') approvals.push(event.data.artifactId);
+                    && typeof event.data.artifactId === 'string') {
+                    approvals.push(event.data.artifactId);
+                }
             });
             try {
                 await handleActionsCommand(['invoke', 'deployments.bindings.set', '--input-json', JSON.stringify(bindingInput),
@@ -188,7 +269,7 @@ it.each(['controller', 'targeted-cli', 'targeted-terminal'] as const)('retains t
             return;
         }
         const decided = await executor.execute('deployments.bindings.set', bindingInput,
-            { surface: 'cli', actionCaller: { kind: 'host' }, authority: entry === 'controller' ? 'present_user' : 'account_automation',
+            { surface: 'cli', actionCaller: { kind: 'host' }, authority: controller ? 'present_user' : 'account_automation',
                 serverId: home.serverId, serverIdentityId: home.serverId, actionRequestId: randomUUID(),
                 externalActionTarget: { kind: 'machine', machineId: home.machineId } });
         expect(approvals, JSON.stringify(decided)).toHaveLength(1);
@@ -196,6 +277,7 @@ it.each(['controller', 'targeted-cli', 'targeted-terminal'] as const)('retains t
             errorCode: entry === 'targeted-cli' ? 'present_user_required' : 'service_unavailable' });
     } finally {
         lifetime.abort();
+        await control?.stop();
         await daemon?.close();
         await home.close();
     }

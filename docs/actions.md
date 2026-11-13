@@ -1136,6 +1136,10 @@ active-join and retained-receipt semantics, not a new durable replay ledger.
 `executor/approvalReview.ts` records the
 same `presentUserApproval` used by an authenticated deferred decision. A native
 review has no Artifact id and does not manufacture an approval Artifact.
+A standalone terminal CLI spends its exact in-flow confirmation through this same
+owner while retaining its automation authority floor. Session, Workflow and native
+credential children retain their automated origin; this does not grant fresh approval
+reviewer eligibility.
 For an own-UI press that still needs review, a receiving executor without a native
 confirmation presenter returns its prepared review and `reviewDigest` with `action_interactive_review_required`.
 The originating UI presents that review and binds a fresh invocation's confirmation
@@ -5097,7 +5101,11 @@ authority without template child-role knowledge. Link management uses the existi
 `audience:'signed_in'`; anonymous publication remains unavailable for templates.
 Standalone link creation retains the existing present-user authority; scoped
 automation creates a link through that reviewed release child.
-In 0.3 development, standalone Artifact link creation uses the answering
+In 0.3 development, public-link placement is selected by the Action spec from
+the caller and surface. Only an absent or host caller on the CLI or UI person
+surface uses Account placement; a person invoking the CLI receives the link in
+their terminal without requiring an App. All other callers and surfaces,
+including standalone MCP agents with waived approval, use the answering
 client's existing approval and reverse-dispatch path. The issuing App receives
 the capability once through `onPublicLinkIssued` and opens its issued-link Share
 sheet with the selected anonymous or signed-in audience. The agent's result and

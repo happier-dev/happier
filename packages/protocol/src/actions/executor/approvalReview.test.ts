@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ExternalActionExecutionAuthorizationV1Schema } from '../externalActionApi.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
+import { readExternalActionBindingAuthority } from '../externalActionBindingAuthority.js';
 import type { ActionExecutorContext } from './types.js';
 import { admitAccountActionInvokeConfirmationV1, admitPresentUserConfirmationV1, recordPresentUserApprovalV1 } from './approvalReview.js';
 
@@ -75,7 +76,7 @@ describe('terminal CLI confirmation binding', () => {
       ...(origin ? { workflowActionOrigin: origin } : {}),
     } });
     return {
-      surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+      surface: 'cli', authority: readExternalActionBindingAuthority(binding), actionCaller: { kind: 'host' },
       runtimeAccountId: 'alice', serverId: 'home', serverIdentityId: 'home', actionRequestId: 'request',
       externalActionTarget: target, externalActionExecutionAuthorization: { v: 1, token: 'fixture-proof', binding },
       presentUserConfirmation: { actionId: 'machines.managed.delete', requestId: 'request', accountId: 'alice',
@@ -90,7 +91,47 @@ describe('terminal CLI confirmation binding', () => {
         inputDigest: computeActionInputApprovalDigestV1('machines.managed.delete', input, context.sessionTargetsV1) } });
     expect(admitPresentUserConfirmationV1('machines.managed.delete', input,
       confirmed(terminalContext({ runId: 'run', requestId: 'request' })))).toBeNull();
-    expect(admitPresentUserConfirmationV1('machines.managed.delete', input, confirmed(terminalContext())))
+    const direct = confirmed(terminalContext());
+    expect(direct.authority).toBe('account_automation');
+    expect(admitPresentUserConfirmationV1('machines.managed.delete', input, direct))
       .toMatchObject({ actionId: 'machines.managed.delete' });
+    expect(direct.authority).toBe('account_automation');
+    expect(admitPresentUserConfirmationV1('machines.managed.delete', input, direct)).toBeNull();
   });
+
+  it('keeps a native credential child at its automated origin', () => {
+    const actionId = 'machines.managed.credentials.install';
+    const input = { homeId: 'home', managedId: 'managed', sessionId: 'session', bindingKey: 'binding',
+      expectedResourceRevision: 1, expectedSourceRevision: 'source', expectedProviderTicket: 'ticket' };
+    const base = terminalContext();
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ ...base.externalActionExecutionAuthorization,
+      binding: { ...base.externalActionExecutionAuthorization!.binding, actionId,
+        managedAdmission: { actionId, input },
+        nativeCredentialSpawnChild: { requestId: 'parent-request', requestEnvelopeDigest: 'B'.repeat(43) } } });
+    expect(admitPresentUserConfirmationV1(actionId, input, { ...base,
+      externalActionExecutionAuthorization: authorization,
+      presentUserConfirmation: { ...base.presentUserConfirmation!, actionId,
+        inputDigest: computeActionInputApprovalDigestV1(actionId, input) },
+    })).toBeNull();
+  });
+
+  it.each(['agent', 'plugin', 'account_ceiling', 'changed_input'] as const)(
+    'does not spend terminal confirmation for %s', changed => {
+      const input = { homeId: 'home', managedId: 'managed' };
+      const base = terminalContext();
+      const context: ActionExecutorContext = { ...base,
+        ...(changed === 'agent' ? { surface: 'agent' as const } : {}),
+        ...(changed === 'plugin' ? { actionCaller: { kind: 'plugin' as const, pluginId: 'acme.parent' } } : {}),
+        ...(changed === 'account_ceiling' ? { externalActionExecutionAuthorization:
+          ExternalActionExecutionAuthorizationV1Schema.parse({ ...base.externalActionExecutionAuthorization,
+            binding: { ...base.externalActionExecutionAuthorization!.binding,
+              authentication: { kind: 'account', tokenEpoch: 0 } } }) } : {}),
+        presentUserConfirmation: { ...base.presentUserConfirmation!,
+          inputDigest: computeActionInputApprovalDigestV1('machines.managed.delete', input) },
+      };
+      expect(admitPresentUserConfirmationV1('machines.managed.delete',
+        changed === 'changed_input' ? { ...input, managedId: 'another-managed' } : input, context)).toBeNull();
+      expect(context.authority).toBe('account_automation');
+    },
+  );
 });
