@@ -726,7 +726,7 @@ function WorkflowEditorBlockList(props: Omit<React.ComponentProps<typeof Workflo
 }>) {
     const { draftStore, readValidation, onUseExample, ...list } = props;
     const draft = useWorkflowEditorSelector(draftStore, readWholeDraft);
-    return <WorkflowBlockListEditor {...list} draft={draft} blocks={draft.blocks} validation={readValidation(draft)}
+    return <WorkflowBlockListEditor {...list} draft={draft} readDraft={draftStore.get} blocks={draft.blocks} validation={readValidation(draft)}
         {...(documentIsUntouched(draft) && onUseExample !== undefined ? { onUseExample } : {})} />;
 }
 

@@ -119,6 +119,8 @@ export type {
 
 export type WorkflowBlockListEditorProps = Readonly<{
   draft: WorkflowEditorDraft;
+  /** Live custody for multiple edits before React publishes the next rendered draft. */
+  readDraft?: () => WorkflowEditorDraft;
   highlightedBlockIds?: readonly string[];
   list: WorkflowBlockListRef;
   blocks: readonly WorkflowBlock[];
@@ -282,7 +284,7 @@ export function WorkflowBlockListEditor(
   const addBlock = React.useCallback(
     (request: WorkflowAddBlockRequest, afterBlockId?: string) => {
       const current = owner.current;
-      const insertion = insertWorkflowEditorBlock(current.draft, {
+      const insertion = insertWorkflowEditorBlock(current.readDraft?.() ?? current.draft, {
         request,
         list: current.list,
         ...(afterBlockId === undefined ? {} : { afterBlockId }),
@@ -633,7 +635,7 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
         onFocus: () => engagement.engage(block.id),
       }
     : undefined;
-  const readDraft = () => row.owner.current.draft;
+  const readDraft = () => row.owner.current.readDraft?.() ?? row.owner.current.draft;
   const onChange: WorkflowBlockListEditorProps['onChange'] = (...args) =>
     row.owner.current.onChange(...args);
   const onSelect: WorkflowBlockListEditorProps['onSelect'] = (...args) =>

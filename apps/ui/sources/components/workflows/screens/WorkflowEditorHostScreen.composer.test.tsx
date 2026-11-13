@@ -239,6 +239,40 @@ function storedProgress(detail: WorkflowInvocationDetailV1, accountId: string) {
 }
 
 describe('editor workflow composer', () => {
+    it('keeps a selected Workflow input binding when the composer publishes its token in the same turn', async () => {
+        const definitionId = '8fab3a81-5e64-4000-8000-000000000001';
+        await seedSavedDefinition(definitionId, createWorkflowDefinitionFixture({
+            defaults: savedAgentDefinition().defaults,
+            inputs: [{ name: 'subject', valueType: 'string', required: true }],
+            blocks: [{ kind: 'step', id: 'prompt', document: { text: 'Summarize @', references: [], attachments: [] },
+                input: [], result: { kind: 'text' } }],
+        }));
+        const screen = await renderScreen(<AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'saved', definitionId }} /></AppPaneProvider>);
+        const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+        const { ScopedAuthoringComposer } = await import('@/components/sessions/authoring/ScopedAuthoringComposer');
+        await screen.pressByTestIdAsync('workflow-editor-step-prompt-summary-prompt');
+        const composer = screen.root.findByType(ScopedAuthoringComposer);
+        const suggestion = composer.props.additionalSuggestions?.('@subject').find(row => row.kind === 'composerReference');
+        if (!suggestion || suggestion.kind !== 'composerReference' || !suggestion.structuredInput || !('ref' in suggestion.structuredInput)) {
+            throw new Error('Expected the real Workflow input suggestion');
+        }
+        const reference = suggestion.structuredInput;
+        // Reference selection and the portable document publication happen before React renders
+        // the newly appended input. Both writes must read the current draft, not the rendered one.
+        await act(async () => {
+            const selected = suggestion.selectionEffect?.();
+            composer.props.onChangeDocument?.({ text: `Summarize ${suggestion.text} `,
+                references: [{ ...reference, token: suggestion.text }], attachments: [] });
+            await selected;
+        });
+        const draft = screen.root.findByType(WorkflowEditorBody).props.draftStore.get();
+        expect(draft.blocks[0]).toMatchObject({ kind: 'step', input: [{ kind: 'input', name: 'subject' }],
+            document: { text: `Summarize ${suggestion.text} `, references: [{ ref: 'workflowInput:0' }] } });
+        const { validateWorkflowEditorDraft } = await import('@/sync/domains/workflows/workflowAuthoring');
+        expect(validateWorkflowEditorDraft(draft).issues.filter(issue => issue.path.includes('/document/references/'))).toEqual([]);
+        expectNoWorkflowWrites();
+    });
+
     it.each([
         { kind: 'new-session', admission: 'readiness' }, { kind: 'trigger', admission: 'readiness' },
         { kind: 'new-session', admission: 'shell' }, { kind: 'trigger', admission: 'shell' },
