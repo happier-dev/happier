@@ -47,6 +47,7 @@ import type { SessionMcpCustomToolsBridge } from './runtime/sessionMcpToolsBridg
 import { createMcpWatchSession, type McpWatchSession } from './resources/watchSubscriptions';
 import { serveSessionMcpRelayUpgrade } from './runtime/sessionMcpRelayEndpoint';
 import { createSessionMcpAgentPeerAdmission } from './runtime/sessionMcpAgentPeer';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { currentSessionHolderScope } from '@/subprocess/supervision/sessionHolder';
 
 const NativeAgentToolCallRequestV1Schema = z.strictObject({
@@ -205,6 +206,7 @@ export function registerHappierSessionAgentToolRpc(
     client: HappyMcpSessionClient,
     opts?: HappySessionToolRuntimeOptions,
 ): void {
+    const environment = sessionProcessEnvironment();
     const actionSettingsProvider = opts?.actionsSettingsProvider ?? createMcpActionSettingsProvider({
         accountSettings: opts?.accountSettings ?? null,
         getAccountSettings: opts?.getAccountSettings ?? null,
@@ -241,6 +243,7 @@ export function registerHappierSessionAgentToolRpc(
                 return { ok: false as const, errorCode: error.code, error: error.message };
             }
             const runtime = createHappierMcpServer(client, {
+                environment,
                 ...(opts?.sessionToolsBridge ? { sessionToolsBridge: opts.sessionToolsBridge } : {}),
                 mcpToolCallIdMetaKey: opts?.mcpToolCallIdMetaKey,
                 happierToolsEnabled: opts?.happierToolsEnabled,

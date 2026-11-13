@@ -11,6 +11,7 @@ import { resolveCliActionCallerSession } from '../resolveCliActionCallerSession'
 import type { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import type { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { readPreparedAccountRoleOverrides } from '@/session/roles/sessionRoleContext';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 export function createCliAgentStartContext(
   params: Pick<CliActionDepsParams, 'actionsSettingsProvider' | 'credentials' | 'getAgentStartRunCaller' | 'getCurrentAppliedChildSelection' | 'getCurrentTurnWorkDepth' | 'getSessionRoleContext' | 'readAgentStartPolicy' | 'savedSecretOperationContext' | 'sessionId' | 'token' | 'workflowStepRoleDefaultEngine'>,
@@ -23,6 +24,7 @@ export function createCliAgentStartContext(
   }>,
   readEffectiveDeps: () => ActionExecutorDeps,
 ): NonNullable<ActionExecutorDeps['resolveAgentStartContext']> {
+  const environment = sessionProcessEnvironment();
   const resolveAgentStartContext: NonNullable<ActionExecutorDeps['resolveAgentStartContext']> = async (context, options) => {
     const binding = context.externalActionExecutionAuthorization?.binding;
     const workflowOrigin = binding?.workflowActionOrigin;
@@ -106,7 +108,7 @@ export function createCliAgentStartContext(
         {
         const [{ readCurrentRunnerAgentStartPolicyV1 }, { bootstrapAccountSettingsContext }] = await Promise.all([import("@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient"), import("@/settings/accountSettings/bootstrapAccountSettingsContext")]);
         return requiresBoundStartPolicy ? await (params.readAgentStartPolicy
-          ? params.readAgentStartPolicy(context.signal) : readCurrentRunnerAgentStartPolicyV1(session.sessionId, context.signal))
+          ? params.readAgentStartPolicy(context.signal) : readCurrentRunnerAgentStartPolicyV1(session.sessionId, context.signal, environment))
         : params.actionsSettingsProvider?.getAccountSettings?.()
         ?? (params.credentials ? (await bootstrapAccountSettingsContext({ credentials: params.credentials, mode: 'blocking' })).settings : null);
       });

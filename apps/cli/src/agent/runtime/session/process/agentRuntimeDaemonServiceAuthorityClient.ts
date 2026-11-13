@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { configuration } from '@/configuration';
 import type { RequesterAgentStartPolicyV1 } from '@/daemon/sessionEncryption/requesterAgentStartPolicy';
 
@@ -97,9 +98,9 @@ export async function readCurrentRunnerTeamCredentialBrokerDenial(
 
 /** The existing Session capability selects the policy's Account and source. */
 export async function readCurrentRunnerAgentStartPolicyV1(
-  sessionId: string, signal?: AbortSignal,
+  sessionId: string, signal?: AbortSignal, environment: NodeJS.ProcessEnv = sessionProcessEnvironment(),
 ): Promise<RequesterAgentStartPolicyV1 | null> {
-  const path = process.env[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY];
+  const path = environment[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY];
   if (!path) return null;
   const current = await readCurrentRunnerAgentRuntimeDaemonServiceAuthority({
     happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,

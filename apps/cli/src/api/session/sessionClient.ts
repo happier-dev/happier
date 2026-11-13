@@ -1,5 +1,5 @@
 import { resolveCatalogAgentRequestCoverageOptions } from '@/agent/catalog/registry';
-import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { readHostedSessionScope, sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createSessionUsageLimitRecoveryRuntime } from '@/session/usageLimitRecoveryControls/createSessionUsageLimitRecoveryRuntime';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import { materializeDiscussionInputAttachments, DiscussionAttachmentPreparationError,
@@ -171,7 +171,6 @@ import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncr
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { registerLocalSessionRpcTarget } from '@/session/transport/rpc/localSessionRpcChannel';
 import { readDaemonState } from '@/persistence';
-import { readHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { readStartedByArg } from '@/cli/readStartedByArg';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { findTranscriptEncryptedMessageByLocalIdV2 } from './transcriptMessageLookup';
@@ -643,6 +642,7 @@ export class ApiSessionClient extends EventEmitter {
     private sessionSyncPendingInputServerContractResult: SessionClientConnectionContractResult | null = null;
     private startupMessageCatchUpStarted = false;
     private readonly startupMessageCatchUpExplicitAfterSeq: number | null;
+    private readonly environment = sessionProcessEnvironment();
     private readonly startedByDaemonProcess: boolean;
     private readonly transcriptStorage: 'persisted' | 'direct';
     private readonly usageObservationPublisher: ReturnType<typeof createSessionClientUsageObservationPublisher>;
@@ -2789,10 +2789,10 @@ export class ApiSessionClient extends EventEmitter {
             const result = await notifyDaemonConnectedServiceTurnLifecycleViaControl({
                 sessionId: this.sessionId,
                 event,
-                ...(process.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]
+                ...(this.environment[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]
                     ? {
                         connectedServiceSelectionsEnvRaw:
-                            process.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY],
+                            this.environment[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY],
                     }
                     : {}),
             });

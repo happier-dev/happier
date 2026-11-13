@@ -29,6 +29,7 @@ import {
   type RuntimeOverrideTarget,
 } from '@/agent/runtime/createRuntimeOverrideSynchronizers';
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/lifecycle/runnerTerminationHandlers';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { CapabilitySelectionSynchronizerInput } from '@/agent/runtime/capabilitySelectionSynchronizer';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { surfacePrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
@@ -313,6 +314,7 @@ export class RuntimeEventSubscriptionRequiredError extends Error {
 }
 
 export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams): Promise<void> {
+  const environment = sessionProcessEnvironment();
   const cleanupBackendRunResourcesFn = params.deps.cleanupBackendRunResourcesFn ?? cleanupBackendRunResources;
   const createRuntimeOverrideSynchronizersFn = params.deps.createRuntimeOverrideSynchronizersFn ?? createRuntimeOverrideSynchronizers;
   const runPermissionModePromptLoopFn = params.deps.runPermissionModePromptLoopFn ?? runPermissionModePromptLoop;
@@ -716,10 +718,10 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
             const result = await notifyDaemonConnectedServiceTurnLifecycleFn({
               sessionId: params.session.sessionId,
               ...input,
-              ...(process.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]
+              ...(environment[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]
                 ? {
                     connectedServiceSelectionsEnvRaw:
-                      process.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY],
+                      environment[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY],
                   }
                 : {}),
             });

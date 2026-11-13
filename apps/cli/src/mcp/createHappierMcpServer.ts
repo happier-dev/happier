@@ -57,6 +57,7 @@ import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { createSessionFollowActionDeps } from '@/api/sessionFollowActionDeps';
 import { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime/session/follow/createSessionFollowSourceKeyPreparationAfterSet';
 import { createSessionAccountActionExecutor } from '@/mcp/runtime/createSessionAccountActionExecutor';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { readCurrentRunnerAgentStartPolicyV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient';
 import { createNativeAgentSessionEffectBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
 import { readSessionMemoryEnabledV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
@@ -143,6 +144,7 @@ async function writeMcpSessionStateFieldMetadata(params: Readonly<{
 export function createHappierMcpServer(
   client: HappyMcpSessionClient,
   opts?: Readonly<{
+    environment?: NodeJS.ProcessEnv;
     mcpToolCallIdMetaKey?: string;
     happierToolsEnabled?: boolean;
     /** Session transport authentication; does not grant Account-wide Action authority. */
@@ -177,6 +179,7 @@ export function createHappierMcpServer(
     toolCallId?: string;
   }>): Promise<HappierBuiltInToolDispatchResult>;
 } {
+  const environment = opts?.environment ?? sessionProcessEnvironment();
   const actionInvocation = client.getRunActionInvocation?.();
   const toolSurface = actionInvocation?.surface === 'voice' ? 'voice' as const : 'agent' as const;
   const credentials = opts?.authorityScope === 'session' ? null : opts?.credentials ?? null;
@@ -197,7 +200,7 @@ export function createHappierMcpServer(
   const readSessionAgentSpawnPolicyV1 = async (signal?: AbortSignal) => {
     if (credentials) return actionSettingsProvider.getAccountSettings?.()?.sessionAgentSpawnPolicyV1;
     const policy = await readCurrentRunnerAgentStartPolicyV1(client.sessionId, toolExecutionSignal
-      ? signal ? AbortSignal.any([toolExecutionSignal, signal]) : toolExecutionSignal : signal);
+      ? signal ? AbortSignal.any([toolExecutionSignal, signal]) : toolExecutionSignal : signal, environment);
     if (!policy) throw createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect');
     return policy.sessionAgentSpawnPolicyV1;
   };
@@ -366,7 +369,7 @@ export function createHappierMcpServer(
       ...(connectedAccountAuthenticationHost?.savedSecretOperationContext
         ? { savedSecretOperationContext: connectedAccountAuthenticationHost.savedSecretOperationContext } : {}),
       ...(!credentials ? { readAgentStartPolicy: (signal?: AbortSignal) =>
-        readCurrentRunnerAgentStartPolicyV1(client.sessionId, signal) } : {}),
+        readCurrentRunnerAgentStartPolicyV1(client.sessionId, signal, environment) } : {}),
       token: sessionCredentials?.token ?? '',
       ...(credentials ? { credentials } : {}),
       ...(sessionContentCredentials ? { sessionContentCredentials, resolveExactSessionEncryptionMaterial } : {}),

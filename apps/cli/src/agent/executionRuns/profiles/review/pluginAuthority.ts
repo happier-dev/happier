@@ -1,5 +1,6 @@
 import type { PluginMachineMaterializationRefV1 } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
 import { configuration } from '@/configuration';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY,
@@ -35,8 +36,9 @@ export async function readCurrentReviewHostPluginAuthority(
 
 /** Session composition binds this reader to its existing tracked-runner service. */
 export function createRunnerReviewHostPluginAuthorityReader(sessionId: string): ReviewHostPluginAuthorityReader {
+  const environment = sessionProcessEnvironment();
   return async pluginId => {
-    const path = process.env[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY];
+    const path = environment[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY];
     if (!path) return null;
     try {
       const current = await readCurrentRunnerAgentRuntimeDaemonServiceAuthority({
