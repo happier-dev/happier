@@ -19,6 +19,7 @@ import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecret
 import { createOnHappySessionWebhook } from '@/daemon/sessions/onHappySessionWebhook';
 import { createSkillStore } from '@/prompts/skills/store/skillStore';
 import { createInstalledProjectAgentLaunchFixture } from './installedProjectAgentLaunchFixture';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 type InstalledProjectAgentLaunchFixture = Awaited<ReturnType<typeof createInstalledProjectAgentLaunchFixture>>;
 type InstalledProjectAgentDaemonFixtureOwners = Readonly<{
@@ -32,9 +33,9 @@ type InstalledProjectAgentDaemonFixtureOwners = Readonly<{
   runner: Readonly<{ pid: number; processStartTimeMs: number; processCommandHash: string; snapshotIdentity: string }>;
   tracked: TrackedSession;
   plugin: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>>;
-  pidToTrackedSession: Map<number, TrackedSession>;
+  trackedSessionsByKey: TrackedSessionMap;
   connectedServiceRuntimeRegistry: ConnectedServiceRuntimeRegistry;
-  pidToAwaiter: Map<number, (tracked: TrackedSession) => void>;
+  spawnAwaiterByKey: Map<SessionTrackingKey, (tracked: TrackedSession) => void>;
   daemon: Awaited<ReturnType<typeof startDaemonSessionControlRuntime>>;
   resolveRequesterRuntime: ResolveRequesterSessionRuntimeContext;
   readRequesterRecoveryStage(): string;
@@ -113,7 +114,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   const runner = requesterOptions?.runnerIdentity?.(f.directory)
     ?? { pid: process.pid, processStartTimeMs: 1, processCommandHash: 'a'.repeat(64), snapshotIdentity: 'fixture-runner' };
   const sessionId = requesterOptions?.ordinaryAccountSession ? 'ordinary-native-owner' : 'project-session';
-  const tracked: TrackedSession = { pid: process.pid, sessionRunnerPid: process.pid, startedBy: 'daemon', happySessionId: sessionId,
+  const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, sessionRunnerPid: process.pid, startedBy: 'daemon', happySessionId: sessionId,
     ...(requesterOptions?.reattachedFromDiskMarker ? { reattachedFromDiskMarker: true } : {}),
     ...(requesterOptions?.ordinaryAccountSession ? {} : { requesterWorkAttributionV1: f.bootstrap.attribution }),
     processStartTimeMs: runner.processStartTimeMs, processCommandHash: runner.processCommandHash,
@@ -121,12 +122,12 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     runnerAgentBootstrapIdentity: { agentId: retainedAgent.agentId, backendId: retainedAgent.agentId },
     runnerAgentInvocationContext: { cwd, environment: {}, providerBindingActive: false },
     spawnOptions: { directory: cwd, backendTarget: { kind: 'backend', backendId: retainedAgent.agentId } } };
-  const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
+  const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
   const connectedServiceRuntimeRegistry = new ConnectedServiceRuntimeRegistry();
   let createRequesterRuntime: ((bootstrap: typeof f.bootstrap) => ReturnType<typeof createRequesterSessionRuntimeContext>) | null = null;
   let requesterRecoveryStage = 'not_requested';
   const resolveRequesterRuntime = createRequesterSessionRuntimeContextResolver({
-    trackedSessions: pidToTrackedSession,
+    trackedSessions: trackedSessionsByKey,
     // Startup precedes construction of the real requester runtime factory.
     getCreateRuntime: () => createRequesterRuntime,
     recoverBootstrap: async ({ sessionId: id, attribution }) => {
@@ -141,7 +142,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     },
   });
   const deviceLocalSecretStorage = await readOrCreateDeviceLocalSecretStorage({ path: join(f.directory, 'fixture-device-secret') });
-  const pidToAwaiter = new Map<number, (tracked: TrackedSession) => void>();
+  const spawnAwaiterByKey = new Map<SessionTrackingKey, (tracked: TrackedSession) => void>();
   const skillStore = createSkillStore({ happyHomeDir: f.directory });
   onTestFinished(async () => {
     await skillStore.releaseSkillSessionDirs(sessionId);
@@ -167,15 +168,15 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
       stageTranscriptEvent: async () => ({ persisted: true, delivered: true }) },
     connectedServicesMaterializationBaseDir: join(f.directory, 'connected-services'),
     getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-    pidToTrackedSession, pidToAwaiter, pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-    getApiMachineForSessions: requesterOptions?.getApiMachineForSessions ?? (() => machine), spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+    trackedSessionsByKey, spawnAwaiterByKey, spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+    getApiMachineForSessions: requesterOptions?.getApiMachineForSessions ?? (() => machine), spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
     resolveRequesterSessionRuntimeContext: resolveRequesterRuntime,
     releaseRequesterSessionRuntimeContext: async context => {
       await releaseUnretainedRequesterSessionRuntimeContext(context,
-        [...pidToTrackedSession.values()].map(session => session.requesterSessionRuntimeContext));
+        [...trackedSessionsByKey.values()].map(session => session.requesterSessionRuntimeContext));
     },
-    connectedServicesRestartRequestedPids: new Set(), beforeShutdown: async () => {},
-    onHappySessionWebhook: createOnHappySessionWebhook({ pidToTrackedSession, pidToAwaiter, deviceLocalSecretStorage }),
+    connectedServicesRestartRequestedSessions: new Set(), beforeShutdown: async () => {},
+    onHappySessionWebhook: createOnHappySessionWebhook({ trackedSessionsByKey, spawnAwaiterByKey, deviceLocalSecretStorage }),
     requestShutdown() {}, processEnv: { NODE_ENV: 'test', ...requesterOptions?.processEnv } });
   onTestFinished(() => daemon.stopControlServer());
   // Full daemon startup binds its produced Account ingress to the Machine.
@@ -195,7 +196,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
       coordinatorInput: { machineId: 'machine', machineIdProvider: () => 'machine', runtimeId: 'project-runtime', happyHomeDir: f.directory,
         logger: { debug() {}, info() {}, warn() {} }, processEnv: { NODE_ENV: 'test',
           HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '0', HAPPIER_CONNECTED_SERVICES_QUOTAS_ENABLED: '0' },
-        pidToTrackedSession, connectedServiceRuntimeRegistry,
+        trackedSessionsByKey, connectedServiceRuntimeRegistry,
         connectedServiceAuthGroupPreTurnSwitchCoordinator: daemon.connectedServiceAuthGroupPreTurnSwitchCoordinator } });
     if (context) onTestFinished(() => context.dispose());
     requesterRecoveryStage = context ? 'ready' : 'runtime_refused';
@@ -222,7 +223,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     { sessionId, runner, retainedAgent, trackedSession: tracked, invocationContext: tracked.runnerAgentInvocationContext!,
       isCurrent: async () => true, signal }));
   const operationBase = (invocationId = 'cold-invocation') => ({ invocationId, requestId: `request-${++sequence}` });
-  return { ...fixture, signal, cwd, dispatch, operationBase, sessionId, retainedAgent, requester, runner, tracked, plugin, pidToTrackedSession, connectedServiceRuntimeRegistry, pidToAwaiter, daemon,
+  return { ...fixture, signal, cwd, dispatch, operationBase, sessionId, retainedAgent, requester, runner, tracked, plugin, trackedSessionsByKey, connectedServiceRuntimeRegistry, spawnAwaiterByKey, daemon,
     resolveRequesterRuntime,
     readRequesterRecoveryStage: () => requesterRecoveryStage,
     async replaceRequesterRuntime() {
