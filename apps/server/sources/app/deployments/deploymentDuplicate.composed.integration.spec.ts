@@ -130,7 +130,7 @@ describe('Duplicate through the Environment create HTTP/storage boundary', () =>
             await db.deploymentEnvironment.update({ where: { id: f.original.environmentId }, data: { revision: { increment: 1 } } });
             const retry = await post(f.input);
             expect(retry.statusCode).toBe(200);
-            expect(retry.json()).toEqual(created);
+            expect(retry.json()).toEqual({ ...created, replayed: true });
             expect((await post({ ...f.input, copyFrom: { ...f.input.copyFrom, expectedRevision: 2 } })).json())
                 .toEqual({ ok: false, error: 'deployment_conflict' });
             const changedContent = await f.artifactFor(f.actor.id, 'Changed prepared copy');
@@ -164,7 +164,7 @@ describe('Duplicate through the Environment create HTTP/storage boundary', () =>
         // Already acknowledged work survives a later source revision, while a
         // new source CAS or reviewed configuration still changes the intent.
         await db.deploymentEnvironment.update({ where: { id: f.original.environmentId }, data: { revision: { increment: 1 } } });
-        expect.soft(await create({ ...input, ...rematerialized })).toEqual(created);
+        expect.soft(await create({ ...input, ...rematerialized })).toEqual({ ...created, replayed: true });
         expect(await create({ ...input, ...rematerialized,
             copyIntentCommitment: createHash('sha256').update('changed-reviewed-copy-fixture').digest('base64url') }))
             .toEqual({ ok: false, error: 'deployment_conflict' });

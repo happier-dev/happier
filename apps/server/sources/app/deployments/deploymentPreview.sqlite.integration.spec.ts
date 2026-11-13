@@ -229,7 +229,7 @@ describe('preview Environment relation admission', () => {
             expect(companionResponse.statusCode, companionResponse.body).toBe(200);
             const companion = DeploymentEnvironmentCreateResultV1Schema.parse(companionResponse.json());
             if (!companion.ok) throw new Error(companion.error);
-            expect((await postCreate(companionInput)).json()).toEqual(companion);
+            expect((await postCreate(companionInput)).json()).toEqual({ ...companion, replayed: true });
             const companionDuplicate = await postCreate({ ...companionInput, requestKey: crypto.randomUUID() });
             expect(companionDuplicate.statusCode, companionDuplicate.body).toBe(409);
             const companionList = await app.inject({ method: 'GET',
@@ -258,7 +258,7 @@ describe('preview Environment relation admission', () => {
                 previewTemplateEnvironmentId: parent.environmentId } });
             const replay = await postCreate(input);
             expect(replay.statusCode, replay.body).toBe(200);
-            expect(DeploymentEnvironmentCreateResultV1Schema.parse(replay.json())).toEqual(created);
+            expect(DeploymentEnvironmentCreateResultV1Schema.parse(replay.json())).toEqual({ ...created, replayed: true });
             const admitted = await inTx(tx => loadDeploymentEnvironmentInTx(tx, owner.id, serverId, created.environmentId));
             if (!admitted.ok) throw new Error(admitted.error);
             expect(projectDeploymentEnvironmentHeader(admitted.row, serverId, admitted.admission)).toMatchObject({
@@ -339,7 +339,7 @@ describe('preview Environment relation admission', () => {
             expect(disabled.statusCode, disabled.body).toBe(409);
             const committedRetry = await postCreate(input);
             expect(committedRetry.statusCode, committedRetry.body).toBe(200);
-            expect(DeploymentEnvironmentCreateResultV1Schema.parse(committedRetry.json())).toEqual(created);
+            expect(DeploymentEnvironmentCreateResultV1Schema.parse(committedRetry.json())).toEqual({ ...created, replayed: true });
             expect(await db.deploymentEnvironment.count({ where: { projectSourceId: source.source.id } })).toBe(before);
             // Close/recovery discovers the same relation after ordinary soft deletion.
             await db.deploymentEnvironment.updateMany({ where: { id: { in: [created.environmentId, companion.environmentId] } },

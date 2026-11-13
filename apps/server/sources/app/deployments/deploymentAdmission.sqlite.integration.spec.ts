@@ -714,7 +714,9 @@ describe('current Source deployment authority', () => {
         expect(loaded.admission.source).toMatchObject({ name: input.newProject.name, owner: input.newProject.owner });
         expect(created).toMatchObject({ projectSourceId: loaded.admission.source.id });
         expect(loaded.admission.source.repository).toBeUndefined();
-        expect(await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id, parsed))).toEqual(created);
+        expect(await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id, parsed)))
+            .toEqual({ ...created, replayed: true });
+        expect(await db.deploymentEnvironment.count({ where: { projectSourceId: loaded.admission.source.id } })).toBe(1);
         expect(await db.projectSource.count({ where: { createdByAccountId: owner.id } })).toBe(1);
         const refused = DeploymentEnvironmentCreateInputV1Schema.parse({ ...input, requestKey: crypto.randomUUID(),
             newProject: { ...input.newProject, requestKey: crypto.randomUUID(), name: 'Refused project' }, controllerMachineId: 'unavailable' });

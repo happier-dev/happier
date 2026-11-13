@@ -136,7 +136,8 @@ it.each(['Source CAS', 'transaction helper'] as const)('%s retires only preview 
     expect(await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id, { ...childInput,
         requestKey: crypto.randomUUID(), preview: { ...childInput.preview, pullRequestId: 'opaque-pr-18' } })))
         .toMatchObject({ ok: false, error: 'deployment_conflict' });
-    expect(await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id, childInput))).toEqual(child);
+    expect(await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id, childInput)))
+        .toEqual({ ...child, replayed: true });
     expect(await inTx(tx => updateProjectSourceInTx(tx, owner.id, replacement))).toMatchObject({ ok: false, error: 'source_conflict' });
     expect(await db.automationRun.count({ where: { automationId: cleanup.id } })).toBe(2);
 }, 60_000);

@@ -239,7 +239,9 @@ describe('deployment storage real SQLite boundary', () => {
             const opened = await inTx(tx => readPlainDeploymentEnvironmentContentInTx(tx, owner.id,
                 { kind: 'account', accountId: owner.id }, input));
             expect(opened).toMatchObject({ ok: true, content });
-            expect(DeploymentEnvironmentCreateResultV1Schema.parse((await create(owner.id)).json())).toEqual(created);
+            expect(DeploymentEnvironmentCreateResultV1Schema.parse((await create(owner.id)).json()))
+                .toEqual({ ...created, replayed: true });
+            expect(await db.deploymentEnvironment.count({ where: { projectSourceId: source.source.id } })).toBe(1);
         });
     });
 
@@ -640,7 +642,7 @@ describe('deployment storage real SQLite boundary', () => {
                 .toMatchObject({ source: { kind: 'host', id: 'own-server' }, machines: [machine.id],
                     contentArtifactId: linkContent.contentArtifactId });
             const seq = (await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq;
-            expect((await create(input)).json()).toEqual(result);
+            expect((await create(input)).json()).toEqual({ ...result, replayed: true });
             expect(await db.deploymentTargetLink.count({ where: { environmentId: row.id } })).toBe(1);
             expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(seq);
             const changedIntent = await create({ ...input, firstTargetLink: { ...input.firstTargetLink,
