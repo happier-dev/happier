@@ -13,6 +13,12 @@ directory; a changed placement returns `input_changed`. The ordinary Session
 creation owner handles authentication and launch. Continuing a returned Session
 uses its ordinary message Action. The preparation brief contains source intent,
 without copying the launch recipe or Connected Account references into messages.
+The signed child-purpose owner carries the admitted Prepare root through its
+reviewed Session child: a fresh child can read the selected Machine codec, and
+a continued child can read Account encryption currentness and its exact Session.
+Host, Session and Workflow callers use that same owner. Ordinary Session birth,
+access and input owners retain their decisions; no additional permission or
+Account encryption-mode decision is made by Prepare.
 
 The Prepare read composes reported Session work state, structured SCM Action
 results and the Session's linked pull requests. Forge owns PR status and checks,

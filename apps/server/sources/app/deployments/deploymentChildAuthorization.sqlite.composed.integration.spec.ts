@@ -1,11 +1,11 @@
 import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
-import { projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createSavedSecretResourceInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { createPrepareEnvironmentContentForHost } from '../../../../cli/src/deployments/prepareEnvironmentContentForHost';
 import { createDaemonDeploymentActionDeps } from '../../../../cli/src/deployments/createDaemonDeploymentActionDeps';
 import { createDaemonDeploymentNativeSnapshot } from '../../../../cli/src/deployments/daemonDeploymentNativeSnapshot';
+import { createManagedPresetHydrator } from '../../../../cli/src/machines/managed/presetHydration';
 import { createAdmittedPluginRuntimeFixture } from '../../../../cli/src/plugins/testkit/admittedRuntime';
 import { createDaemonExternalActionContributedInvoker } from '../../../../cli/src/daemon/externalActions/createDaemonExternalActionContributedInvoker';
 import { createUnavailableActionTransportDeps } from '../../../../cli/src/testkit/actionTransportDeps';
@@ -1871,6 +1871,8 @@ describe('deployment children retain their controller Action authority', () => {
     });
 
     it.each([
+        { origin: 'host', contentMode: 'plain', placement: 'same', active: true },
+        { origin: 'host', contentMode: 'e2ee', placement: 'same', active: true },
         { origin: 'session', contentMode: 'plain', placement: 'same', active: true },
         { origin: 'session', contentMode: 'e2ee', placement: 'same', active: true },
         { origin: 'workflow', contentMode: 'plain', placement: 'same', active: true },
@@ -1925,7 +1927,7 @@ describe('deployment children retain their controller Action authority', () => {
             return auth.mintExternalActionExecutionAuthorization({ accountId: f.account.id, serverIdentityId: serverId,
                 authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch }, actionId,
                 machineId: f.controller.id, target, requestId, admittedMachineRole: 'use',
-                ...(origin === 'workflow' ? { workflowActionOrigin: { ...f.workflowActionOrigin!, requestId } }
+                ...(origin === 'host' ? {} : origin === 'workflow' ? { workflowActionOrigin: { ...f.workflowActionOrigin!, requestId } }
                     : { sessionActionOrigin: { v: 1 as const, caller: { kind: 'session' as const, sessionId: sourceSession.id,
                         starterDepth: 0, turnDepth: 0 }, sourceTurnId: 'prepare-turn', callerPermissionMode: null, requestId },
                         sessionActionSource: { machineId: f.controller.id, installationId: f.controller.installationId } }),
@@ -2774,7 +2776,15 @@ describe('deployment children retain their controller Action authority', () => {
             .toMatchObject({ deploymentNativeAdmission: { kind: 'restore', mode: 'confirm', deploymentId: capture.id } });
         await expect(mint(input, other.account.id)).rejects.toMatchObject({ code: 'credential_scope_denied' });
         await expect(mint({ ...input, deploymentId: other.receipt.id })).rejects.toMatchObject({ code: 'credential_scope_denied' });
-        await expect(mint({ ...input, expectedRevision: input.expectedRevision - 1 })).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        await expect(mint({ ...input, deploymentId: other.receipt.id, expectedRevision: input.expectedRevision - 1 }))
+            .rejects.toMatchObject({ code: 'credential_scope_denied' });
+        await expect(mint({ ...input, expectedRevision: input.expectedRevision - 1 })).rejects.toMatchObject({ code: 'source_changed' });
+        await expect(mint({ ...input, mode: 'confirm', prepareOperationId: crypto.randomUUID(), expectedRevision: input.expectedRevision - 1 }))
+            .rejects.toMatchObject({ code: 'source_changed' });
+        const { readCurrentDeploymentRootEnvironmentAdmissionInTx } = await import('./deploymentRootEnvironmentAdmission');
+        await expect(readCurrentDeploymentRootEnvironmentAdmissionInTx(db, authorization.binding,
+            projectDeploymentNativeAdmissionV1(actionId, { ...input, expectedRevision: input.expectedRevision - 1 }), undefined))
+            .resolves.toMatchObject({ ok: false, code: 'source_changed' });
         await expect(mint({ ...input, machineId: f.outsider.id })).rejects.toBeDefined();
         const sessionAuthorization = await mint(input, f.account.id, true);
         // A finite root retains its admitted requester after the originating Session stops publishing.
@@ -2805,8 +2815,12 @@ describe('deployment children retain their controller Action authority', () => {
             expect((await app.inject({ method: 'POST', url: managedPath, payload: otherManagedInput,
                 headers: headers('POST', managedPath, otherManagedInput, 'machines.managed.list') })).statusCode).toBe(401);
             // The installed prepare reader signs its offer read itself; Home must admit exactly what it sends.
-            const offerReader = createDaemonDeploymentNativeSnapshot({ serverHttpBaseUrl: await app.listen({ host: '127.0.0.1', port: 0 }) }, {
+            const serverHttpBaseUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+            const managedHydrator = createManagedPresetHydrator({ serverUrl: serverHttpBaseUrl,
+                credentials: { token: authorization.token, encryption: null } });
+            const offerReader = createDaemonDeploymentNativeSnapshot({ serverHttpBaseUrl }, {
                 headers: async (_context, effectActionId, request) => headers(request.method, request.path, request.body, effectActionId),
+                openManagedRead: (read, context) => managedHydrator.openRead(read, context.signal),
                 sendChild: async () => { throw new Error('Restore prepare dispatches no child'); } });
             await expect(offerReader.read(input, {})).resolves.toBeNull();
             const offer = { managedId: managed.id, intentRevision: managed.intentRevision,
@@ -3284,7 +3298,7 @@ describe('deployment children retain their controller Action authority', () => {
         if (!admission) throw new Error('Current read admission missing');
         const binding = { ...f.authorization.binding, actionId: 'deployments.health.current' as const,
             deploymentReadAdmission: admission };
-        expect(await readDeploymentReadAuthorizationInTx(db, binding, admission)).toEqual({ artifactIds: [] });
+        expect(await readDeploymentReadAuthorizationInTx(db, binding, admission)).toEqual({ ok: true, artifactIds: [] });
         expect(await readDeploymentReadAuthorizationInTx(db, binding, { ...admission, machineId: f.outsider.id })).toBeNull();
         const mint = async (targetLinkId: string) => {
             const input = { serverId, environmentId: f.environment.id, targetLinkId, machineId: f.controller.id };

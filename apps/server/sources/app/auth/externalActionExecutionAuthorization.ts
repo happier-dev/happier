@@ -241,7 +241,7 @@ function isInstalledSessionClientAction(
     if (spec.executionPlacement !== 'client' && !spec.executionPlacements?.includes('client')) return false;
     if (readExternalActionSessionProposalSurface(origin) === undefined) return false;
     const caller = origin?.workflowActionOrigin ? { kind: 'workflowRun' } : origin?.sessionActionOrigin?.caller;
-    return resolveActionExecutionPlacementForInput(spec, undefined, caller) === 'client';
+    return resolveActionExecutionPlacementForInput(spec, undefined, caller, 'agent') === 'client';
 }
 
 /** Interactive Account execution consumes the canonical signed-root catalog and declaration families. */
@@ -1246,16 +1246,23 @@ function isAdmittedDeploymentPrepareSessionMessage(binding: ExternalActionExecut
     return isDeploymentPrepareSessionMessageEffectV1(binding.actionId, effectActionId)
         && binding.deploymentPreparationAdmission?.operation === 'prepare'
         && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
-        && target.kind === 'session' && 'authentication' in binding
-        && Boolean(binding.sessionActionOrigin || binding.workflowActionOrigin);
+        && target.kind === 'session' && 'authentication' in binding;
 }
 
-function readDeploymentPrepareSessionMessageHttpPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
-    effectActionId: string, target: ExternalActionTargetV1, proof: ExternalActionExecutionRequestProof): Readonly<{ sessionId: string }> | null {
-    if (!isAdmittedDeploymentPrepareSessionMessage(binding, effectActionId, target) || target.kind !== 'session'
-        || proof.reviewedChild?.actionId !== effectActionId
+function readDeploymentPrepareSessionHttpPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
+    effectActionId: string, target: ExternalActionTargetV1, proof: ExternalActionExecutionRequestProof):
+    Readonly<{ machineId: string } | { sessionId: string }> | null {
+    if (proof.reviewedChild?.actionId !== effectActionId
         || proof.reviewedChild.role !== DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1
         || proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return null;
+    // The ordinary birth owner binds the reviewed recipe and creates the Session.
+    // Its preceding codec read needs only the root's selected Machine.
+    if (binding.actionId === 'deployments.prepare' && binding.deploymentPreparationAdmission?.operation === 'prepare'
+        && 'authentication' in binding && binding.target.kind === 'machine'
+        && binding.target.machineId === binding.machineId && target.kind === 'machine' && target.machineId === binding.machineId
+        && effectActionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+        && proof.path === `/v1/machines/${encodeURIComponent(binding.machineId)}`) return { machineId: binding.machineId };
+    if (!isAdmittedDeploymentPrepareSessionMessage(binding, effectActionId, target) || target.kind !== 'session') return null;
     const path = `/v2/sessions/${encodeURIComponent(target.sessionId)}`;
     const sessionRead = proof.sessionRouteTarget?.sessionId === target.sessionId
         && (proof.path === path || proof.path === `${path}?accessProjectionVersion=1`
@@ -1290,7 +1297,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
     const machineSetupEffect = isMachineSetupPlanOrApplyActionIdV1(effectActionId)
         || isMachineSetupCombinedActionIdV1(effectActionId) || isMachineSetupNativeCodecActionIdV1(effectActionId);
     const reviewedSessionAgentReadinessChild = readGrantedSessionAgentReadinessChild(binding, proof.reviewedChild) === effectActionId;
-    const prepareSessionMessage = readDeploymentPrepareSessionMessageHttpPurpose(binding, effectActionId, target, proof);
+    const prepareSession = readDeploymentPrepareSessionHttpPurpose(binding, effectActionId, target, proof);
     const reviewedMachineSetupChild = binding.admittedMachineRole === 'manage'
         && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
         && machineSetupEffect
@@ -1324,7 +1331,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         && isDeploymentBackupConfigureNativeAdmissionV1(binding.deploymentNativeAdmission);
     const crossesEffectFamily = configureBindings || setupPreparationRead || createPreparationEffect || movePreparationEffect || Boolean(targetRetentionPurpose)
         || reviewedMachineSetupChild || reviewedSessionAgentReadinessChild || linkReviewedSetupRead || reviewedDomainEffect
-        || teardownDomainContinuation || membershipDomainContinuation || prepareSessionMessage !== null;
+        || teardownDomainContinuation || membershipDomainContinuation || prepareSession !== null;
     const effectFamilyAdmitted = (hasMatchingExecutionEffectFamily(binding.actionId, effectActionId) || crossesEffectFamily)
         && (binding.actionId === effectActionId || !binding.handoffContinuation && !binding.handoffPreflight
             && (isContributedActionRoot(binding.actionId)
@@ -1332,11 +1339,11 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
                 || Object.values(sibling).some(Boolean) || crossesEffectFamily || templateDeployEffect));
     const usesRootCredential = sibling.docDecision || templateDeployEffect || sibling.deploymentRead || movePreparationEffect
         || linkReviewedSetupRead || sibling.registryRead || sibling.secondOpinion || sibling.memory
-        || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSessionMessage !== null;
+        || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSession !== null;
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
     return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential,
         createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild, reviewedSessionAgentReadinessChild,
-        linkReviewedSetupRead, candidatePublication, preparationRead, prepareSessionMessage, sibling,
+        linkReviewedSetupRead, candidatePublication, preparationRead, prepareSession, sibling,
         nativeTransition: readDeploymentNativeTransition(binding, effectActionId, proof),
         domainPurpose };
 }
@@ -2497,7 +2504,7 @@ async function readDeploymentNativeReadHttpPurpose(verified: VerifiedSignedChild
     const current = openLogs ? await readDeploymentReadAuthorizationInTx(db, verified.binding, admission, {
         authenticationAuthority: verified.effectiveAuthority, authenticationEvidence: verified.principal.authenticationEvidence,
     }) : null;
-    if (openLogs && !current) return false;
+    if (openLogs && !current?.ok) return false;
     if (exactTransportPurpose && (admission.actionId !== 'deployments.health.current'
         || verified.effectActionId === verified.binding.actionId)) return {};
     const access = openLogs ? readDeploymentEnvironmentAccessPurpose(verified, proof) : null;
@@ -3388,7 +3395,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined
             || !isAccountEncryptionCurrentnessHttpRead(proof)
                 && proof.path !== `/v1/machines/${encodeURIComponent(verified.binding.machineId)}`) return null;
-    } else if (verified.signedChildPurpose.prepareSessionMessage) {
+    } else if (verified.signedChildPurpose.prepareSession) {
         // The signed child owner already bound these actual codec/Session reads.
         // Ordinary Session routes retain their access checks; preparation is not re-decided in P.
     } else if (verified.createPreparationAdmission || verified.deploymentPreparationSourceRead
