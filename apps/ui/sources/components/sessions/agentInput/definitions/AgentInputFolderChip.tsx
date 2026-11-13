@@ -48,6 +48,8 @@ export type AgentInputFolderChipState =
     | Readonly<{ kind: 'resolving'; lastKnownPath: string | null }>
     | Readonly<{ kind: 'failed'; reason: string }>
     | Readonly<{ kind: 'launch_preparable' }>
+    /** No Machine chosen yet: the folder waits for one, in place, so nothing jumps when it arrives. */
+    | Readonly<{ kind: 'machine_required' }>
     | Readonly<{
         kind: 'machine_unavailable';
         label: Readonly<{ kind: 'folder'; path: string }> | Readonly<{ kind: 'none' }>;
@@ -110,6 +112,8 @@ function resolveChipAccessibilityLabel(state: AgentInputFolderChipState): string
             return state.reason;
         case 'launch_preparable':
             return t('newSession.folder.workspaceOnStart');
+        case 'machine_required':
+            return t('newSession.folder.chooseMachineFirst');
         case 'machine_unavailable':
             return state.label.kind === 'folder'
                 ? t('newSession.folder.a11y.folder', { path: formatPathRelativeToHome(state.label.path, undefined, {
@@ -132,7 +136,7 @@ export function AgentInputFolderChip(props: AgentInputFolderChipProps): React.Re
     const reducedMotion = useReducedMotionPreference();
     const { state, onRemove } = props;
     const removable = state.kind === 'folder' && typeof onRemove === 'function';
-    const disabled = state.kind === 'machine_unavailable';
+    const disabled = state.kind === 'machine_unavailable' || state.kind === 'machine_required';
     // One hover region spans the chip and ×, so moving onto × never hides it.
     const hoverRegion = useRowActionHoverHost();
     const [chipFocusVisible, setChipFocusVisible] = React.useState(false);
@@ -211,7 +215,9 @@ export function AgentInputFolderChip(props: AgentInputFolderChipProps): React.Re
             ? t('newSession.folder.addFolder')
             : labelState.kind === 'launch_preparable'
                 ? t('newSession.folder.workspaceOnStart')
-                : labelState.lastKnownPath === null ? null : formatPathRelativeToHome(labelState.lastKnownPath, undefined, {
+                : labelState.kind === 'machine_required'
+                    ? t('newSession.folder.chooseMachineFirst')
+                    : labelState.lastKnownPath === null ? null : formatPathRelativeToHome(labelState.lastKnownPath, undefined, {
                     homeLabel: t('workspacePresentation.homeFolder'),
                 });
 

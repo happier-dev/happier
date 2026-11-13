@@ -70,7 +70,7 @@ import { readComposerPresentationSnapshot } from '@/components/sessions/presenta
 import { AgentInput } from '@/components/sessions/agentInput';
 import { SelectionList, type SelectionListOption, type SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
-import { MachinePathBrowserView } from '@/components/ui/pathBrowser/MachinePathBrowserModal';
+import { PathSelectionList } from '@/components/ui/pathPicker/PathSelectionList';
 import { SessionParticipantComposer } from '@/components/sessions/participants/composer/SessionParticipantComposer';
 import { SessionInteractiveExecutionRunDraftView } from './SessionInteractiveExecutionRunDraftView';
 import { ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
@@ -634,10 +634,11 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(agentRows.some(id => id.includes('codex'))).toBe(true);
         expect(screen.root.findAll(node => typeof node.props.testID === 'string'
             && /discussion-invite-(session|model)|share-principal/.test(node.props.testID))).toEqual([]);
-        expect(screen.findByTestId('run-start-machine')).not.toBeNull();
+        // A detached start chooses its folder on New Session's folder chip; its Machine is fixed (owner 2026-11-12).
+        expect(screen.findByTestId(detached ? 'agent-input-machine-chip' : 'run-start-machine')).not.toBeNull();
         expect(screen.findByTestId('run-start-machine-selector')).toBeNull();
         expect(screen.findAllByType(MachineSelector)).toHaveLength(0);
-        expect(screen.findByTestId(detached ? 'run-start-project-directory' : 'run-start-project-directory-readonly')).not.toBeNull();
+        expect(screen.findByTestId(detached ? 'agent-input-path-chip' : 'run-start-project-directory-readonly')).not.toBeNull();
         expect(screen.findByTestId('second-opinion.question')).toBeNull();
         expect(composer().engine).toBeUndefined();
         expect(composer().extraActionChips?.some(chip => chip.key.startsWith('execution-run-start-reviewer'))).toBe(false);
@@ -645,10 +646,10 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(input().props.value).toBe('Keep this rich question');
         expect(emittedStarts).toEqual([]);
         if (detached) {
-            await screen.pressByTestIdAsync('run-start-project-directory');
-            const browser = screen.findByType(MachinePathBrowserView);
-            expect(browser.props.machineId).toBe('machine_1');
-            await act(async () => browser.props.onPickPath('/chosen-folder'));
+            await screen.pressByTestIdAsync('agent-input-path-chip');
+            const picker = screen.findByType(PathSelectionList);
+            expect(picker.props.machineId).toBe('machine_1');
+            await act(async () => picker.props.onCommit('/chosen-folder'));
             await waitFor(() => expect(composer().workspace).toEqual({ machineId: 'machine_1', cwd: '/chosen-folder' }));
             expect(screen.findAllByType(MachineSelector)).toHaveLength(0);
             expect(input().props.value).toBe('Keep this rich question');
@@ -662,7 +663,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             comparisonReview: { cwd: '/captured-folder', comparison: { kind: 'workingTree' }, comparisonId: 'captured-a2',
                 scopeLabel: 'Pending changes', defaultWalkthrough: false, preselectedEngineIds: ['claude'] } });
         await waitFor(() => expect(screen.findByTestId('contextual-start-who')).not.toBeNull());
-        expect(screen.findByTestId('run-start-project-directory')).toBeNull();
+        expect(screen.findByTestId('agent-input-path-chip')).toBeNull();
         expect(screen.findByTestId('run-start-project-directory-readonly')).not.toBeNull();
         expect(composer().workspace).toEqual({ machineId: 'machine_1', cwd: '/captured-folder' });
         expect(screen.findAllByType(MachineSelector)).toHaveLength(0);

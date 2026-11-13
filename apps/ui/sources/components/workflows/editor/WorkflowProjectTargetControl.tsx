@@ -181,6 +181,14 @@ export const WorkflowProjectTargetControl = React.forwardRef<
             machineHomeDir={machineHomeDir ?? null}
             onChange={props.onChange}
             testIDPrefix={testIDPrefix}
+            // One owner, two presentations by context (owner rulings 2026-11-13): chips in chip rows,
+            // bordered where the editor header's other chips are; a labelled field row in forms.
+            {...(props.presentation === 'field' ? {
+                presentation: 'fields' as const,
+                title: props.title ?? t('workflows.page.sections.machineAndProject'),
+                ...(props.subtitle === undefined ? {} : { subtitle: props.subtitle }),
+                rowTestID: `${testIDPrefix}-machine-row`,
+            } : props.presentation === 'chip' ? { chipVariant: 'bordered' as const } : {})}
         />
     ) : null;
     const scope = props.currentUiContextCommandScope;
@@ -238,13 +246,14 @@ export const WorkflowProjectTargetControl = React.forwardRef<
         );
     }
 
+    if (editor) return editor;
     const summary = formatWorkflowWhereSummary({ target, machineName: props.machineName, machineHomeDir });
     return (
         <WhereField
             title={props.title ?? t('workflows.page.sections.machineAndProject')}
             accessoryLayout={props.accessoryLayout}
             {...(props.subtitle === undefined ? {} : { subtitle: props.subtitle })}
-            readOnlyValue={editable ? null : (
+            readOnlyValue={(
                 target === undefined || target === null || props.machineName === null ? (
                     // Someone who can't edit is never told to choose: they read what is (FIN-DESIGN-REVIEW M7).
                     <Text testID={`${testIDPrefix}-machine`} style={styles.unresolved}>
@@ -256,26 +265,18 @@ export const WorkflowProjectTargetControl = React.forwardRef<
                 )
             )}
             testIDPrefix={testIDPrefix}
-        >
-            {editor}
-        </WhereField>
+        />
     );
 });
 
-/**
- * The field presentation: one settings row whose control is the Machine and folder chips (the same
- * chips the composer shows). A read-only host gets the summary as plain value text.
- */
+/** The field presentation for a host that fixes the place: its label and what is, never a choice. */
 function WhereField(props: Readonly<{
     title: string;
     subtitle?: string;
     accessoryLayout?: ItemProps['accessoryLayout'];
-    /** Non-null: the target is fixed by the host and reads as this value. */
-    readOnlyValue: React.ReactNode | null;
+    readOnlyValue: React.ReactNode;
     testIDPrefix: string;
-    children: React.ReactNode;
 }>): React.ReactElement {
-    const editable = props.readOnlyValue === null;
     return (
         <Item
             testID={`${props.testIDPrefix}-machine-row`}
@@ -284,7 +285,8 @@ function WhereField(props: Readonly<{
             accessoryLayout={props.accessoryLayout ?? 'stacked'}
             showChevron={false}
             selected={false}
-            {...(editable ? { rightElement: props.children } : { mode: 'info' as const, rightElement: props.readOnlyValue })}
+            mode="info"
+            rightElement={props.readOnlyValue}
         />
     );
 }
@@ -375,11 +377,16 @@ function useWorkflowWhereChoices(props: WorkflowWhereInput) {
     return { choice, serverId, machineHomeDir, machinePlatform, moveToDirectory, latest };
 }
 
-/** The Machine and folder chips (New Session's), then the checkout picker, with the workflow rules. */
+/** The Machine and folder (New Session's), then the checkout picker, with the workflow rules. */
 function WorkflowWhereChips(props: WorkflowWhereInput & Readonly<{
     handleRef: React.Ref<SessionPlacementChipsHandle>;
     currentUiContextCommandScope?: string;
     testIDPrefix: string;
+    presentation?: 'chips' | 'fields';
+    chipVariant?: 'composer' | 'bordered';
+    title?: string;
+    subtitle?: string;
+    rowTestID?: string;
 }>): React.ReactElement {
     const { target } = props;
     const { choice, serverId, machineHomeDir, machinePlatform, moveToDirectory, latest } = useWorkflowWhereChoices(props);
@@ -408,14 +415,17 @@ function WorkflowWhereChips(props: WorkflowWhereInput & Readonly<{
     ], { foregroundOverlay: true, contextKey: scope });
 
     return (
-        <>
-            <SessionPlacementChips
-                {...choice}
-                handleRef={props.handleRef}
-                testIDPrefix={props.testIDPrefix}
-                {...(scope === undefined ? {} : { currentUiContextCommandScope: scope })}
-            />
-            {target !== null && isWorkflowProjectTarget(target) ? <ProjectCheckoutPicker
+        <SessionPlacementChips
+            {...choice}
+            handleRef={props.handleRef}
+            testIDPrefix={props.testIDPrefix}
+            {...(scope === undefined ? {} : { currentUiContextCommandScope: scope })}
+            {...(props.presentation === undefined ? {} : { presentation: props.presentation })}
+            {...(props.chipVariant === undefined ? {} : { chipVariant: props.chipVariant })}
+            {...(props.title === undefined ? {} : { title: props.title })}
+            {...(props.subtitle === undefined ? {} : { subtitle: props.subtitle })}
+            {...(props.rowTestID === undefined ? {} : { rowTestID: props.rowTestID })}
+            trailing={target !== null && isWorkflowProjectTarget(target) ? <ProjectCheckoutPicker
                 currentUiContextCommandScope={scope}
                 target={target}
                 serverId={serverId}
@@ -424,7 +434,7 @@ function WorkflowWhereChips(props: WorkflowWhereInput & Readonly<{
                 onSelectDirectory={moveToDirectory}
                 testIDPrefix={props.testIDPrefix}
             /> : null}
-        </>
+        />
     );
 }
 

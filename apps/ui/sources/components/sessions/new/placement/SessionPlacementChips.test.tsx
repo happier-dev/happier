@@ -129,4 +129,45 @@ describe('SessionPlacementChips', () => {
     ).toHaveLength(0);
     await screen.unmount();
   });
+
+  it('keeps the folder chip in place, disabled, until a Machine is chosen (ruling 3)', async () => {
+    const { SessionPlacementChips } = await import('./SessionPlacementChips');
+    const screen = await renderScreen(
+      <SessionPlacementChips serverId="server-a" machine={null} path="" onSelectMachine={vi.fn()} onSelectPath={vi.fn()} />,
+    );
+    const folder = screen.findAllByTestId('agent-input-path-chip').find((node) => typeof node.props.accessibilityLabel === 'string');
+    expect(folder?.props.accessibilityLabel).toBe((await import('@/text')).t('newSession.folder.chooseMachineFirst'));
+    expect(folder?.props.disabled).toBe(true);
+    await screen.unmount();
+  });
+
+  it('takes its host row\'s bordered chip look and opens the same pickers (ruling 1)', async () => {
+    const { SessionPlacementChips } = await import('./SessionPlacementChips');
+    const { SelectionListFilterChip } = await import('@/components/ui/selectionList');
+    const onSelectMachine = vi.fn();
+    const screen = await renderScreen(
+      <SessionPlacementChips chipVariant="bordered" serverId="server-a" machine={machine('machine-1', 'Machine 1')}
+        path="/Users/test/project" onSelectMachine={onSelectMachine} onSelectPath={vi.fn()} />,
+    );
+    const chips = screen.findAllByType(SelectionListFilterChip);
+    expect(chips.map((chip) => chip.props.filter.valueLabel)).toEqual(['Machine 1', '~/project']);
+    const content = chips[0]!.props.filter.renderPopoverContent({ close: vi.fn(), maxHeight: 400 });
+    expect(content).not.toBeNull();
+    await screen.unmount();
+  });
+
+  it('renders as one form row of Machine and folder fields, as Agent and model does (ruling 2)', async () => {
+    const { SessionPlacementChips } = await import('./SessionPlacementChips');
+    const { NewSessionMachineSelectionContent } = await import('@/components/sessions/new/components/NewSessionMachineSelectionContent');
+    const screen = await renderScreen(
+      <SessionPlacementChips presentation="fields" title="Where it runs" rowTestID="where-row" serverId="server-a"
+        machine={null} path="" onSelectMachine={vi.fn()} onSelectPath={vi.fn()} />,
+    );
+    expect(screen.findByTestId('where-row')).not.toBeNull();
+    expect(screen.getTextContent()).toContain('Where it runs');
+    expect(screen.getTextContent()).toContain((await import('@/text')).t('newSession.folder.chooseMachineFirst'));
+    await screen.pressByTestIdAsync('agent-input-machine-chip');
+    expect(screen.findAllByType(NewSessionMachineSelectionContent)).toHaveLength(1);
+    await screen.unmount();
+  });
 });

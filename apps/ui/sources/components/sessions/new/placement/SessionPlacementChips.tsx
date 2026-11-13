@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import {
   AgentInputContentPopover,
@@ -18,6 +18,13 @@ import { buildServerScopedMachine } from '@/components/sessions/new/hooks/machin
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { Icon } from '@/components/ui/icons/Icon';
+import { Item } from '@/components/ui/lists/Item';
+import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
+import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
+import { SelectionListFilterChip } from '@/components/ui/selectionList';
+import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import {
@@ -129,14 +136,25 @@ export function useSessionPlacementPopovers(props: SessionPlacementChoiceProps):
 }
 
 /**
- * The Machine chip and the folder chip, as New Session shows them, for a host that is not a composer
- * (an inline recipe, a recipe sheet). Each opens New Session's own picker anchored to itself; the host
- * owns the values and decides what a choice does (owner 2026-11-12: Machine and folder are two chips).
+ * Where a Session runs, as New Session asks it: a Machine and a folder, each opening New Session's own
+ * picker anchored to itself; the host owns the values and decides what a choice does (owner
+ * 2026-11-12). One owner, two presentations chosen by context (as `SessionAuthoringControls`):
+ * `chips` in chip rows (composers, headers, Discuss Add agent), taking the host row's chip look, and
+ * `fields` in forms and phone editors: one row, its label, then the Machine and folder fields.
  */
 export function SessionPlacementChips(
   props: SessionPlacementChoiceProps & Readonly<{
     /** Opens either picker from elsewhere (a "Choose where it runs" action, an agent's command). */
     handleRef?: React.Ref<SessionPlacementChipsHandle>;
+    presentation?: 'chips' | 'fields';
+    /** `chips`: the host row's look; `bordered` where the row's other chips are bordered (an editor header). */
+    chipVariant?: 'composer' | 'bordered';
+    /** `fields`: the row's label and its consequence. */
+    title?: string;
+    subtitle?: string;
+    rowTestID?: string;
+    /** What follows the Machine and folder in the same row (a workflow's checkout picker). */
+    trailing?: React.ReactNode;
   }>,
 ): React.ReactElement {
   const machineAnchor = React.useRef<View | null>(null);
@@ -144,56 +162,165 @@ export function SessionPlacementChips(
   const [open, setOpen] = React.useState<'machine' | 'folder' | null>(null);
   const chip = useSessionAuthoringChipRenderContext(machineAnchor);
   const { machinePopover, pathPopover } = useSessionPlacementPopovers(props);
-  // The chip reads the folder home-relative, as New Session's own (whose paths already are).
+  const machineLabel = props.machine ? getMachineDisplayName(props.machine) : (props.machineName ?? null);
+  const machineKnown = props.machine !== null || Boolean(props.machineName);
+  // The folder reads home-relative, as New Session's own (whose paths already are).
   const folderHome = props.machineHomeDir ?? props.machine?.metadata?.homeDir ?? undefined;
-  const folderState: AgentInputFolderChipState = props.path.trim()
-    ? { kind: 'folder', path: formatPathRelativeToHome(props.path.trim(), folderHome) }
-    : { kind: 'none' };
+  const path = props.path.trim();
+  const folderState: AgentInputFolderChipState = !machineKnown
+    ? { kind: 'machine_required' }
+    : path ? { kind: 'folder', path: formatPathRelativeToHome(path, folderHome) } : { kind: 'none' };
+  const folderLabel = !machineKnown ? t('newSession.folder.chooseMachineFirst')
+    : path ? formatPathRelativeToHome(path, folderHome, { homeLabel: t('workspacePresentation.homeFolder') })
+      : t('newSession.folder.noFolder');
+  const machineChoosable = props.onSelectMachine !== undefined;
   const close = React.useCallback(() => setOpen(null), []);
   React.useImperativeHandle(props.handleRef, () => ({ open: (picker) => setOpen(picker), close }), [close]);
   // A folder is chosen for one Machine: when the host's Machine changes underneath, its pickers close.
   const machineId = props.machine?.id ?? null;
   React.useEffect(() => setOpen(null), [machineId]);
+  const popovers = (
+    <>
+      {open === 'machine' ? <PlacementPopover config={machinePopover} anchorRef={machineAnchor} onClose={close} /> : null}
+      {open === 'folder' ? <PlacementPopover config={pathPopover} anchorRef={folderAnchor} onClose={close} /> : null}
+    </>
+  );
+
+  if (props.presentation === 'fields') {
+    return (
+      <Item
+        {...(props.rowTestID === undefined ? {} : { testID: props.rowTestID })}
+        title={props.title ?? t('newSession.wizardSection.machine')}
+        {...(props.subtitle === undefined ? {} : { subtitle: props.subtitle, subtitleLines: 0 })}
+        accessoryLayout="stacked"
+        showChevron={false}
+        selected={false}
+        rightElement={
+          <View style={styles.fields}>
+            <PlacementField anchorRef={machineAnchor} testID="agent-input-machine-chip"
+              label={t('newSession.wizardSection.machine')} value={machineLabel} placeholder={t('agentInput.runOn')}
+              open={open === 'machine'} disabled={!machineChoosable} onPress={() => setOpen('machine')} />
+            <PlacementField anchorRef={folderAnchor} testID="agent-input-path-chip"
+              label={t('newSession.wizardSection.folder')} value={folderLabel} placeholder={folderLabel}
+              open={open === 'folder'} disabled={!machineKnown} onPress={() => setOpen('folder')} />
+            {props.trailing}
+            {popovers}
+          </View>
+        }
+      />
+    );
+  }
+
+  if (props.chipVariant === 'bordered') {
+    return (
+      <View style={styles.row}>
+        <SelectionListFilterChip filter={{
+          id: 'session-placement-machine',
+          label: t('newSession.wizardSection.machine'),
+          valueLabel: machineLabel ?? t('agentInput.runOn'),
+          icon: <PlacementIcon name="desktop" />,
+          muted: machineLabel === null,
+          disabled: !machineChoosable,
+          open: open === 'machine',
+          onOpenChange: (next) => setOpen(next ? 'machine' : null),
+          renderPopoverContent: (context) => renderPlacementContent(machinePopover, context),
+          testID: 'agent-input-machine-chip',
+        }} />
+        <SelectionListFilterChip filter={{
+          id: 'session-placement-folder',
+          label: t('newSession.wizardSection.folder'),
+          valueLabel: folderLabel,
+          icon: <PlacementIcon name="folder" />,
+          muted: !machineKnown || !path,
+          disabled: !machineKnown,
+          open: open === 'folder',
+          onOpenChange: (next) => setOpen(next ? 'folder' : null),
+          renderPopoverContent: (context) => renderPlacementContent(pathPopover, context),
+          testID: 'agent-input-path-chip',
+        }} />
+        {props.trailing}
+      </View>
+    );
+  }
+
   return (
     <View style={styles.row}>
       {createMachineActionChip({
         anchorRef: machineAnchor,
-        machineName: props.machine
-          ? getMachineDisplayName(props.machine)
-          : (props.machineName ?? null),
+        machineName: machineLabel,
         tint: chip.iconColor,
         showLabel: true,
         chipStyle: chip.chipStyle,
         textStyle: chip.textStyle,
         onPress: () => setOpen('machine'),
-        disabled: props.onSelectMachine === undefined,
+        disabled: !machineChoosable,
       })}
-      {/* A folder belongs to a Machine: until one is chosen, only the Machine chip asks. */}
-      {props.machine !== null || props.machineName ? (
-        <AgentInputFolderChip
-          anchorRef={folderAnchor}
-          state={folderState}
-          tint={chip.iconColor}
-          chipStyle={chip.chipStyle}
-          textStyle={chip.textStyle}
-          onPress={() => setOpen('folder')}
-          layout="wrap"
-        />
-      ) : null}
-      {open === 'machine' ? (
-        <PlacementPopover
-          config={machinePopover}
-          anchorRef={machineAnchor}
-          onClose={close}
-        />
-      ) : null}
-      {open === 'folder' ? (
-        <PlacementPopover
-          config={pathPopover}
-          anchorRef={folderAnchor}
-          onClose={close}
-        />
-      ) : null}
+      {/* Until a Machine is chosen the folder stays in place, disabled, so nothing jumps. */}
+      <AgentInputFolderChip
+        anchorRef={folderAnchor}
+        state={folderState}
+        tint={chip.iconColor}
+        chipStyle={chip.chipStyle}
+        textStyle={chip.textStyle}
+        onPress={() => setOpen('folder')}
+        layout="wrap"
+      />
+      {props.trailing}
+      {popovers}
+    </View>
+  );
+}
+
+/** A bordered chip hosts the same picker in its own popover. */
+function renderPlacementContent(
+  config: AgentInputContentPopoverConfig,
+  context: Readonly<{ close: () => void; maxHeight: number }>,
+): React.ReactNode {
+  const content = config.renderContent;
+  return typeof content === 'function'
+    ? content({ maxHeight: context.maxHeight, requestClose: () => { config.onRequestClose?.(); context.close(); } })
+    : content;
+}
+
+function PlacementIcon(props: Readonly<{ name: 'desktop' | 'folder' }>): React.ReactElement {
+  const { theme } = useUnistyles();
+  return <Icon name={props.name} size={14} color={theme.colors.text.secondary} />;
+}
+
+/** One field of the `fields` presentation: the canonical page field box, pressable, anchoring its picker. */
+function PlacementField(props: Readonly<{
+  anchorRef: React.RefObject<View | null>;
+  testID: string;
+  label: string;
+  value: string | null;
+  placeholder: string;
+  open: boolean;
+  disabled: boolean;
+  onPress: () => void;
+}>): React.ReactElement {
+  const { theme } = useUnistyles();
+  const fieldColors = React.useMemo(() => resolveFieldBoxColors(theme), [theme]);
+  return (
+    <View ref={props.anchorRef} collapsable={false}>
+      <HappierPressable
+        testID={props.testID}
+        accessibilityRole="button"
+        accessibilityLabel={`${props.label}: ${props.value ?? props.placeholder}`}
+        expanded={props.open}
+        disabled={props.disabled}
+        {...(props.disabled ? {} : { onPress: props.onPress })}
+      >
+        {renderDropdownItemTriggerRightElement({
+          detail: props.value,
+          open: props.open,
+          detailColor: props.disabled ? theme.colors.text.tertiary : theme.colors.text.secondary,
+          chevronColor: theme.colors.text.secondary,
+          field: fieldColors,
+          fieldSpan: 'row',
+          placeholder: props.placeholder,
+          placeholderColor: theme.colors.input.placeholder,
+        })}
+      </HappierPressable>
     </View>
   );
 }
@@ -243,6 +370,7 @@ function PlacementPopover(
 }
 
 const styles = StyleSheet.create((theme) => ({
+  fields: { gap: theme.space.s8, alignSelf: 'stretch' },
   row: {
     flexDirection: 'row',
     flexWrap: 'wrap',

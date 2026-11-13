@@ -56,9 +56,10 @@ export function createWorkflowStartPlacementChips(
     params.onChange !== undefined,
     params.machines?.length ?? null,
   ]);
+  // Until a Machine is set the folder chip waits in place, disabled, so nothing jumps (owner 2026-11-13).
   const folderLabel =
     target === null
-      ? null
+      ? t('newSession.folder.chooseMachineFirst')
       : isWorkflowProjectTarget(target)
         ? formatPathRelativeToHome(
             target.directory,
@@ -93,7 +94,6 @@ export function createWorkflowStartPlacementChips(
     controlId: 'machine',
     placement: { ...getWorkflowStartWhereChipPlacement(), pending: true },
   };
-  if (folderLabel === null) return [machine];
   const folder: AgentInputExtraActionChip = {
     ...createExecutionRunStartContentChip({
       key: WORKFLOW_START_FOLDER_CHIP_KEY,
@@ -103,7 +103,7 @@ export function createWorkflowStartPlacementChips(
       title: t('newSession.wizardSection.folder'),
       label: folderLabel,
       testID: `${params.testID}-folder`,
-      disabled: params.onChange === undefined,
+      disabled: params.onChange === undefined || target === null,
       revision,
       renderContent: (args) => (
         <WorkflowStartPlacementPicker {...shared} picker="folder" args={args} />

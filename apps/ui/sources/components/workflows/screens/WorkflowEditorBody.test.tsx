@@ -1795,12 +1795,10 @@ describe('workflow editor body', () => {
             'workflow-editor-chips',
             'workflow-editor-steps-presentation',
         ])).toEqual(['workflow-editor-header', 'workflow-editor-chips', 'workflow-editor-steps-presentation']);
-        // Where it runs is New Session's Machine and folder chips in the header (owner 2026-11-12).
-        const where = screen.findByTestId('workflow-editor-where-chips');
-        const inWhere = (testID: string) => where?.findAll((node) => node.props?.testID === testID
-            && typeof node.props?.accessibilityLabel === 'string')[0];
-        expect(inWhere('agent-input-machine-chip')?.props.accessibilityLabel).toBe('Mac Studio');
-        expect(inWhere('agent-input-path-chip')?.props.accessibilityLabel).toContain('~/project');
+        // Where it runs is the Machine and folder chips in the header, in the row's bordered look (owner 2026-11-13).
+        const placement = (id: string) => screen.root.findAll((node) => node.props?.filter?.id === id)[0]?.props.filter;
+        expect(placement('session-placement-machine')?.valueLabel).toBe('Mac Studio');
+        expect(placement('session-placement-folder')?.valueLabel).toBe('~/project');
         expect(screen.findByTestId('workflow-editor-header-engine')).not.toBeNull();
         // Settings are a pane, closed until asked for; the document carries no settings wall.
         expect(screen.findByTestId('workflow-editor-defaults')).toBeNull();
@@ -1934,17 +1932,17 @@ describe('workflow editor body', () => {
             onChangeProjectTarget: () => {},
             onRunNow: ran,
         });
-        const where = screen.findByTestId('workflow-editor-where-chips');
-        const machineChip = where?.findAll((node) => node.props?.testID === 'agent-input-machine-chip'
-            && typeof node.props?.accessibilityLabel === 'string')[0];
-        // Missing is stated once, by the Machine chip; no folder chip until a Machine is chosen.
-        expect(machineChip?.props.accessibilityLabel).toBe('agentInput.runOn');
-        expect(where?.findAll((node) => node.props?.testID === 'agent-input-path-chip')).toHaveLength(0);
-        expect(screen.findAllByTestId('workflow-editor-machine-option:machine-1')).toHaveLength(0);
+        const placement = (id: string) => screen.root.findAll((node) => node.props?.filter?.id === id)[0]?.props.filter;
+        // Missing is stated once, by the Machine chip; the folder chip waits in place, disabled.
+        expect(placement('session-placement-machine')?.muted).toBe(true);
+        expect(placement('session-placement-machine')?.valueLabel).toBe('agentInput.runOn');
+        expect(placement('session-placement-machine')?.open).toBe(false);
+        expect(placement('session-placement-folder')?.disabled).toBe(true);
+        expect(placement('session-placement-folder')?.valueLabel).toBe('newSession.folder.chooseMachineFirst');
 
         await screen.pressByTestIdAsync('workflow-editor-run-now');
         expect(ran).not.toHaveBeenCalled();
-        expect(screen.findAllByTestId('workflow-editor-machine-option:machine-1').length).toBeGreaterThan(0);
+        expect(placement('session-placement-machine')?.open).toBe(true);
         expect(announcementWrites).not.toHaveBeenCalled();
     });
 

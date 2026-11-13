@@ -163,9 +163,14 @@ function ComposerFields(props: Readonly<{
                     />
                 )}
             </ItemGroup>
-            {/* Where the recipe runs: New Session's Machine and folder chips (a saved project may move the Machine). */}
-            <View testID="server-start-draft-placement" style={styles.chips}>
+            {/* Where the recipe runs: a form row of New Session's Machine and folder fields, as Agent and model
+                is one (owner rulings 2026-11-13); a saved project may move the Machine. */}
+            <ItemGroup>
                 <SessionPlacementChips
+                    presentation="fields"
+                    title={t('workflows.page.sections.whereTitle')}
+                    {...(selectedPlacement.machineReady ? {} : { subtitle: t('newSession.recipeComposerMachineNotReady') })}
+                    rowTestID="server-start-draft-placement"
                     serverId={selectedTarget.serverId}
                     machine={machine}
                     path={directory}
@@ -173,10 +178,7 @@ function ComposerFields(props: Readonly<{
                     onSelectNoFolder={clearDirectory}
                     {...(placementCandidates ? { placementCandidates } : {})}
                 />
-                {selectedPlacement.machineReady ? null : (
-                    <Text testID="server-start-draft-machine-not-ready" style={styles.note}>{t('newSession.recipeComposerMachineNotReady')}</Text>
-                )}
-            </View>
+            </ItemGroup>
             {/* Where its sessions are listed (the Session organization folder, not the working folder). */}
             {showFolder ? <ItemGroup>
                 {folderChoosable ? (
