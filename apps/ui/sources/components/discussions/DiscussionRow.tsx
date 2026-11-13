@@ -8,7 +8,7 @@ import { readDiscussionMessagePreview, resolveDiscussionMessageSpeakerLabel } fr
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import type { DiscussionListAttention } from '@/activity/attention/buildDiscussionListAttention';
 import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
-import { resolveWorkStatusRowMark } from '@/components/work/status/workStatusRowMark';
+import { resolveWorkStatusRowMark } from '@/components/work/status/workStatusRowMarkModel';
 import { workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
 import { CollectionRequestPeek } from '@/components/ui/lists/collection/CollectionRequestPeek';
 import type { CollectionRequestRef } from '@/components/ui/lists/collection/collectionRequestRef';
@@ -232,6 +232,7 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
     /** What needs the viewer here, from the list's attention projection. */
     attentionReason: DiscussionListAttention['attentionReason'];
     attentionType: DiscussionListAttention['attentionType'];
+    word?: DiscussionListAttention['word'];
     agentName?: string | null;
     /** Qualified by the list's existing scoped approval join; the row never loads an inventory. */
     serverId?: string;

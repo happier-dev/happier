@@ -494,6 +494,7 @@ function DiscussionsListReady(props: Readonly<{
                         presented={presented}
                         attentionReason={attention.get(item.discussion.id)?.attentionReason ?? null}
                         attentionType={attention.get(item.discussion.id)?.attentionType ?? null}
+                    word={attention.get(item.discussion.id)?.word}
                         agentName={attention.get(item.discussion.id)?.agentName}
                         selected={activeDiscussionKey === item.discussion.id}
                         onOpenDiscussion={openDiscussion}
@@ -568,6 +569,7 @@ function DiscussionsListReady(props: Readonly<{
                     statusWords={statusWords} presented={presented}
                     attentionReason={attention.get(item.discussion.id)?.attentionReason ?? null}
                     attentionType={attention.get(item.discussion.id)?.attentionType ?? null}
+                        word={attention.get(item.discussion.id)?.word}
                     agentName={attention.get(item.discussion.id)?.agentName}
                     selected={activeDiscussionKey === item.discussion.id} onOpenDiscussion={openDiscussion} />;
             case 'archived_loading':

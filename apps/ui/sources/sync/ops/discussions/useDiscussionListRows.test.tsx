@@ -99,6 +99,49 @@ it('renders no list when an attention Artifact write changes none of its own Dis
     } finally { await hook.unmount(); await home.dispose(); }
 });
 
+it('projects a member Session’s live attention without subscribing to unrelated Sessions', async () => {
+    const { createSessionFixture, createSessionViewerFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+    const { resolveWorkStatusTone } = await import('@/components/work/status/resolveWorkStatusTone');
+    const home = await createPlainArtifactHomeFixture('https://discussion-session-attention.test');
+    seedAdmittedArtifactRows([], storage);
+    const scope = storage.getState().profileScope!;
+    storage.setState({ isDataReady: true, artifactInboxLoaded: true });
+    const member = createSessionFixture({ id: 'member', serverId: scope.serverId, owner: scope.accountId,
+        active: true, activeAt: Date.now(), viewer: createSessionViewerFixture() });
+    const elsewhere = createSessionFixture({ id: 'elsewhere', serverId: scope.serverId, owner: scope.accountId });
+    storage.getState().applySessions([member, elsewhere]);
+    const discussion: DiscussionOpenedSummaryV1 = { id: 'discussion', ownerAccountId: scope.accountId,
+        encryptionMode: 'plain', anchor: null, access: 'owner', keyReadiness: true, dataEncryptionKey: null,
+        creationLocalId: null, title: 'Review', latestMessage: { id: 'message', localId: null, seq: 1,
+            authorAccountId: scope.accountId, accountActor: { v: 1, accountId: scope.accountId, profile: null }, producerV1: null, createdAt: 1 },
+        messageSeq: 1, lastReadSeq: 1, unreadCount: 0, unreadMentionCount: 0, recentAuthorAccountIds: [], archivedAt: null,
+        participantSessionIds: [member.id], capabilities: { postMessages: true, rename: true, archive: true, restore: false,
+            askAgent: true, sendToSession: true, manageAccess: true, leave: false } };
+    const items = [discussion, { ...discussion, id: 'unrelated-discussion', participantSessionIds: [] }];
+    let renders = 0;
+    const hook = await renderHook(() => { renders += 1; return useDiscussionListRows(scope, items); });
+    try {
+        const unrelated = hook.getCurrent()[1];
+        expect(hook.getCurrent()[0]?.attentionType).toBeNull();
+        const permissionViewer = createSessionViewerFixture({ attention: { needsAttention: true,
+            reasons: ['permission_required'], primary: 'permission_required', presentation: 'full' } });
+        await act(async () => storage.getState().applySessions([{ ...member, viewer: permissionViewer }]));
+        expect(resolveWorkStatusTone({ kind: 'discussion', facts: hook.getCurrent()[0]! }))
+            .toMatchObject({ bucket: 'needs_you', attentionType: 'approval' });
+        expect(hook.getCurrent()[0]?.waitingSessionId).toBe(member.id);
+        expect(hook.getCurrent()[1]).toBe(unrelated);
+        const rows = hook.getCurrent();
+        renders = 0;
+        await act(async () => storage.getState().applySessions([{ ...elsewhere, viewer: permissionViewer }]));
+        expect(hook.getCurrent()).toBe(rows);
+        expect(renders).toBe(0);
+        await act(async () => storage.getState().applySessions([member]));
+        expect(resolveWorkStatusTone({ kind: 'discussion', facts: hook.getCurrent()[0]! }).bucket).toBe('idle');
+        expect(hook.getCurrent()[0]).toMatchObject({ attentionType: null, waitingSessionId: null });
+        expect(hook.getCurrent()[1]).toBe(unrelated);
+    } finally { await hook.unmount(); await home.dispose(); }
+});
+
 it('reads only open Inbox membership for an open Discussion list at Account scale', async () => {
     const home = await createPlainArtifactHomeFixture('https://discussion-approval-membership.test', {
         handleRequest: async path => path === '/v2/account/settings' ? Response.json({ content: { t: 'plain', v: {} }, version: 1 })
