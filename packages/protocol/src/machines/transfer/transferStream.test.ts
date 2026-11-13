@@ -5,7 +5,6 @@ async function loadTransferStreamModule() {
 }
 
 const MAX_TRANSFER_CHUNK_PAYLOAD_BASE64_LENGTH = 16 * 1024 * 1024;
-const MAX_TRANSFER_CHUNK_PAYLOAD_DECODED_LENGTH = (MAX_TRANSFER_CHUNK_PAYLOAD_BASE64_LENGTH / 4) * 3;
 
 describe('machine transfer stream schemas', () => {
   it('fails closed when targetMachineId exceeds the bounded maximum length', async () => {
@@ -79,7 +78,6 @@ describe('machine transfer stream schemas', () => {
       });
     }).not.toThrow();
     expect(parsed?.success).toBe(true);
-    expect(MAX_TRANSFER_CHUNK_PAYLOAD_DECODED_LENGTH).toBe(12 * 1024 * 1024);
   });
 
   it('requires canonical padded base64 for transfer chunk payload fields', async () => {

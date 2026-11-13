@@ -107,6 +107,7 @@ describe('computeFileReplacement', () => {
     expect(result.matches[0]).toMatchObject({ line: 1, column16: 2, text: '\uFEFFold', replacedText: '\uFEFFnew', before: [], after: ['context', 'old'] });
     expect(result.matches[1]).toMatchObject({ line: 3, column16: 1, before: ['\uFEFFold', 'context'], after: ['last'] });
     const anchored = computeFileReplacement(encode('\uFEFFold'), { ...literal, query: '^', replacement: '!', regex: true });
+    expect(anchored.kind).toBe('ok');
     if (anchored.kind === 'ok') expect(decode(anchored.newBytes)).toBe('\uFEFF!old');
   });
 

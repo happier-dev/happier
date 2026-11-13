@@ -88,8 +88,8 @@ describe('Machine live-stream codec negotiation V1', () => {
       codecId: 'image.mjpeg',
       payloadKind: 'mjpeg_frame',
       payloadEncoding: 'binary_base64',
-      payloadBase64: 'AQID',
-      payloadSizeBytes: 3,
+      payloadBase64: 'AQI=',
+      payloadSizeBytes: 2,
     } as const;
 
     expect(mod.MachineLiveStreamPayloadV2Schema.safeParse(payload).success).toBe(true);

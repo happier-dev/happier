@@ -93,7 +93,8 @@ describe('MachineRpcRoutePolicyV1', () => {
     const { MACHINE_RPC_ROUTE_POLICIES, resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
     // Captured from the public table before removing access overlays, including
     // duplicate rows and their order; independent of the rewritten declarations.
-    // Includes O-MACH's 2026-11-08 explicit Manage admission for action.invoke.
+    // Includes later reviewed declarations: install Use, managed rollout/resize,
+    // Project definitions, legacy Sync Manage and private managed-service custody.
     expect(MACHINE_RPC_ROUTE_POLICIES.map(({ method, sharedMachineAccess }) => [method, sharedMachineAccess]))
       .toEqual(beforeEffectiveAccess);
     expect(resolveMachineRpcRoutePolicy('unknown.method')).toMatchObject({
@@ -1571,7 +1572,7 @@ describe('MachineRpcRoutePolicyV1', () => {
     }
   });
 
-  it('keeps managed-service endpoint reads on the authenticated exact-session route', async () => {
+  it('keeps managed-service reads and custody on the authenticated exact-session route', async () => {
     const protocol = await importRpcPolicy();
     expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
     if ('importError' in protocol) throw protocol.importError;
@@ -1592,6 +1593,16 @@ describe('MachineRpcRoutePolicyV1', () => {
         }),
       });
     }
+    const custodyMethod = SESSION_RPC_METHODS.SESSION_MANAGED_SERVICES_CUSTODY_V1;
+    expect(protocol.resolveMachineRpcRoutePolicy(custodyMethod)).toMatchObject({
+      routeClass: 'server_required', serverRequiredReason: 'auth',
+      rpcClassification: 'internal_only', sharedMachineAccess: 'custodian_only',
+      scope: { accountRequired: true, machineRequired: true, serverRequired: true },
+    });
+    expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(custodyMethod)).toBeNull();
+    expect(resolveSocketRpcSessionAuthorization(`session-1:${custodyMethod}`)).toEqual({
+      method: custodyMethod, authority: 'sessionOwner', routeToSessionOwnerDaemon: true,
+    });
   });
 
   it('routes signed live-stream relay start directly under signed authority', async () => {

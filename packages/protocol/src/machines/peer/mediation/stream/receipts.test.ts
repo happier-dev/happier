@@ -35,26 +35,22 @@ describe('MachineLiveStreamReceiptV1Schema', () => {
   });
 
   it('rejects frame payload, grant, and nonce details', () => {
-    const unsafe = {
+    const receipt = {
       v: 1,
       id: PEER_MEDIATION_RECEIPTS.streamPaused,
       streamId: 'stream_1',
       routeKind: 'server_relay',
       flowKind: 'live_stream',
       reasonCode: 'backpressure_window_exhausted',
-      payloadBase64: 'c2VudGluZWw=',
     } as const;
 
-    expect(MachineLiveStreamReceiptV1Schema.safeParse(unsafe).success).toBe(false);
-    expect(MachineLiveStreamReceiptV1Schema.safeParse({
-      ...unsafe,
-      payloadBase64: undefined,
-      grantToken: 'secret',
-    }).success).toBe(false);
-    expect(MachineLiveStreamReceiptV1Schema.safeParse({
-      ...unsafe,
-      payloadBase64: undefined,
-      nonceBase64Url: 'nonce',
-    }).success).toBe(false);
+    expect(MachineLiveStreamReceiptV1Schema.parse(receipt)).toEqual(receipt);
+    for (const unsafe of [
+      { payloadBase64: 'c2VudGluZWw=' },
+      { grantToken: 'secret' },
+      { nonceBase64Url: 'nonce' },
+    ]) {
+      expect(MachineLiveStreamReceiptV1Schema.safeParse({ ...receipt, ...unsafe }).success).toBe(false);
+    }
   });
 });

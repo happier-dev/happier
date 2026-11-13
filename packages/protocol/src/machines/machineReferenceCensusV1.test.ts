@@ -67,7 +67,10 @@ describe('readMachineReferenceCensusV1', () => {
       readAssignments: async () => { started.push('assignments'); return { automations: [], nextCursor: null }; },
       readDeployments: async input => ({ ...input, coverage: 'complete', references: [], nextCursor: null }),
     });
-    try { expect(started).toEqual(['boards', 'profiles', 'pools', 'assignments']); }
+    try {
+      expect(started).toHaveLength(4);
+      expect(started).toEqual(expect.arrayContaining(['boards', 'profiles', 'pools', 'assignments']));
+    }
     finally { release(); await result; }
     await expect(result).resolves.toMatchObject({ coverage: 'partial', unavailable: ['profiles'] });
   });

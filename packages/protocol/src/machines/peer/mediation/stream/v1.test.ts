@@ -317,8 +317,8 @@ describe('MachineLiveStreamV1 schemas', () => {
       timestampMs: 1_000,
       payloadKind: 'image_keyframe',
       payloadEncoding: 'binary_base64',
-      payloadBase64: 'AQID',
-      payloadSizeBytes: 3,
+      payloadBase64: 'AQI=',
+      payloadSizeBytes: 2,
     } as const;
 
     expect(MachineLiveStreamFrameV1Schema.safeParse(frame).success).toBe(true);
