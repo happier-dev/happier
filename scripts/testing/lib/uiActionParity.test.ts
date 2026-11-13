@@ -7,6 +7,7 @@ import { BUILT_IN_SETTINGS_METADATA_V1 } from '../../../packages/protocol/src/ac
 import { SCREEN_CAPTURE_DELIVERY_ACTION_SPECS } from '../../../packages/protocol/src/actions/specs/screenCapture.ts';
 import { listActionSpecs } from '../../../packages/protocol/src/actions/actionSpecs.ts';
 import { collectUiActionParity, readUiActionParitySources } from './uiActionParity.ts';
+import './uiActionParity.settings.test.ts';
 
 const specs = [
   { id: 'demo.edit', surfaces: { ui: true, agent: true, mcp: true, cli: false } },
@@ -474,9 +475,113 @@ test('walks aliases, conditional dispatch, registrations and settings instead of
       // executor.execute('comment.ignored', {});
       const label = 'unrelated.label';`,
   }], specs, [{ anchor: 'appearance.density', storage: { scope: 'account', key: 'density', access: 'read_write' } }]);
-  assert.deepEqual(report.actions.map(site => site.actionId), ['settings.set', 'demo.edit', 'demo.missing', 'demo.missing', 'demo.edit']);
+  assert.deepEqual(report.actions.map(site => site.actionId), ['settings.set', 'demo.edit', 'demo.missing', 'demo.missing']);
   assert.deepEqual(report.settings.map(site => site.key), ['density']);
   assert.deepEqual(report.findings.map(finding => finding.code), ['unregistered_action', 'unregistered_action']);
+});
+
+test('Action metadata and policy targets are data until passed to dispatch', () => {
+  const report = collectUiActionParity([{ filePath: 'apps/ui/sources/components/Example.tsx', content: `
+    const descriptor = { actionId: 'demo.edit' };
+    writePolicy({ actionId: 'demo.edit', change: 'ask' });
+    function describe() { return { actionId: 'demo.edit' }; }
+    executor.execute(descriptor.actionId, {});
+    executor.execute({ actionId: 'demo.missing', input: {} });
+    const request = { actionId: 'demo.missing', input: {} };
+    executor.execute(request);
+    registerSurfaceAction({ actionId: 'demo.edit' });
+    defineAction({ id: 'demo.edit' });
+  ` }], specs, []);
+  assert.deepEqual(report.actions.map(site => site.actionId), ['demo.edit', 'demo.missing', 'demo.missing', 'demo.edit', 'demo.edit']);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['unregistered_action', 'demo.missing'], ['unregistered_action', 'demo.missing'],
+  ]);
+});
+
+test('focused scans resolve first-party UI imports without scanning unrelated entry points', () => {
+  const root = mkdtempSync(join(tmpdir(), 'ui-parity-imports-'));
+  try {
+    const sources = join(root, 'apps/ui/sources');
+    mkdirSync(sources, { recursive: true });
+    writeFileSync(join(sources, 'actionIds.ts'), `export const EDIT_ACTION_ID = 'demo.edit'; executor.execute('unrelated.missing', {});`);
+    const report = collectUiActionParity([{ filePath: 'apps/ui/sources/Entry.tsx', content: `
+      import { EDIT_ACTION_ID } from './actionIds';
+      executor.execute(EDIT_ACTION_ID, {});
+    ` }], specs, [], { sourceRoot: root });
+    assert.deepEqual(report.actions.map(site => site.actionId), ['demo.edit']);
+    assert.deepEqual(report.findings, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('finite record keys and immutable indexed maps keep all possible Actions visible', () => {
+  const report = collectUiActionParity([{ filePath: 'apps/ui/sources/components/Example.tsx', content: `
+    type Inputs = Readonly<{ 'demo.edit': unknown; 'demo.missing': unknown }>;
+    function run<T extends keyof Inputs>(actionId: T) { executor.execute(actionId, {}); }
+    const BY_OPERATION = { edit: 'demo.edit', missing: 'demo.missing' } as const;
+    function mapped(operation: string) { executor.execute(BY_OPERATION[operation], {}); }
+    const open = { edit: 'demo.edit', ...fetchOperations() } as const;
+    function unknown(operation: string) { executor.execute(open[operation], {}); }
+  ` }], specs, []);
+  assert.deepEqual(report.actions.map(site => site.actionId), ['demo.edit', 'demo.missing', 'demo.edit', 'demo.missing']);
+  assert.deepEqual(report.findings.map(site => site.code), ['unregistered_action', 'unregistered_action', 'dynamic_action']);
+});
+
+test('readonly for-of rows and entries resolve their actual Action operands', () => {
+  const report = collectUiActionParity([{ filePath: 'apps/ui/sources/components/Example.tsx', content: `
+    const controls: ReadonlyArray<Readonly<{ id: string }>> = [{ id: 'demo.edit' }, { id: 'demo.missing' }];
+    for (const control of controls) executor.execute(control.id, {});
+    for (const [index, control] of controls.entries()) executor.execute(control.id, {});
+    const mutable = [{ id: 'demo.edit' }];
+    for (const control of mutable) executor.execute(control.id, {});
+  ` }], specs, []);
+  assert.deepEqual(report.actions.map(site => site.actionId), ['demo.edit', 'demo.missing', 'demo.edit', 'demo.missing']);
+  assert.deepEqual(report.findings.map(site => site.code), ['unregistered_action', 'unregistered_action', 'dynamic_action']);
+});
+
+test('composed owner families resolve qualified type queries and Object.values spreads', () => {
+  const report = collectUiActionParity([
+    { filePath: 'packages/protocol/src/actions/actionIdsFixture.ts', content: `
+      export const FAMILIES = { core: ['demo.edit', 'demo.missing'] as const } as const;
+      const READS = { read: 'demo.edit' } as const;
+      export const FILES = [...Object.values(READS), 'demo.missing'] as const;
+    ` },
+    { filePath: 'apps/ui/sources/components/Example.tsx', content: `
+      import { FAMILIES, FILES } from '@happier-dev/protocol/actions/actionIdsFixture';
+      type CoreActionId = typeof FAMILIES.core[number];
+      type FileActionId = typeof FILES[number];
+      function core(actionId: CoreActionId) { executor.execute(actionId, {}); }
+      function files(actionId: FileActionId) { executor.execute(actionId, {}); }
+    ` },
+  ], specs, []);
+  assert.deepEqual(report.actions.map(site => site.actionId), ['demo.edit', 'demo.missing', 'demo.edit', 'demo.missing']);
+  assert.deepEqual(report.findings.map(site => site.code), ['unregistered_action', 'unregistered_action']);
+});
+
+test('audited forwarding exemptions retain finite capability checks and unknown siblings', () => {
+  const report = collectUiActionParity([{ filePath: 'apps/ui/sources/sync/ops/actions/defaultActionExecutor.ts', content: `
+    function forward(actionId: string) { executor.execute(actionId, {}); }
+    function finite(actionId: 'demo.missing') { executor.execute(actionId, {}); }
+    function added(futureActionId: string) { executor.execute(futureActionId, {}); }
+  ` }], specs, []);
+  assert.deepEqual(report.actions.map(site => site.actionId), ['demo.missing']);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['unregistered_action', 'demo.missing'], ['dynamic_action', 'Identifier: futureActionId'],
+  ]);
+  assert.equal(report.exclusions.length, 1);
+});
+
+test('pairing bootstrap exemption does not expose the credential through another UI entry', () => {
+  const content = `executor.execute('machines.pairing.create', {});`;
+  const report = collectUiActionParity([
+    { filePath: 'apps/ui/sources/hooks/auth/usePairingSession.ts', content },
+    { filePath: 'apps/ui/sources/components/Unreviewed.tsx', content },
+  ], [{ id: 'machines.pairing.create', surfaces: { ui: true, agent: false } }], []);
+  assert.deepEqual(report.findings.map(site => [site.filePath, site.code]), [
+    ['apps/ui/sources/components/Unreviewed.tsx', 'agent_unavailable'],
+  ]);
+  assert.equal(report.exclusions.length, 1);
 });
 
 test('rejects hidden agent/MCP and undeclared CLI commands without requiring CLI for client-only Actions', () => {
@@ -735,11 +840,32 @@ test('a canonical ActionId forwarding parameter is transport evidence; concrete 
       function invoke(id: ActionId) { executor.execute(id, {}); }
       invoke('demo.edit');
       function selected(id: 'demo.edit') { executor.execute(id, {}); }
+      function callRequestAction(params: Readonly<{ actionId: ActionId; input: unknown }>) {
+        executor.execute(params.actionId, params.input);
+      }
+      callRequestAction({ actionId: 'demo.edit', input: {} });
     ` },
   ], [{ ...specs[0], surfaces: { ui: true, agent: false } }, specs[1]], []);
-  assert.deepEqual(report.actions.map(site => site.actionId), ['demo.edit', 'demo.edit']);
-  assert.deepEqual(report.findings.map(site => site.code), ['agent_unavailable', 'agent_unavailable']);
-  assert.equal(report.exclusions.length, 1);
+  assert.deepEqual(report.actions.map(site => site.actionId), ['demo.edit', 'demo.edit', 'demo.edit']);
+  assert.deepEqual(report.findings.map(site => site.code), ['agent_unavailable', 'agent_unavailable', 'agent_unavailable']);
+  assert.equal(report.exclusions.length, 2);
+});
+
+test('local command request ids remain with their UI owner while its Action effects are scanned', () => {
+  const report = collectUiActionParity([
+    { filePath: 'apps/ui/sources/sessionCommands.ts', content: `
+      export type SessionActionId = 'ui.session.rename';
+      export function executeSessionAction(params: Readonly<{ actionId: SessionActionId; input: unknown }>) {
+        executor.execute('demo.edit', params.input);
+      }
+    ` },
+    { filePath: 'apps/ui/sources/components/Example.tsx', content: `
+      import { executeSessionAction } from '../sessionCommands';
+      executeSessionAction({ actionId: 'ui.session.rename', input: { title: 'Next' } });
+    ` },
+  ], specs, []);
+  assert.deepEqual(report.actions.map(site => site.actionId), ['demo.edit']);
+  assert.deepEqual(report.findings, []);
 });
 
 test('resolved RPC constants retain their transport provenance even when they share an Action id', () => {

@@ -1,4 +1,5 @@
 import ts from 'typescript';
+import { SOURCE_PARITY_EXCLUSIONS } from './uiActionParityExclusions.ts';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative, posix, resolve as resolvePath } from 'node:path';
 
@@ -21,45 +22,6 @@ type Discovery = Readonly<{ agentIds?: ReadonlySet<string>; mcpIds?: ReadonlySet
   cliIds?: ReadonlySet<string>; cliCommandIds?: ReadonlySet<string>;
   agentExclusionReasons?: ReadonlyMap<string, string>;
   settingBindings?: ReadonlyMap<string, readonly string[]>; sourceRoot?: string }>;
-
-// Owner-local exclusions apply to every census, including corridor checks. They
-// exempt presentation state or validated forwarding, never a new UI effect.
-// WorkflowBlockListEditor.onChange is controlled, unsaved document editing:
-// insert/remove/move/replace use workflowDefinitionEditV1's Protocol operations,
-// and WorkflowEditorHostScreen.changeSnapshot owns the same history/revision as
-// workflow.authoring.draft.edit (FIN AMEND-FIN-0.7, 04 §4.7). The Add adapter
-// supplies the person's chosen block and previous-result input; it never runs
-// an authored Action. Like typing, these local buffer edits need no Off/Ask
-// admission. Agent access to that buffer still uses draft.edit admission, and
-// Save/Run and all transport/settings/platform effects retain their Actions.
-// This is a semantic disposition, not a file-wide scanner suppression.
-const SOURCE_PARITY_EXCLUSIONS = [
-  {
-    filePath: 'apps/ui/sources/components/atmosphere/atmosphereSettings.ts',
-    operation: 'project:invokeAtmospherePictureOperation',
-    reason: 'Declared settings.invoke picture operation mutates the Project row only below Action admission',
-  },
-  {
-    filePath: 'apps/ui/sources/components/navigation/shell/appRail/AppRailMachines.tsx',
-    operation: 'local:machinesRailSeenV1',
-    reason: 'Machine rail acknowledgement is device-local seen state (R4), not a machine or Account setting',
-  },
-  {
-    filePath: 'apps/ui/sources/components/machines/vitals/MachineVitalsRangeBar.tsx',
-    operation: 'local:machineVitalsRangeV1',
-    reason: 'Remembered chart history range is device-local presentation state (plan 60 §4.1)',
-  },
-  {
-    filePath: 'apps/ui/sources/components/machines/guard/activity/useGuardWayBack.ts',
-    operation: 'PropertyAccessExpression: item.actionId',
-    reason: 'Activity forwards the daemon ActionIdSchema-validated way-back reference through the Action executor',
-  },
-  {
-    filePath: 'apps/ui/sources/activity/notifications/guardStopWarningLifecycle.ts',
-    operation: 'PropertyAccessExpression: command.actionId',
-    reason: 'Guard push forwards readGuardStopWarningPushActionV1 schema-admitted controls through the Action executor',
-  },
-] as const;
 
 function unwrap(node: ts.Expression): ts.Expression {
   if (ts.isAsExpression(node) || ts.isSatisfiesExpression(node) || ts.isParenthesizedExpression(node)
@@ -110,7 +72,8 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
   const host = ts.createCompilerHost(options, true);
   const readExternal = host.readFile;
   const externalExists = host.fileExists;
-  const mayReadExternal = (path: string) => !!discovery.sourceRoot && relativePath(path).startsWith('packages/');
+  const mayReadExternal = (path: string) => !!discovery.sourceRoot
+    && (relativePath(path).startsWith('packages/') || relativePath(path).startsWith('apps/ui/sources/'));
   host.getCurrentDirectory = () => root;
   host.fileExists = path => contents.has(relativePath(path)) || mayReadExternal(path) && externalExists(path);
   host.readFile = path => contents.get(relativePath(path)) ?? (mayReadExternal(path) ? readExternal(path) : undefined);
@@ -141,14 +104,22 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       actionArguments: new Map<string, number>() };
     modules.set(path, result);
     for (const statement of source.statements) {
-      if (ts.isFunctionDeclaration(statement) && statement.name && /^(execute|invoke|dispatch)/.test(statement.name.text)) {
+      if (ts.isFunctionDeclaration(statement) && statement.name && /^(execute|invoke|dispatch|call.*Action)/.test(statement.name.text)) {
         // Resource adapters put the Action after their scope/input. Follow the
         // authored family type, including a generic constrained to that family.
         const actionType = (type: ts.TypeNode | undefined) => !!type && ts.isTypeReferenceNode(type)
           && ts.isIdentifier(type.typeName) && /ActionId$/.test(type.typeName.text);
+        const actionRequestType = (type: ts.TypeNode | undefined): boolean => {
+          if (type && ts.isTypeReferenceNode(type) && type.typeName.getText() === 'Readonly') return actionRequestType(type.typeArguments?.[0]);
+          return !!type && ts.isTypeLiteralNode(type)
+            && type.members.some(member => ts.isPropertySignature(member) && member.name.getText() === 'actionId' && actionType(member.type)
+              && member.type && ts.isTypeReferenceNode(member.type)
+              && symbol(path, member.type.typeName.getText(), 'types')?.getSourceFile().fileName.startsWith('packages/protocol/src/actions/'))
+            && type.members.some(member => ts.isPropertySignature(member) && member.name.getText() === 'input');
+        };
         const index = statement.parameters.findIndex(parameter => {
           const type = parameter.type;
-          return actionType(type) || type && ts.isTypeReferenceNode(type) && statement.typeParameters?.some(generic =>
+          return actionType(type) || actionRequestType(type) || type && ts.isTypeReferenceNode(type) && statement.typeParameters?.some(generic =>
             generic.name.text === type.typeName.getText() && actionType(generic.constraint));
         });
         if (index >= 0) result.actionArguments.set(statement.name.text, index);
@@ -247,7 +218,19 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
     const subpage = property(input, 'subpage');
     const subId = subpage && scalar(property(subpage, 'id'));
     const prefix = subpage && subId && scalar(property(subpage, 'anchors')) !== 'page' ? `${pageId}.${subId}` : pageId;
-    const candidate = `${prefix}.${settingId}`;
+    const sections = property(input, 'sections');
+    const resolvedSections = sections && resolve(sections);
+    let explicit: string | undefined;
+    if (resolvedSections && ts.isObjectLiteralExpression(resolvedSections)) {
+      for (const section of resolvedSections.properties) {
+        if (!ts.isPropertyAssignment(section)) continue;
+        const settings = property(section.initializer, 'settings');
+        const row = settings && property(settings, settingId);
+        explicit = row && scalar(property(row, 'anchor'));
+        if (explicit) break;
+      }
+    }
+    const candidate = explicit ?? `${prefix}.${settingId}`;
     return declarations.some(declaration => declaration.anchor === candidate) ? candidate : undefined;
   }
   // Infer semantic binding root writes only from actual page-attached storage callbacks.
@@ -312,6 +295,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       return;
     }
     actions.push({ ...site, actionId });
+    if (exclude(actionId, site)) return;
     const spec = catalog.get(actionId);
     const exclusionReason = discovery.agentExclusionReasons?.get(actionId);
     if (spec && !spec.surfaces.agent && exclusionReason) {
@@ -377,7 +361,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       mutable?: Readonly<{ key: ts.Expression; scope: string }> }>;
     const bindings = new Map<ts.Node, Map<string, Binding>>();
     const mutableNames = new Set<string>();
-    const isScope = (node: ts.Node) => ts.isSourceFile(node) || ts.isBlock(node) || ts.isFunctionLike(node);
+    const isScope = (node: ts.Node) => ts.isSourceFile(node) || ts.isBlock(node) || ts.isFunctionLike(node) || ts.isForOfStatement(node);
     function declare(node: ts.Node, identifier: string, binding: Binding): void {
       let scope = node.parent;
       while (scope && !isScope(scope)) scope = scope.parent;
@@ -434,12 +418,22 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       return parts.every(part => part !== undefined) ? [...new Set(parts.flat())] : undefined;
     }
     function queryValue(type: ts.TypeQueryNode): ts.Expression | undefined {
-      if (!ts.isIdentifier(type.exprName)) return undefined;
-      const value = symbol(type.getSourceFile().fileName, type.exprName.text, 'values');
-      return value && ts.isExpression(value) ? resolve(value) : undefined;
+      function value(name: ts.EntityName): ts.Expression | undefined {
+        if (ts.isIdentifier(name)) {
+          const found = symbol(type.getSourceFile().fileName, name.text, 'values');
+          return found && ts.isExpression(found) ? resolve(found) : undefined;
+        }
+        const owner = value(name.left);
+        const field = owner && property(owner, name.right.text);
+        return field && resolve(field);
+      }
+      return value(type.exprName);
     }
     function elements(expression: ts.Expression, seen: Set<ts.Node>): string[] | undefined {
       const value = resolve(expression);
+      if (ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression)
+        && value.expression.expression.getText() === 'Object' && value.expression.name.text === 'values'
+        && value.arguments[0]) return elements(value.arguments[0], seen);
       if (ts.isArrayLiteralExpression(value)) return complete(value.elements.map(element =>
         ts.isSpreadElement(element) ? elements(element.expression, seen) : finiteStrings(element, new Set(seen))));
       if (ts.isObjectLiteralExpression(value)) return complete(value.properties.map(field =>
@@ -503,11 +497,32 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
         const definition = typeDefinition(type);
         return definition !== type ? typeStrings(definition, seen) : undefined;
       }
-      if (ts.isTypeOperatorNode(type) && type.operator === ts.SyntaxKind.KeyOfKeyword && ts.isTypeQueryNode(type.type)) {
-        const value = queryValue(type.type);
-        return value && ts.isObjectLiteralExpression(value) ? complete(value.properties.map(field =>
-          ts.isPropertyAssignment(field) || ts.isShorthandPropertyAssignment(field)
-            ? [field.name.getText().replaceAll(/['"]/g, '')] : undefined)) : undefined;
+      if (ts.isTypeOperatorNode(type) && type.operator === ts.SyntaxKind.KeyOfKeyword) {
+        if (ts.isTypeQueryNode(type.type)) {
+          const value = queryValue(type.type);
+          return value && ts.isObjectLiteralExpression(value) ? complete(value.properties.map(field =>
+            ts.isPropertyAssignment(field) || ts.isShorthandPropertyAssignment(field)
+              ? [field.name.getText().replaceAll(/['"]/g, '')] : undefined)) : undefined;
+        }
+        const object = typeDefinition(type.type);
+        // Schema-derived keyof types retain the authored strict-object keys.
+        if (ts.isTypeReferenceNode(object) && ts.isQualifiedName(object.typeName)
+          && object.typeName.left.getText() === 'z' && object.typeName.right.text === 'infer'
+          && object.typeArguments?.[0] && ts.isTypeQueryNode(object.typeArguments[0])) {
+          let schema = queryValue(object.typeArguments[0]);
+          if (schema && ts.isCallExpression(schema) && schema.expression.getText() === 'lazyZodSchema'
+            && schema.arguments[0] && ts.isArrowFunction(schema.arguments[0]) && ts.isExpression(schema.arguments[0].body)) schema = schema.arguments[0].body;
+          if (schema && ts.isCallExpression(schema) && schema.expression.getText() === 'z.strictObject'
+            && schema.arguments[0]) {
+            const shape = resolve(schema.arguments[0]);
+            if (ts.isObjectLiteralExpression(shape)) return complete(shape.properties.map(field =>
+              ts.isPropertyAssignment(field) && !ts.isComputedPropertyName(field.name)
+                ? [field.name.getText().replaceAll(/['"]/g, '')] : undefined));
+          }
+        }
+        return ts.isTypeLiteralNode(object) ? complete(object.members.map(member =>
+          ts.isPropertySignature(member) && !ts.isComputedPropertyName(member.name)
+            ? [member.name.getText().replaceAll(/['"]/g, '')] : undefined)) : undefined;
       }
       if (ts.isIndexedAccessTypeNode(type)) {
         let objectType = type.objectType;
@@ -551,10 +566,15 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       if (resolved !== node) return finiteStrings(resolved, seen, typed);
       if (ts.isElementAccessExpression(node) && node.argumentExpression) {
         const keys = finiteStrings(node.argumentExpression, new Set(seen), typed);
-        return keys ? complete(keys.map(key => {
+        if (keys) return complete(keys.map(key => {
           const field = property(node.expression, key);
           return field && finiteStrings(field, new Set(seen), typed);
-        })) : undefined;
+        }));
+        // Indexing an authored immutable map cannot introduce a value outside
+        // its closed literal values. Spreads/open fields still fail resolution.
+        const object = resolve(node.expression);
+        return ts.isObjectLiteralExpression(object) && ts.isAsExpression(object.parent)
+          && object.parent.type.getText() === 'const' ? elements(object, seen) : undefined;
       }
       const type = typed && expressionType(node);
       return type ? typeStrings(type) : undefined;
@@ -584,26 +604,52 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       if (!ts.isPropertyAccessExpression(node) || !ts.isIdentifier(node.expression)) return undefined;
       return lookup(node.expression, node.expression.text)?.iterations?.map(value => property(value, node.name.text));
     }
-    function settingAnchors(node: ts.Expression): string[] | undefined {
+    function settingField(expression: ts.Expression, key: string, seen: Set<ts.Node>): string[] | undefined {
+      const value = localValue(expression);
+      if (seen.has(value)) return undefined;
+      seen = new Set([...seen, value]);
+      if (ts.isObjectLiteralExpression(value)) {
+        // Later fields/spreads own the value, matching object spread semantics.
+        for (const field of [...value.properties].reverse()) {
+          if (ts.isSpreadAssignment(field)) {
+            const anchors = settingField(field.expression, key, seen);
+            if (anchors === undefined || anchors.length) return anchors;
+          } else if ((ts.isPropertyAssignment(field) || ts.isShorthandPropertyAssignment(field))
+            && field.name.getText().replaceAll(/['"]/g, '') === key) {
+            return settingAnchors(ts.isPropertyAssignment(field) ? field.initializer : field.name, seen);
+          }
+        }
+        return [];
+      }
+      if (ts.isPropertyAccessExpression(value) && value.name.text === 'settings') {
+        const page = localValue(value.expression);
+        if (ts.isCallExpression(page) && name(page.expression) === 'defineSettingsPage' && page.arguments[0]) {
+          const anchor = pageAnchor(page.arguments[0], key);
+          return anchor ? [anchor] : undefined;
+        }
+      }
+      return undefined;
+    }
+    function settingAnchors(node: ts.Expression, seen = new Set<ts.Node>()): string[] | undefined {
       const fields = iterationFields(node);
-      if (fields) return complete(fields.map(value => value && settingAnchors(value)));
+      if (fields) return complete(fields.map(value => value && settingAnchors(value, new Set(seen))));
       const value = localValue(node);
+      if (seen.has(value)) return undefined;
+      seen = new Set([...seen, value]);
       if (ts.isIdentifier(value) && lookup(value, value.text)?.parameter) return undefined;
       const direct = scalar(property(value, 'anchor'));
       if (direct) return [direct];
-      // Resolve lexical aliases and finite indexed page refs from the real page.
-      // Every resulting address still goes through declaration admission below.
       if (ts.isPropertyAccessExpression(value) || ts.isElementAccessExpression(value)) {
-        const settings = localValue(value.expression);
-        const keys = ts.isPropertyAccessExpression(value) ? [value.name.text]
+        let keys = ts.isPropertyAccessExpression(value) ? [value.name.text]
           : value.argumentExpression ? finiteStrings(value.argumentExpression) : undefined;
-        if (keys && ts.isPropertyAccessExpression(settings) && settings.name.text === 'settings') {
-          const page = localValue(settings.expression);
-          if (ts.isCallExpression(page) && name(page.expression) === 'defineSettingsPage' && page.arguments[0]) {
-            const anchors = keys.map(key => pageAnchor(page.arguments[0], key));
-            return anchors.every(anchor => anchor !== undefined) ? anchors : undefined;
-          }
+        if (!keys) {
+          const object = localValue(value.expression);
+          if (ts.isObjectLiteralExpression(object) && ts.isAsExpression(object.parent)
+            && object.parent.type.getText() === 'const') keys = complete(object.properties.map(field =>
+              ts.isPropertyAssignment(field) || ts.isShorthandPropertyAssignment(field)
+                ? [field.name.getText().replaceAll(/['"]/g, '')] : undefined));
         }
+        return keys ? complete(keys.map(key => settingField(value.expression, key, seen))) : undefined;
       }
       return undefined;
     }
@@ -621,6 +667,18 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       return !!value && value.getSourceFile().fileName.startsWith('packages/protocol/src/rpc/')
         && !!declaration && ts.isVariableDeclaration(declaration) && ts.isIdentifier(declaration.name)
         && /^(RPC_METHODS|SESSION_RPC_METHODS)$/.test(declaration.name.text);
+    }
+    function readonlyType(type: ts.TypeNode | undefined): boolean {
+      return !!type && (ts.isTypeOperatorNode(type) && type.operator === ts.SyntaxKind.ReadonlyKeyword
+        || ts.isTypeReferenceNode(type) && /^(Readonly|ReadonlyArray)$/.test(type.typeName.getText()));
+    }
+    function iterationValues(expression: ts.Expression): readonly ts.Expression[] | undefined {
+      const receiver = localValue(expression);
+      const immutable = ts.isAsExpression(receiver.parent)
+        && (receiver.parent.type.getText() === 'const' || readonlyType(receiver.parent.type))
+        || readonlyType(expressionType(expression));
+      return immutable && ts.isArrayLiteralExpression(receiver)
+        && receiver.elements.every(element => !ts.isSpreadElement(element)) ? [...receiver.elements] : undefined;
     }
     function collect(node: ts.Node): void {
       if (ts.isImportSpecifier(node)) {
@@ -651,7 +709,37 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
           || ts.isCallExpression(call) && ts.isPropertyAccessExpression(call.expression) && unwrap(call.expression.expression) === receiver);
         const iterations = receiver && ts.isArrayLiteralExpression(receiver)
           && immutable && receiver.elements.every(element => !ts.isSpreadElement(element)) ? [...receiver.elements] : undefined;
-        declare(node, node.name.text, { annotation: node.type, parameter: true, iterations });
+        let annotation = node.type;
+        if (!annotation && ts.isVariableDeclaration(callback.parent) && callback.parent.type) {
+          const expected = typeDefinition(callback.parent.type);
+          if (ts.isFunctionTypeNode(expected)) annotation = expected.parameters[callback.parameters.indexOf(node)]?.type;
+        }
+        // useMemo<Callback | undefined>(() => available ? callback : undefined)
+        // contextually types the returned callback's parameters.
+        let returned: ts.Node = callback;
+        while (returned.parent && ts.isConditionalExpression(returned.parent)) returned = returned.parent;
+        const factory = returned.parent;
+        const memo = factory?.parent;
+        if (!annotation && factory && ts.isArrowFunction(factory) && factory.body === returned
+          && memo && ts.isCallExpression(memo) && name(memo.expression) === 'useMemo' && memo.arguments[0] === factory) {
+          const expected = memo.typeArguments?.[0];
+          const types = expected && ts.isUnionTypeNode(expected) ? expected.types : expected ? [expected] : [];
+          const functions = types.map(type => typeDefinition(type)).filter(ts.isFunctionTypeNode);
+          if (functions.length === 1) annotation = functions[0].parameters[callback.parameters.indexOf(node)]?.type;
+        }
+        declare(node, node.name.text, { annotation, parameter: true, iterations });
+      }
+      if (ts.isVariableDeclaration(node) && ts.isVariableDeclarationList(node.parent)
+        && ts.isForOfStatement(node.parent.parent) && node.parent.flags & ts.NodeFlags.Const) {
+        const expression = node.parent.parent.expression;
+        const entries = ts.isCallExpression(expression) && ts.isPropertyAccessExpression(expression.expression)
+          && expression.expression.name.text === 'entries' && !expression.arguments.length;
+        const iterations = iterationValues(entries ? expression.expression.expression : expression);
+        const binding = entries && ts.isArrayBindingPattern(node.name) ? node.name.elements[1] : undefined;
+        if (ts.isIdentifier(node.name)) declare(node, node.name.text, { iterations });
+        else if (binding && ts.isBindingElement(binding) && ts.isIdentifier(binding.name)) {
+          declare(binding, binding.name.text, { iterations });
+        }
       }
       if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
         const init = unwrap(node.initializer);
@@ -849,10 +937,15 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
     }
     const checked = new Set<number>();
     const checkedSettings = new Set<ts.Expression>();
+    function dynamicSetting(node: ts.Node, operation = ts.SyntaxKind[node.kind]): void {
+      if (!exclude(`${ts.SyntaxKind[node.kind]}: ${node.getText()}`, location(node))) {
+        findings.push({ ...location(node), code: 'dynamic_setting', operation });
+      }
+    }
     function delta(expression: ts.Expression, scope: string, directWriter?: string, seen = new Set<ts.Node>(), previous = new Set<Binding>()): void {
       expression = unwrap(expression);
       if (seen.has(expression)) {
-        findings.push({ ...location(expression), code: 'dynamic_setting', operation: 'cyclic setting delta' });
+        dynamicSetting(expression, 'cyclic setting delta');
         return;
       }
       seen.add(expression);
@@ -872,24 +965,27 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
             const keys = ts.isComputedPropertyName(field.name) ? strings(field.name.expression)
               : [field.name.getText(source).replaceAll(/['"]/g, '')];
             for (const key of keys) checkSetting(key, scope, location(field), directWriter);
-            if (!keys.length) findings.push({ ...location(field), code: 'dynamic_setting', operation: ts.SyntaxKind[field.kind] });
+            if (!keys.length) dynamicSetting(field);
           } else if (ts.isSpreadAssignment(field)) {
             const prior = ts.isIdentifier(field.expression) ? lookup(field.expression, field.expression.text) : undefined;
             if (!prior || !previous.has(prior)) delta(field.expression, scope, directWriter, new Set(seen), previous);
           }
-          else findings.push({ ...location(field), code: 'dynamic_setting', operation: ts.SyntaxKind[field.kind] });
+          else dynamicSetting(field);
         }
-      } else findings.push({ ...location(expression), code: 'dynamic_setting', operation: ts.SyntaxKind[expression.kind] });
+      } else dynamicSetting(expression);
     }
     function dispatch(node: ts.Expression): void {
       if (checked.has(node.pos)) return;
       checked.add(node.pos);
-      if (exclude(`${ts.SyntaxKind[node.kind]}: ${node.getText()}`, location(node))) return;
+      const request = localValue(node);
+      const requestAction = property(request, 'actionId');
+      if (requestAction && property(request, 'input')) { dispatch(requestAction); return; }
       const operand = unwrap(node);
-      const binding = ts.isIdentifier(operand) ? lookup(operand, operand.text) : undefined;
-      const annotation = binding?.annotation;
-      const definition = annotation && ts.isTypeReferenceNode(annotation) && ts.isIdentifier(annotation.typeName)
-        ? symbol(annotation.getSourceFile().fileName, annotation.typeName.text, 'types') : undefined;
+      let rootOperand = operand;
+      while (ts.isPropertyAccessExpression(rootOperand)) rootOperand = rootOperand.expression;
+      const binding = ts.isIdentifier(rootOperand) ? lookup(rootOperand, rootOperand.text) : undefined;
+      const annotation = expressionType(operand);
+      const definition = annotation && typeDefinition(annotation);
       // A whole-catalog transport parameter does not assert a concrete UI
       // capability. Its literal/family callers are still walked independently.
       if (binding?.parameter && definition?.getSourceFile().fileName === 'packages/protocol/src/actions/actionIds.ts'
@@ -899,7 +995,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       } else {
         const ids = strings(node);
         if (ids.length) for (const id of ids) checkAction(id, location(node));
-        else findings.push({ ...location(node), code: 'dynamic_action', operation: `${ts.SyntaxKind[node.kind]}: ${node.getText()}` });
+        else if (!exclude(`${ts.SyntaxKind[node.kind]}: ${node.getText()}`, location(node))) findings.push({ ...location(node), code: 'dynamic_action', operation: `${ts.SyntaxKind[node.kind]}: ${node.getText()}` });
       }
     }
     function visit(node: ts.Node): void {
@@ -911,7 +1007,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
           checkedSettings.add(mutable.key);
           const keys = strings(mutable.key);
           if (keys.length) for (const key of keys) checkSetting(key, mutable.scope, location(mutable.key));
-          else findings.push({ ...location(mutable.key), code: 'dynamic_setting', operation: ts.SyntaxKind[mutable.key.kind] });
+          else dynamicSetting(mutable.key);
         }
       }
       if (ts.isPropertyAssignment(node)) {
@@ -931,8 +1027,10 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
           && bridge?.path === 'apps/ui/sources/utils/platform/desktopWindowActionBridge.ts'
           && bridge.name === 'executeDesktopWindowActionWithResult'
           && strings(node.initializer, new Set(), false).some(id => catalog.has(id));
-        if ((property === 'actionId' && (request || !rpcReference(node.initializer)
-          && strings(node.initializer, new Set(), false).some(id => catalog.has(id))))
+        // Descriptors, approval presentation and Action-policy targets carry
+        // actionId as data. Only consumed requests/registrations are ingress;
+        // a later descriptor.actionId invocation is resolved at that call.
+        if ((property === 'actionId' && (request || registration))
           || (property === 'id' && registration) || desktopAction) dispatch(node.initializer);
       }
       if (ts.isCallExpression(node)) {
@@ -1032,8 +1130,8 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
         } else if (directMessagePinWrite) {
           findings.push({ ...location(node), code: 'direct_message_pin_write', operation: 'savePersistedSessionMessagePins' });
         } else if (directClipboardWrite) {
-          findings.push({ ...location(node), code: 'direct_clipboard_write', operation: ts.isIdentifier(node.expression)
-            ? clipboardWriters.get(node.expression.text)! : called });
+          const operation = ts.isIdentifier(node.expression) ? clipboardWriters.get(node.expression.text)! : called;
+          if (!exclude(operation, location(node))) findings.push({ ...location(node), code: 'direct_clipboard_write', operation });
         } else if (directCaptureWrite) {
           findings.push({ ...location(node), code: 'direct_desktop_window_write', operation:
             nativeCaptureWriters.get(ts.isIdentifier(node.expression) ? node.expression.text : called)! });
@@ -1065,7 +1163,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
           if (writer === 'anchor') {
             const values = settingAnchors(operand) ?? [];
             if (values.length) for (const value of values) checkAnchor(value, location(first));
-            else findings.push({ ...location(first), code: 'dynamic_setting', operation: ts.SyntaxKind[first.kind] });
+            else dynamicSetting(first);
           } else delta(operand, writer);
         } else if (first && !isExecutorForward(node) && !isCurrentUiContextCommandInvoke(node.expression)
           && !/^(getActionSpec|isActionSpec|resolveAction|readAction)/.test(called)) {
@@ -1081,7 +1179,8 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
             ts.forEachChild(node, visit);
             return;
           }
-          if ((isDispatch || conventional) && candidates.some(id => id.includes('.'))) dispatch(first);
+          if (isDispatch && property(localValue(first), 'actionId') && property(localValue(first), 'input')) dispatch(first);
+          else if ((isDispatch || conventional) && candidates.some(id => id.includes('.'))) dispatch(first);
           // Catalog ids passed to feature/binding readers or membership checks
           // are data. Thin `read`, `mutate` and `prepare` clients remain walked.
           else if (!/^(get|is|has|includes|useFeature)/.test(called) && candidates.some(id => catalog.has(id))) dispatch(first);
