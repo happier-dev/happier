@@ -459,6 +459,38 @@ test('completed slots retain sampled RSS peaks by class without extra process wa
   assert.deepEqual(Object.keys(rows[0]).sort(), ['className', 'completedAt', 'floorKiB', 'maxGapMs', 'method', 'peakRssKiB', 'samples'].sort());
 });
 
+for (const resourceClass of ['focused-validation-ui', 'entry-loads']) {
+  test(`completed slots attribute ${resourceClass} through the real client beside its disk class`, linux, async t => {
+    const { runAdmittedTask } = await import('./admission_client.mjs');
+    const diskClasses = [];
+    const { root } = await fixture(t, {
+      readProcesses: () => new Map([[process.pid, { pid: process.pid, parentPid: 1, rssKiB: 41 }]]),
+      admitDisk: request => { diskClasses.push(request.className); return { admitted: true }; },
+    });
+    const recorded = new Promise(resolve => {
+      const watcher = fs.watch(root, (_, name) => {
+        if (name === 'completed-slot-memory.jsonl') { watcher.close(); resolve(); }
+      });
+      t.after(() => watcher.close());
+    });
+    await runAdmittedTask({ root, className: resourceClass, floorKiB: 20,
+      machine: 'fixture', repoDir: root, cacheBaseDir: root, env: {} }, async () => {
+      // Another arrival supplies the existing broker event sample while this
+      // real client's slot is active; no test-only sampler or history writer.
+      const observer = await acquire(root, 1, t, { pid: 999999 });
+      await observer.admit();
+    });
+    await recorded;
+    const rows = (await readFile(join(root, 'completed-slot-memory.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].resourceClass, resourceClass);
+    assert.equal(rows[0].className, 'validation');
+    assert.equal(rows[0].floorKiB, 20);
+    assert.equal(rows[0].peakRssKiB, 41);
+    assert.deepEqual(diskClasses, ['validation', 'validation']);
+  });
+}
+
 function captureRecoveryClock(t) {
   // Timer scheduling is the OS boundary; broker/socket/resource decisions stay real.
   const active = new Map();

@@ -184,7 +184,7 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
     // Reuse the first arrival when this same waiter reconnects after broker loss.
     // Resolve policy from the current catalog, rather than a retained broker's
     // older module. The broker alone owns host capacity and reservations.
-    const request = { kind: 'acquire', className: resolveAdmissionDiskClass(className), floorKiB,
+    const request = { kind: 'acquire', className: resolveAdmissionDiskClass(className), resourceClass: className, floorKiB,
       cpuCost: resolveAdmissionCpuCost(className),
       requestedCpuCores: requestedCpuCores ?? resolveRequestedAdmissionCpuCores({ env }),
       pid: process.pid, arrivedAt: Date.now(),

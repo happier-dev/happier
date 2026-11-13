@@ -393,7 +393,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       const now = Date.now();
       try {
         appendFileSync(join(root, 'completed-slot-memory.jsonl'), JSON.stringify({
-          className: slot.className, floorKiB: slot.floorKiB, peakRssKiB: slot.peakRssKiB,
+          className: slot.className, resourceClass: slot.resourceClass, floorKiB: slot.floorKiB, peakRssKiB: slot.peakRssKiB,
           samples: slot.samples, maxGapMs: Math.max(slot.maxGapMs, now - slot.lastSampleAt),
           completedAt: new Date(now).toISOString(), method: 'broker-event-sampled-tree-rss',
         }) + '\n', { mode: 0o600 });
@@ -460,7 +460,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       const resources = readResources(item);
       if (!resources) continue;
       const address = slotAddress(root, item.pid, floorKiB, randomUUID(), cpuCores);
-      const slot = { address, pid: item.pid, className: item.className, floorKiB, cpuCores, clientCpuCores, workers: fitting?.workers, control: item.socket,
+      const slot = { address, pid: item.pid, className: item.className, resourceClass: item.resourceClass, floorKiB, cpuCores, clientCpuCores, workers: fitting?.workers, control: item.socket,
         arrivedAt: item.arrivedAt, arrivalOrder: item.arrivalOrder };
       slots.set(address, slot);
       availableMemoryKiB -= floorKiB;
@@ -538,6 +538,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
         || request.kind !== 'acquire' || item || !Number.isSafeInteger(request.floorKiB) || request.floorKiB <= 0
         || (request.arrivedAt !== undefined && (!Number.isSafeInteger(request.arrivedAt) || request.arrivedAt < 0))
         || !Number.isSafeInteger(request.pid) || request.pid <= 1 || typeof request.className !== 'string'
+        || (request.resourceClass !== undefined && typeof request.resourceClass !== 'string')
         || typeof request.repoDir !== 'string' || (request.cacheBaseDir !== undefined && typeof request.cacheBaseDir !== 'string')
         || (request.floorOptions !== undefined && (!Array.isArray(request.floorOptions) || request.floorOptions.length === 0
           || request.floorOptions.some(option => !Number.isSafeInteger(option?.floorKiB) || option.floorKiB <= 0
