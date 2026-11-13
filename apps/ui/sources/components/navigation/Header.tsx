@@ -188,6 +188,31 @@ export function NavigationHeaderTitle(props: Readonly<{ title: string; tintColor
 
 const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((props) => {
     const { options, route, back, navigation } = props;
+    return (
+        <StackOptionsHeader
+            options={options}
+            routeName={route.name}
+            canGoBack={!!back}
+            onBack={() => navigation.goBack()}
+        />
+    );
+});
+
+/**
+ * The bar a stack route declares through its options (title, leading Back or Cancel, trailing actions).
+ * The navigator draws it through `createHeader`; a host that drops navigator headers (Expo Router's web
+ * route drawer) draws the same bar from the same options, so the route's chrome has one owner.
+ */
+export const StackOptionsHeader = React.memo(function StackOptionsHeader(props: Readonly<{
+    options: NativeStackHeaderProps['options'];
+    routeName: string;
+    canGoBack: boolean;
+    onBack: () => void;
+    /** A contained host (a route card) spans its bar across the card instead of the window's content column. */
+    contentStyle?: StyleProp<ViewStyle>;
+}>) {
+    const { options, routeName, onBack } = props;
+    const back = props.canGoBack;
     const extendedOptions = options as ExtendedNavigationOptions;
 
     // Extract title - handle both string and function types
@@ -197,7 +222,7 @@ const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((
             title = <NavigationHeaderTitle title={options.headerTitle} tintColor={options.headerTintColor} style={options.headerTitleStyle} />;
         } else if (typeof options.headerTitle === 'function') {
             // Handle function type headerTitle
-            title = options.headerTitle({ children: route.name, tintColor: options.headerTintColor });
+            title = options.headerTitle({ children: routeName, tintColor: options.headerTintColor });
         }
     } else if (typeof options.title === 'string') {
         title = <NavigationHeaderTitle title={options.title} tintColor={options.headerTintColor} style={options.headerTitleStyle} />;
@@ -213,7 +238,7 @@ const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((
         headerLeftContent = () => (
             <DefaultBackButton
                 tintColor={options.headerTintColor}
-                onPress={() => navigation.goBack()}
+                onPress={onBack}
             />
         );
     }
@@ -228,6 +253,7 @@ const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((
                 undefined
             }
             headerStyle={options.headerStyle}
+            headerContentStyle={props.contentStyle}
             headerTitleStyle={options.headerTitleStyle}
             headerSubtitleStyle={extendedOptions.headerSubtitleStyle}
             headerShadowVisible={options.headerShadowVisible}

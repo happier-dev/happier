@@ -1,6 +1,6 @@
 import { useLastUsedBackendSelection } from '@/hooks/session/useLastUsedBackendSelection';
 import React from 'react';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useNavigation } from '@react-navigation/native';
 
 import { DEFAULT_AGENT_ID, getAgentCore, isBundledAgentId, resolveBundledAgentIdFromContributionIdentity, type AgentId } from '@/agents/catalog/catalog';
@@ -17,6 +17,7 @@ import { NewSessionScreenPortalScope, useNewSessionContainedModalScreenOptions }
 import { resolveResumePickerBackendTarget } from '@/components/sessions/new/navigation/resolveResumePickerBackendTarget';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
+import { NewSessionPickerRouteScreen } from '@/components/sessions/new/navigation/NewSessionPickerRouteScreen';
 import { canBrowseExternalSessions, resolveExternalSessionBrowseLockedSource } from '@/components/sessions/external/browse/resolveExternalSessionBrowseLockedSourceOption';
 import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { readBackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
@@ -259,47 +260,48 @@ export default function ResumePickerScreen() {
 
     return (
         <NewSessionScreenPortalScope>
-            <Stack.Screen options={screenOptions} />
-            <NewSessionResumeSelectionContent
-                value={inputValue}
-                onChangeValue={setInputValue}
-                onSave={handleSave}
-                onClear={handleClear}
-                onClose={() => safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref })}
-                agentType={agentType}
-                agentLabel={agentLabel}
-                resumeBrowse={resumeBrowseEnabled ? {
-                    enabled: true,
-                    onBrowse: async () => {
-                        if (!effectiveMachineId || !operationalAgentId) return null;
-                        const accountScope = getActiveServerAccountScope();
-                        const source = resolveExternalSessionBrowseLockedSource({
-                            accountScope,
-                            serverId: effectiveServerId,
-                            providerId: operationalAgentId,
-                            machineId: effectiveMachineId,
-                            agentOptionState,
-                            profile: accountProfile,
-                            agentSettings: settings,
-                            labelsByKey: getConnectedMetadataCatalog(accountScope).labelsByKey,
-                            projection: daemonMergedProjectionInputs?.pluginProjectionV2,
-                            interaction: 'pickRemoteSessionId',
-                        });
-                        if (!source) return null;
-                        return await openExternalSessionsResumeIdPickerModal({
-                            title: t('externalSessions.browseTitle'),
-                            webPortalTarget: modalPortalTarget,
-                            lockScope: {
-                                machineId: effectiveMachineId,
+            <NewSessionPickerRouteScreen options={screenOptions}>
+                <NewSessionResumeSelectionContent
+                    value={inputValue}
+                    onChangeValue={setInputValue}
+                    onSave={handleSave}
+                    onClear={handleClear}
+                    onClose={() => safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref })}
+                    agentType={agentType}
+                    agentLabel={agentLabel}
+                    resumeBrowse={resumeBrowseEnabled ? {
+                        enabled: true,
+                        onBrowse: async () => {
+                            if (!effectiveMachineId || !operationalAgentId) return null;
+                            const accountScope = getActiveServerAccountScope();
+                            const source = resolveExternalSessionBrowseLockedSource({
+                                accountScope,
                                 serverId: effectiveServerId,
                                 providerId: operationalAgentId,
-                                source,
-                            },
-                        });
-                    },
-                } : null}
-                showInlineHeader={false}
-            />
+                                machineId: effectiveMachineId,
+                                agentOptionState,
+                                profile: accountProfile,
+                                agentSettings: settings,
+                                labelsByKey: getConnectedMetadataCatalog(accountScope).labelsByKey,
+                                projection: daemonMergedProjectionInputs?.pluginProjectionV2,
+                                interaction: 'pickRemoteSessionId',
+                            });
+                            if (!source) return null;
+                            return await openExternalSessionsResumeIdPickerModal({
+                                title: t('externalSessions.browseTitle'),
+                                webPortalTarget: modalPortalTarget,
+                                lockScope: {
+                                    machineId: effectiveMachineId,
+                                    serverId: effectiveServerId,
+                                    providerId: operationalAgentId,
+                                    source,
+                                },
+                            });
+                        },
+                    } : null}
+                    showInlineHeader={false}
+                />
+            </NewSessionPickerRouteScreen>
         </NewSessionScreenPortalScope>
     );
 }

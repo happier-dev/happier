@@ -2,7 +2,7 @@ import { useLastUsedBackendSelection } from '@/hooks/session/useLastUsedBackendS
 import { useAiLaunchProfilesForLegacyUi } from '@/sync/store/useAiLaunchProfiles';
 import React from 'react';
 import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
-import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
+import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { Platform } from 'react-native';
 import { Item } from '@/components/ui/lists/Item';
@@ -34,6 +34,7 @@ import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSes
 import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
 import { buildSecretRequirementRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { buildProfileEditPickerRouteParams } from '@/components/sessions/new/navigation/buildProfileEditPickerRouteParams';
+import { NewSessionPickerRouteScreen } from '@/components/sessions/new/navigation/NewSessionPickerRouteScreen';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
 import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
@@ -480,11 +481,7 @@ export default React.memo(function ProfilePickerScreen() {
 
     return (
         <PopoverScope>
-            <>
-                <Stack.Screen
-                    options={screenOptions}
-                />
-
+            <NewSessionPickerRouteScreen options={screenOptions}>
                 {!useProfiles ? (
                     <ItemGroup description={t('settingsFeatures.profilesDisabled')}>
                         <Item
@@ -543,7 +540,7 @@ export default React.memo(function ProfilePickerScreen() {
                         }}
                     />
                 )}
-            </>
+            </NewSessionPickerRouteScreen>
         </PopoverScope>
     );
 });

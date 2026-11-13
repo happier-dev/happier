@@ -1,5 +1,5 @@
 import React from 'react';
-import { Stack, useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
+import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
 import { useWindowDimensions } from 'react-native';
 
 import { NewSessionServerSelectionContent } from '@/components/sessions/new/components/NewSessionServerSelectionContent';
@@ -7,6 +7,7 @@ import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
 import { t } from '@/text';
 import { buildNewSessionPickerFallbackHref } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { NewSessionPickerRouteScreen } from '@/components/sessions/new/navigation/NewSessionPickerRouteScreen';
 
 export default React.memo(function ServerPickerScreen() {
     const router = useRouter();
@@ -31,13 +32,12 @@ export default React.memo(function ServerPickerScreen() {
     }), [headerLeft]);
 
     return (
-        <>
-            <Stack.Screen options={screenOptions} />
+        <NewSessionPickerRouteScreen options={screenOptions}>
             <NewSessionServerSelectionContent
                 maxHeight={maxHeight}
                 ownsScrollViewport={true}
                 onClose={close}
             />
-        </>
+        </NewSessionPickerRouteScreen>
     );
 });

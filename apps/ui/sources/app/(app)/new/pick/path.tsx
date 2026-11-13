@@ -4,7 +4,7 @@ import React, { useState, useMemo } from 'react';
 import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
 import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
 import { View, Pressable } from 'react-native';
-import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
+import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { Typography } from '@/constants/Typography';
 import { useActiveMachineFacts, useAllSessionListRenderables, useSetting, useSettingMutable, useSettingsSelector } from '@/sync/domains/state/storage';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -22,6 +22,7 @@ import { NewSessionScreenPortalScope, useNewSessionContainedModalScreenOptions }
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
 import { NewSessionPathSelectionContent } from '@/components/sessions/new/components/NewSessionPathSelectionContent';
+import { NewSessionPickerRouteScreen } from '@/components/sessions/new/navigation/NewSessionPickerRouteScreen';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -243,41 +244,39 @@ export default React.memo(function PathPickerScreen() {
     if (!machine) {
         return (
             <NewSessionScreenPortalScope>
-                <Stack.Screen
-                    options={screenOptions}
-                />
-                <ItemList presentation="grouped">
-                    <View style={styles.emptyContainer}>
-                        <Text style={styles.emptyText}>{t('newSession.noMachineSelected')}</Text>
-                    </View>
-                </ItemList>
+                <NewSessionPickerRouteScreen options={screenOptions}>
+                    <ItemList presentation="grouped">
+                        <View style={styles.emptyContainer}>
+                            <Text style={styles.emptyText}>{t('newSession.noMachineSelected')}</Text>
+                        </View>
+                    </ItemList>
+                </NewSessionPickerRouteScreen>
             </NewSessionScreenPortalScope>
         );
     }
 
     return (
         <NewSessionScreenPortalScope>
-            <Stack.Screen
-                options={screenOptions}
-            />
-            <NewSessionPathSelectionContent
-                noFolderOption={{ selected: params.directoryKind === 'managed', onSelect: () => handleSelectDirectory({ kind: 'managed' }) }}
-                machineHomeDir={machineHomeDir}
-                selectedPath={customPath}
-                onChangeSelectedPath={setCustomPath}
-                submitBehavior="confirm"
-                onSubmitSelectedPath={handleSelectPath}
-                recentPaths={recentPaths}
-                usePickerSearch={usePathPickerSearch}
-                searchQuery={pathSearchQuery}
-                onChangeSearchQuery={setPathSearchQuery}
-                favoriteDirectories={favoriteDirectories}
-                onChangeFavoriteDirectories={setFavoriteDirectories}
-                machineBrowse={{
-                    enabled: true,
-                    machineId: machine.id,
-                }}
-            />
+            <NewSessionPickerRouteScreen options={screenOptions}>
+                <NewSessionPathSelectionContent
+                    noFolderOption={{ selected: params.directoryKind === 'managed', onSelect: () => handleSelectDirectory({ kind: 'managed' }) }}
+                    machineHomeDir={machineHomeDir}
+                    selectedPath={customPath}
+                    onChangeSelectedPath={setCustomPath}
+                    submitBehavior="confirm"
+                    onSubmitSelectedPath={handleSelectPath}
+                    recentPaths={recentPaths}
+                    usePickerSearch={usePathPickerSearch}
+                    searchQuery={pathSearchQuery}
+                    onChangeSearchQuery={setPathSearchQuery}
+                    favoriteDirectories={favoriteDirectories}
+                    onChangeFavoriteDirectories={setFavoriteDirectories}
+                    machineBrowse={{
+                        enabled: true,
+                        machineId: machine.id,
+                    }}
+                />
+            </NewSessionPickerRouteScreen>
         </NewSessionScreenPortalScope>
     );
 });

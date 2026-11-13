@@ -1,6 +1,6 @@
 import { useLastUsedBackendSelection } from '@/hooks/session/useLastUsedBackendSelection';
 import React from 'react';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useNavigation } from '@react-navigation/native';
 import { View } from 'react-native';
 
@@ -19,6 +19,7 @@ import { NewSessionScreenPortalScope, useNewSessionContainedModalScreenOptions }
 import { resolveResumePickerBackendTarget } from '@/components/sessions/new/navigation/resolveResumePickerBackendTarget';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
+import { NewSessionPickerRouteScreen } from '@/components/sessions/new/navigation/NewSessionPickerRouteScreen';
 import { normalizeOptionalParam } from '@/profileRouteParams';
 import { readBackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 import { peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
@@ -222,49 +223,50 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
 
     return (
         <NewSessionScreenPortalScope>
-            <Stack.Screen options={screenOptions} />
-            <View style={{ flex: 1, minHeight: 0 }}>
-                {lockScope ? (
-                    <ExternalSessionsBrowseScreen
-                        interaction="pickRemoteSessionId"
-                        lockScope={lockScope}
-                        onPickRemoteSessionId={(remoteSessionId) => {
-                            const returnMode = setNewSessionPickerReturnParams({
-                                navigation,
-                                router,
-                                routeParams: {
-                                    ...roundTripBackendParams,
-                                    resumeSessionId: remoteSessionId,
-                                },
-                                currentParams: currentRouteParams,
-                                returnToHost,
-                                replaceParams: {
-                                    ...roundTripBackendParams,
-                                    ...(normalizeNonEmptyParam(params.dataId) ? { dataId: normalizeNonEmptyParam(params.dataId) } : {}),
-                                    ...(normalizeNonEmptyParam(params.machineId) ? { machineId: normalizeNonEmptyParam(params.machineId) } : {}),
-                                    ...(pickFirstNonEmpty(params.spawnServerId, params.serverId) ? { spawnServerId: pickFirstNonEmpty(params.spawnServerId, params.serverId) } : {}),
-                                    resumeSessionId: remoteSessionId,
-                                },
-                            });
-                            if (returnMode === 'dispatch') {
-                                safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
-                            }
-                        }}
-                    />
-                ) : awaitingProjection ? (
-                    <SurfaceStateCard
-                        testID="external-sessions-browse-route-loading"
-                        kind="loading"
-                        accessibilitySemantics="status"
-                        title={t('common.loading')}
-                        reason={t('externalSessions.settingsIntegrationInventoryLoadingSubtitle')}
-                        secondaryAction={{
-                            label: t('common.close'),
-                            onPress: () => safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref }),
-                        }}
-                    />
-                ) : null}
-            </View>
+            <NewSessionPickerRouteScreen options={screenOptions}>
+                <View style={{ flex: 1, minHeight: 0 }}>
+                    {lockScope ? (
+                        <ExternalSessionsBrowseScreen
+                            interaction="pickRemoteSessionId"
+                            lockScope={lockScope}
+                            onPickRemoteSessionId={(remoteSessionId) => {
+                                const returnMode = setNewSessionPickerReturnParams({
+                                    navigation,
+                                    router,
+                                    routeParams: {
+                                        ...roundTripBackendParams,
+                                        resumeSessionId: remoteSessionId,
+                                    },
+                                    currentParams: currentRouteParams,
+                                    returnToHost,
+                                    replaceParams: {
+                                        ...roundTripBackendParams,
+                                        ...(normalizeNonEmptyParam(params.dataId) ? { dataId: normalizeNonEmptyParam(params.dataId) } : {}),
+                                        ...(normalizeNonEmptyParam(params.machineId) ? { machineId: normalizeNonEmptyParam(params.machineId) } : {}),
+                                        ...(pickFirstNonEmpty(params.spawnServerId, params.serverId) ? { spawnServerId: pickFirstNonEmpty(params.spawnServerId, params.serverId) } : {}),
+                                        resumeSessionId: remoteSessionId,
+                                    },
+                                });
+                                if (returnMode === 'dispatch') {
+                                    safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
+                                }
+                            }}
+                        />
+                    ) : awaitingProjection ? (
+                        <SurfaceStateCard
+                            testID="external-sessions-browse-route-loading"
+                            kind="loading"
+                            accessibilitySemantics="status"
+                            title={t('common.loading')}
+                            reason={t('externalSessions.settingsIntegrationInventoryLoadingSubtitle')}
+                            secondaryAction={{
+                                label: t('common.close'),
+                                onPress: () => safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref }),
+                            }}
+                        />
+                    ) : null}
+                </View>
+            </NewSessionPickerRouteScreen>
         </NewSessionScreenPortalScope>
     );
 }

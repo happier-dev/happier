@@ -1,6 +1,6 @@
 import { useLastUsedBackendSelection } from '@/hooks/session/useLastUsedBackendSelection';
 import React from 'react';
-import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
@@ -17,6 +17,7 @@ import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCata
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
+import { NewSessionPickerRouteScreen } from '@/components/sessions/new/navigation/NewSessionPickerRouteScreen';
 import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
@@ -157,8 +158,7 @@ export default React.memo(function PreviewMachinePickerScreen() {
     ]);
 
     return (
-        <>
-            <Stack.Screen options={screenOptions} />
+        <NewSessionPickerRouteScreen options={screenOptions}>
             <ItemList presentation="grouped">
                 <MachineSelector
                     machines={machines}
@@ -178,6 +178,6 @@ export default React.memo(function PreviewMachinePickerScreen() {
                     onToggleFavorite={(machine) => toggleFavorite(machine.id)}
                 />
             </ItemList>
-        </>
+        </NewSessionPickerRouteScreen>
     );
 });

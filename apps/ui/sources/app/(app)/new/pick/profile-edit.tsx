@@ -2,7 +2,8 @@ import { useLastUsedBackendSelection } from '@/hooks/session/useLastUsedBackendS
 import { useAiLaunchProfiles } from '@/sync/store/useAiLaunchProfiles';
 import React from 'react';
 import { View, useWindowDimensions } from 'react-native';
-import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
+import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
+import { NewSessionPickerRouteScreen } from '@/components/sessions/new/navigation/NewSessionPickerRouteScreen';
 import { StyleSheet } from 'react-native-unistyles';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
@@ -278,38 +279,37 @@ export default React.memo(function ProfileEditScreen() {
 
     return (
         <PopoverScope>
-            {/* The profile editor's keyboard-aware list owns keyboard avoidance for this screen. */}
-            <View style={profileEditScreenStyles.container}>
-                <Stack.Screen
-                    options={screenOptions}
-                />
-                <View style={[
-                    { flex: 1, paddingHorizontal: screenWidth > 700 ? 16 : 8 }
-                ]}>
+            <NewSessionPickerRouteScreen options={screenOptions}>
+                {/* The profile editor's keyboard-aware list owns keyboard avoidance for this screen. */}
+                <View style={profileEditScreenStyles.container}>
                     <View style={[
-                        { maxWidth: layout.maxWidth, flex: 1, width: '100%', alignSelf: 'center' }
+                        { flex: 1, paddingHorizontal: screenWidth > 700 ? 16 : 8 }
                     ]}>
-                        {!profile ? <SurfaceStateCard
-                            testID="profiles.edit.unavailable"
-                            kind={loading ? 'loading' : 'unavailable'}
-                            title={loading ? t('common.loading') : t('profilesPage.notFoundTitle')}
-                            reason={loading ? undefined : t('profilesPage.notFoundDescription')}
-                            diagnosticCode={draft.status === 'unavailable' ? draft.reason : undefined}
-                            action={loading ? undefined : { label: t('common.back'), onPress: handleCancel }}
-                        /> : <LaunchProfileEditForm
-                            profile={profile}
-                            draftSecretBindings={draftSecretBindings}
-                            legacyCloneSource={draft.status === 'ready' ? draft.legacyCloneSource : undefined}
-                            sourcePreservingClone={draft.status === 'ready' && draft.legacyCloneSource !== undefined}
-                            machineId={machineIdParam || null}
-                            onSave={handleSave}
-                            onCancel={handleCancel}
-                            onDirtyChange={setIsDirty}
-                            saveRef={saveRef}
-                        />}
+                        <View style={[
+                            { maxWidth: layout.maxWidth, flex: 1, width: '100%', alignSelf: 'center' }
+                        ]}>
+                            {!profile ? <SurfaceStateCard
+                                testID="profiles.edit.unavailable"
+                                kind={loading ? 'loading' : 'unavailable'}
+                                title={loading ? t('common.loading') : t('profilesPage.notFoundTitle')}
+                                reason={loading ? undefined : t('profilesPage.notFoundDescription')}
+                                diagnosticCode={draft.status === 'unavailable' ? draft.reason : undefined}
+                                action={loading ? undefined : { label: t('common.back'), onPress: handleCancel }}
+                            /> : <LaunchProfileEditForm
+                                profile={profile}
+                                draftSecretBindings={draftSecretBindings}
+                                legacyCloneSource={draft.status === 'ready' ? draft.legacyCloneSource : undefined}
+                                sourcePreservingClone={draft.status === 'ready' && draft.legacyCloneSource !== undefined}
+                                machineId={machineIdParam || null}
+                                onSave={handleSave}
+                                onCancel={handleCancel}
+                                onDirtyChange={setIsDirty}
+                                saveRef={saveRef}
+                            />}
+                        </View>
                     </View>
                 </View>
-            </View>
+            </NewSessionPickerRouteScreen>
         </PopoverScope>
     );
 });
