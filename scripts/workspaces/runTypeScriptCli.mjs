@@ -12,7 +12,7 @@ import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
 import { prepareReferencedTypecheckDeclarations, orderTypecheckProjects } from './prepareReferencedTypecheckDeclarations.mjs';
 import { ensureWorkspacePackagesBuiltForComponents } from './ensureWorkspacePackagesBuilt.mjs';
 import { prepareWorkspaceSourceTypecheckProjects } from './workspaceSourceTypecheck.mjs';
-import { createTypecheckDiagnosticRun, createTypecheckInputObservation, isCompleteTypecheckDiagnosticResult, typecheckDiagnosticFailureIdentifier } from './typecheckDiagnostics.mjs';
+import { createTypecheckDiagnosticRun, createTypecheckInputObservation, isCompleteTypecheckDiagnosticResult, typecheckDiagnosticFailureIdentifier, typecheckPartitionFailure } from './typecheckDiagnostics.mjs';
 import {
   resolveTypeScriptCliInvocation,
   shouldRouteTypeScriptCliThroughHstack,
@@ -106,19 +106,21 @@ async function runCompiler(invocation, project, isCancelled, captureDiagnostics 
   const projectName = project.authoredProject ?? project.project;
   process.stderr.write(`[typescript] starting ${JSON.stringify({ project: projectName, at: new Date().toISOString() })}\n`);
   const publish = async result => {
+    const checkFailure = typecheckPartitionFailure(result);
     if (result.error || result.signal || result.status !== 0) {
       const reason = result.error ? typecheckDiagnosticFailureIdentifier(result.error, 'spawn')
-        : result.signal ? 'compiler-signal' : 'compiler-exit';
+        : result.signal ? 'compiler-signal' : checkFailure?.kind ?? 'compiler-exit';
       process.stderr.write(`[typecheck-failure] compiler: exit=${result.status ?? 'unavailable'} signal=${result.signal ?? 'none'} reason=${reason} project=${projectName}\n`);
     }
     if (diagnosticReportDir) await writeJsonAtomic(resolve(diagnosticReportDir, `${randomUUID()}.json`), {
       cwd: process.cwd(), project: projectName,
       compiler: invocation.compilerPath,
       status: result.status, signal: result.signal,
+      ...(checkFailure ? { checkFailure } : {}),
       ...(result.error ? { error: { message: result.error.message, code: result.error.code } } : {}),
       stdout: result.stdout ?? '', stderr: result.stderr ?? '',
     });
-    return result;
+    return checkFailure ? { ...result, checkFailure } : result;
   };
   if (process.platform !== 'linux' || process.env.CI !== 'true' || process.env.HAPPIER_TYPESCRIPT_CLI_MEASURE_RSS !== '1') {
     return await publish(await execute(invocation.command, compilerArgs));

@@ -127,6 +127,7 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
   const testRoots = new Set([...existingTests, ...originalRoots].filter(file => !sharedSet.has(file) && existsSync(file)
     && (existingTests.has(file) || /\.(?:test|spec)\.tsx?$/.test(file)
       || /(?:^|[\\/])vitestSetup\.[cm]?tsx?$/.test(file)
+      || /(?:^|[\\/])vitest(?:\.[^\\/]+)?\.config\.[cm]?tsx?$/.test(file)
       || file.replaceAll('\\', '/').includes('/__tests__/'))));
   const owned = new Set();
   const results = [];

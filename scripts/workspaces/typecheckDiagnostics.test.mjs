@@ -4,7 +4,24 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { createTypecheckDiagnosticRun, typecheckDiagnosticFailureIdentifier } from './typecheckDiagnostics.mjs';
+import { createTypecheckDiagnosticRun, isCompleteTypecheckDiagnosticResult, typecheckDiagnosticFailureIdentifier } from './typecheckDiagnostics.mjs';
+
+test('a partition stopped before semantic checking cannot publish a completed baseline', async t => {
+  const f = await fixture(t);
+  for (const stdout of [
+    "error TS6053: File 'removed.config.ts' not found.\n",
+    'input.ts(1,1): error TS1490: File appears to be binary.\n',
+    'input.ts(1,1): error TS1005: Expected expression.\n',
+  ]) {
+    const result = { status: 1, signal: null, stdout, stderr: '' };
+    assert.equal(isCompleteTypecheckDiagnosticResult(result), false);
+    assert.deepEqual(await f.finish(stdout, 1), []);
+  }
+  assert.equal(isCompleteTypecheckDiagnosticResult({ status: 2, stdout: compilerDiagnostic, stderr: '' }), true);
+  assert.equal(isCompleteTypecheckDiagnosticResult({ status: 1, stdout: compilerDiagnostic, stderr: '' }), true);
+  assert.equal(isCompleteTypecheckDiagnosticResult({ status: 1,
+    stdout: 'input.ts(1,1): error TS2883: The inferred type exceeds the maximum length.\n', stderr: '' }), true);
+});
 
 // Captured on windows2-linux, 2026-10-24, through the shared compiler selector:
 // tsrs and @typescript/native both exited 2 for `const value: number = "wrong";`.

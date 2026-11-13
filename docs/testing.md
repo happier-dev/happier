@@ -1536,6 +1536,14 @@ stops the sequence. These large app programs explicitly use `--singleThreaded`
 to avoid retaining duplicate native checker state. Use the public package
 `typecheck` entry point to check every partition, not only the source config.
 
+UI editor roots exclude `src-tauri/target/**`; native build artifacts are not
+TypeScript inputs. Finite membership follows existing files, and discovered
+Vitest configs belong to the test programs rather than source declarations.
+Pre-semantic diagnostic exit-1 runs report `partition-not-checked`: option or syntactic
+errors can prevent semantic checking entirely. They preserve the previous
+diagnostic baseline instead of publishing an ordinary completed count. Resolve
+the reported input/configuration errors and rerun the public check.
+
 In 0.3 development, `scripts/workspaces/deriveTypecheckProjects.mjs` derives UI
 and CLI file lists at the serial compiler choke point. The public UI entry checks
 foundation, core, source, component tests and other tests; CLI checks foundation,

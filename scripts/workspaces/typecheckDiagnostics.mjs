@@ -145,12 +145,27 @@ async function readSnapshot(path, projects) {
       row && [row.line, row.column, row.code].every(value => Number.isSafeInteger(value) && value > 0)))) return snapshot;
 }
 
+// tsrs can stop before semantic checking on option/syntactic diagnostics.
+// Exit 1 alone is insufficient: declaration emit errors can follow a full check.
+/** @returns {{ kind: 'partition-not-checked' } | undefined} */
+export function typecheckPartitionFailure(result) {
+  const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+  const codes = [...output.matchAll(/error TS(\d+):/gu)].map(match => Number(match[1]));
+  // The incident also reached TS4082 (declaration visibility) before checking.
+  // When tracing proves semantic progress, never infer a zero-file check.
+  if (result.status === 1 && !/tsrs check file:.*begins/u.test(output)
+    && codes.length > 0 && codes.every(code => (code >= 1000 && code < 2000)
+      || (code >= 5000 && code < 7000) || code === 4082 || code === 18003)) {
+    return { kind: 'partition-not-checked' };
+  }
+}
+
 function collectDiagnostics(results, cwd, repoRoot) {
   const diagnosticsByPath = Object.create(null);
   const locations = new Set();
   const globalDiagnostics = new Set();
   for (const result of results) {
-    if (result.error || result.signal || ![0, 1, 2].includes(result.status)) return;
+    if (result.error || result.signal || typecheckPartitionFailure(result) || ![0, 1, 2].includes(result.status)) return;
     let recognized = 0;
     let continuation = false;
     // Admission owns stderr too. Read diagnostic headers from both streams,

@@ -968,6 +968,19 @@ test(`package diagnostic delta reaches the runner without changing compiler outp
 });
 }
 
+test('pre-semantic compiler diagnostics report partition-not-checked instead of a baseline', async t => {
+  const diagnostic = "error TS6053: File 'removed.config.ts' not found.\n";
+  const setup = await fixture(t, { exitCode: 1, compilerBody: `process.stdout.write(${JSON.stringify(diagnostic)});` });
+  await writeFile(join(setup.root, 'tsconfig.json'), '{"compilerOptions":{"noEmit":true},"files":["source.ts"]}');
+  await writeFile(join(setup.root, 'source.ts'), 'export const value = 1;');
+  assert.equal(spawnSync('git', ['init', '-q'], { cwd: setup.root }).status, 0);
+  const { child, stderr, stdout } = setup.start([runner, '--noEmit', '-p', 'tsconfig.json'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  assert.deepEqual(await once(child, 'exit'), [1, null], stderr());
+  assert.equal(stdout().toString(), diagnostic);
+  assert.match(stderr(), /reason=partition-not-checked/);
+  assert.doesNotMatch(stderr(), /\[typecheck-delta\].*\d+ diagnostics/);
+});
+
 test('snapshot failures report a safe step and code without changing the compiler verdict', async t => {
   const diagnostic = 'source.ts(1,7): error TS2322: captured diagnostic\n';
   const setup = await fixture(t, { exitCode: 2, compilerBody: `process.stdout.write(${JSON.stringify(diagnostic)});` });

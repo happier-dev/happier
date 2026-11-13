@@ -10,9 +10,31 @@ import { deriveTypecheckProjects, readTypecheckProject } from './deriveTypecheck
 import { verifyTypeScriptProjectCoverage } from './prepareTypeScriptProjectBuild.mjs';
 import { prepareReferencedTypecheckDeclarations } from './prepareReferencedTypecheckDeclarations.mjs';
 import { prepareWorkspaceSourceTypecheckProjects } from './workspaceSourceTypecheck.mjs';
-import { prepareUiTypecheckProjects } from '../../apps/ui/scripts/deriveTypecheckProjects.mjs';
+import { deriveUiTypecheckProjects, prepareUiTypecheckProjects } from '../../apps/ui/scripts/deriveTypecheckProjects.mjs';
 import { deriveCliTypecheckProjects, prepareCliTypecheckProjects } from '../../apps/cli/scripts/deriveTypecheckProjects.mjs';
 import { installUiTypecheckFixtureDependencies } from '../testing/lib/typecheckProjectFixture.mjs';
+
+test('UI partition roots exclude native build output and derive existing config membership', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-ui-partition-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const authored = ts.readConfigFile(new URL('../../apps/ui/tsconfig.json', import.meta.url).pathname, ts.sys.readFile).config;
+  await mkdir(join(root, 'src-tauri/target/debug'), { recursive: true });
+  await mkdir(join(root, 'sources'), { recursive: true });
+  await writeFile(join(root, 'sources/entry.ts'), 'export const value = 1;');
+  await writeFile(join(root, 'src-tauri/target/debug/binary.ts'), Buffer.from([0, 1, 2]));
+  await writeFile(join(root, 'vitest.current.config.ts'), 'export default {};');
+  await writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { types: [] }, include: authored.include, exclude: authored.exclude }));
+  for (const name of ['foundation', 'core', 'source', 'test', 'test-components', 'test-other']) {
+    await writeFile(join(root, `tsconfig.${name}.json`), JSON.stringify({ extends: './tsconfig.json', files: ['vitest.removed.config.ts'], include: [] }));
+  }
+  const inventory = await deriveUiTypecheckProjects(root);
+  const configs = await Promise.all(inventory.map(async project => JSON.parse(await readFile(project.configPath, 'utf8'))));
+  const files = configs.flatMap(config => config.files);
+  assert.ok(files.includes(join(root, 'sources/entry.ts')));
+  assert.ok(!files.some(file => file.includes('/src-tauri/target/')));
+  assert.ok(!files.some(file => file.endsWith('vitest.removed.config.ts')));
+  assert.ok(configs.slice(3).some(config => config.files.includes(join(root, 'vitest.current.config.ts'))));
+});
 
 for (const failure of ['ENOENT', 'ENOTDIR', 'EISDIR']) {
   test(`public derivation handles a listed root changed before reading: ${failure}`, { skip: process.platform === 'win32' }, async t => {

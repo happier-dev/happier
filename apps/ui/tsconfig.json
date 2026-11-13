@@ -58,6 +58,7 @@
     ".expo/types/**/*.ts"
   ],
   "exclude": [
+    "src-tauri/target/**",
     "sources/trash/**/*",
     "**/*.composed.*",
     "node_modules"
