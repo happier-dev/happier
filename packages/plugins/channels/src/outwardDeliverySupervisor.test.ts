@@ -5148,7 +5148,7 @@ describe('Channels outward-delivery supervisor', () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 
-  it.each(['completion', 'shutdown', 'late retry'] as const)('delivers a later collection wake while a sibling binding remains pending until %s', async finish => {
+  it.each(['completion', 'shutdown', 'late retry'] as const)('delivers a later collection wake through activation while a sibling binding remains pending until %s', async finish => {
     vi.useFakeTimers();
     const generation = new AbortController();
     const state = new MemoryCollection();
@@ -5180,14 +5180,34 @@ describe('Channels outward-delivery supervisor', () => {
         scannedThroughSeq: hasAnswer ? 1 : 0,
         nextCursor: hasAnswer ? '1' : '0', hasMore: false,
         items: hasAnswer && request.cursor !== '1' ? [{ kind: 'assistantText',
-          sessionId: request.sessionId, seq: 1, itemId: 'answer', turnId: 'turn', final: 'completed', text: 'Answer', consumedInputs: [] }] : [] };
+          sessionId: request.sessionId, seq: 1, itemId: 'answer', turnId: 'turn', final: 'completed',
+          text: `Answer from ${request.sessionId}`, consumedInputs: [] }] : [] };
     });
-    const deliver = vi.fn(async () => ({ result: { kind: 'delivered', providerMessageIds: ['answer'] }, executionOrigin: providerTransportOrigin }));
-    const supervisor = createConversationOutwardDeliverySupervisor();
-    const running = supervisor.run({ ...backgroundContext({ state, deliveries, execute,
+    const deliveredTexts: string[] = [];
+    const deliver = vi.fn(async (_operation: unknown, request: unknown) => {
+      const delivery = ConversationDeliveryInputV1Schema.parse(request);
+      deliveredTexts.push(delivery.content.text);
+      return { result: { kind: 'delivered', providerMessageIds: [delivery.content.text] }, executionOrigin: providerTransportOrigin };
+    });
+    const context = { ...backgroundContext({ state, deliveries, execute,
       executeAdmittedTargetedOperationWithExecutionOrigin: deliver,
       watchSession: (listener, sessionId) => { changed.set(sessionId, listener); return { dispose() { changed.delete(sessionId); } }; },
-    }), signal: generation.signal });
+    }), signal: generation.signal };
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: context.services });
+    const runner = activation.registration('backgroundServices', 'outward-delivery-supervisor');
+    if (!runner) throw new Error('Expected registered outward supervisor');
+    const running = runner(context);
+    const storedReplies = (bindingId: string) => [...deliveries.rows.values()]
+      .filter(row => row.value['binding-id'] === bindingId).map(row => row.value.payload);
+    const expectDeliveredReply = (bindingId: string, sessionId: string) => {
+      expect(storedReplies(bindingId)).toEqual([expect.objectContaining({
+        state: 'delivered', source: { kind: 'sessionProjection', sessionId, semanticItemId: 'answer' },
+        providerMessageIds: [`Answer from ${sessionId}`],
+      })]);
+      expect(state.rows.get(`projection-frontier:${bindingId}`)?.value.payload).toMatchObject({
+        transcriptCursor: '1', lastScannedSeq: 1,
+      });
+    };
     try {
       await vi.advanceTimersByTimeAsync(0);
       expect(changed.has('session-2')).toBe(true);
@@ -5199,9 +5219,13 @@ describe('Channels outward-delivery supervisor', () => {
         await state.put({ ...current.value, 'updated-at': 1 }, { expectedRevision: current.revision });
       }
       await vi.advanceTimersByTimeAsync(0);
-      await vi.waitFor(() => expect(deliver).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expectDeliveredReply('binding-2', 'session-2'));
       expect(heldReads).toBe(1);
-      expect(state.rows.get('projection-frontier:binding-2')?.value.payload).toMatchObject({ transcriptCursor: '1' });
+      expect(deliveredTexts).toEqual(['Answer from session-2']);
+      expect(storedReplies('binding-1')).toEqual([]);
+      expect(state.rows.get('projection-frontier:binding-1')?.value.payload).toMatchObject({
+        transcriptCursor: null, lastScannedSeq: 0,
+      });
       siblingAnswer = true;
       if (finish !== 'late retry') changed.get('session-1')?.();
       await vi.advanceTimersByTimeAsync(0);
@@ -5214,15 +5238,18 @@ describe('Channels outward-delivery supervisor', () => {
         expect(heldReads).toBe(1);
         await vi.advanceTimersByTimeAsync(1);
         expect(heldReads).toBe(2);
-        await vi.waitFor(() => expect(deliver).toHaveBeenCalledTimes(2));
+        await vi.waitFor(() => expectDeliveredReply('binding-1', 'session-1'));
+        expectDeliveredReply('binding-2', 'session-2');
+        expect(deliveredTexts).toEqual(['Answer from session-2', 'Answer from session-1']);
         return;
       }
       if (finish === 'completion') {
         releaseHeld();
         await vi.advanceTimersByTimeAsync(0);
         expect(heldReads).toBe(2);
-        await vi.waitFor(() => expect(deliver).toHaveBeenCalledTimes(2));
-        expect(state.rows.get('projection-frontier:binding-1')?.value.payload).toMatchObject({ transcriptCursor: '1' });
+        await vi.waitFor(() => expectDeliveredReply('binding-1', 'session-1'));
+        expectDeliveredReply('binding-2', 'session-2');
+        expect(deliveredTexts).toEqual(['Answer from session-2', 'Answer from session-1']);
         return;
       }
       let stopped = false;
@@ -5231,7 +5258,9 @@ describe('Channels outward-delivery supervisor', () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(stopped).toBe(false);
     } finally {
-      releaseHeld(); generation.abort(); await running; await supervisor.dispose(); vi.useRealTimers();
+      releaseHeld(); generation.abort(); await running; await activation.dispose();
+      expect(changed.size).toBe(0);
+      vi.useRealTimers();
     }
   });
 

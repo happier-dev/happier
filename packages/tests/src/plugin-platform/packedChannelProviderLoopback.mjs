@@ -110,6 +110,11 @@ export async function startPackedChannelProviderLoopback() {
       caCertificatePath: tlsFixture.caCertificatePath,
       observerSocketCount: () => observerSockets.size,
       receivedFrameKinds: () => [...receivedFrameKinds],
+      // Native vendor events let source-composed journeys reuse this genuine
+      // network boundary without building or installing an archive.
+      sendProviderEvent: (event) => {
+        for (const socket of observerSockets) socket.send(JSON.stringify(event));
+      },
       sendObservation: () => {
         for (const socket of observerSockets) {
           socket.send(JSON.stringify({

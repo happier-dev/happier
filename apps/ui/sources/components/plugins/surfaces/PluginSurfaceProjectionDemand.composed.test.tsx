@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { createRegistryHostV1, createPluginRegistrySourceDescriptorV1, projectPluginRegistrySourceDeclarationV1, RegistryFetchRequestV1Schema } from '@happier-dev/protocol/registries';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
+import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import { PLUGIN_MANIFEST } from '../../../../../../packages/plugins/deployment-templates/src/manifest';
+import { CHANNELS_UI, PLUGIN_MANIFEST as CHANNELS_MANIFEST } from '../../../../../../packages/plugins/channels/src/manifest';
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { NewAppScreen } from '@/components/projects/starters/NewAppScreen';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -38,6 +40,10 @@ import { listStoreKindContributions } from '@/components/store/catalog/storeKind
 import { projectPluginStoreKindDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/storeKinds';
 import { PluginSurfaceProjectionDemand } from './PluginSurfaceProjectionDemand';
 import { usePluginSurfaceExecutionOrigin } from './pluginSurfaceExecutionOrigin';
+import { PluginMachineExecutionOriginSelectorView } from '@/components/settings/machines/PluginMachineExecutionOriginSelector';
+import { SettingsCatalogOverviewGroup } from '@/components/settings/SettingsCatalogOverviewGroup';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { t } from '@/text';
 import { InputTypePickerHostProvider } from '@/components/sessions/actions/InputTypePickerHostProvider';
 import { ScmComparisonScopePicker } from '@/components/sessions/files/comparison/ScmComparisonScopePicker';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -332,14 +338,24 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
 });
 
 /** The measured 20-Machine cold fleet; only the Socket and HTTP transports are substituted. */
-async function serveSourceFleet(options: Readonly<{ refuseProjection?: boolean; machineOnly?: boolean }> = {}) {
+async function serveSourceFleet(options: Readonly<{ refuseProjection?: boolean; machineOnly?: boolean;
+    channels?: boolean; inventoryGate?: Promise<void>; projectionGate?: Promise<void> }> = {}) {
     const { PluginMachineExecutionOriginV1Schema } = await import('@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1');
     const accountId = 'source-fleet-account';
     const serverIdentityId = 'srv_source_fleet';
-    const pluginId = 'acme.triage';
-    const machines = Array.from({ length: 20 }, (_, index) => createMachineFixture({ id: `fleet-${String(index).padStart(2, '0')}`, activeAt: 0, storageMode: 'plain' }));
+    const pluginId = options.channels ? CHANNELS_MANIFEST.id : 'acme.triage';
+    const pluginVersion = options.channels ? CHANNELS_MANIFEST.version : '1.0.0';
+    const channelUiEntries = options.channels
+        ? projectPluginPortableUiDeclarationsV1(PluginManifestV2Schema.parse(CHANNELS_MANIFEST)) : {};
+    const machines = Array.from({ length: 20 }, (_, index) => createMachineFixture({ id: `fleet-${String(index).padStart(2, '0')}`,
+        activeAt: options.channels ? Date.now() : 0, storageMode: 'plain' }));
     const rows = machines.map(machine => createPlainMachineRowFixture({ id: machine.id, accountId, machine }));
-    const widget = widgetProjectionEntry({ pluginId, localId: 'inbox', target: 'app' });
+    // The Channels keeper consumes the shipped declaration, through the same
+    // canonical fixture projector as every installed widget host test.
+    const channelWidget = CHANNELS_UI.views.find(view => view.container === 'widget' && view.target.kind === 'app')!;
+    const widget = widgetProjectionEntry(options.channels ? { pluginId, localId: channelWidget.id, target: 'app',
+        title: channelWidget.title.fallback, resources: channelWidget.resources, sizeDeclaration: channelWidget.sizeDeclaration,
+        homeDefault: 'available' } : { pluginId, localId: 'inbox', target: 'app' });
     const projectionsByMachineId = new Map<string, ReturnType<typeof PluginProjectionV2Schema.parse>>();
     const rememberProjection = (id: string, projection: ReturnType<typeof PluginProjectionV2Schema.parse>) => {
         projectionsByMachineId.set(id, projection);
@@ -353,16 +369,18 @@ async function serveSourceFleet(options: Readonly<{ refuseProjection?: boolean; 
         return [machine.id, buildDeferredDaemonProjectionSections({ protocolVersion: 1,
             projectionDigest: machine.id.padEnd(64, '0').slice(0, 64).replace(/[^0-9a-f]/g, 'a'),
             projection: rememberProjection(machine.id, PluginProjectionV2Schema.parse({ v: 2, generation: 7,
-                installedPackagesById: { [pluginId]: { id: pluginId, displayName: `Triage on ${machine.id}`, version: '1.0.0',
+                installedPackagesById: { [pluginId]: { id: pluginId, displayName: options.channels ? CHANNELS_MANIFEST.displayName : `Triage on ${machine.id}`, version: pluginVersion,
                     enabled: true, source: { kind: 'localPath', locator: `/src/${machine.id}/triage` }, occurrenceId: widget.occurrenceId, executionOrigin, sourceCustody } },
-                familiesById: { ...(options.machineOnly ? { connectedAccounts: { family: 'connectedAccounts', entriesById: {
+                familiesById: options.channels ? { pluginUi: { family: 'pluginUi', entriesById: Object.fromEntries(
+                    Object.entries(channelUiEntries).map(([id, entry]) => [id, { ...entry, occurrenceId: widget.occurrenceId, executionOrigin }]),
+                ) } } : { ...(options.machineOnly ? { connectedAccounts: { family: 'connectedAccounts', entriesById: {
                     [`${pluginId}/source`]: { id: 'source', serviceId: 'source', pluginId,
                         title: 'Machine-only source', provenance: 'external', sourceKind: 'installed',
                         authentication: { defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', title: 'Source credentials',
                             outcomeReconciliation: 'none', fields: [] }] }, capabilities: [],
                         availability: { state: 'available', reason: 'resolved' }, diagnostics: [] },
                 } } } : {}), pluginUi: { family: 'pluginUi', entriesById: { [widget.id]: { ...widget, executionOrigin,
-                    title: `Inbox on ${machine.id}` } } }, inputTypes: { family: 'inputTypes', entriesById: {
+                    title: options.channels ? channelWidget.title.fallback : `Inbox on ${machine.id}` } } }, inputTypes: { family: 'inputTypes', entriesById: {
                     [`${pluginId}/comparison`]: { id: `${pluginId}/comparison`, pluginId, pluginVersion: '1.0.0',
                         occurrenceId: widget.occurrenceId, executionOrigin,
                         definition: { id: 'comparison', title: 'Pull request', semantic: 'scmPullRequestComparison',
@@ -395,6 +413,7 @@ async function serveSourceFleet(options: Readonly<{ refuseProjection?: boolean; 
             }
             requestsByMachineId.set(machineId!, (requestsByMachineId.get(machineId!) ?? 0) + 1);
             if (options.refuseProjection) return { ok: false, error: 'Daemon method unavailable', errorCode: 'RPC_METHOD_NOT_FOUND' };
+            await options.projectionGate;
             const content = { mode: 'plain' as const };
             const decoded = await socketRpcCodec.decodeRequestParams(content, packet.params, packet.method);
             const request = DaemonContributionRegistryProjectionDescribeRequestSchema.parse(decoded.params);
@@ -410,13 +429,15 @@ async function serveSourceFleet(options: Readonly<{ refuseProjection?: boolean; 
         });
     });
     const materializations = machines.map(machine => PluginMachineMaterializationV1Schema.parse({ serverIdentityId, machineId: machine.id,
-        materializationId: `triage-${machine.id}`, pluginId, version: '1.0.0', sourceClass: 'localPath',
+        materializationId: `triage-${machine.id}`, pluginId, version: pluginVersion, sourceClass: 'localPath',
         portableRelease: false, uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: 1 }));
     const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://source-fleet.test',
-        serverIdentityId, accountId, accountMode: 'plain' }], route: request => {
-        if (request.path === '/v1/machines') return Response.json(rows);
-        if (request.path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(request.body,
-            id => rows.find(row => row.id === id) ?? null);
+        serverIdentityId, accountId, accountMode: 'plain' }], route: async request => {
+        if (request.path === '/v1/machines' || request.path === '/v1/machines/read-batch') {
+            await options.inventoryGate;
+            return request.path === '/v1/machines' ? Response.json(rows)
+                : createMachineReadBatchResponseFixture(request.body, id => rows.find(row => row.id === id) ?? null);
+        }
         if (request.path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'])
             return Response.json(PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse({ availabilityCursor: 1,
                 snapshots: (options.machineOnly ? [] : materializations).map(materialization => ({ serverIdentityId, machineId: materialization.machineId,
@@ -428,7 +449,7 @@ async function serveSourceFleet(options: Readonly<{ refuseProjection?: boolean; 
         return undefined;
     } });
     return { accountId, pluginId, machines, home, sectionReadsByMachineId, requestsByMachineId, manifestReadsByMachineId,
-        projectionsByMachineId, deferredByMachineId };
+        projectionsByMachineId, deferredByMachineId, widget };
 }
 
 it('discovers a Machine-only source from the presented Connect target with no Account installation census', async () => {
@@ -514,8 +535,8 @@ it('asks only the presented origin for packages and UI in a cold 20-Machine sour
     }
 });
 
-it('refreshes a restored stale origin when its surface is presented after a cold reload', async () => {
-    const { accountId, pluginId, machines, home, requestsByMachineId, manifestReadsByMachineId } = await serveSourceFleet({ machineOnly: true });
+it('repopulates the shipped Channels Settings catalog from a restored stale origin after a cold reload', async () => {
+    const { accountId, pluginId, machines, home, requestsByMachineId, manifestReadsByMachineId } = await serveSourceFleet({ machineOnly: true, channels: true });
     let tree: Awaited<ReturnType<typeof renderWithAppProviders>> | undefined;
     try {
         await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
@@ -543,7 +564,8 @@ it('refreshes a restored stale origin when its surface is presented after a cold
             const read = React.useCallback(() => readCurrentAppShellPluginUiExecutionOriginCandidates(pluginId), []);
             facts = React.useSyncExternalStore(subscribeCommittedAppShellPluginUiProjection, read, read);
             current = useAppShellPluginUiProjection();
-            return null;
+            const router = useRouter();
+            return <SettingsCatalogOverviewGroup groupId="groupSessionsBehavior" router={router} />;
         }
         function Presented({ visible }: Readonly<{ visible: boolean }>) {
             return <AppShellPluginUiProjectionProvider>
@@ -567,13 +589,74 @@ it('refreshes a restored stale origin when its surface is presented after a cold
             expect(facts?.sourceCandidates[0]?.validation).toEqual({ kind: 'admitted' });
             expect(readCachedDaemonMergedProjectionCacheEntry({ ...target, sections: [] })
                 ?.deferredProjection?.loadedSections).toContain('familiesById.pluginUi');
-            expect(readWidgetDescriptor(current?.pluginUiProjection, { pluginId, localId: 'inbox' }))
-                .not.toBeNull();
+            expect(tree!.tree.root.findAll(node => typeof node.props.testID === 'string'
+                && node.props.testID.startsWith('settings-plugin-page-item.') && node.props.title === 'Channels').length)
+                .toBeGreaterThan(0);
+            expect(Object.values(current?.pluginUiProjection?.settingsPagesById ?? {}))
+                .toContainEqual(expect.objectContaining({ pluginId }));
         });
         await flushHookEffects({ cycles: 3 });
         expect([...requestsByMachineId.keys()]).toEqual([target.machineId]);
         expect(manifestReadsByMachineId.get(target.machineId)).toBe(1);
     } finally {
+        if (tree) await act(async () => tree.unmount());
+        await home.dispose();
+    }
+});
+
+it('keeps Channels pending through held inventory HTTP until named origins populate the catalog', async () => {
+    let releaseInventory!: () => void;
+    const inventoryGate = new Promise<void>(resolve => { releaseInventory = resolve; });
+    let releaseProjection!: () => void;
+    const projectionGate = new Promise<void>(resolve => { releaseProjection = resolve; });
+    const { accountId, pluginId, machines, home, requestsByMachineId } = await serveSourceFleet({ channels: true,
+        inventoryGate, projectionGate });
+    let tree: Awaited<ReturnType<typeof renderWithAppProviders>> | undefined;
+    let execution: ReturnType<typeof usePluginSurfaceExecutionOrigin> | undefined;
+    try {
+        const lifetime = captureActiveServerAccountScopeLifetime()!;
+        const { sync } = await import('@/sync/sync');
+        await sync.refreshPluginAccountAvailability();
+        function PresentedChannels() {
+            const projection = useAppShellPluginUiProjection();
+            execution = usePluginSurfaceExecutionOrigin({ pluginId, projection: projection.pluginUiProjection,
+                enabled: true, includeMachineCandidates: true });
+            const router = useRouter();
+            return <>
+                <PluginMachineExecutionOriginSelectorView pluginId={pluginId} selection={execution.selection}
+                    machineCandidates={execution.selection.machineCandidates} testIDPrefix="channels-cold-origin" />
+                <SettingsCatalogOverviewGroup groupId="groupSessionsBehavior" router={router} />
+            </>;
+        }
+        tree = await renderWithAppProviders(<AppShellPluginUiProjectionProvider>
+            <PluginSurfaceProjectionDemand pluginId={pluginId} accountScope={lifetime.scope} enabled />
+            <PresentedChannels />
+        </AppShellPluginUiProjectionProvider>);
+        await flushHookEffects({ cycles: 3 });
+        const originRow = () => tree!.tree.root.findAllByProps({ testID: 'channels-cold-origin.current' })[0]!;
+        await waitForHomeGovernance(() => expect(home.httpRequests).toContainEqual(expect.objectContaining({ path: '/v1/machines' })));
+        expect(originRow().props.title).toBe(t('common.loading'));
+        expect(execution?.loading).toBe(true);
+        releaseInventory();
+        await waitForHomeGovernance(() => expect(storage.getState().machineListByServerId[home.homes.home!.id]).toHaveLength(machines.length));
+        observeMachinePresenceForTest({ serverId: home.homes.home!.id, accountId }, machines.map(machine => machine.id));
+        await waitForHomeGovernance(() => expect(requestsByMachineId.size).toBeGreaterThan(0));
+        await flushHookEffects({ cycles: 3 });
+        expect(originRow().props.title).toBe(t('common.loading'));
+        expect(execution?.loading).toBe(true);
+        releaseProjection();
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(execution?.loading).toBe(false);
+            expect(execution?.selection.state.kind).toBe('selected');
+            expect(originRow().props.title).toContain('tester.local');
+            expect(tree!.tree.root.findAll(node => typeof node.props.testID === 'string'
+                && node.props.testID.startsWith('settings-plugin-page-item.') && node.props.title === 'Channels').length)
+                .toBeGreaterThan(0);
+        });
+    } finally {
+        releaseInventory();
+        releaseProjection();
         if (tree) await act(async () => tree.unmount());
         await home.dispose();
     }

@@ -1,3 +1,5 @@
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+
 export type PackedChannelProviderLoopback = Readonly<{
   origin: string;
   socketUrl: string;
@@ -6,6 +8,7 @@ export type PackedChannelProviderLoopback = Readonly<{
   observerSocketCount(): number;
   receivedFrameKinds(): readonly string[];
   sendObservation(): void;
+  sendProviderEvent(event: JsonValue): void;
   sendHistoryGap(): void;
   closeObserverSockets(): void;
   waitForObserverSocketCount(

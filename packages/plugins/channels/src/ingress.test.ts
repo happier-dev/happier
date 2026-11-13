@@ -1,4 +1,7 @@
 import { readFile } from 'node:fs/promises';
+import { once } from 'node:events';
+import { WebSocket } from 'ws';
+import { startPackedChannelProviderLoopback } from '../../../tests/src/plugin-platform/packedChannelProviderLoopback.mjs';
 import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import { arePluginMachineExecutionOriginsEqual, definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import { arePluginMachineExecutionRoutingsEqual, getPluginMachineExecutionRouting, type PluginMachineExecutionOriginV1, type PluginMachineExecutionRoutingV1 } from '@happier-dev/plugin-sdk/actions';
@@ -92,6 +95,7 @@ import { deliverTelegramMessage, pollTelegramObservations } from '../../channel-
 import { parseDiscordMessageDispatch } from '../../channel-discord/src/discordMessage.js';
 import { mapDiscordMessageToSocketIngress } from '../../channel-discord/src/discordObservation.js';
 import { createDiscordIngressScheduler } from '../../channel-discord/src/discordIngressScheduler.js';
+import { mapSlackEventToIngress } from '../../channel-slack/src/slackObservation.js';
 import { createConversationPairingManager } from './pairing.js';
 import { createConversationPairingResourceRuntime } from './pairingResource.js';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
@@ -1575,9 +1579,31 @@ describe('thread router admission', () => {
     let pairedRouterId = '';
     const sessionsByCreationKey = new Map<string, string>();
     let createdSessions = 0;
+    const permissionSettlements: JsonValue[] = [];
+    const stoppedSessions: JsonValue[] = [];
+    let permissionNumber = 1;
     let nextTelegramMessage: JsonValue | null = null;
-    const harness = createIngressHarness({ connection, availableSessionIds: ['session-2'],
-      execute: (actionId, input) => {
+    const harness = createIngressHarness({ connection, availableSessionIds: ['session-2', 'session-3'],
+      execute: (actionId, input): JsonValue => {
+        if (actionId === 'session.transcript.get') {
+          const sessionId = record(input).sessionId;
+          if (typeof sessionId !== 'string') throw new Error('Expected the requested Session identity');
+          return { ok: true, projection: 'externalShareableV1', sessionId, items: [], scannedThroughSeq: 0, hasMore: false };
+        }
+        if (actionId === 'session.permission.remote.pending.list') return { requests: [pendingPermissionRequest({
+          requestId: `request-${permissionNumber}`, turnId: `turn-${permissionNumber}`,
+          createdAtMs: permissionNumber, allowedScopes: ['request'],
+        })], truncated: false, nextCursor: null };
+        if (actionId === 'session.permission.remote.respond') {
+          const decision = record(input).decision;
+          if (decision !== 'allow' && decision !== 'deny') throw new Error('Expected permission decision');
+          permissionSettlements.push(input);
+          const result = { status: 'applied', settlementId: `settlement-${permissionNumber}`,
+            requestId: `request-${permissionNumber}`, decision, effect: { kind: decision === 'allow' ? 'allowOnce' : 'deny' } };
+          permissionNumber += 1;
+          return result;
+        }
+        if (actionId === 'session.turn.cancel') { stoppedSessions.push(input); return { requested: true }; }
         if (actionId === 'session.spawn_new') {
           expect(input).toMatchObject({
             creationKey: `channel-thread:${pairedRouterId}:${freshThreadId}`,
@@ -1690,15 +1716,34 @@ describe('thread router admission', () => {
       } },
     });
     let discordSourceKit: Awaited<ReturnType<typeof createPluginTestkit>> | null = null;
+    const loopback = await startPackedChannelProviderLoopback();
+    const providerSocket = new WebSocket(loopback.socketUrl, ['channels-fixture-v1'], {
+      ca: await readFile(loopback.caCertificatePath),
+    });
+    await once(providerSocket, 'open');
+    providerSocket.send(JSON.stringify({ kind: 'subscribe', connectionId: 'connection-1' }));
+    await loopback.waitForObserverSocketCount(1, 'paired native provider journey');
+    const overNetwork = async (event: JsonValue): Promise<JsonValue> => {
+      const received = once(providerSocket, 'message');
+      loopback.sendProviderEvent(event);
+      const [wire] = await received;
+      // The real provider parser below validates this external JSON.
+      const decoded: JsonValue = JSON.parse(wire.toString());
+      return decoded;
+    };
     const deliver = async (text: string, threadId: number | null, senderId = '42') => {
       messageNumber += 1;
       if (provider === 'telegram') {
-        nextTelegramMessage = { update_id: 9000 + messageNumber, message: {
+        nextTelegramMessage = await overNetwork({ update_id: 9000 + messageNumber, message: {
           message_id: messageNumber, message_thread_id: threadId, is_topic_message: threadId !== null,
           date: Math.floor(Date.now() / 1000), chat: { id: 100, type: 'supergroup', title: 'Forum', is_forum: true },
-          from: { id: Number(senderId), is_bot: false, first_name: 'Ada' }, text,
-          ...(text.startsWith('@happier_bot') ? { entities: [{ type: 'mention', offset: 0, length: 12 }] } : {}),
-        } };
+          from: { id: Number(senderId), is_bot: false, first_name: 'Ada' },
+          ...(text.includes('follow-up') ? { caption: text,
+            caption_entities: [{ type: 'mention', offset: 0, length: 12 }],
+            document: { file_id: 'fixture-file', file_unique_id: 'fixture-file-unique',
+              file_name: 'screen.png', mime_type: 'image/png', file_size: 4 } } : { text,
+              ...(text.startsWith('@happier_bot') ? { entities: [{ type: 'mention', offset: 0, length: 12 }] } : {}) }),
+        } });
         await runConversationCheckpointedPollForInvocation({ connectionId: 'connection-1', waitMs: 0 }, context, manager);
       } else {
         if (discordSourceKit === null) throw new Error('Expected the authenticated Discord provider Action source.');
@@ -1709,10 +1754,12 @@ describe('thread router admission', () => {
             ? { kind: 'shared', channelId: 'parent-1' }
             : { kind: 'thread', channelId: `thread-${threadId}`, parentChannelId: 'parent-1' },
           // Discord withholds unmentioned guild content unless IDENTIFY requested Message Content.
-          payload: { id: String(messageNumber), timestamp: new Date().toISOString(),
+          payload: await overNetwork({ id: String(messageNumber), timestamp: new Date().toISOString(),
             content: messageContentIntentEnabled || text.startsWith('<@12345>') ? text : '',
-            type: 0, author: { id: senderId, bot: false },
-            mentions: text.startsWith('<@12345>') ? [{ id: '12345' }] : [] },
+            type: 0, author: { id: senderId, bot: false, global_name: 'Ada' },
+            ...(text.includes('follow-up') ? { attachments: [{ id: '123', filename: 'screen.png',
+              content_type: 'image/png', size: 4, url: 'https://cdn.discordapp.com/attachments/fixture/screen.png' }] } : {}),
+            mentions: text.startsWith('<@12345>') ? [{ id: '12345' }] : [] }),
           context: { botUserId: '12345', applicationId: 'application-1', botRoleIds: [], messageContentIntentEnabled },
         });
         const normalized = mapDiscordMessageToSocketIngress({ parsed });
@@ -1823,24 +1870,63 @@ describe('thread router admission', () => {
         inputMode: record(readRouter().value.payload).inputMode,
       });
       expect(createdSessions).toBe(provider === 'telegram' ? 0 : 1);
+      const firstInput = sentUserTextRequest(harness.send.mock.calls[0]?.[0]);
+      expect(firstInput.source).toMatchObject({ externalActor: { displayNameSnapshot: 'Ada' } });
+      expect(sentUserTextRequest(harness.send.mock.calls[1]?.[0]).attachments).toEqual([expect.objectContaining({
+        attachmentLocalId: 'channel-file', value: expect.objectContaining({
+          value: expect.objectContaining({ descriptor: expect.objectContaining({ name: 'screen.png', mediaType: 'image/png' }) }),
+        }),
+      })]);
       expect(harness.execute.mock.calls.filter(([action]) => action === 'session.spawn_new')).toHaveLength(1);
       expect(harness.send.mock.calls.map(([request]) => sentUserTextRequest(request).text))
         .toEqual(provider === 'discord'
           ? ['first topic message', 'follow-up']
           : [`${mention} first topic message`, `${mention} follow-up`]);
+      if (provider === 'discord') {
+        const child = children[0]!;
+        const target = record(record(child.value.payload).target);
+        await kit.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingUpdate, {
+          bindingId: child.rowId, expectedRevision: child.revision,
+          target: { ...target, policy: { ...record(target.policy), approvals: { kind: 'enabled', maximumScope: 'request' } } },
+        }, { surface: 'agent' });
+        await deliver(`${mention} /allow request-1`, 1);
+        await deliver(`${mention} /deny request-2`, 1);
+        expect(permissionSettlements).toEqual([
+          expect.objectContaining({ sessionId: 'session-2', requestId: 'request-1', decision: 'allow', turnId: 'turn-1' }),
+          expect.objectContaining({ sessionId: 'session-2', requestId: 'request-2', decision: 'deny', turnId: 'turn-2' }),
+        ]);
+        const current = harness.rows.get(child.rowId)!;
+        await kit.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingUpdate, {
+          bindingId: child.rowId, expectedRevision: current.revision,
+          target: { ...record(record(current.value.payload).target), sessionId: 'session-3' },
+        }, { surface: 'agent' });
+        await deliver(`${mention} retargeted input`, 1);
+        await deliver(`${mention} /stop`, 1);
+        expect(stoppedSessions).toEqual([{ sessionId: 'session-3' }]);
+        expect([...harness.rows.values()].filter(row => row.value['record-kind'] === 'ingress-obligation'
+          && record(row.value.payload).disposition === 'approvalConsumed')).toHaveLength(2);
+        expect([...harness.rows.values()].filter(row => row.value['record-kind'] === 'ingress-obligation'
+          && record(row.value.payload).disposition === 'admitted')).toEqual(expect.arrayContaining([
+            expect.objectContaining({ value: expect.objectContaining({ payload: expect.objectContaining({
+              sessionInput: expect.objectContaining({ sessionId: 'session-3' }), lifecycle: expect.objectContaining({ phase: 'terminal' }),
+            }) }) }),
+          ]));
+      }
       await deliver(`${mention} unknown sender`, provider === 'telegram' ? 9 : 2, '99');
       await deliver(`${mention} unknown child sender`, provider === 'telegram' ? 8 : 1, '99');
       await kit.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingUpdate,
         { bindingId: routerId, expectedRevision: readRouter().revision, enabled: false }, { surface: 'agent' });
       await deliver(`${mention} disabled child`, provider === 'telegram' ? 8 : 1);
       await deliver(`${mention} disabled new thread`, provider === 'telegram' ? 10 : 3);
-      expect(harness.send).toHaveBeenCalledTimes(2);
+      expect(harness.send).toHaveBeenCalledTimes(provider === 'discord' ? 3 : 2);
       expect(harness.execute.mock.calls.filter(([action]) => action === 'session.spawn_new')).toHaveLength(1);
       expect([...harness.rows.values()].filter(row => record(row.value.payload).parentBindingId === routerId)).toHaveLength(1);
     } finally {
       await discordSourceKit?.dispose();
       await kit.dispose();
       manager.dispose();
+      providerSocket.terminate();
+      await loopback.stop();
     }
   });
 
@@ -2790,7 +2876,7 @@ describe('Conversation provider observation ingress', () => {
     const heldPost = new Promise<void>(resolve => { releasePost = resolve; });
     let postStarted!: () => void;
     const started = new Promise<void>(resolve => { postStarted = resolve; });
-    const harness = createIngressHarness({ connection: socketChannelConnection(), execute: async actionId => {
+    const harness = createIngressHarness({ connection: socketChannelConnection(), execute: async (actionId): Promise<JsonValue> => {
       if (actionId === 'session.turn.cancel') return { requested: true };
       if (actionId === 'discussion.read') return { v: 1, serverId: 'home-1', discussionId: 'discussion-1', messages: [],
         hasMoreOlder: false, messageSeq: 0, incomplete: false };
@@ -2819,12 +2905,15 @@ describe('Conversation provider observation ingress', () => {
     };
     const context: BackgroundServiceContext = { ...providerContext, surface: 'background', session: undefined };
     const scheduler = createDiscordIngressScheduler();
-    const deliver = (id: string, text: string) => {
+    const deliver = async (id: string, text: string) => {
+      const payload = { id, timestamp: new Date().toISOString(),
+        author: { id: '42', bot: false, global_name: 'Ada' },
+        mentions: [{ id: 'bot-1' }], content: `<@bot-1> ${text}`,
+      };
       const parsed = parseDiscordMessageDispatch({ event: 'MESSAGE_CREATE',
         channel: { channelId: 'fixture-channel', kind: 'thread', parentChannelId: 'parent' },
         context: { applicationId: 'app-1', botUserId: 'bot-1', botRoleIds: [], messageContentIntentEnabled: false },
-        payload: { id, timestamp: new Date().toISOString(), author: { id: '42', bot: false },
-          mentions: [{ id: 'bot-1' }], content: `<@bot-1> ${text}` },
+        payload,
       });
       if (parsed.kind !== 'message') throw new Error('Expected a Discord message');
       const normalized = mapDiscordMessageToSocketIngress({ parsed });
@@ -2853,6 +2942,12 @@ describe('Conversation provider observation ingress', () => {
       await deliver('follow-up', 'Session input');
       await deliver('stop', '/stop');
       expect(harness.send.mock.calls.map(([request]) => sentUserTextRequest(request).text)).toEqual(['Session input']);
+      const admitted = sentUserTextRequest(harness.send.mock.calls[0]?.[0]);
+      expect(admitted.source).toMatchObject({ externalActor: { displayNameSnapshot: 'Ada' } });
+      const storedInput = [...state.rows.values()].find(row => row.value['record-kind'] === 'ingress-obligation'
+        && record(row.value.payload).sessionInput !== null && record(row.value.payload).disposition === 'admitted');
+      expect(storedInput?.value.payload).toMatchObject({ lifecycle: { phase: 'terminal' },
+        sessionInput: { sessionId: 'session-1', localId: 'pending-1' } });
       expect(harness.execute.mock.calls.filter(([actionId]) => actionId === 'session.turn.cancel'))
         .toEqual([['session.turn.cancel', { sessionId: 'session-1' }]]);
       expect(state.rows.get(original.rowId)).toEqual(attempting);
@@ -2866,6 +2961,107 @@ describe('Conversation provider observation ingress', () => {
       generation.abort();
       await supervisor.dispose();
       await running;
+    }
+  });
+
+  it('ingests native Slack files, consumes allow then deny, and cancels the retargeted Session', async () => {
+    const identity = { teamId: 'T1', appId: 'A1', botUserId: 'U1', botId: 'B1', label: 'Happier' };
+    const channel = { id: 'C1', isIm: false, isMpim: false, isPrivate: false, isArchived: false, name: 'Engineering' };
+    const settlements: JsonValue[] = [];
+    const cancellations: JsonValue[] = [];
+    let requestNumber = 1;
+    const providerPluginId = 'happier.channel.slack';
+    const harness = createIngressHarness({ connection: createCurrentConversationConnectionFixture({
+      connectionId: 'connection-1', authority: { ...telegramConnectionAuthority, providerPluginId,
+        credentialRef: { service: { pluginId: providerPluginId, localId: 'slack-bot' }, accountId: 'slack-account-1' },
+      }, transport: { kind: 'socket' }, overlapSafety: 'safe', replayContinuity: 'none',
+      outboundTextLimit: { maximum: 4_096, unit: 'utf8Bytes' },
+    }), availableSessionIds: ['session-1', 'session-2'],
+      execute: async (actionId, input): Promise<JsonValue> => {
+        if (actionId === 'session.permission.remote.pending.list') return { requests: [pendingPermissionRequest({
+          requestId: `request-${requestNumber}`, turnId: `turn-${requestNumber}`, createdAtMs: requestNumber,
+          allowedScopes: ['request'],
+        })], truncated: false, nextCursor: null };
+        if (actionId === 'session.permission.remote.respond') {
+          const decision = record(input).decision;
+          if (decision !== 'allow' && decision !== 'deny') throw new Error('Expected a permission decision');
+          const result = { status: 'applied', settlementId: `settlement-${requestNumber}`,
+            requestId: `request-${requestNumber}`, decision, effect: { kind: decision === 'allow' ? 'allowOnce' : 'deny' } };
+          settlements.push(input);
+          requestNumber += 1;
+          return result;
+        }
+        if (actionId === 'session.turn.cancel') { cancellations.push(input); return { requested: true }; }
+        throw new Error(`Unexpected Session boundary Action ${actionId}`);
+      },
+    });
+    const original = harness.rows.get('binding-1')!;
+    harness.rows.set(original.rowId, stateRow({ ...original.value, payload: { ...record(original.value.payload),
+      endpoint: { kind: 'shared', audience: 'shared', id: 'slack:T1:channel:C1', label: 'Engineering' },
+      allowedPrincipalIds: ['slack:T1:user:U2'],
+    } }, original.revision));
+    setBindingApprovalEnabled(harness.rows);
+    const executionOrigin = { ...telegramExecutionOrigin,
+      materializationRef: { ...telegramExecutionOrigin.materializationRef, pluginId: providerPluginId } };
+    const slackContext: PluginInvocationContext = { ...harness.context, caller: {
+      kind: 'plugin', pluginId: providerPluginId,
+      contribution: { id: 'socket-worker', qualifiedId: `${providerPluginId}/background/socket-worker` },
+      occurrenceId: 'slack-native-journey', sourceCustody: { kind: 'development', registeredRootId: 'slack-test' },
+      materialization: executionOrigin.materializationRef, executionOrigin,
+    } };
+    const loopback = await startPackedChannelProviderLoopback();
+    const socket = new WebSocket(loopback.socketUrl, ['channels-fixture-v1'], {
+      ca: await readFile(loopback.caCertificatePath),
+    });
+    await once(socket, 'open');
+    socket.send(JSON.stringify({ kind: 'subscribe', connectionId: 'connection-1' }));
+    await loopback.waitForObserverSocketCount(1, 'Slack native provider journey');
+    let ordinal = 0;
+    const deliver = async (text: string, files = false) => {
+      ordinal += 1;
+      const received = once(socket, 'message');
+      loopback.sendProviderEvent({
+        type: 'event_callback', team_id: 'T1', api_app_id: 'A1', event_id: `Ev${ordinal}`,
+        event: { type: 'app_mention', channel: 'C1', user: 'U2', text: `<@U1> ${text}`,
+          ts: `1700000000.${String(ordinal).padStart(6, '0')}`,
+          ...(files ? { files: [{ id: 'F1', name: 'screen.png', mimetype: 'image/png', size: 4 }] } : {}),
+        },
+      });
+      const [wire] = await received;
+      const payload: unknown = JSON.parse(wire.toString());
+      const normalized = mapSlackEventToIngress({ identity, channel, payload });
+      if (normalized === null) throw new Error('Expected real Slack adapter output');
+      await ingestConversationProviderObservationForInvocation(ConversationProviderObservationIngestInputV1Schema.parse({
+        connectionId: 'connection-1', authorityEpoch: 4, entry: { observation: normalized, eventCandidate: null },
+      }), slackContext);
+    };
+    try {
+      await deliver('Please read this', true);
+      expect(sentUserTextRequest(harness.send.mock.calls[0]?.[0]).attachments).toEqual([
+        expect.objectContaining({ attachmentLocalId: 'channel-file' }),
+      ]);
+      await deliver('/allow request-1');
+      await deliver('/deny request-2');
+      expect(settlements).toEqual([
+        expect.objectContaining({ sessionId: 'session-1', requestId: 'request-1', decision: 'allow', turnId: 'turn-1' }),
+        expect.objectContaining({ sessionId: 'session-1', requestId: 'request-2', decision: 'deny', turnId: 'turn-2' }),
+      ]);
+      supersedeBindingSessionTarget(harness.rows, 'session-2');
+      await deliver('Continue on the new Session');
+      await deliver('/stop');
+      expect(cancellations).toEqual([{ sessionId: 'session-2' }]);
+      expect(harness.send.mock.calls.map(([request]) => sentUserTextRequest(request).text))
+        .toEqual(['Please read this', 'Continue on the new Session']);
+      const obligations = [...harness.rows.values()].filter(row => row.value['record-kind'] === 'ingress-obligation');
+      expect(obligations.filter(row => record(row.value.payload).disposition === 'approvalConsumed')).toHaveLength(2);
+      expect(obligations).toHaveLength(5);
+      for (const row of obligations) {
+        expect(row.value.payload).toMatchObject({ lifecycle: { phase: 'terminal' } });
+        expect(isValidPluginJsonSchemaValue(compilePluginJsonSchema(CHANNEL_STATE_COLLECTION.schema), row.value)).toBe(true);
+      }
+    } finally {
+      socket.terminate();
+      await loopback.stop();
     }
   });
 

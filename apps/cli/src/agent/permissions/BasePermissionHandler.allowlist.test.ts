@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { SESSION_REMOTE_PERMISSION_ACTIVE_GRANTS_MAX } from '@happier-dev/protocol';
 import { SessionPermissionRemotePendingListOutputV1Schema } from '@happier-dev/protocol/sessions/permissions/v1';
 import { createDeferred } from '@/testkit/async/deferred';
+import { createAcpNativePermissionChoices } from '@/agent/acp/permissions/permissionMapping';
 import type { NativePermissionChoiceAnswerV1, NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { BasePermissionHandler, type PermissionResult } from './BasePermissionHandler';
 import { createCliPermissionActionDeps } from '@/session/services/cliPermissionActionDeps';
@@ -5577,20 +5578,82 @@ describe('remote native offered permission admission', () => {
     }
   });
 
-  it.each(['allow', 'deny'] as const)('settles a chat %s using the unique offered request choice and replays it', async decision => {
+  it('settles sequential chat allow then deny against each native offer and replays only its admitted decision', async () => {
+    // The System Record transport is the boundary; offer serialization, pending
+    // ownership, native selection and replay all use the production owners.
+    const rows = new Map<string, PermissionMediationStoredRecord>();
+    const recordStore: PermissionMediationRecordStore = {
+      read: async ({ identity }) => {
+        const stored = rows.get(identity.requestId);
+        return stored ? { status: 'found', stored } : { status: 'absent' };
+      },
+      createExpectedAbsent: async input => {
+        if (rows.has(input.identity.requestId)) return { status: 'conflict' };
+        const stored: PermissionMediationStoredRecord = { ...input, revision: `ssr1.${input.identity.requestId}` };
+        rows.set(input.identity.requestId, stored);
+        return { status: 'created', stored };
+      },
+      list: async () => ({ status: 'ready', records: [...rows.values()], nextCursor: null, hasNext: false }),
+      pruneInactive: async () => ({ status: 'unavailable' }),
+      compareAndSet: async () => ({ status: 'unavailable' }),
+    };
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as any, { mediationRecordStore: recordStore });
+    const sourceAuthority = { kind: 'mediatedExternal', mediatorPluginId: 'happier.channels',
+      sourceRef: 'binding:ops', sourceRevisionOrEpoch: '42', admittedPermissionCeiling: 'default',
+      remoteApprovalMaxScope: 'request' } as const;
+    try {
+      for (const decision of ['allow', 'deny'] as const) {
+        const requestId = `chat-native-${decision}`;
+        const turnId = `turn-${requestId}`;
+        const nativeChoices = createAcpNativePermissionChoices(`requirement-${requestId}`, [
+          { optionId: `run-${requestId}`, name: 'Run once', kind: 'allow_once' },
+          { optionId: `save-${requestId}`, name: 'Save locally', kind: 'allow_always' },
+          { optionId: `stop-${requestId}`, name: 'Stop once', kind: 'reject_once' },
+        ]);
+        const pending = handler.request(requestId, 'Bash', { command: ['bash', '-lc', 'echo sequential'] }, {
+          nativeChoices, causalPermissionContext: { turnId, causalPermissionAuthority: {
+            kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default', sourceAuthority,
+          } },
+        });
+        void pending.catch(() => undefined);
+        expect(session.agentState.requests[requestId]).toMatchObject({ nativeChoices });
+        const response = { sessionId: session.sessionId, turnId, requestId,
+          sourceRef: sourceAuthority.sourceRef, sourceRevisionOrEpoch: sourceAuthority.sourceRevisionOrEpoch,
+          idempotencyKey: `${requestId}-retry`, actor: { namespace: 'discord', principalId: 'person-1' },
+          decision, scope: 'request', mediator: { pluginId: 'happier.channels', contributionLocalId: 'discord' },
+        } as const;
+        const nativeChoice = { requirementId: nativeChoices.requirementId,
+          choiceId: `${decision === 'allow' ? 'run' : 'stop'}-${requestId}` };
+        await expect(handler.respondToMediatedPendingPermission(response)).resolves.toMatchObject({ status: 'applied', decision });
+        await expect(pending).resolves.toMatchObject({ decision: decision === 'allow' ? 'approved' : 'denied', nativeChoice });
+        expect(session.agentState.requests[requestId]).toBeUndefined();
+        expect(session.agentState.completedRequests[requestId]).toMatchObject({
+          status: decision === 'allow' ? 'approved' : 'denied',
+        });
+        expect(rows.get(requestId)?.record).toMatchObject({ nativeChoice });
+        await expect(handler.respondToMediatedPendingPermission(response)).resolves.toMatchObject({ status: 'alreadyApplied' });
+        await expect(handler.respondToMediatedPendingPermission({ ...response,
+          decision: decision === 'allow' ? 'deny' : 'allow',
+        })).resolves.toMatchObject({ status: 'rejected' });
+      }
+    } finally {
+      await handler.reset();
+    }
+  });
+
+  it('preserves an offered native abort when a chat deny settles it', async () => {
     const nativeChoices: NativePermissionChoicesV1 = { ...choices, choices: [...choices.choices,
       { id: 'stop-opaque', label: 'Stop', scope: 'once', decision: 'abort', response: { approved: false, decision: 'abort' } },
     ] };
-    const fixture = startBlockedRemoteSettlement({ requestId: `chat-native-${decision}`, nativeChoices, decision });
+    const fixture = startBlockedRemoteSettlement({ requestId: 'chat-native-abort', nativeChoices, decision: 'deny' });
     const pendingOutcome = fixture.pending.then(() => undefined, () => undefined);
     fixture.releaseRowCreate.resolve();
-    const nativeChoice = { requirementId: choices.requirementId, choiceId: decision === 'allow' ? 'run-opaque' : 'stop-opaque' };
     try {
-      await expect(fixture.remote).resolves.toMatchObject({ status: 'applied', decision });
-      await expect(fixture.pending).resolves.toMatchObject({ decision: decision === 'allow' ? 'approved' : 'abort', nativeChoice });
-      expect(fixture.readStored()?.record).toMatchObject({ nativeChoice });
-      await expect(fixture.handler.respondToMediatedPendingPermission(fixture.response)).resolves.toMatchObject({ status: 'alreadyApplied' });
-      await expect(fixture.handler.respondToMediatedPendingPermission({ ...fixture.response, decision: decision === 'allow' ? 'deny' : 'allow' })).resolves.toMatchObject({ status: 'rejected' });
+      await expect(fixture.remote).resolves.toMatchObject({ status: 'applied', decision: 'deny' });
+      await expect(fixture.pending).resolves.toMatchObject({ decision: 'abort',
+        nativeChoice: { requirementId: choices.requirementId, choiceId: 'stop-opaque' },
+      });
     } finally {
       await fixture.handler.reset();
       await pendingOutcome;

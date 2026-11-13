@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createMachineFixture } from '@/dev/testkit';
+import { publishMachineActivities } from '@/sync/domains/machines/machineActivity';
 import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed, recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
 import { isMachineSelectableForFleet, resolveFleetMachineRejection, resolveFleetReadState, resolveFleetSupplyAgreement } from './fleetUnion';
 
@@ -8,6 +9,7 @@ afterEach(clearMachineRequestReachabilityForTest);
 describe('Administration fleet policy', () => {
     it('admits only current reachable unlocked identities under their exact Home', () => {
         const machine = createMachineFixture({ id: 'fleet-member', active: true, activeAt: Date.now() });
+        publishMachineActivities([{ machine, activity: machine, projections: [] }]);
         const scope = { serverId: 'home-a', accountId: 'account-a' };
         recordMachineRequestFailed({ ...scope, machineId: machine.id });
         expect(isMachineSelectableForFleet(scope, machine)).toBe(false);
@@ -35,6 +37,7 @@ describe('Administration fleet policy', () => {
 
     it('preserves a known transport refusal over stale inventory and restores stale classification after recovery', () => {
         const machine = createMachineFixture({ id: 'retained-source', active: true, activeAt: Date.now() });
+        publishMachineActivities([{ machine, activity: machine, projections: [] }]);
         const scope = { serverId: 'home-a', accountId: 'account-a' };
         const read = (observation: 'stale' | 'live') => resolveFleetMachineRejection({
             serverIdentityId: scope.serverId, machineId: machine.id,

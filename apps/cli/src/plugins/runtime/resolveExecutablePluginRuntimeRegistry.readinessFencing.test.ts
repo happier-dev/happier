@@ -4,10 +4,12 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 
 import { describe, expect, it } from 'vitest';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
+import { buildPluginProjectionV2 } from '@/plugins/projection/registry/projection/v2';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
@@ -207,9 +209,11 @@ describe('executable plugin readiness fencing', () => {
         }
     }, 60_000);
 
-    it('settles a failed readiness participant activation component before returning from the fence', async () => {
-        const fixture = await seedFixture({ activationCleanup: true });
+    it('rebuilds a populated Action catalog after retiring a failed prepared readiness participant', async () => {
+        const fixture = await seedFixture({ activationCleanup: true, settlingBackgroundService: true });
         let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let successor: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let prepared: readonly PluginRuntimeActivationRegistryLease[] = [];
         const runtimeDisposableCalls: string[] = [];
 
         try {
@@ -227,9 +231,9 @@ describe('executable plugin readiness fencing', () => {
                 .find((entry) => entry.pluginId === PLUGIN_ID);
             if (!handler) throw new Error('Expected the activated fixture hook handler');
 
-            const prepared = runtime.retainPreparedActivationRegistryComponents?.() ?? [];
-            expect(prepared.map((lease) => [...lease.pluginIds])).toEqual([[PLUGIN_ID]]);
-            await Promise.all(prepared.map((lease) => lease.release()));
+            const healthy = runtime.retainPreparedActivationRegistryComponents?.() ?? [];
+            expect(healthy.map((lease) => [...lease.pluginIds])).toEqual([[PLUGIN_ID]]);
+            await Promise.all(healthy.map((lease) => lease.release()));
 
             await runtime.recordPluginActivationFailure?.(
                 PLUGIN_ID,
@@ -243,13 +247,33 @@ describe('executable plugin readiness fencing', () => {
             expect(runtime.retainPluginActivationComponent?.(PLUGIN_ID) ?? null).toBeNull();
             // A prepared-candidate rebase must omit the same retired component.
             // Retaining its disposed lease would break catalog recovery as well.
-            expect(runtime.retainPreparedActivationRegistryComponents?.()).toEqual([]);
+            prepared = runtime.retainPreparedActivationRegistryComponents?.() ?? [];
+            expect(prepared).toEqual([]);
+
+            // Recovery must rebuild the failed participant, rather than stop at
+            // "no disposed donor" while leaving the successor catalog empty.
+            successor = await resolveExecutablePluginRuntimeRegistry({
+                happyHomeDir: fixture.happyHomeDir,
+                contributes: inputs.contributes,
+                generationAuthority: inputs.generationAuthority,
+                pluginIds: [PLUGIN_ID],
+                preparedActivationRegistryLeases: prepared,
+            });
+            const catalog = PluginProjectionV2Schema.parse(buildPluginProjectionV2({
+                registry: successor.contributes, generation: 2,
+            }));
+            expect(catalog.actionsById[`${PLUGIN_ID}/status`]).toMatchObject({ pluginId: PLUGIN_ID, title: 'Status' });
+            await expect(executeContributedAction({ runtimeRegistry: successor,
+                actionId: `${PLUGIN_ID}/status`, input: {}, context: { surface: 'cli' },
+            })).resolves.toMatchObject({ matched: true, result: { ok: true, result: { completed: false } } });
 
             await runtime.dispose();
             expect(await readFile(fixture.cleanupMarkerPath, 'utf8')).toBe('cleaned\n');
             expect(runtimeDisposableCalls).toEqual(['disposed']);
             runtime = null;
         } finally {
+            await successor?.dispose();
+            await Promise.all(prepared.map((lease) => lease.release()));
             await runtime?.dispose();
             await rm(fixture.happyHomeDir, { recursive: true, force: true });
             await rm(fixture.pluginRoot, { recursive: true, force: true });
