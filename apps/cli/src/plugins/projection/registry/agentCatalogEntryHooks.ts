@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep, win32 } from 'node:path';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { writeSecureTempTextFileSync } from '@happier-dev/plugin-sdk/fs';
 import { removeHappierTempDirAsync } from '@happier-dev/cli-common/tempDirs';
 import { logger } from '@/ui/logger';
@@ -815,11 +816,18 @@ function applyPreflightCommandEnvironment(
     return Object.freeze(selected);
 }
 
+// Preserve the native owner's typed file refusal through the optional probe
+// projection. Other unavailable discovery retains its existing null result.
+function unavailablePreflightResult(error: unknown): null {
+    if (isPluginError(error) && error.code === 'agent_launch_required_file_unavailable') throw error;
+    return null;
+}
+
 async function withPreparedPreflightCommand<T>(
     command: AgentPreflightSessionControlsCommandV1,
     input: AgentPreflightSessionControlsProbeInputV1 & Readonly<{ bypassCache?: boolean; signal?: AbortSignal }>,
     environment: Readonly<Record<string, string>>,
-    run: (args: readonly string[], env: Readonly<Record<string, string>>, preferredPath?: string) => Promise<T>,
+    run: (args: readonly string[], env: Readonly<Record<string, string>>, preferredPath?: string, requiredFiles?: readonly string[]) => Promise<T>,
     cleanupScope?: PreflightCatalogCleanupScope,
     commandArgsSuffix: readonly string[] = [],
 ): Promise<T> {
@@ -838,6 +846,7 @@ async function withPreparedPreflightCommand<T>(
             throw new TypeError('Invalid prepared preflight executable path');
         }
         const args: string[] = [];
+        const requiredFiles: string[] = [];
         for (const argument of prepared.args) {
             input.signal?.throwIfAborted();
             if (typeof argument === 'string') { args.push(argument); continue; }
@@ -850,6 +859,7 @@ async function withPreparedPreflightCommand<T>(
                 const path = writeSecureTempTextFileSync({ prefix: 'happier-agent-preflight', suffix: argument.suffix, contents: argument.contents });
                 artifacts.push(dirname(path));
                 args.push(path);
+                requiredFiles.push(path);
             } else if (argument.kind === 'environmentPath') {
                 if (Object.keys(argument).some((key) => !['kind', 'key', 'relativePath'].includes(key))
                     || typeof argument.key !== 'string' || !command.environmentKeys?.includes(argument.key)
@@ -869,10 +879,11 @@ async function withPreparedPreflightCommand<T>(
                     throw new TypeError('Preflight environment path escapes its root');
                 }
                 args.push(path);
+                requiredFiles.push(path);
             } else { throw new TypeError('Unknown prepared preflight argument'); }
         }
         input.signal?.throwIfAborted();
-        return await run([...args, ...commandArgsSuffix], selectedToolchain, prepared.preferredPath);
+        return await run([...args, ...commandArgsSuffix], selectedToolchain, prepared.preferredPath, requiredFiles);
     } finally {
         try { await cleanup(); } finally { releaseCleanup?.(); }
     }
@@ -1136,13 +1147,14 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                     assertCurrent();
                     if (command.toolId === undefined) return unavailable();
                     const { environment, exec, input } = await acquireNativeContext();
-                    return await withPreparedPreflightCommand(command, { ...input, bypassCache: probeParams.bypassCache, signal }, environment, async (args, env, preferredPath) => {
+                    return await withPreparedPreflightCommand(command, { ...input, bypassCache: probeParams.bypassCache, signal }, environment, async (args, env, preferredPath, requiredFiles) => {
                         assertCurrent();
                         const resolved = await exec.systemTools.resolve({ toolId: command.toolId!, purpose: `Probe ${params.agentId} Session controls`, cwd: probeParams.cwd, signal, ...(preferredPath ? { preferredPath } : {}) });
                         assertCurrent();
                         const execution = exec.run({
                             executable: resolved.executable,
                             args,
+                            requiredFiles,
                             ...(command.stdin === undefined ? {} : { stdin: new TextEncoder().encode(command.stdin) }),
                             cwd: { root: 'workspace', relativePath: '' },
                             env,
@@ -1161,7 +1173,8 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                             return observed;
                         } finally { releaseCleanup?.(); }
                     }, probeParams.cleanupScope, probeParams.commandArgsSuffix);
-                } catch {
+                } catch (error) {
+                    unavailablePreflightResult(error);
                     logger.info('[agent-preflight] Command unavailable', { agentId: params.agentId, toolId: command.toolId });
                     return unavailable();
                 }
@@ -1174,7 +1187,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                 }
                 assertCurrent();
                 const { environment, exec, input } = await acquireNativeContext();
-                return await withPreparedPreflightCommand(command, { ...input, bypassCache: probeParams.bypassCache, signal }, environment, async (args, env, preferredPath) => {
+                return await withPreparedPreflightCommand(command, { ...input, bypassCache: probeParams.bypassCache, signal }, environment, async (args, env, preferredPath, requiredFiles) => {
                     assertCurrent();
                     const executable = command.toolId !== undefined
                         ? (await exec.systemTools.resolve({ toolId: command.toolId, purpose: `Probe ${params.agentId} Session controls`, cwd: probeParams.cwd, signal, ...(preferredPath ? { preferredPath } : {}) })).executable
@@ -1188,6 +1201,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                         launch: {
                             executable,
                             args,
+                            requiredFiles,
                             cwd: { root: 'workspace', relativePath: '' },
                             env,
                             maxStderrBytes: PREFLIGHT_COMMAND_OUTPUT_MAX_BYTES,
@@ -1240,13 +1254,13 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
             if (typeof mode.launch.cwd === 'string' || mode.launch.cwd?.root !== 'workspace' || mode.launch.cwd.relativePath !== '') throw new Error('Agent preflight managed service must use its scoped working directory');
             if (!params.bindManagedServices) throw new Error('Agent preflight managed service owner is unavailable');
             const { environment, exec, input } = await acquireNativeContext();
-            return await withPreparedPreflightCommand(command, { ...input, bypassCache: probeParams.bypassCache, signal }, environment, async (args, env) => {
+            return await withPreparedPreflightCommand(command, { ...input, bypassCache: probeParams.bypassCache, signal }, environment, async (args, env, _preferredPath, requiredFiles) => {
                 assertCurrent();
                 const services = params.bindManagedServices!({ exec, signal });
                 const service = await services.supervise({
                     ...spec,
                     startupTimeoutMs: probeParams.timeoutMs,
-                    mode: { ...mode, launch: { ...mode.launch, executable: { kind: 'systemTool', id: toolId }, args, env: { ...env, ...mode.launch.env } } },
+                    mode: { ...mode, launch: { ...mode.launch, executable: { kind: 'systemTool', id: toolId }, args, requiredFiles, env: { ...env, ...mode.launch.env } } },
                 }, { signal });
                 const releaseCleanup = await probeParams.cleanupScope?.retain(() => service.dispose());
                 try {
@@ -1392,7 +1406,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
         callback: ((context: Awaited<ReturnType<typeof createContext>>) => Promise<T> | T) | undefined,
         probeParams: PreflightSessionControlsProbeParams,
     ): Promise<T | null> => callback
-        ? withProbeLifetime(probeParams, async (scopedParams) => callback(await createContext(scopedParams))).catch(() => null)
+        ? withProbeLifetime(probeParams, async (scopedParams) => callback(await createContext(scopedParams))).catch(unavailablePreflightResult)
         : Promise.resolve(null);
     return Object.freeze({
         ...(params.resolvePluginSettings ? { resolveProbePluginSettings: params.resolvePluginSettings } : {}),
@@ -1545,7 +1559,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                         return fallback.parseOutput
                             ? await fallback.parseOutput(fallbackResult)
                             : fallbackResult.stdout;
-                    }).catch(() => null),
+                    }).catch(unavailablePreflightResult),
                 }
                 : {}),
             ...(contribution.probeModels

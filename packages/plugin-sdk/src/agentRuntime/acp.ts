@@ -73,6 +73,8 @@ export type AgentAcpRuntimeExtensions = Readonly<{
 
 export type AgentAcpRuntimeOptions = Readonly<{
   transport: PluginAgentAcpTransport;
+  /** Files required by this native launch; checked by the exec materialization owner. */
+  requiredFiles?: readonly string[];
   definition?: AgentAcpRuntimeDefinition;
   extensions?: AgentAcpRuntimeExtensions;
   providerTurnSource?: AgentAcpProviderTurnSourceFactory;

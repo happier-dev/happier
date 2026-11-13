@@ -41,11 +41,12 @@ export const OH_MY_PI_PROVIDER_BINDING_ADAPTER = {
   },
 } satisfies AgentProviderBindingAdapter;
 
-export function ohMyPiProviderLaunchArgs(binding: AgentSessionProviderBinding | undefined): readonly string[] {
-  if (!binding) return [];
+export function ohMyPiProviderLaunch(binding: AgentSessionProviderBinding | undefined): Readonly<{ args: readonly string[]; requiredFiles: readonly string[] }> {
+  if (!binding) return { args: [], requiredFiles: [] };
   if (binding.materialization.kind !== 'configFile') throw new Error('Oh My Pi requires its Provider configuration');
   // The native loader defers this qualified model until extensions register.
-  return ['--extension', join(binding.materialization.rootPath, EXTENSION_PATH), '--model', nativeProviderModelId(binding.model.id)];
+  const extensionPath = join(binding.materialization.rootPath, EXTENSION_PATH);
+  return { args: ['--extension', extensionPath, '--model', nativeProviderModelId(binding.model.id)], requiredFiles: [extensionPath] };
 }
 
 function nativeProviderModelId(modelId: string): string {

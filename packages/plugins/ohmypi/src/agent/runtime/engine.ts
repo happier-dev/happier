@@ -12,7 +12,7 @@ import type {
 import { prepareOhMyPiQualifiedAccounts } from '../auth/services/preparation.js';
 import { OH_MY_PI_SYSTEM_TOOL_ID } from '../systemTool.js';
 import { OH_MY_PI_ACP_COMMAND } from '../preflight/models.js';
-import { ohMyPiProviderLaunchArgs, ohMyPiProviderModelControls } from '../providerBinding.js';
+import { ohMyPiProviderLaunch, ohMyPiProviderModelControls } from '../providerBinding.js';
 
 export {
   ohMyPiExternalSessionsContribution,
@@ -33,16 +33,18 @@ async function openOhMyPiExecutionRun(
     if (prepared.isInvalidated()) {
       throw new Error('Oh My Pi qualified Connected Account launch was invalidated before opening the runtime.');
     }
+    const providerLaunch = ohMyPiProviderLaunch(prepared.request.providerBinding);
     const run = await context.protocols.acp.openExecutionRunV1(
       prepared.request,
       {
+        requiredFiles: providerLaunch.requiredFiles,
         transport: {
           kind: 'stdio',
           executable: {
             kind: 'systemTool',
             id: OH_MY_PI_SYSTEM_TOOL_ID,
           },
-          args: [...OH_MY_PI_ACP_COMMAND.args, ...ohMyPiProviderLaunchArgs(prepared.request.providerBinding)],
+          args: [...OH_MY_PI_ACP_COMMAND.args, ...providerLaunch.args],
         },
         definition: { ...OH_MY_PI_ACP_RUNTIME_DEFINITION, models: ohMyPiProviderModelControls(prepared.request.providerBinding) },
       },
@@ -63,14 +65,16 @@ async function openOhMyPiSession(
     if (prepared.isInvalidated()) {
       throw new Error('Oh My Pi qualified Connected Account launch was invalidated before opening the runtime.');
     }
+    const providerLaunch = ohMyPiProviderLaunch(prepared.request.providerBinding);
     const session = await context.protocols.acp.open(prepared.request, {
+      requiredFiles: providerLaunch.requiredFiles,
       transport: {
         kind: 'stdio',
         executable: {
           kind: 'systemTool',
           id: OH_MY_PI_SYSTEM_TOOL_ID,
         },
-        args: [...OH_MY_PI_ACP_COMMAND.args, ...ohMyPiProviderLaunchArgs(prepared.request.providerBinding)],
+        args: [...OH_MY_PI_ACP_COMMAND.args, ...providerLaunch.args],
       },
       definition: { ...OH_MY_PI_ACP_RUNTIME_DEFINITION, models: ohMyPiProviderModelControls(prepared.request.providerBinding) },
     });

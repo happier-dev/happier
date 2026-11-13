@@ -22,6 +22,10 @@ import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createAgentLaunchObserver, type AgentLaunchObserverBoundaries } from '@happier-dev/plugin-sdk/testing';
 import { createCodexAgentRuntime } from '../../../../../../../packages/plugins/codex/src/agent/runtime/engine';
+import { prepareSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
+import { createOhMyPiAgentRuntime } from '../../../../../../../packages/plugins/ohmypi/src/agent/runtime/engine';
+import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
+import type { AgentExecutionRunRuntimeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createGeminiAgentRuntime } from '../../../../../../../packages/plugins/gemini/src/agent/runtime/factory';
 import { createCustomAcpAgentRuntime } from '../../../../../../../packages/plugins/custom-acp/src/agent/runtime/factory';
 import { createKiloAgentRuntime } from '../../../../../../../packages/plugins/kilo/src/agent/runtime/factory';
@@ -1394,6 +1398,53 @@ function createHistoryDefinition(): AgentAcpRuntimeDefinition {
 }
 
 describe('createPublicAcpSession', () => {
+  it.skipIf(process.platform !== 'linux').each(['create', 'resume', 'executionRun'] as const)(
+    'refuses a host-private Oh My Pi provider extension through the real %s ACP launch', async kind => {
+      await withTempDir('omp-member-provider-', async dir => {
+        const fixture = createFixture(dir, 'default');
+        const resolved = await fixture.resolve();
+        fixture.resolve.mockResolvedValue({ ...resolved, toolId: 'ohmypi-cli' });
+        const mcp = await prepareSessionMcpLocalTransport({ agentUid: process.getuid!(), runtimeRoot: dir });
+        const controller = new AbortController();
+        const exec = createStablePluginExecService({ signal: controller.signal, isOccurrenceCurrent: () => true,
+          resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => dir,
+          requesterIdentity: { kind: 'isolated', separationRequired: false, requester: {
+            serverId: 'home', accountId: 'owner', machineId: 'team-machine', installationId: 'installation' } },
+          agentIsolation: { read: () => ({ enabled: true,
+            status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [dir],
+            localTransport: { agentUid: 2402, agentGid: 2402 },
+            launch: { managedHappierBinaryPath: '/nonexistent/happier', runtimeHome: path.join(dir, 'native-runtime'),
+              selectedEnvironmentKeys: [], selectedMaterials: [], sessionMcpContext: mcp.localContext } }) },
+        });
+        const dependencies = { ...fixture.dependencies, exec };
+        const connectedAccounts = { getBinding: async () => null, materialize: async () => { throw new Error('No selected account'); },
+          watch: (_purpose: unknown, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => void) => {
+            queueMicrotask(() => listener({ kind: 'resync', authorityChanged: false })); return { dispose() {} };
+          } };
+        // Connected Account observation and the executable resolver are system boundaries.
+        // The actual OMP factory, ACP composer and native finalizer remain real.
+        const context = { signal: controller.signal, services: { connectedAccounts }, protocols: { acp: {
+          open: (request: AgentSessionOpenRequest, options: AgentAcpRuntimeOptions) => createPublicAcpSession(request, options, dependencies),
+          openExecutionRunV1: (request: AgentExecutionRunOpenRequest, options: AgentAcpRuntimeOptions) => createPublicAcpExecutionRun(request, options, dependencies),
+        } } } as unknown as AgentSessionRuntimeContext & AgentExecutionRunRuntimeContextV1;
+        const runtime = await createOhMyPiAgentRuntime({ plugin: { id: 'happier.agent.ohmypi', version: '0.0.0' },
+          agent: { id: 'ohmypi' }, signal: controller.signal });
+        const providerBinding = { connectionId: 'gateway', upstream: { protocol: 'openai-responses',
+          normalizedUrl: 'http://127.0.0.1:7777/v1', credential: 'apiKey' as const },
+          model: { id: 'selected-model', name: 'Selected' }, materialization: { v: 1 as const, kind: 'configFile' as const,
+            rootPath: dir, relativePaths: ['provider.mjs'] } };
+        await writeFile(path.join(dir, 'provider.mjs'), 'export default function() {}', { mode: 0o600 });
+        try {
+          const opening = kind === 'executionRun'
+            ? runtime.sessions.executionRunContextV1!.open({ kind: 'create', runId: 'member-run', cwd: dir,
+              profile: { pluginId: 'happier.agent.ohmypi', localId: 'default' }, input: { text: 'Run once' }, providerBinding }, context)
+            : runtime.sessions.open({ ...(kind === 'resume' ? { kind: 'resume', providerSessionId: 'native' } as const : { kind: 'create' } as const),
+              sessionId: 'member-session', cwd: dir, providerBinding }, context);
+          await expect(opening).rejects.toMatchObject({ code: 'agent_launch_required_file_unavailable' });
+        } finally { controller.abort(); await mcp.retire(); }
+      });
+    });
+
   it('preserves the captured standard tool name across sparse updates in public events', async () => {
     await withTempDir('happier-public-acp-standard-tool-', async dir => {
       const fixture = createFixture(dir, 'captured-standard-tool-name');

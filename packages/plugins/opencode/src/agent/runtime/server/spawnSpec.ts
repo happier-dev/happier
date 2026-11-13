@@ -1,4 +1,6 @@
 import type { ManagedServiceSpec } from '@happier-dev/plugin-sdk/managed-services';
+import { OPEN_CODE_REQUEST_AUTH_PROVIDERS } from '../../auth/services/purposes.js';
+import { resolveOpenCodeRequestAuthPluginPath, resolveOpenCodeRequestAuthV2PluginDir, resolveOpenCodeRequestAuthV2PluginSourcePath } from '../../auth/services/requestAuth/assets.js';
 
 import { OPENCODE_SERVER_PASSWORD_ENV_KEY } from './endpoint.js';
 import { buildOpenCodePermissionEnv, resolveOpenCodePermissionConfig } from '../../permissions/policy.js';
@@ -108,6 +110,18 @@ export function buildOpenCodeManagedServerSpawnSpec(params: Readonly<{
   additionalEnv?: Readonly<Record<string, string>>;
   durableLog?: boolean;
 }>): ManagedServiceSpec {
+  const env = buildOpenCodeManagedLaunchEnvironment(params.env, params.permissionMode,
+    params.configParts, params.additionalEnv, params.workspaceWrites);
+  const configHome = env.XDG_CONFIG_HOME;
+  const plugins = env.OPENCODE_CONFIG_CONTENT === undefined ? undefined
+    : readOpenCodeConfigPart(env.OPENCODE_CONFIG_CONTENT).plugins;
+  // Materialization owns these generated plugin paths. Declare the source file
+  // used by the selected native dialect; the native file owner alone admits it.
+  const requiredFiles = configHome && Array.isArray(plugins)
+    ? OPEN_CODE_REQUEST_AUTH_PROVIDERS.filter(provider => plugins.includes(resolveOpenCodeRequestAuthV2PluginDir(configHome, provider)))
+      .map(provider => params.dialect === 'v1' ? resolveOpenCodeRequestAuthPluginPath(configHome, provider)
+        : resolveOpenCodeRequestAuthV2PluginSourcePath(configHome, provider))
+    : [];
   return {
     id: params.id,
     mode: {
@@ -123,13 +137,8 @@ export function buildOpenCodeManagedServerSpawnSpec(params: Readonly<{
           '127.0.0.1',
         ],
         cwd: { root: 'workspace', relativePath: '' },
-        env: buildOpenCodeManagedLaunchEnvironment(
-          params.env,
-          params.permissionMode,
-          params.configParts,
-          params.additionalEnv,
-          params.workspaceWrites,
-        ),
+        env,
+        requiredFiles,
       },
       endpoint: {
         kind: 'assignAndInject',

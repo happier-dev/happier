@@ -682,6 +682,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       // transport resolver also serves readonly session/list and stays passive.
       const finalized = await authorizeResolvedAgentNativeExecLaunchForHost(dependencies.exec, {
         command: launch.command, args: launch.args, cwd: request.cwd,
+        requiredFiles: options.requiredFiles,
         env: stripUnsetEnvironmentVariables(buildScopedProcessEnv({
           baseEnv: process.env, explicitEnv: launch.env, unsetEnvKeys: launch.unsetEnv,
         }), []),
