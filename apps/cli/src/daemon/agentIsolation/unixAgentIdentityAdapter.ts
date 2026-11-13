@@ -24,6 +24,7 @@ export function createUnixAgentIdentityLaunch(input: Readonly<{
   managedHappierBinaryPath: string;
   executable: string;
   args: readonly string[];
+  requiredFiles?: readonly string[];
   cwd: string;
   runtimeHome: string;
   environment: Readonly<Record<string, string | undefined>>;
@@ -47,6 +48,16 @@ export function createUnixAgentIdentityLaunch(input: Readonly<{
     selectedMaterials: input.selectedMaterials.filter(file => file.relativePath !== SESSION_MCP_CONTEXT_RELATIVE_PATH),
   };
   const materialization = input.sessionMcpContext ? withSessionMcpAgentLaunchMaterial(selected, input.sessionMcpContext) : selected;
+  // The native materialization owner decides availability once, before the
+  // RunAs wrapper or Agent starts; host-readable temporary files are insufficient.
+  if (input.requiredFiles?.length) {
+    const selectedPaths = new Set(materialization.selectedMaterials.map(file => join(materialization.runtimeHome, file.relativePath)));
+    if (input.requiredFiles.some(path => !selectedPaths.has(path))) throw new PluginError({
+      code: 'agent_launch_required_file_unavailable',
+      message: 'Required Agent extension or configuration was not materialized for the native launch',
+      retryable: false, details: { phase: 'materialization', reason: 'not_materialized' },
+    });
+  }
   const environment: Record<string, string> = {};
   const selectedEnvironmentKeys = new Set(input.selectedEnvironmentKeys);
   const providerEnvironmentKeys = new Set(input.providerEnvironmentKeys);

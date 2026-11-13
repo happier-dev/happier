@@ -9,6 +9,8 @@ import { authorizePluginExecLaunchForHost, authorizeResolvedAgentNativeExecLaunc
 import { createUnixAgentIdentityLaunch } from '@/daemon/agentIsolation/unixAgentIdentityAdapter';
 import { prepareSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { AgentRuntimeDaemonServiceResponseV1Schema } from './agentRuntimeDaemonServiceProtocol';
+import { buildPiRpcLaunch } from '../../../../../../../packages/plugins/pi/src/agent/runtime/rpc/args';
+import { preparePiHappierToolsExtension } from '../../../../../../../packages/plugins/pi/src/agent/tools/assets';
 import { createCodexNativeAppServerClient } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/client';
 import { createCodexNativeSessionControls } from '../../../../../../../packages/plugins/codex/src/agent/runtime/controls';
 
@@ -162,6 +164,49 @@ function preparedSnapshot() {
         },
     };
 }
+
+it.skipIf(process.platform !== 'linux')('refuses host-private Pi files through the runner writer, strict decoder and native launch owner', async () => {
+    await withTempDir('pi-member-launch-seam-', async root => {
+        const controller = new AbortController();
+        const tools = await preparePiHappierToolsExtension({ directory: root });
+        const daemonExec = createStablePluginExecService({
+            signal: controller.signal, isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => root,
+            requesterIdentity: { kind: 'isolated', separationRequired: false, requester: {
+                serverId: 'home', accountId: 'owner', machineId: 'team-machine', installationId: 'installation' } },
+            // The native OS observation is the boundary fixture. Exec admission,
+            // request serialization and selected-file availability remain real.
+            agentIsolation: { read: () => ({ enabled: true,
+                status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [root],
+                localTransport: { agentUid: 2402, agentGid: 2402 },
+                launch: { managedHappierBinaryPath: '/nonexistent/happier', runtimeHome: join(root, 'native-runtime'),
+                    selectedEnvironmentKeys: [], selectedMaterials: [] } }) },
+        });
+        try {
+            const services = await prepareRunnerDaemonPluginServices({
+                invocationId: 'pi-transient-file-seam', signal: controller.signal,
+                local: createUnavailablePluginServices(),
+                // RPC is the system boundary; consume the actual decoded request.
+                dispatch: async raw => {
+                    const operation = RunnerDaemonPluginServiceOperationV1Schema.parse(raw);
+                    if (operation.kind === 'plugin_services.prepare_v1') return preparedSnapshot();
+                    if (operation.kind === 'plugin_services.close_v1' || operation.kind === 'plugin_exec.launch.release_v1') return null;
+                    if (operation.kind !== 'plugin_exec.launch.authorize_v1') throw new Error(operation.kind);
+                    const { stdin, ...request } = operation.request;
+                    const launch = await authorizePluginExecLaunchForHost(daemonExec, { ...request,
+                        ...(stdin === undefined ? {} : { stdin: new Uint8Array(Buffer.from(stdin, 'base64')) }) });
+                    try { return { authorizationId: operation.requestId,
+                        launch: { command: launch.command, args: launch.args, env: launch.env, cwd: launch.cwd } }; }
+                    finally { await launch.release(); }
+                },
+            });
+            await expect(services.exec.spawn({ executable: { kind: 'systemTool', id: 'pi-cli' }, cwd: root,
+                ...buildPiRpcLaunch({ providerModelId: 'selected-model', happierToolsExtension: tools }),
+            })).rejects.toMatchObject({ code: 'agent_launch_required_file_unavailable',
+                data: expect.objectContaining({ details: { phase: 'materialization', reason: 'not_materialized' } }) });
+        } finally { controller.abort(); await tools.dispose(); }
+    });
+});
 
 function managedProviderBootstrap(
     activationOccurrenceId: string,

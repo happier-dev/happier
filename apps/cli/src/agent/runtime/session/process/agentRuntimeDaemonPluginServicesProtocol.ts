@@ -511,6 +511,7 @@ const RunnerDaemonProviderOperationIdV1Schema = lazyZodSchema(() => z.enum(
 const ExecSpawnRequestSchema = lazyZodSchema(() => z.strictObject({
     executable: ManagedExecutableRefSchema,
     args: z.optional(z.array(BoundedTextSchema).check(z.maxLength(4_096))),
+    requiredFiles: z.optional(z.array(BoundedTextSchema)),
     cwd: z.optional(z.union([PluginPathSchema, z.string().check(z.maxLength(32_768))])),
     env: z.optional(StringRecordSchema),
     stdin: z.optional(Base64Schema),

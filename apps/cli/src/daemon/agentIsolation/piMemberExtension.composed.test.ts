@@ -1,0 +1,110 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, relative } from 'node:path';
+import { PassThrough, Readable } from 'node:stream';
+import { expect, it } from 'vitest';
+import { preparePiHappierToolsExtension } from '../../../../../packages/plugins/pi/src/agent/tools/assets';
+import { buildPiRpcLaunch } from '../../../../../packages/plugins/pi/src/agent/runtime/rpc/args';
+import { PI_REQUEST_AUTH_CAPABILITY_PATH_ENV, resolvePiRequestAuthExtensionPath } from '../../../../../packages/plugins/pi/src/agent/auth/services/requestAuth';
+import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
+import { deriveAgentIsolationMemberIdentity } from './provisioning';
+import { createUnixAgentIdentityLaunch } from './unixAgentIdentityAdapter';
+import { readAgentLaunchFrame } from './agentLaunchFrame';
+import { executeAgentLaunchPayload } from './agentLaunchShim';
+
+it('refuses the member Pi launch before spawning when its host tools extension is not materialized for the native identity', async () => {
+  const memberHome = await mkdtemp(join(tmpdir(), 'pi-member-native-'));
+  const tools = await preparePiHappierToolsExtension({ directory: memberHome });
+  try {
+    // Recorded #144 shape: paired tools flag and extension, bound provider, but
+    // host-private extension paths do not exist in the native member namespace.
+    const { extensionPath, configPath } = tools;
+    // Constructed OS observation: the member UID/home differs from the host
+    // that produced these 0700-directory / 0600-file assets. No sudo is needed.
+    const memberIdentity = { ...deriveAgentIsolationMemberIdentity({
+      homeServerIdentityId: 'home', requester: { serverId: 'home', accountId: 'member',
+        machineId: 'team-machine', installationId: 'installation' },
+    }), home: memberHome, agentUid: (process.getuid?.() ?? 1000) + 1, agentGid: (process.getgid?.() ?? 1000) + 1 };
+    await expect(readFile(extensionPath)).resolves.toBeInstanceOf(Buffer);
+    const { args, requiredFiles } = buildPiRpcLaunch({ providerModelId: 'selected-model',
+      happierToolsExtension: { extensionPath, configPath } });
+    expect(() => createUnixAgentIdentityLaunch({
+      managedHappierBinaryPath: '/opt/happier/cli/current/happier', executable: process.execPath,
+      args: ['-e', 'process.stdout.write("child-spawned")', '--', ...args],
+      cwd: memberHome, runtimeHome: join(memberHome, 'runtime'), environment: {},
+      selectedEnvironmentKeys: [], selectedMaterials: [], memberIdentity,
+      requiredFiles,
+    })).toThrow(expect.objectContaining({ code: 'agent_launch_required_file_unavailable',
+      data: expect.objectContaining({ details: { phase: 'materialization', reason: 'not_materialized' } }) }));
+  } finally { await tools.dispose(); await rm(memberHome, { recursive: true, force: true }); }
+});
+
+it('allows the paired Pi files after their native materialization and retires them with the launch', async () => {
+  const memberHome = await mkdtemp(join(tmpdir(), 'pi-member-ready-'));
+  const mcpToolPolicy = { a: { unlisted: 'ask' as const, tools: { echo: 'ask' as const } } };
+  const tools = await preparePiHappierToolsExtension({ directory: memberHome, mcpToolPolicy });
+  try {
+    const runtimeHome = join(memberHome, 'runtime');
+    const extensionPath = join(runtimeHome, 'files', 'extension.mjs');
+    const configPath = join(runtimeHome, 'files', 'config.json');
+    const launch = createUnixAgentIdentityLaunch({
+      managedHappierBinaryPath: '/opt/happier/cli/current/happier', executable: process.execPath,
+      args: ['-e', 'const fs=require("node:fs"); for(const file of process.argv.slice(1).filter(arg=>arg.endsWith(".mjs")||arg.endsWith(".json"))) fs.readFileSync(file); process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync(process.argv[process.argv.indexOf("--happier-tools-config")+1],"utf8")).mcpToolPolicy))', '--', ...buildPiRpcLaunch({
+        happierToolsExtension: { extensionPath, configPath } }).args],
+      cwd: memberHome, runtimeHome, environment: {}, selectedEnvironmentKeys: [],
+      selectedMaterials: [
+        { relativePath: 'files/extension.mjs', contentBase64: (await readFile(tools.extensionPath)).toString('base64') },
+        { relativePath: 'files/config.json', contentBase64: (await readFile(tools.configPath)).toString('base64') },
+      ],
+      requiredFiles: buildPiRpcLaunch({ happierToolsExtension: { extensionPath, configPath } }).requiredFiles,
+    });
+    const payload = await readAgentLaunchFrame(Readable.from([launch.stdinPreamble], { objectMode: false }));
+    const stdout = new PassThrough();
+    const chunks: Buffer[] = [];
+    stdout.on('data', chunk => chunks.push(Buffer.from(chunk)));
+    expect(await executeAgentLaunchPayload(payload, { agentHome: memberHome,
+      input: Readable.from([]), stdout, stderr: new PassThrough() })).toEqual({ code: 0, signal: null });
+    expect(JSON.parse(Buffer.concat(chunks).toString())).toEqual(mcpToolPolicy);
+    await expect(readFile(extensionPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(configPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  } finally { await tools.dispose(); await rm(memberHome, { recursive: true, force: true }); }
+});
+
+it('requires every configured Pi extension and config, with one dependency per file', () => {
+  const runtimeHome = join(tmpdir(), 'pi-selected-runtime');
+  const agentDir = join(runtimeHome, 'agent');
+  const extensionPath = join(runtimeHome, 'tools.mjs');
+  const configPath = join(runtimeHome, 'tools.json');
+  const discoveryPath = join(runtimeHome, 'discovery.mjs');
+  const expectedFiles = [resolvePiRequestAuthExtensionPath(agentDir), discoveryPath, extensionPath, configPath];
+  const launch = buildPiRpcLaunch({ modelDiscoveryExtensionPath: discoveryPath,
+    env: { PI_CODING_AGENT_DIR: agentDir, [PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]: '/fixture/capability' },
+    happierToolsExtension: { extensionPath, configPath } });
+  // Four actual roles in a fully configured launch; no duplicate payload entries.
+  expect(launch.requiredFiles).toHaveLength(expectedFiles.length);
+  for (const missing of expectedFiles) {
+    expect(() => createUnixAgentIdentityLaunch({
+      managedHappierBinaryPath: '/nonexistent/happier', executable: '/nonexistent/pi', ...launch,
+      cwd: runtimeHome, runtimeHome, environment: {}, selectedEnvironmentKeys: [],
+      selectedMaterials: expectedFiles.filter(file => file !== missing).map(file => ({
+        relativePath: relative(runtimeHome, file), contentBase64: '',
+      })),
+    })).toThrow(expect.objectContaining({ code: 'agent_launch_required_file_unavailable' }));
+  }
+});
+
+it('keeps the own-host Pi launch able to read its prepared files without native selection', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pi-own-host-'));
+  const tools = await preparePiHappierToolsExtension({ directory: root });
+  const controller = new AbortController();
+  try {
+    const exec = createStablePluginExecService({ signal: controller.signal, isOccurrenceCurrent: () => true,
+      resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => root });
+    const result = await exec.run({ executable: { kind: 'systemTool', id: 'fixture.node' },
+      requiredFiles: buildPiRpcLaunch({ happierToolsExtension: tools }).requiredFiles,
+      args: ['-e', 'const fs=require("node:fs"); fs.readFileSync(process.argv[1]); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[2],"utf8")).directory)',
+        tools.extensionPath, tools.configPath], cwd: root });
+    expect(result.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
+    expect(Buffer.from(result.stdout).toString()).toBe(root);
+  } finally { controller.abort(); await tools.dispose(); await rm(root, { recursive: true, force: true }); }
+});

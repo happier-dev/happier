@@ -2789,6 +2789,7 @@ export async function prepareRunnerDaemonPluginServices(
                         ...(request.args
                             ? { args: [...request.args] }
                             : {}),
+                        ...(request.requiredFiles ? { requiredFiles: [...request.requiredFiles] } : {}),
                         ...(request.cwd
                             ? { cwd: request.cwd }
                             : {}),

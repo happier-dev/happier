@@ -97,6 +97,9 @@ export interface DeploymentExecEnvPortV1 {
 export type PluginExecSpawnRequest = Readonly<{
     executable: ManagedExecutableRef;
     args?: readonly string[];
+    /** Transient absolute files required by this launch. A native identity switch
+     * requires them in its selected material; host-private paths fail before spawn. */
+    requiredFiles?: readonly string[];
     /** Process-only selected absolute cwd, or an existing admitted filesystem root. */
     cwd?: PluginPath | string;
     env?: Readonly<Record<string, string>>;
@@ -156,7 +159,18 @@ export interface PluginJsonRpcClient extends Disposable {
     onNotification(listener: (message: { method: string; params?: JsonValue }) => void | Promise<void>): Disposable;
     onRequest(method: string, listener: (request: { id: string | number; method: string; params?: JsonValue }) => JsonValue | Promise<JsonValue>): Disposable;
 }
-export interface PluginJsonStreamClient extends Disposable { write(value: JsonValue): Promise<void>; subscribe(listener: (value: JsonValue) => void | Promise<void>): Disposable }
+export interface PluginJsonStreamClient extends Disposable {
+    write(value: JsonValue): Promise<void>;
+    subscribe(listener: (value: JsonValue) => void | Promise<void>): Disposable;
+    /**
+     * Only for a spawn that declared `adoptsHeldAgentTurns`: what this client
+     * attached to, from the Session holder's stored state (`none`: a fresh
+     * Agent; `idle`: an adopted Agent with no turn running; `turn`: an adopted
+     * Agent still answering the previous runner's turn; `unknown`: the declared
+     * shape tracks no turns).
+     */
+    readonly heldAgentTurn?: Promise<'none' | 'idle' | 'turn' | 'unknown'>;
+}
 export interface PluginFramedBytesClient extends Disposable { writeFrame(frame: Uint8Array): Promise<void>; subscribe(listener: (frame: Uint8Array) => void | Promise<void>): Disposable }
 export interface PluginLoopbackWebSocketJsonClient extends Disposable { send(value: JsonValue): Promise<void>; subscribe(listener: (value: JsonValue) => void | Promise<void>): Disposable }
 export type PluginLoopbackWebSocketHeader = Readonly<{
@@ -200,8 +214,29 @@ export type PluginProtocolClientSpec =
         maxFrameBytes?: number;
         requestTimeoutMs?: number;
         cancellationMethod?: string;
+        /**
+         * The runtime surfaces Agent output that arrives without a turn it started
+         * (an Agent adopted after its runner crashed) as a provider-started turn
+         * once its session is open. Only then may the host keep the Agent running
+         * across a runner crash for the respawned runner to adopt.
+         */
+        adoptsHeldAgentTurns?: true;
     }>
-    | Readonly<{ kind: 'jsonStream'; launch: PluginExecSpawnRequest; maxFrameBytes: number }>
+    | Readonly<{
+        kind: 'jsonStream';
+        launch: PluginExecSpawnRequest;
+        maxFrameBytes: number;
+        /**
+         * As for `jsonRpc`: the runtime surfaces an adopted Agent's in-flight turn
+         * as a provider-started turn. The value names the stream's request shape,
+         * so the host can keep the Agent's request ids apart across runners:
+         * - `streamJsonControl`: `control_request`/`control_response` by `request_id`
+         *   (Claude Code stream-json);
+         * - `commandResponse`: `{type, id}` commands answered by `{type: 'response', id}`;
+         *   records whose type ends in `_response` answer the Agent's own requests.
+         */
+        adoptsHeldAgentTurns?: 'streamJsonControl' | 'commandResponse';
+    }>
     | Readonly<{ kind: 'framedBytes'; launch: PluginExecSpawnRequest; framing: 'lengthPrefix' | 'contentLength'; maxFrameBytes: number }>
     | PluginLoopbackWebSocketClientSpec;
 export type PluginProtocolClientByKind = {

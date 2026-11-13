@@ -32,6 +32,8 @@ import {
     type SupervisedPluginGracefulStop,
 } from '../../exec/processSupervisor';
 import type { ProcessCustodySpawnSpec } from '@/subprocess/supervision/processCustody';
+import { resolveAgentSessionHolderLaunch, type SessionHolderRole } from '@/subprocess/supervision/sessionHolder';
+import { createSessionHolderAdoption, JSON_RPC_INITIALIZE_HANDSHAKE, JSON_STREAM_ADOPT_HANDSHAKES } from '@/subprocess/supervision/sessionHolderAdoption';
 import {
     PluginExecClientError,
     createPluginExecClientExitError,
@@ -78,6 +80,12 @@ function withExecLaunchNotStarted(error: unknown): unknown {
         value: Object.freeze({ ...refusal.data, execLaunch: 'notStarted' as const }), enumerable: true,
     });
     return refusal;
+}
+
+/** Register a host-owned protocol handle that is not spawned by this Exec service (a workspace-source process). */
+export function registerPluginProtocolClientGracefulDisposerForHost(handle: PluginProtocolClientHandle<'jsonRpc'>,
+    dispose: (beforeTerminate: SupervisedPluginGracefulStop) => Promise<void>): void {
+    INTERNAL_PROTOCOL_GRACEFUL_DISPOSERS.set(handle, dispose);
 }
 
 /** The supervisor's existing termination grace contains the entire protocol stop. */
@@ -186,11 +194,20 @@ function assertNativeLaunchQualifier(qualifiers: NativeLaunchQualifiers, nativeL
     }
 }
 
+const INTERNAL_NATIVE_LAUNCH_ROLES = new WeakMap<object, SessionHolderRole>();
+
+/** The holder role of launches under this qualifier: only the Session's own Agent is `primary`. */
+export function readAgentNativeLaunchHolderRoleForHost(nativeLaunch: unknown): SessionHolderRole {
+    return typeof nativeLaunch === 'object' && nativeLaunch !== null
+        ? INTERNAL_NATIVE_LAUNCH_ROLES.get(nativeLaunch) ?? 'auxiliary' : 'auxiliary';
+}
+
 /** Only host composition qualifies cold native launch intent; ordinary admission still applies. */
 export function issueAgentNativeLaunchQualifierForHost(service: ExecService,
     readSessionMcpContext?: () => SessionMcpLocalContext | undefined,
     readMcpLaunchMaterial?: () => McpLaunchMaterial,
-    nativeOperation?: HostAgentIsolationLaunchContext): AgentNativeLaunchQualifier {
+    nativeOperation?: HostAgentIsolationLaunchContext,
+    holderRole: SessionHolderRole = 'auxiliary'): AgentNativeLaunchQualifier {
     let qualifiers = INTERNAL_NATIVE_LAUNCH_QUALIFIERS.get(service);
     if (!qualifiers) {
         qualifiers = new WeakSet();
@@ -198,6 +215,7 @@ export function issueAgentNativeLaunchQualifierForHost(service: ExecService,
     }
     const qualifier = Object.freeze({});
     qualifiers.add(qualifier);
+    INTERNAL_NATIVE_LAUNCH_ROLES.set(qualifier, holderRole);
     if (nativeOperation) INTERNAL_NATIVE_OPERATIONS.set(service, nativeOperation);
     if (readSessionMcpContext) INTERNAL_NATIVE_SESSION_CONTEXTS.set(qualifier, readSessionMcpContext);
     // Classify ordinary versus held native material once when the qualifier is issued.
@@ -372,6 +390,7 @@ export type HostResolvedSystemToolExecutable = Awaited<ReturnType<PluginSystemTo
 export type HostAuthorizedPluginExecLaunch = Readonly<{
     command: string;
     args: readonly string[];
+    requiredFiles?: readonly string[];
     env: Readonly<Record<string, string>>;
     cwd?: string;
     /** Host-finalized RunAs wrapper directory; cwd remains the logical payload directory. */
@@ -425,6 +444,8 @@ export function spawnAuthorizedHostExecLaunchForHost(
         readSpawnFailureLimits?: SpawnFailureLimitsReader;
         /** Transfer the final capture to the existing service's physical-settlement cleanup. */
         retainLaunch?: (release: HostAuthorizedPluginExecLaunch['release']) => void;
+        /** Agent launch: the per-Session holder owns the Agent's pipes and process group. */
+        sessionHolder?: SessionHolderRole;
     }> = {},
 ): SupervisedPluginProcess {
     const custody = options.processCustody;
@@ -447,8 +468,11 @@ export function spawnAuthorizedHostExecLaunchForHost(
             ? buildCgroupProcessLaunchSpec({ scope: options.linuxProcessLaunchScope, unit,
                 launchSpec: { filePath: launch.command, args: [...launch.args], env: { ...environment } } })
             : null;
+        const holder = options.sessionHolder && !custody && !scopedLaunch
+            ? resolveAgentSessionHolderLaunch({ role: options.sessionHolder }) : null;
         spawnAttempted = true;
         supervised = spawnSupervisedPluginProcess({
+            ...(holder ? { sessionHolder: holder } : {}),
             command: custody ? custody.executablePath : scopedLaunch?.filePath ?? launch.command,
             args: custody ? [
                 'run', `--job=${custody.jobName}`, `--handshake=${custody.handshakePath}`,
@@ -488,6 +512,8 @@ export function spawnAuthorizedHostExecLaunchForHost(
             void launch.onNativeLaunchFailure().catch(() => undefined);
         }
         if (!options.retainLaunch) void launch.release();
+        // The holder decision refuses before any process starts; keep its typed code.
+        if (!spawnAttempted && isPluginError(error)) throw error;
         const spawnFailure = classifySpawnFailure(error, { syscall: 'spawn', limits: options.readSpawnFailureLimits?.() });
         throw new PluginError({ code: 'plugin_exec_spawn_failed', message: spawnFailureMessage(spawnFailure, 'Process could not be started'), details: { spawnFailure } }, { cause: error });
     }
@@ -982,6 +1008,7 @@ async function finalizeHostExecLaunch(input: Readonly<{
             const material = isolated.snapshot.launch!;
             if (input.agentNativeLaunch && !material.sessionMcpContext) fail('agent_isolation_unavailable', 'Current Session MCP context is unavailable');
             const launch = createUnixAgentIdentityLaunch({ ...material, executable: command, args, cwd: isolated.cwd,
+                requiredFiles: input.launch.requiredFiles,
                 nativeSocketDirectory: input.mcpLaunchMaterial?.nativeSocketDirectory,
                 ...(isolated.snapshot.memberIdentity ? { memberIdentity: isolated.snapshot.memberIdentity } : {}),
                 environment: { ...environment, ...material.environment },
@@ -1214,13 +1241,14 @@ export function createProjectNativeToolchainIoForHost(input: Readonly<{
                     if (result.termination.observed.kind === 'failed') {
                         fail('project_native_toolchain_process_failed', 'Native environment process failed');
                     }
-                    if (result.stdoutTruncated) {
+                    if (result.stdoutTruncated && request.allowTruncatedStdout !== true) {
                         fail('project_native_toolchain_output_incomplete', 'Native environment output was incomplete');
                     }
                     return Object.freeze({
                         exitCode: result.termination.observed.kind === 'exit' ? result.termination.observed.exitCode : 1,
                         stdout: Buffer.from(result.stdout).toString('utf8'),
                         stderr: Buffer.from(result.stderr).toString('utf8'),
+                        ...(request.allowTruncatedStdout ? { stdoutTruncated: result.stdoutTruncated } : {}),
                     });
                 } finally {
                     try { await settle(); }
@@ -1235,6 +1263,81 @@ export function createProjectNativeToolchainIoForHost(input: Readonly<{
 
 function fail(code: string, message: string, cause?: unknown): never {
     throw new PluginError({ code, message }, cause === undefined ? undefined : { cause });
+}
+
+/** The plugin-facing JSON-RPC client over a host JSON-RPC process client (shared by Exec and workspace-source processes). */
+export function guardJsonRpcClient(
+    protocol: ReturnType<typeof createJsonRpcProcessClient>,
+    assertCurrent: (signal?: AbortSignal) => void,
+): PluginJsonRpcClient {
+    const requestMethods = new Set<string>();
+    const assertCallbackCurrent = () => {
+        try {
+            assertCurrent();
+        } catch (error) {
+            protocol.dispose(error instanceof Error ? error : undefined);
+            throw error;
+        }
+    };
+    return Object.freeze({
+        async request(method: string, requestParams?: JsonValue, requestOptions?: { signal?: AbortSignal; timeoutMs?: number | null }) {
+            assertCurrent(requestOptions?.signal);
+            const result = await protocol.client.request<JsonValue | undefined, JsonValue>(method, requestParams, requestOptions);
+            assertCurrent(requestOptions?.signal);
+            return result;
+        },
+        notify: async (method: string, notificationParams?: JsonValue) => { assertCurrent(); await protocol.client.notify(method, notificationParams); },
+        onNotificationReceived(listener: Parameters<PluginJsonRpcClient['onNotificationReceived']>[0]) {
+            assertCurrent();
+            const unsubscribe = protocol.subscribeNotificationReceived((message) => {
+                assertCallbackCurrent();
+                listener({
+                    method: message.method,
+                    ...(message.params === undefined ? {} : { params: message.params as JsonValue }),
+                    receivedAtMs: message.receivedAtMs,
+                });
+            });
+            return Object.freeze({ dispose: unsubscribe });
+        },
+        onNotification(listener: Parameters<PluginJsonRpcClient['onNotification']>[0]) {
+            assertCurrent();
+            const unsubscribe = protocol.subscribeNotification((message) => {
+                assertCallbackCurrent();
+                return listener({
+                    method: message.method,
+                    ...(message.params === undefined ? {} : { params: message.params as JsonValue }),
+                });
+            });
+            return Object.freeze({ dispose: unsubscribe });
+        },
+        onRequest(method: string, listener: Parameters<PluginJsonRpcClient['onRequest']>[1]) {
+            assertCurrent();
+            if (requestMethods.has(method)) {
+                fail('plugin_exec_protocol_duplicate_handler', `JSON-RPC method '${method}' already has a responder`);
+            }
+            requestMethods.add(method);
+            const unregister = protocol.client.registerRequestHandler(method, async (requestParams, context) => {
+                assertCallbackCurrent();
+                try {
+                    return await listener({
+                        id: context.requestId
+                            ?? fail('plugin_exec_protocol_invalid_request', 'JSON-RPC server request is missing its correlation id'),
+                        method,
+                        ...(requestParams === undefined ? {} : { params: requestParams as JsonValue }),
+                    });
+                } finally {
+                    assertCallbackCurrent();
+                }
+            });
+            return Object.freeze({
+                dispose() {
+                    requestMethods.delete(method);
+                    unregister();
+                },
+            });
+        },
+        dispose: () => protocol.dispose(),
+    });
 }
 
 export function adaptStablePluginExecLegacyProcessHandle(
@@ -1289,6 +1392,9 @@ export function createStablePluginExecService(params: Readonly<{
         isOccurrenceCurrent: () => boolean,
     ): Promise<ResolvedPluginExecutable>;
     observeProcessOutput?: (output: import('@happier-dev/plugin-sdk/exec').PluginProcessOutput) => void;
+    /** Host-private input of an admitted invocation channel (the provisioner `stream` role):
+     * bound to the process that selected invocation delivery; returns its unbind. */
+    bindProcessInput?: (process: Pick<PluginProcessHandle, 'write' | 'closeStdin'>) => () => void;
     invocationTimeoutMs?: number | null;
     resolvePath(path: PluginPath): Promise<string>;
     /** Finite operation workspace selected by the host; explicit child cwd wins. */
@@ -1595,7 +1701,8 @@ export function createStablePluginExecService(params: Readonly<{
                 await launch.release();
                 throw error;
             }
-            return hostAgentIsolation || params.agentIsolation ? await finalizeHostExecLaunch({ launch,
+            return hostAgentIsolation || params.agentIsolation ? await finalizeHostExecLaunch({
+                launch: { ...launch, ...(request.requiredFiles ? { requiredFiles: request.requiredFiles } : {}) },
                 ...(typeof request.cwd === 'string' ? { requestedCwd: request.cwd } : {}),
                 agentIsolation: hostAgentIsolation ?? params.agentIsolation, agentNativeLaunch,
                 ...(nativeLaunch ? { sessionMcpContext: INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch)?.(),
@@ -1712,6 +1819,7 @@ export function createStablePluginExecService(params: Readonly<{
         const originalInput: ResolvedHostExecLaunch = {
                 command: resolved.command,
                 args: [...(resolved.args ?? []), ...(request.args ?? [])],
+                ...(request.requiredFiles ? { requiredFiles: [...request.requiredFiles] } : {}),
                 env: environment,
                 ...(cwd ? { cwd } : {}),
                 ...(request.stdin ? { stdin: new Uint8Array(request.stdin) } : {}),
@@ -1847,6 +1955,11 @@ export function createStablePluginExecService(params: Readonly<{
             ...(params.recordRuntimeLimitMeasurement
                 ? { recordRuntimeLimitMeasurement: params.recordRuntimeLimitMeasurement }
                 : {}),
+            // Long-lived Agent processes (not finite runs, managed services or
+            // native-tool handoffs) are held by the per-Session holder.
+            ...(openAccess && options?.nativeLaunch !== undefined && !managedCustody
+                && options.descendantDisposition !== 'preserve-on-success'
+                ? { sessionHolder: readAgentNativeLaunchHolderRoleForHost(options.nativeLaunch) } : {}),
         });
         logger.infoFile('[PluginExec] Launch preparation phase', {
             phase: 'spawn_requested', executableKind: request.executable.kind, pid: supervised.child.pid,
@@ -1858,6 +1971,13 @@ export function createStablePluginExecService(params: Readonly<{
         const outputSubscription = !lifetime && options?.outputDelivery === 'invocation' && params.observeProcessOutput
             ? supervised.handle.onOutput(params.observeProcessOutput)
             : null;
+        const unbindChannelInput = !lifetime && options?.outputDelivery === 'invocation' && params.bindProcessInput
+            ? params.bindProcessInput(supervised.handle)
+            : null;
+        let inputBound = unbindChannelInput !== null;
+        const unbindInput = () => { if (inputBound) { inputBound = false; unbindChannelInput?.(); } };
+        // The channel's input ends with the process root, before its pipes settle.
+        if (unbindChannelInput) void supervised.handle.waitForExit().then(unbindInput, unbindInput);
         const retire = () => {
             void supervised.dispose('generationRetired').catch(() => undefined);
         };
@@ -1867,6 +1987,7 @@ export function createStablePluginExecService(params: Readonly<{
         else retirementSignal?.addEventListener('abort', retire, { once: true });
         void supervised.waitForSettlement().then(() => {
             outputSubscription?.dispose();
+            unbindInput();
             retirementSignal?.removeEventListener('abort', retire);
         });
         return supervised;
@@ -1878,80 +1999,6 @@ export function createStablePluginExecService(params: Readonly<{
     ): Promise<PluginProcessHandle> {
         return (await launchProcess(request, options, true)).handle;
     }
-    function guardJsonRpcClient(
-        protocol: ReturnType<typeof createJsonRpcProcessClient>,
-        assertCurrent: (signal?: AbortSignal) => void,
-    ): PluginJsonRpcClient {
-        const requestMethods = new Set<string>();
-        const assertCallbackCurrent = () => {
-            try {
-                assertCurrent();
-            } catch (error) {
-                protocol.dispose(error instanceof Error ? error : undefined);
-                throw error;
-            }
-        };
-        return Object.freeze({
-            async request(method: string, requestParams?: JsonValue, requestOptions?: { signal?: AbortSignal; timeoutMs?: number | null }) {
-                assertCurrent(requestOptions?.signal);
-                const result = await protocol.client.request<JsonValue | undefined, JsonValue>(method, requestParams, requestOptions);
-                assertCurrent(requestOptions?.signal);
-                return result;
-            },
-            notify: async (method: string, notificationParams?: JsonValue) => { assertCurrent(); await protocol.client.notify(method, notificationParams); },
-            onNotificationReceived(listener: Parameters<PluginJsonRpcClient['onNotificationReceived']>[0]) {
-                assertCurrent();
-                const unsubscribe = protocol.subscribeNotificationReceived((message) => {
-                    assertCallbackCurrent();
-                    listener({
-                        method: message.method,
-                        ...(message.params === undefined ? {} : { params: message.params as JsonValue }),
-                        receivedAtMs: message.receivedAtMs,
-                    });
-                });
-                return Object.freeze({ dispose: unsubscribe });
-            },
-            onNotification(listener: Parameters<PluginJsonRpcClient['onNotification']>[0]) {
-                assertCurrent();
-                const unsubscribe = protocol.subscribeNotification((message) => {
-                    assertCallbackCurrent();
-                    return listener({
-                        method: message.method,
-                        ...(message.params === undefined ? {} : { params: message.params as JsonValue }),
-                    });
-                });
-                return Object.freeze({ dispose: unsubscribe });
-            },
-            onRequest(method: string, listener: Parameters<PluginJsonRpcClient['onRequest']>[1]) {
-                assertCurrent();
-                if (requestMethods.has(method)) {
-                    fail('plugin_exec_protocol_duplicate_handler', `JSON-RPC method '${method}' already has a responder`);
-                }
-                requestMethods.add(method);
-                const unregister = protocol.client.registerRequestHandler(method, async (requestParams, context) => {
-                    assertCallbackCurrent();
-                    try {
-                        return await listener({
-                            id: context.requestId
-                                ?? fail('plugin_exec_protocol_invalid_request', 'JSON-RPC server request is missing its correlation id'),
-                            method,
-                            ...(requestParams === undefined ? {} : { params: requestParams as JsonValue }),
-                        });
-                    } finally {
-                        assertCallbackCurrent();
-                    }
-                });
-                return Object.freeze({
-                    dispose() {
-                        requestMethods.delete(method);
-                        unregister();
-                    },
-                });
-            },
-            dispose: () => protocol.dispose(),
-        });
-    }
-
     async function spawnJsonRpcClient(
         spec: Extract<Parameters<ExecService['clients']['spawn']>[0], { kind: 'jsonRpc' }>,
         options?: HostExecOptions,
@@ -1970,6 +2017,10 @@ export function createStablePluginExecService(params: Readonly<{
             onFailure: () => {
                 void supervised.dispose('runtimeRecovery');
             },
+            // A held primary Agent whose runtime surfaces adopted turns keeps its
+            // handshake and in-flight ids for the next runner.
+            ...(spec.adoptsHeldAgentTurns ? { sessionHolderAdoption: (deliver: (frame: Record<string, unknown>) => void) =>
+                createSessionHolderAdoption({ child: supervised.child, handshake: JSON_RPC_INITIALIZE_HANDSHAKE, deliver }) } : {}),
             ...(params.recordRuntimeLimitMeasurement
                 ? { recordRuntimeLimitMeasurement: params.recordRuntimeLimitMeasurement }
                 : {}),
@@ -2016,17 +2067,22 @@ export function createStablePluginExecService(params: Readonly<{
             Buffer.from(supervised.readBufferedStderr()).toString('utf8'),
             spec.launch.maxStderrBytes ?? 4_096,
         );
+        const adoptHandshake = spec.adoptsHeldAgentTurns ? JSON_STREAM_ADOPT_HANDSHAKES[spec.adoptsHeldAgentTurns] : null;
         const protocol = createJsonStreamProcessClient({
             process: adaptStablePluginExecLegacyProcessHandle(supervised),
             stdout: supervised.child.stdout,
             write: async (data) => supervised.handle.write(new Uint8Array(Buffer.from(data, 'utf8'))),
             maxFrameBytes: spec.maxFrameBytes,
             readStderrPreview,
+            // As for JSON-RPC, with the request shape the plugin declared.
+            ...(adoptHandshake ? { sessionHolderAdoption: (deliver: (record: Record<string, unknown>) => void) =>
+                createSessionHolderAdoption({ child: supervised.child, handshake: adoptHandshake, deliver }) } : {}),
             ...(params.recordRuntimeLimitMeasurement
                 ? { recordRuntimeLimitMeasurement: params.recordRuntimeLimitMeasurement }
                 : {}),
         });
         const client: PluginJsonStreamClient = Object.freeze({
+            ...(adoptHandshake ? { heldAgentTurn: protocol.sessionHolderAdoption?.heldTurn ?? Promise.resolve('none' as const) } : {}),
             async write(value: JsonValue) {
                 const outcome = await protocol.client.writeRecord(value);
                 if (outcome.kind !== 'written') {
