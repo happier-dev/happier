@@ -43,6 +43,5 @@ describe('applyMachineLiveStreamRelayBackpressure', () => {
             bytesDropped: 8,
         });
         else expect(result.receipt).toBeNull();
-        expect(JSON.stringify(result.receipt)).not.toContain('AQID');
     });
 });

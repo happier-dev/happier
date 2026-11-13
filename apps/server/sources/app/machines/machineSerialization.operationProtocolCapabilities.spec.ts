@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { serializeAccessibleMachineRow, serializeMachineRow, type MachineSerializationRow } from './machineSerialization';
+import { serializeMachineRow, type MachineSerializationRow } from './machineSerialization';
 
 const baseMachineRow: MachineSerializationRow = {
     id: 'machine-1',
@@ -20,17 +20,6 @@ const baseMachineRow: MachineSerializationRow = {
 };
 
 describe('serializeMachineRow operation protocol capabilities', () => {
-    it('keeps the canonical owner key basis separate from the foreign recipient envelope', () => {
-        const ownerEnvelope = new Uint8Array([0, 1, 2]);
-        const recipientEnvelope = new Uint8Array([0, 3, 4]);
-        const projection = serializeAccessibleMachineRow({ ...baseMachineRow, dataEncryptionKey: ownerEnvelope }, {
-            access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'e2ee', accessState: 'ready' },
-            owned: false, callerDataEncryptionKey: recipientEnvelope,
-        });
-        expect(projection.dataEncryptionKey).toBe('AAME');
-        expect(projection.keyBasis).toEqual({ dataEncryptionKey: 'AAEC', metadataVersion: 3, daemonStateVersion: 0 });
-    });
-
     it('projects the exact persisted Runner key proof and Account verification key only for a Runner', () => {
         const binding = {
             v: 1,

@@ -238,8 +238,9 @@ describe("machinesRoutes machine replacement", () => {
         expect((await db.managedMachinePreset.findUniqueOrThrow({ where: { id: elsewhere.id } })).controllerInstallationId).toBe("install-1");
     });
 
-    it("exposes manual replacement and undo routes", async () => {
+    it.each([true, false])("applies and undoes connected replacement despite durable active=%s", async active => {
         await readyReplacement();
+        await db.machine.update({ where: { id: "m2" }, data: { active } });
         const response = await invoke({ replacementMachineId: "m2", confirmActiveOldMachine: true }, { path: "/v1/machines/m1/replacement" });
         expect(response.statusCode, response.body).toBe(200);
         expect(response.json()).toMatchObject({ machine: { active: false, replacedByMachineId: "m2", replacementSource: "manual", replacementActorUserId: accountId } });

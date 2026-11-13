@@ -10,6 +10,7 @@ import { createDaemonSessionMutationCustody } from '../connectedServices/usageLi
 import type { RequesterSessionRuntimeContext } from '../sessionEncryption/requesterSessionCredentials';
 import { startDaemonSessionControlRuntime } from '../startup/startDaemonSessionControlRuntime';
 import type { TrackedSession } from '../types';
+import type { TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 /** Real startup composition for tests consuming the Session/FSM-owned auth port. */
 export async function createRequesterSessionControlRuntimeFixture(input: Readonly<{
@@ -22,21 +23,22 @@ export async function createRequesterSessionControlRuntimeFixture(input: Readonl
   credentials: StoredCredentials;
   connectedServicesMaterializationBaseDir: string;
   registry: ConnectedServiceRuntimeRegistry;
-  trackedSessions: Map<number, TrackedSession>;
+  trackedSessions: TrackedSessionMap;
   getRequester(): RequesterSessionRuntimeContext | null;
   resolveRequesterSessionRuntimeContext?: Parameters<typeof startDaemonSessionControlRuntime>[0]['resolveRequesterSessionRuntimeContext'];
   releaseRequesterSessionRuntimeContext?: Parameters<typeof startDaemonSessionControlRuntime>[0]['releaseRequesterSessionRuntimeContext'];
   resolveQualifiedConnectedAccountV4Support: NonNullable<Parameters<typeof startDaemonSessionControlRuntime>[0]['resolveQualifiedConnectedAccountV4Support']>;
   getApiMachineForSessions?: Parameters<typeof startDaemonSessionControlRuntime>[0]['getApiMachineForSessions'];
-  pidToAwaiter?: Parameters<typeof startDaemonSessionControlRuntime>[0]['pidToAwaiter'];
+  spawnAwaiterByKey?: Parameters<typeof startDaemonSessionControlRuntime>[0]['spawnAwaiterByKey'];
   beforeStartup?: () => Promise<void>;
   processEnv?: NodeJS.ProcessEnv;
   startup?: Pick<Parameters<typeof startDaemonSessionControlRuntime>[0],
     'resolveSessionSpawnDirectTargetTransport' | 'resolveCurrentMachineExecutionOriginContext'>
     & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0],
       'deviceLocalSecretStorage' | 'onHappySessionWebhook' | 'createRequesterSessionRuntimeContext'
-      | 'liveStreamCaptureRegistry' | 'onComputerRoutesReady' | 'onLocalServicesRoutesReady' | 'onMachineAccessLossReceiverReady' | 'workflowAcceptedAuthorizationCurrentness'
-      | 'runtimeActionExecute' | 'pluginRuntimeController' | 'projectProviderModelsForAccount' | 'readProviderForAccount' | 'resolveServerFeaturesSnapshot'>>;
+      | 'liveStreamCaptureRegistry' | 'onComputerRoutesReady' | 'onDevicesRoleStopped' | 'machineRoles' | 'onBrowserStoragePurgeOwnerReady' | 'onLocalServicesRoutesReady' | 'onMachineAccessLossReceiverReady' | 'workflowAcceptedAuthorizationCurrentness'
+      | 'runtimeActionExecute' | 'pluginRuntimeController' | 'projectProviderModelsForAccount' | 'readProviderForAccount' | 'resolveServerFeaturesSnapshot'
+      | 'readLiveWorkInventory'>>;
 }>) {
   const previousConfiguration = {
     happyHomeDir: configuration.happyHomeDir,
@@ -97,13 +99,13 @@ export async function createRequesterSessionControlRuntimeFixture(input: Readonl
       daemonSessionMutationCustody: mutationCustody,
       connectedServicesMaterializationBaseDir: input.connectedServicesMaterializationBaseDir,
       connectedServiceRuntimeRegistry: input.registry,
-      pidToTrackedSession: input.trackedSessions,
-      pidToAwaiter: input.pidToAwaiter ?? new Map(),
-      pidToSpawnResultResolver: new Map(),
-      pidToSpawnWebhookTimeout: new Map(),
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
-      connectedServicesRestartRequestedPids: new Set(),
+      trackedSessionsByKey: input.trackedSessions,
+      spawnAwaiterByKey: input.spawnAwaiterByKey ?? new Map(),
+      spawnResultResolverByKey: new Map(),
+      spawnWebhookTimeoutByKey: new Map(),
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
+      connectedServicesRestartRequestedSessions: new Set(),
       getApiMachineForSessions: input.getApiMachineForSessions ?? (() => null),
       getConnectedServiceRefreshCoordinator: () => input.getRequester()?.connectedServiceRefreshCoordinator ?? null,
       getConnectedServiceQuotasCoordinator: () => input.getRequester()?.connectedServiceQuotasCoordinator ?? null,

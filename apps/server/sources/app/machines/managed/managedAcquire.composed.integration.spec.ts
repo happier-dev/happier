@@ -29,6 +29,7 @@ import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { resolveMachineAccessInTx } from '@/app/machines/machineAccess';
 import { createAuthenticatedRouteRequest } from '@/app/api/testkit/requestFixtures';
 import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
+import { projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ManagedAdmissionOutputV1Schema, ManagedControllerContextOutputV1Schema, ManagedControllerMachineOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedPolicyCensusOutputV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { LUME_PLUGIN } from '../../../../../../packages/plugins/machine-lume/src/manifest';
@@ -2331,22 +2332,34 @@ describe("managed acquisition durable authority", () => {
     });
 
     it("correlates a private continuation without retaining its text or startup instructions", async () => {
-        const homeId = `srv_${"a".repeat(32)}`;
-        const account = await db.account.create({ data: { publicKey: "managed-private-continuation" } });
-        const controller = await db.machine.create({ data: { id: "managed-private-controller", accountId: account.id, metadata: "ciphertext", installationId: "private-installation" } });
-        const input = ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: { kind: 'existingUser', role: 'adopted' }, selection: { kind: "one-off", homeId, controller: { machineId: controller.id, installationId: "private-installation" }, launch: { provider: { pluginId: "fixture.compute", localId: "compute" }, schemaVersion: 1, name: "reviewed", choices: { image: "linux" } }, retention: { kind: "until-delete" }, wakeOnAcceptedMessage: false }, agentStart: { directory: { kind: "path", path: "/work" }, agentTarget: { kind: "agent", identity: { pluginId: "fixture.agent", localId: "agent" } }, initialInput: { text: "private-managed-initial-message" }, agentSessionStartupInstructionsV1: { v: 1, id: "managed.startup", revision: 1, instructions: "private-managed-startup-instructions" } } });
-        if (input.selection.kind !== "one-off" || !input.agentStart) throw new Error("Expected explicit launch and continuation fixture");
-        const { agentStart: _privateContinuation, ...computeInput } = input;
-        const identity = { computeInput, continuation: { requestEnvelopeDigest: "verified-original-envelope" } };
-        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id, controllerMachineId: controller.id, controllerInstallationId: "private-installation", admittedActionRequestId: "private-request", admittedInput: identity, launch: input.selection.launch, retention: input.selection.retention, wakeOnAcceptedMessage: false } });
-        const replay = await admitManagedAcquire({ custodianAccountId: account.id, requesterAccountId: account.id, requestEnvelopeDigest: "verified-original-envelope", input: { requestId: "private-request", continuationPresent: true, input: computeInput } });
-        expect(replay).toMatchObject({ machine: { id: row.id }, replayed: true });
-        const retained = (await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).admittedInput;
-        expect(retained).toEqual(identity);
+        const fixture = await createManagedComputeFixture('private-continuation');
+        const input = ManagedAcquireInputV1Schema.parse({ ...fixture.input, agentStart: {
+            directory: { kind: "path", path: "/work" },
+            agentTarget: { kind: "agent", identity: { pluginId: "fixture.agent", localId: "agent" } },
+            initialInput: { text: "private-managed-initial-message" },
+            agentSessionStartupInstructionsV1: { v: 1, id: "managed.startup", revision: 1, instructions: "private-managed-startup-instructions" },
+        } });
+        const projected = projectExternalActionManagedAdmissionV1('machines.managed.acquire', input);
+        if (projected?.actionId !== 'machines.managed.acquire') throw new Error('Expected managed acquire admission');
+        const request = { ...fixture.request, requestEnvelopeDigest: "verified-original-envelope",
+            input: { requestId: fixture.request.input.requestId,
+                continuationPresent: projected.continuationPresent, input: projected.input } };
+        const created = await admitManagedAcquire(request);
+        expect(created.replayed).toBe(false);
+        const retained = (await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } })).admittedInput;
+        const identity = { computeInput: projected.input, continuation: { requestEnvelopeDigest: request.requestEnvelopeDigest } };
+        expect(retained).toEqual({ ...identity, enrollmentAccountId: fixture.account.id,
+            requestEnvelopeDigest: request.requestEnvelopeDigest });
         expect(JSON.stringify(retained)).not.toContain("private-managed-initial-message");
         expect(JSON.stringify(retained)).not.toContain("private-managed-startup-instructions");
-        await expect(admitManagedAcquire({ custodianAccountId: account.id, requesterAccountId: account.id, requestEnvelopeDigest: "verified-changed-envelope", input: { requestId: "private-request", continuationPresent: true, input: computeInput } })).rejects.toMatchObject({ code: "request_conflict" });
-        expect(await db.managedMachine.count({ where: { admittedActionRequestId: "private-request" } })).toBe(1);
+        // Historical rows retained the continuation digest without the newer
+        // top-level digest or enrollment Account. Replay must keep that identity.
+        await db.managedMachine.update({ where: { id: created.machine.id }, data: { admittedInput: identity } });
+        expect(await admitManagedAcquire(request)).toMatchObject({ machine: { id: created.machine.id }, replayed: true });
+        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } })).admittedInput).toEqual(identity);
+        await expect(admitManagedAcquire({ ...request, requestEnvelopeDigest: "verified-changed-envelope" }))
+            .rejects.toMatchObject({ code: "request_conflict" });
+        expect(await db.managedMachine.count({ where: { admittedActionRequestId: request.input.requestId } })).toBe(1);
     });
 
     it("reads shared recovery through current Machine grants and restricts cancellation to Manage", async () => {

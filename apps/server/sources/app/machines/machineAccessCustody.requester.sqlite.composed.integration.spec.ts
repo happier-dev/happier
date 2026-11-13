@@ -9,7 +9,7 @@ import tweetnacl from 'tweetnacl';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
-import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent, MachineServicesListResultV1Schema } from '@happier-dev/protocol';
+import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent, MachineServicesListResultV1Schema, DeploymentEnvironmentListResultV1Schema } from '@happier-dev/protocol';
 import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, parseAccountStoredContentCompatibilitySocketAuthV1 } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { createLocalServiceActionConfirmationNonceV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
@@ -20,7 +20,7 @@ import { eventRouter } from '@/app/events/connectionEventRouter';
 import { evaluateAccountStoredContentCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import { createSocketRoomDiscoveryHarness } from '@/app/api/testkit/socketHarness';
 import { forwardRpcCall } from '@/app/api/socket/rpc/forwardRpcCall';
-import { commitMachineRecipientKeyEnvelopesInTx, readMachineRecipientCensusInTx, removeMachineAccessGrantInTx, resolveEffectiveMachineRoleInTx, resolveMachineAdmission } from './machineAccess';
+import { commitMachineRecipientKeyEnvelopesInTx, readMachineRecipientCensusInTx, removeMachineAccessGrantInTx, resolveMachineAdmission } from './machineAccess';
 import { setEligibleMachineAccessGrantInTx as setMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { dispatchMachineAccessLossCustody, recoverMachineAccessLossCustody } from './machineAccessCustody';
 import { MachineAccessLossCustodyRequestV1Schema, MachineAdmissionVerifyResponseV1Schema, SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
@@ -28,12 +28,13 @@ import { RpcHandlerManager } from '../../../../cli/src/api/rpc/RpcHandlerManager
 import { authorizeMachineRpcRequest } from '../../../../cli/src/api/machine/machineRpcAuthorization';
 import { registerMachineAccessLossReceiver } from '../../../../cli/src/daemon/externalActions/registerMachineAccessLossReceiver';
 import { readProcessIdentityByPid } from '../../../../cli/src/daemon/processIdentity';
-import type { TrackedSession } from '../../../../cli/src/daemon/types';
+import { mintSessionTrackingKey, type TrackedSessionMap } from '../../../../cli/src/daemon/sessions/sessionTrackingKey';
+import { createLiveWorkProducerGroup, createManagedActivityInventory, type LiveWorkProducerV1 } from '../../../../cli/src/daemon/lifecycle/managedActivity';
 import { createAdmittedPluginRuntimeFixture } from '../../../../cli/src/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '../../../../cli/src/plugins/runtime/reload/singleton';
 import { authorizeResolvedProjectExecLaunchForHost, createProjectNativeToolchainIoForHost } from '../../../../cli/src/plugins/runtime/invocation/services/exec';
 import { ApiMachineClient } from '../../../../cli/src/api/apiMachine';
-import { createWorkspaceSyncTargetContent } from '../../../../cli/src/api/rpc/workspaceSyncTargetContent';
+import { createWorkspaceSyncTargetContent, openWorkspaceSyncTargetContent } from '../../../../cli/src/api/rpc/workspaceSyncTargetContent';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { WorkspaceSyncCommittedCopyTargetV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 import { createRequesterSessionControlRuntimeFixture } from '../../../../cli/src/daemon/testkit/requesterSessionControlRuntimeFixture';
@@ -41,6 +42,7 @@ import { ConnectedServiceRuntimeRegistry } from '../../../../cli/src/daemon/conn
 import { readOrCreateInstallationIdentity } from '../../../../cli/src/daemon/identity/store';
 import { writeStoredCredentialsForServerId } from '../../../../cli/src/persistence';
 import { createRequesterCurrentnessSocketHarness } from '../../../../cli/src/testkit/backends/requesterCurrentnessSocketHarness';
+import { installAxiosFastifyAdapter } from '../../../../cli/src/testkit/http/axiosAdapter';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_EFFECT_ACTION_HEADER, ExternalActionExecutionAuthorizationV1Schema,
     ExternalActionExecutionAuthorizationVerifyResponseV1Schema,
@@ -55,6 +57,8 @@ import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '../../../../c
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { registerAccountProfileRoute } from '@/app/api/routes/account/registerAccountProfileRoute';
+import { registerAccountEncryptionRoutes } from '@/app/api/routes/account/registerAccountEncryptionRoutes';
 import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
 import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerExternalActionRoutes';
 import { registerProjectAccountRowRoutes } from '@/app/api/routes/projects/registerProjectAccountRowRoutes';
@@ -83,7 +87,7 @@ import { signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/act
 import { createAuthenticatedFakeSocket, triggerSocketHandler } from '@/app/api/testkit/socketHarness';
 import { registerSocketRpcHandlers } from '@/app/api/socket/rpc/registerSocketRpcHandlers';
 import { MachineInstallationProofPayloadV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import { computeWorkspaceSyncPolicyDigest, WorkspaceSyncRelationshipCreateRpcRequestV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { computeWorkspaceSyncPolicyDigest, WorkspaceSyncRelationshipCreateRpcRequestV1Schema, WorkspaceSyncTargetBootstrapPrepareV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, buildProjectAccountRowPhysicalKeyV1, ProjectAccountRelationshipGraphV1Schema,
     type ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { callExactMachineRpc } from '../../../../cli/src/session/transport/rpc/machineRpc';
@@ -98,7 +102,7 @@ import { workspaceSyncMaterializationReceiptPath } from '../../../../cli/src/wor
 import { createCliActionExecutorFromCredentials } from '../../../../cli/src/session/actions/createCliActionExecutorFromCredentials';
 import { ProjectWorkerCopyInspectResultV1Schema } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { createCliApprovalsArtifactStore } from '../../../../cli/src/session/actions/approvals/artifactStore';
-import { createExternalActionAuthorizedRequestHeaders } from '../../../../cli/src/api/externalActionExecutionAuthorization';
+import { createExternalActionAuthorizedRequestHeaders, dispatchOriginalAccountAction } from '../../../../cli/src/api/externalActionExecutionAuthorization';
 import { configuration as cliConfiguration } from '../../../../cli/src/configuration';
 import { readStoredCredentialsForServerId, writeCredentialsTokenOnlyForServerId } from '../../../../cli/src/persistence';
 
@@ -339,7 +343,8 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
         const foreignTarget = await invoke({ ...setup.request, operationId: 'foreign-target', actionInput: {
             ...setup.request.actionInput, targetPath: setup.custodianRef.rootPath } });
         expect(foreignTarget, JSON.stringify(setup.rpcDiagnostics))
-            .toMatchObject({ ok: true, result: { errorCode: 'workspace_private_checkout_review_required' } });
+            .toMatchObject({ ok: true });
+        expect(foreignTarget).toHaveProperty('result.failureCause.errorCode', 'workspace_private_checkout_review_required');
         expect(setup.rows).toEqual(rowsBeforeForeignRequests);
         expect(setup.custodianRows).toEqual(setup.custodianBefore);
         await expect(filesystem.stat(setup.custodianRef.rootPath)).rejects.toMatchObject({ code: 'ENOENT' });
@@ -355,7 +360,7 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
         expect(await syncNative.identity.run('member', () => filesystem.readFile(join(setup.targetPath, 'payload.txt'), 'utf8'))).toBe('before quiesce');
     });
 
-    it.skipIf(process.platform !== 'linux').each([false, true])('previews and retires the retained requester copy through MCP, CLI approval and real Home after a cross-Account native create (foreign SOURCE=%s)', async foreignSource => {
+    it.skipIf(process.platform !== 'linux').each([false, true])('previews and retires the retained requester copy through MCP, person approval and real Home after a cross-Account native create (foreign SOURCE=%s)', async foreignSource => {
         await db.machine.deleteMany({ where: { id: { in: ['machine', 'target-parent'] } } });
         await db.account.deleteMany({ where: { id: { in: ['requester', 'member-a'] } } });
         const requester = await db.account.create({ data: { id: 'member-a', publicKey: null, encryptionMode: 'plain' } });
@@ -517,7 +522,23 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
         expect(issued.statusCode, issued.body).toBe(200);
         const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
         const admitted = await setup.prepareInvocation(request, { envelope: prepared.envelope, authorization });
-        expect(await setup.executeRelationshipAction(admitted)).toMatchObject({ ok: true, result: { created: true } });
+        const created = await setup.executeNativeRelationshipAction(admitted);
+        const bootstrapRequests = await Promise.all(forwarded.filter(packet =>
+            packet.method === `target-parent:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE}`).map(async packet => {
+            const routing = packet.workspaceSyncSourceWriterTargetRouting ?? packet.workspaceSyncTargetRouting;
+            if (!routing || typeof packet.params !== 'string') return { method: packet.method, contentUnavailable: true };
+            const content = openWorkspaceSyncTargetContent({ ciphertext: packet.params,
+                installation: setup.targetInstallation, machineId: 'target-parent', method: packet.method, routing });
+            if (!content) return { method: packet.method, contentUnavailable: true };
+            const decoded = await socketRpcCodec.decodeRequestParams(content, packet.params, packet.method);
+            const parsed = WorkspaceSyncTargetBootstrapPrepareV1Schema.safeParse(decoded.params);
+            return parsed.success ? { method: packet.method, targetBootstrap: parsed.data.targetBootstrap,
+                replacementApprovalPresent: parsed.data.targetReplacementApproval !== undefined,
+                replacementReceiptPresent: parsed.data.targetReplacementApprovalReceiptId !== undefined,
+                replacementConsequences: parsed.data.targetReplacementApproval?.consequences }
+                : { method: packet.method, invalidBootstrap: true };
+        }));
+        expect(created, JSON.stringify({ created, bootstrapRequests })).toMatchObject({ ok: true, result: { created: true } });
         expect(await filesystem.readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
         const graphRow = setup.rows.find(row => row.key.kind === 'relationship-graph');
         if (!graphRow || graphRow.content.t !== 'plain') throw new Error('Missing committed requester relationship');
@@ -713,8 +734,9 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
                     bytesPreserved: await filesystem.readFile(join(setup.targetPath, 'payload.txt'), 'utf8') === 'before quiesce' };
                 approvedCopyAttackForwarded = true;
             };
-            // Public CLI authority comes from its credential reader, rather
-            // than the Account bearer used by the MCP host above.
+            // A paired CLI credential cannot mint an approval root, even when
+            // its caller claims present-user authority. The Account app session
+            // below represents the person reviewing the proposal.
             const requesterCliToken = await createAccountTokenForTests(requester.id,
                 { kind: 'terminal', authority: 'account_automation' });
             const sourceServersDir = cliConfiguration.serversDir;
@@ -726,13 +748,6 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
             } finally { Object.assign(cliConfiguration, { serversDir: sourceServersDir }); }
             expect(cliCredentials).toMatchObject({ encryption: null, credentialProvenance: 'stored_session' });
             if (!cliCredentials) throw new Error('Missing signed-in requester CLI credentials');
-            const cli = createCliActionExecutorFromCredentials({ credentials: cliCredentials,
-                serverId: setup.installed.serverId, serverApiUrl: setup.installed.serverHttpBaseUrl, machineId: source.id,
-                resolveServerFeaturesSnapshot: () => ({ status: 'ready', features, provenance: 'authenticated' }),
-                // The person approves the existing foreign SOURCE approval
-                // decision disclosure; Home and both receivers remain real.
-                onRequesterSessionCredentialDisclosure: () => true,
-            });
             const approvalStore = createCliApprovalsArtifactStore({ credentials: requesterCredentials,
                 serverId: setup.installed.serverId, serverHttpBaseUrl: setup.installed.serverHttpBaseUrl });
             const beforeDecision = await approvalStore.approvalsGet({ artifactId: proposal.artifactId });
@@ -740,14 +755,34 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
             expect(beforeDecision, JSON.stringify({ stored: Boolean(rawApproval),
                 storedKeys: rawApproval ? Object.keys(rawApproval) : [], owner: rawApproval?.ownerAccountId,
                 posts: httpPosts.slice(-8) })).toMatchObject({ status: 'open' });
+            const beforeTerminalDecision = homeVerifications.length;
+            const terminalDecision = await dispatchOriginalAccountAction({
+                actionId: 'approval.request.decide', input: { artifactId: proposal.artifactId, decision: 'approve' },
+                requestId: `terminal-approve-real-home-retire-${foreignSource}`,
+                target: { kind: 'machine', machineId: source.id }, credentials: cliCredentials,
+                serverHttpBaseUrl: setup.installed.serverHttpBaseUrl,
+                serverIdentityId: setup.installed.homeServerIdentityId, authority: 'present_user',
+                invocation: { surface: 'cli', authority: 'present_user', caller: { kind: 'host' } },
+                onRequesterSessionCredentialDisclosure: () => true,
+            });
+            expect(terminalDecision).toMatchObject({ ok: false, errorCode: 'credential_scope_denied', effectAttempted: false });
+            expect(homeVerifications.slice(beforeTerminalDecision)).toContainEqual(expect.objectContaining({ status: 403 }));
+            expect(await approvalStore.approvalsGet({ artifactId: proposal.artifactId })).toMatchObject({ status: 'open' });
             const beforeReplay = homeVerifications.length;
-            const decision = await runWithServerHttpBaseUrl(setup.installed.serverHttpBaseUrl, () => cli.execute('approval.request.decide', { artifactId: proposal.artifactId, decision: 'approve' }, {
-                surface: 'cli', authority: 'present_user', serverId: setup.installed.serverId,
-                actionCaller: { kind: 'host' }, actionRequestId: `approve-real-home-retire-${foreignSource}`,
-            }));
+            const decision = await dispatchOriginalAccountAction({
+                actionId: 'approval.request.decide', input: { artifactId: proposal.artifactId, decision: 'approve' },
+                requestId: `approve-real-home-retire-${foreignSource}`,
+                target: { kind: 'machine', machineId: source.id }, credentials: requesterCredentials,
+                serverHttpBaseUrl: setup.installed.serverHttpBaseUrl,
+                serverIdentityId: setup.installed.homeServerIdentityId, authority: 'present_user',
+                invocation: { surface: 'ui', authority: 'present_user', caller: { kind: 'host' } },
+                onRequesterSessionCredentialDisclosure: () => true,
+            });
             const afterDecision = await approvalStore.approvalsGet({ artifactId: proposal.artifactId });
             expect(decision, JSON.stringify({ errorCode: 'errorCode' in decision ? decision.errorCode : undefined,
                 artifactStatus: afterDecision?.status, artifactExecutionCode: afterDecision?.execution?.errorCode,
+                artifactExecutionDetails: afterDecision?.execution?.details,
+                homeRefusals: homeVerifications.slice(beforeReplay).filter(row => row.status !== 200),
                 artifactFailureCause: afterDecision?.execution && 'failureCause' in afterDecision.execution ? afterDecision.execution.failureCause : undefined,
                 approvedCopyAttackOutcome })).toMatchObject({ ok: true,
                 result: { status: 'executed', execution: { ok: true, result: { status: 'retired' } } } });
@@ -788,10 +823,10 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
                 principal: { kind: 'account', accountId: requester.id }, level: 'view' }))).toMatchObject({ kind: 'saved' });
             const beforeFreshRead = forwarded.length;
             const beforeFreshAdmission = homeVerifications.length;
-            expect(await executePreviewViaMcp()).toMatchObject({ errorCode: 'target_unavailable' });
+            expect(await executePreviewViaMcp()).toMatchObject({ errorCode: 'credential_scope_denied' });
             expect(forwarded.slice(beforeFreshRead)).toEqual([]);
             expect(homeVerifications.slice(beforeFreshAdmission)).toContainEqual(expect.objectContaining({
-                path: '/v1/actions/projects.worker.copy.inspect/execution-authorization', status: 409, code: 'target_unavailable',
+                path: '/v1/actions/projects.worker.copy.inspect/execution-authorization', status: 403, errorCode: 'credential_scope_denied',
             }));
         }
     });
@@ -1235,6 +1270,18 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
                 data: admission.kind === 'admitted' ? ExternalActionExecutionAuthorizationVerifyResponseV1Schema.parse({ ok: true })
                     : { error: 'access_denied' } };
         });
+        // First-use Service restoration reads the installed Account's deployment
+        // inventory through Axios's generic request method, rather than get/post.
+        vi.spyOn(axios, 'request').mockImplementation(async options => {
+            const path = new URL(String(options.url)).pathname;
+            if (options.method === 'GET' && path === '/v1/deployments/environments') {
+                homeRequests.push({ method: 'GET', path });
+                expect(options.headers?.Authorization).toBe(`Bearer ${credentials.token}`);
+                return { status: 200, data: DeploymentEnvironmentListResultV1Schema.parse({ ok: true,
+                    items: [], nextCursor: null, runtimeTargetLinks: [], coverage: 'complete' }) };
+            }
+            throw new Error(`Unexpected Home request: ${options.method} ${path}`);
+        });
         vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (url, options) => {
             const path = new URL(String(url)).pathname;
             homeRequests.push({ method: 'GET', path });
@@ -1377,10 +1424,10 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
             expect(manageAdmission).toMatchObject({ kind: 'admitted', actorAccountId: manager.id, custodianAccountId: custodian.id, role: 'manage' });
             if (manageAdmission.kind !== 'admitted') throw new Error('Manage grantee admission missing');
             const manageResult = await invoke(manager.id, 'machines.services.list', target);
-            // The current Home route is custodian-only. A generic Manage grant
-            // admits placement, without disclosing another requester's Service.
-            expect(manageResult, failureDiagnostic('manage_list', manageResult)).toEqual({ ok: false,
-                errorCode: 'requester_account_context_unavailable' });
+            // A generic Manage grant admits placement, without disclosing
+            // another requester's Service.
+            expect(manageResult, failureDiagnostic('manage_list', manageResult)).toEqual({ ok: true,
+                result: { kind: 'snapshot', services: [] } });
 
             const ownerAdmission = await resolveMachineAdmission({ actorAccountId: custodian.id, machineId: machine.id,
                 actionId: 'localServices.actions.stopManaged', requireOnline: true });
@@ -1390,16 +1437,23 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
             expect(ownerResult, failureDiagnostic('owner_list', ownerResult)).toMatchObject({ ok: true });
             const ownerList = MachineServicesListResultV1Schema.parse('result' in ownerResult ? ownerResult.result : undefined);
             let unavailableBasis: Readonly<{ reason: string; metadataStatus: string; exactHome: boolean;
-                nativeOwnerMatches: boolean }> | undefined;
+                nativeOwnerMatches: boolean; restorationFailure?: Readonly<{ name: string; message: string; stack?: string }> }> | undefined;
             if (ownerList.kind === 'unavailable') {
+                let restorationFailure: Readonly<{ name: string; message: string; stack?: string }> | undefined;
+                try { await apiMachine.ensureEnvironmentServices(); }
+                catch (error) { restorationFailure = error instanceof Error
+                    ? { name: error.name, message: error.message, stack: error.stack }
+                    : { name: 'UnknownThrownValue', message: String(error) }; }
                 const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
                 try {
                     unavailableBasis = { reason: ownerList.reason, metadataStatus: apiMachine.getMachineMetadataSnapshot().status,
                         exactHome: await resolveServerProfileHomeIdentityId(homeId) === homeId,
-                        nativeOwnerMatches: lease?.registry.projectManagedServices === serviceOwner };
+                        nativeOwnerMatches: lease?.registry.projectManagedServices === serviceOwner,
+                        ...(restorationFailure ? { restorationFailure } : {}) };
                 } finally { await lease?.release(); }
             }
-            expect(ownerList, JSON.stringify({ phase: 'owner_service_projection', unavailableBasis }))
+            expect(ownerList, JSON.stringify({ phase: 'owner_service_projection', unavailableBasis,
+                admission: failureDiagnostic('owner_list', ownerResult) }))
                 .toMatchObject({ kind: 'snapshot', services: [{ serviceId, generation: service.instanceId, state: 'running' }] });
 
             // A signed wire root copied without its receiver-certified custody
@@ -1416,7 +1470,8 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
                 target: { kind: 'managed_service' as const, machineId: machine.id, managedServiceId: service.instanceId,
                     workspaceId: workspace.id, cwd: root, declaration } };
             const confirmedStop = { ...stop, confirmationNonce: createLocalServiceActionConfirmationNonceV1(stop) };
-            expect(await invoke(member.id, 'localServices.actions.stopManaged', confirmedStop)).toMatchObject({ ok: false });
+            await expect(invoke(member.id, 'localServices.actions.stopManaged', confirmedStop))
+                .rejects.toThrow('managed_controller_credentials_forbidden');
             expect(service.snapshot().state).toBe('running');
             const ownerStop = await invoke(custodian.id, 'localServices.actions.stopManaged', confirmedStop);
             expect(ownerStop, failureDiagnostic('owner_stop', ownerStop)).toMatchObject({ ok: true,
@@ -1430,52 +1485,88 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
     });
 
     it('preserves already admitted requester, owner and entitled recipient runners after withdrawal', async () => {
-        const accounts = await Promise.all(Array.from({ length: 3 }, () => db.account.create({ data: {} })));
+        const accounts = await Promise.all(Array.from({ length: 3 }, () => db.account.create({ data: { encryptionMode: 'plain' } })));
         const [owner, requester, survivor] = accounts;
-        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner!.id,
-            active: true, metadata: 'encrypted-metadata', installationId: randomUUID(),
-            installationPublicKey: tweetnacl.sign.keyPair().publicKey,
-            dataEncryptionKey: sealEncryptedDataKeyEnvelopeV1({ dataKey: randomBytes(32),
-                recipientPublicKey: tweetnacl.box.keyPair().publicKey, randomBytes }) } });
-        for (const account of [requester!, survivor!]) await db.machineAccountGrant.create({ data: {
-            machineId: machine.id, accountId: account.id, accessLevel: 'view', createdByAccountId: owner!.id,
-        } });
+        let machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner!.id,
+            active: true, metadata: encodePlainMachineStoredContent({ host: 'admitted-runners', platform: process.platform,
+                happyCliVersion: 'test', homeDir: '/fixture', happyHomeDir: '/fixture/.happier' }), installationId: randomUUID(),
+            dataEncryptionKey: new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')) } });
+        for (const account of [requester!, survivor!]) expect(await inTx(tx => setMachineAccessGrantInTx(tx, {
+            actorAccountId: owner!.id, machineId: machine.id, principal: { kind: 'account', accountId: account.id }, level: 'view',
+        }))).toMatchObject({ kind: 'saved' });
         expect(await db.accessKey.count({ where: { machineId: machine.id } })).toBe(0);
+        const serverId = 'home';
+        const directory = join(harness.baseDir, `admitted-runners-${machine.id}`);
+        const credentials = { token: await createAccountTokenForTests(owner!.id,
+            { kind: 'terminal', authority: 'account_automation' }), encryption: null };
+        const app = createAuthenticatedTestApp({ authentication: 'real' });
+        registerAccountProfileRoute(app);
+        registerAccountEncryptionRoutes(app);
+        await app.ready();
+        const restoreHttp = installAxiosFastifyAdapter({ app, origin: 'https://admitted-runners.test' });
+        const currentnessSocket = await createRequesterCurrentnessSocketHarness();
+        const tracked: TrackedSessionMap = new Map();
+        let sessionActivityOwner: LiveWorkProducerV1 | null = null;
+        const sessionActivity = createLiveWorkProducerGroup(() => sessionActivityOwner ? [sessionActivityOwner] : null);
+        const inventory = createManagedActivityInventory({ producers: [sessionActivity] });
+        let apiMachine!: ApiMachineClient;
+        const host = await createRequesterSessionControlRuntimeFixture({ happyHomeDir: directory,
+            activeServerDir: join(directory, 'servers', serverId), serverId,
+            serverHttpBaseUrl: 'https://admitted-runners.test', machineId: machine.id,
+            custodianAccountId: owner!.id, credentials,
+            connectedServicesMaterializationBaseDir: join(directory, 'connected-services'),
+            registry: new ConnectedServiceRuntimeRegistry(), trackedSessions: tracked,
+            getRequester: () => null, resolveQualifiedConnectedAccountV4Support: () => 'advertised',
+            getApiMachineForSessions: () => apiMachine,
+            beforeStartup: async () => {
+                await writeStoredCredentialsForServerId(serverId, credentials);
+                const installation = await readOrCreateInstallationIdentity();
+                machine = await db.machine.update({ where: { id: machine.id }, data: {
+                    installationId: installation.installationId,
+                    installationPublicKey: decodeBase64(installation.publicKey, 'base64url'),
+                } });
+                apiMachine = new ApiMachineClient(credentials.token, { id: machine.id,
+                    installationId: installation.installationId, encryptionMode: 'plain',
+                    metadata: { host: 'admitted-runners', platform: process.platform, happyCliVersion: 'test',
+                        homeDir: directory, happyHomeDir: directory }, metadataVersion: 1, daemonState: null, daemonStateVersion: 0 });
+            },
+            startup: { readLiveWorkInventory: inventory.read, pluginRuntimeController: pluginReloadController,
+                resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: machine.id, serverIdentityId: serverId }) },
+        });
+        sessionActivityOwner = host.runtime.sessionLiveWorkProducer;
+        sessionActivity.notifyChanged();
+        onTestFinished(async () => {
+            inventory.dispose(); sessionActivity.dispose();
+            await host.dispose(); await apiMachine.shutdown();
+            await currentnessSocket.close(); restoreHttp(); await app.close();
+        });
         const children = accounts.map(() => spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)']));
-        const tracked = new Map<number, TrackedSession>();
         try {
             await Promise.all(children.map(child => once(child, 'spawn')));
             for (const [index, child] of children.entries()) {
                 if (!child.pid) throw new Error('Missing child PID');
                 const identity = await readProcessIdentityByPid(child.pid);
                 if (!identity?.processStartTimeMs) throw new Error('Missing process identity');
-                tracked.set(child.pid, { pid: child.pid, childProcess: child, startedBy: 'daemon',
+                const trackingKey = mintSessionTrackingKey();
+                tracked.set(trackingKey, { trackingKey, pid: child.pid, childProcess: child, startedBy: 'daemon',
                     happySessionId: randomUUID(), processStartTimeMs: identity.processStartTimeMs,
-                    requesterWorkAttributionV1: { serverId: 'home', accountId: accounts[index]!.id,
+                    requesterWorkAttributionV1: { serverId, accountId: accounts[index]!.id,
                         machineId: machine.id, installationId: machine.installationId! } });
             }
-            let verificationRequests = 0;
-            const rpc = new RpcHandlerManager({ scopePrefix: machine.id, encryptionMode: 'e2ee', encryptionVariant: 'dataKey',
-                encryptionKey: randomBytes(32), logger: () => {},
-                authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, { machineId: machine.id,
-                    resolveCustodianAccountId: async () => owner!.id, resolveInstallationId: () => machine.installationId,
-                    // Substitute only the signed Home network call with its real admission owners.
-                    verifyMachineAdmission: async input => {
-                        verificationRequests++;
-                        const admission = await resolveMachineAdmission({ actorAccountId: owner!.id, machineId: machine.id,
-                            rpcMethod: RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS, requireOnline: true });
-                        return admission.kind === 'admitted' && admission.installationId === input.context.installationId
-                            && !!input.custodySubjectAccountId && await inTx(async tx =>
-                                await resolveEffectiveMachineRoleInTx(tx, { actorAccountId: input.custodySubjectAccountId!, machineId: machine.id }) === null);
-                    },
-                }, source) });
-            registerMachineAccessLossReceiver(rpc, { serverId: 'home', machineId: machine.id,
-                resolveInstallationId: () => machine.installationId });
+            // The actual Session producer feeds startup's inventory port. Runner
+            // transport is deliberately unavailable; census must retain its ownership.
+            const beforeWithdrawal = await inventory.read();
+            for (const session of tracked.values()) expect(beforeWithdrawal.items).toContainEqual(expect.objectContaining({ ownerRef: session,
+                attribution: session.requesterWorkAttributionV1 }));
+            const rpc = apiMachine.getMachineRoleRpcHandlerManager();
             let settle!: (result: unknown) => void;
             const settled = new Promise<unknown>(resolve => { settle = resolve; });
             const method = `${machine.id}:${RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS}`;
             const target = { id: 'installed-daemon', data: { clientType: 'machine-scoped', userId: owner!.id,
-                machineId: machine.id, verifiedMachineInstallationId: machine.installationId }, timeout: () => ({
+                machineId: machine.id, verifiedMachineInstallationId: machine.installationId,
+                accountStoredContentCompatibility: evaluateAccountStoredContentCompatibility(parseAccountStoredContentCompatibilitySocketAuthV1({
+                    accountStoredContentCompatibility: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+                })) }, timeout: () => ({
                     emitWithAck: async (_event: string, request: SocketRpcRequestPayload) => {
                         // This boundary is the authenticated Home socket, whose
                         // ApiMachine listener supplies this exact provenance.
@@ -1490,11 +1581,10 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
             expect(await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: owner!.id,
                 machineId: machine.id, principal: { kind: 'account', accountId: requester!.id } }))).toMatchObject({ kind: 'removed' });
             expect(await settled).toEqual({ kind: 'settled' });
-            expect(verificationRequests).toBe(0);
             for (const index of [0, 1, 2]) {
                 expect(children[index]!.exitCode).toBeNull();
                 expect(children[index]!.signalCode).toBeNull();
-                expect(tracked.has(children[index]!.pid!)).toBe(true);
+                expect([...tracked.values()].some(session => session.pid === children[index]!.pid!)).toBe(true);
             }
         } finally {
             eventRouter.clearIo();
