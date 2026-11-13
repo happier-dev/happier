@@ -58,6 +58,8 @@ import { composeProviderSettingsV1, splitProviderSettingsV1 } from '@happier-dev
 import { ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
 import { createAccountProviderActionExecuteV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
 import { logger } from '@/ui/logger';
+import { preserveBrokerSourceHealthFailure } from '@/providers/broker/sourceFailure';
+import { startProviderBrokerApplicationServer } from '@/providers/broker/providerBrokerApplicationServer';
 
 async function withManagedProviderTestHome<T>(
   options: Parameters<typeof withConfiguredDaemonTestHome>[0],
@@ -94,6 +96,32 @@ it('retains the runtime startup cause in the explicit-start refusal log through 
           failureCause: { phase: 'providers.runtime_start', errorClass: 'Error', errorCode: null, httpStatus: null } },
       });
 
+      // Same real startup through broker custody, source classification and HTTP writer.
+      const custody = createManagedProviderExplicitStartCustody({ machineId: fixture.machineId, happyHomeDir: homeDir, controller });
+      const server = await startProviderBrokerApplicationServer({
+        handler: async () => ({ ok: false, reasonCode: 'resource_unavailable' }),
+        localConsumer: { authorize: () => true, request: async () => {
+          await custody.acquire({ contributionKey: 'acme.managed-run/gateway',
+            identity: { pluginId: 'acme.managed-run', localId: 'gateway' },
+            request: { reason: 'explicitStartLocal', endpointTemplateIds: ['responses'] },
+            purposeBindings: { v: 1, bindings: [] }, isAuthorizationCurrent: () => true,
+            revalidateAuthorization: async () => true,
+            operationClaim: { kind: 'providerBroker', operation: { kind: 'session', sessionId: 'member-session' } },
+            signal: new AbortController().signal,
+          }).catch(preserveBrokerSourceHealthFailure);
+          return { ok: false, reasonCode: 'resource_unavailable' };
+        } },
+      });
+      try {
+        const response = await fetch(server.localConsumerEndpointUrl! + '/v1/models');
+        const body = await response.text();
+        expect(response.status).toBe(403);
+        expect(body).toContain('provider_endpoint_unavailable');
+        expect(body).toContain('providers.runtime_start');
+        expect(body).toContain('Error');
+        expect(body).not.toContain('Worker must not start');
+      } finally { await server.close(); }
+
     } finally { await fixture.cleanup(); }
   });
 });
@@ -107,12 +135,12 @@ it('refuses unavailable Account authority without falling back to the daemon gat
     const custody = createManagedProviderExplicitStartCustody({ machineId: fixture.machineId, happyHomeDir: homeDir,
       controller, accountAuthority: null });
     try {
-      const projection = await custody.acquire({ identity: gateway.identity,
+      const acquisition = custody.acquire({ identity: gateway.identity,
         contributionKey: `${gateway.identity.pluginId}/${gateway.identity.localId}`,
         request: { reason: 'explicitStartLocal', endpointTemplateIds: ['api'] }, purposeBindings: gateway.purposeBindings,
         operationClaim: { kind: 'providerBroker', operation: { kind: 'session', sessionId: 'requester-session' } },
         signal: new AbortController().signal, isAuthorizationCurrent: () => true, revalidateAuthorization: async () => true });
-      expect(projection).toBeNull();
+      await expect(acquisition).rejects.toMatchObject({ code: 'provider_endpoint_unavailable' });
       expect(existsSync(join(gateway.directory, 'gateway-started'))).toBe(false);
     } finally { await fixture.cleanup(); }
   });
@@ -190,7 +218,7 @@ it.each(['cold', 'activated'] as const)('acquires connected-account broker custo
       expect(response.status).toBe(200);
       await response.body?.cancel();
       expect(process.kill(secondPid, 0)).toBe(true);
-      expect(await custody.acquire({ ...request('team-session-two'), revalidateRetainedCurrentness: async () => false })).toBeNull();
+      await expect(custody.acquire({ ...request('team-session-two'), revalidateRetainedCurrentness: async () => false })).rejects.toMatchObject({ code: 'provider_authorization_changed' });
       expect(await waitForProcessExit(secondPid)).toBe(true);
       expect(diagnostic).toHaveBeenCalledWith(expect.any(String), {
         reasonCode: 'resource_unavailable', providerCode: 'provider_authorization_changed',
@@ -208,7 +236,7 @@ it('refuses initial Home consumer admission before starting a physical gateway',
       controller: gateway.controller });
     let admissions = 0;
     try {
-      expect(await custody.acquire({ identity: gateway.identity,
+      await expect(custody.acquire({ identity: gateway.identity,
         contributionKey: `${gateway.identity.pluginId}/${gateway.identity.localId}`,
         request: { reason: 'explicitStartLocal', endpointTemplateIds: ['api'] }, purposeBindings: gateway.purposeBindings,
         operationClaim: { kind: 'providerBroker', operation: { kind: 'execution_run', executionRunId: 'denied-run' } },
@@ -216,7 +244,7 @@ it('refuses initial Home consumer admission before starting a physical gateway',
         revalidateAuthorization: async () => true,
         // Authenticated Home admission is the network boundary; startup is real.
         revalidateRetainedCurrentness: async () => { admissions++; return false; },
-      })).toBeNull();
+      })).rejects.toMatchObject({ code: 'provider_authorization_changed' });
       expect(admissions).toBe(1);
       await expect(readFile(join(gateway.directory, 'gateway-started'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     } finally { await fixture.cleanup(); }
@@ -290,13 +318,13 @@ it('records only closed broker and Provider reasons when source custody acquisit
     const custody = createManagedProviderExplicitStartCustody({ machineId: fixture.machineId, happyHomeDir: homeDir,
       controller: gateway.controller });
     try {
-      expect(await custody.acquire({ identity: gateway.identity,
+      await expect(custody.acquire({ identity: gateway.identity,
         contributionKey: `${gateway.identity.pluginId}/${gateway.identity.localId}`,
         request: { reason: 'explicitStartLocal', endpointTemplateIds: ['api'] }, purposeBindings: gateway.purposeBindings,
         operationClaim: { kind: 'providerBroker', operation: { kind: 'session', sessionId: 'private-session-do-not-log' } },
         signal: new AbortController().signal, isAuthorizationCurrent: () => true,
         revalidateAuthorization: async () => { throw new Error('private-upstream-body-and-secret'); },
-      })).toBeNull();
+      })).rejects.toMatchObject({ code: 'provider_connection_invalid' });
       expect(diagnostic).toHaveBeenCalledWith(expect.any(String), {
         reasonCode: 'resource_unavailable', providerCode: 'provider_connection_invalid',
       });
@@ -624,7 +652,7 @@ it.each(['Start', 'next-request', 'new-stream'] as const)('G1 recovers retained 
 
 it('finishes an in-flight physical response when the admitted job ends, then refuses the next request', async () => {
   await withManagedProviderTestHome({ prefix: 'gateway-inflight-withdrawal-' }, async ({ homeDir }) => {
-    let releaseBody: (() => void) | undefined;
+    let releaseBody: () => void = () => undefined;
     const bodyReleased = new Promise<void>(resolve => { releaseBody = resolve; });
     let upstreamRequests = 0;
     const upstream = createServer(async (request, response) => {
@@ -758,6 +786,7 @@ function managedServices(): ManagedServices {
       remove: unavailable,
     }),
     supervise: unavailable,
+    observeWorkload: unavailable,
   });
 }
 
@@ -798,6 +827,7 @@ async function runtimeRegistry(input: Readonly<{
       uiRenderersV2: Object.freeze([]),
       uiTranslationsV2: Object.freeze([]),
       activationTargets: Object.freeze([]),
+      backupDestinations: Object.freeze([]),
       catalogEntriesById: Object.freeze({}),
       agentDefinitionsById: new Map(),
       pluginDiagnosticsByPluginId: Object.freeze({}),

@@ -14,6 +14,7 @@ export function preserveBrokerSourceHealthFailure(error: unknown): null {
     ? cause.error : cause);
   if (providerError.success) throw new ProviderBrokerApplicationFailureError({
     ok: false, reasonCode: providerError.data.code,
+    ...(providerError.data.failureCause ? { failureCause: providerError.data.failureCause } : {}),
   });
   if (isConnectedAccountSourceReconnectRequiredError(cause)) throw new ProviderBrokerApplicationFailureError({
     ok: false, reasonCode: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired,

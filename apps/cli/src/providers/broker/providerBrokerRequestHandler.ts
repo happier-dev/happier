@@ -1,3 +1,4 @@
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type {
     ManagedProviderEndpointHttpAccess,
 } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
@@ -6,7 +7,6 @@ import type {
     ProviderBrokerAdmissionFailureCodeV1,
     ProviderBrokerApplicationBindingV1,
     ProviderBrokerRelayApplicationBindingV1,
-    ProviderBrokerRequestAdmissionResponseV1,
     ProviderBrokerRouteGrantPayloadV1,
     PeerTcpTunnelRelayAuthorizationV2,
     SignedProviderBrokerRouteGrantV1,
@@ -111,7 +111,8 @@ export type ProviderBrokerApplicationStreamLifetime = Readonly<{
         source: TeamCredentialSourceBindingV1;
         resourceId: string;
         brokerMachineId: string;
-        operation: Extract<ProviderBrokerRequestAdmissionResponseV1, { ok: true }>['operation'];
+        /** The verified route grant's runtime consumer; Action operations use their own stream target. */
+        operation: ProviderBrokerRouteGrantPayloadV1['consumer'];
         expectedResourceRevision: number;
         application: ProviderBrokerApplicationBindingV1;
         modelId: string;
@@ -180,6 +181,7 @@ export type ProviderBrokerRequestHandlerResult =
         reasonCode: TeamCredentialBrokerApplicationFailureCodeV1;
         usageLimit?: TeamCredentialUsageLimitDenialV1;
         sourceOpenFailureReason?: TeamCredentialBrokerSourceOpenFailureReason;
+        failureCause?: ActionFailureCauseV1;
     }>;
 
 export type ProviderBrokerRequestHandler = (input: Readonly<{

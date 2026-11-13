@@ -1,3 +1,5 @@
+import { isPluginError } from '@happier-dev/plugin-sdk';
+import { projectActionFailureCauseV1, readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ProviderErrorV1Schema, createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { parseProviderContributionIdentityV1 } from '@happier-dev/protocol/providers/contribution-identity';
 import type { ProviderBrokerAdmissionFailureCodeV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
@@ -413,7 +415,13 @@ export function createManagedProviderExplicitStartCustody(input: Readonly<{
         } catch {
           // Diagnostics cannot change the existing closed source refusal.
         }
-        return null;
+        // Retain classified startup facts, never exception prose, context or credentials.
+        const failureCause = providerError.success && providerError.data.failureCause
+          ? readActionFailureCauseV1(providerError.data.failureCause)
+          : isPluginError(error) && error.data.failureCause
+            ? readActionFailureCauseV1(error.data.failureCause)
+            : projectActionFailureCauseV1(error, 'providers.runtime_start');
+        throw createProviderErrorV1(providerError.success ? providerError.data.code : 'provider_endpoint_unavailable', { failureCause });
       }
     },
     retire,

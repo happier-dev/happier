@@ -34,10 +34,12 @@ export function providerBrokerApplicationFailureBody(
 ): ProviderBrokerApplicationFailureBodyV1 {
     const usageLimit = response.reasonCode === 'team_credential_usage_limit' ? response.usageLimit : undefined;
     const sourceReason = response.sourceOpenFailureReason;
+    const cause = response.failureCause;
+    const causeSummary = cause ? ` [${cause.phase}: ${cause.errorClass}${cause.errorCode ? ` (${cause.errorCode})` : ''}]` : '';
     const message = usageLimit
         ? `Happier refused this request: the shared credential's ${usageLimit.metric} limit is reached `
             + `(${usageLimit.remaining} remaining, resets ${usageLimit.resetsAtUtc}).`
-        : `Happier refused this request: ${response.reasonCode}${sourceReason ? ` (${sourceReason})` : ''}.`;
+        : `Happier refused this request: ${response.reasonCode}${sourceReason ? ` (${sourceReason})` : ''}${causeSummary}.`;
     return {
         type: 'error',
         error: {

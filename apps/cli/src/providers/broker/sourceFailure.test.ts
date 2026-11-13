@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { providerBrokerApplicationFailureBody, ProviderBrokerApplicationFailureError } from './providerBrokerApplicationFailure';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { resolveTeamCredentialResourceSourceCatalogs } from './resourceTestCandidate';
 import { preserveBrokerSourceHealthFailure } from './sourceFailure';
@@ -46,4 +47,17 @@ describe('external broker source failure projection', () => {
       readSourceModelCatalogs: async () => ({ status: 'error', error: createProviderErrorV1('provider_endpoint_rate_limited') }),
     })).rejects.toMatchObject({ failure: { ok: false, reasonCode: 'provider_endpoint_rate_limited' } });
   });
+});
+
+it('retains sanitized startup cause through source classification and HTTP refusal', () => {
+  const failureCause = { phase: 'providers.runtime_start', errorClass: 'Error', errorCode: null, httpStatus: null } as const;
+  try {
+    preserveBrokerSourceHealthFailure(createProviderErrorV1('provider_endpoint_unavailable', { failureCause }));
+    throw new Error('Expected source refusal');
+  } catch (error) {
+    expect(error).toBeInstanceOf(ProviderBrokerApplicationFailureError);
+    if (!(error instanceof ProviderBrokerApplicationFailureError)) throw error;
+    expect(error.failure).toMatchObject({ failureCause });
+    expect(providerBrokerApplicationFailureBody(error.failure, undefined).error.message).toContain('providers.runtime_start');
+  }
 });
