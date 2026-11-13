@@ -77,11 +77,17 @@ describe('ModalCardFrame', () => {
             const screen = await renderScreen(<ModalCardFrame framed={false} title="Input" bodyScroll="none">{content}</ModalCardFrame>);
             const { ModalCardHeader } = await import('./ModalCardHeader');
             expect(screen.findAllByType(ModalCardHeader)).toHaveLength(0);
-            expect(screen.findAllByType('ScrollView').every(node => node.props.scrollEnabled === false)).toBe(true);
+            // UI refinements (orchestrator), 2026-11-13 03:17Z: raw native content keeps its View;
+            // custody follows the input's state and lifetime, independently of the container type.
             act(() => screen.findByType('RetainedInput').props.onChangeText('entered'));
             await screen.update(<ModalCardFrame title="Updated" bodyScroll="auto">{content}</ModalCardFrame>);
             expect(screen.findByType('RetainedInput').props.value).toBe('entered');
             expect(retired).not.toHaveBeenCalled();
+            for (const scrollHost of ['bounded', 'body', 'overlay'] as const) {
+                await screen.update(<ModalCardFrame title="Picker" scrollHost={scrollHost} bodyScroll="none">{content}</ModalCardFrame>);
+                expect(screen.findByType('RetainedInput').props.value).toBe('entered');
+                expect(retired).not.toHaveBeenCalled();
+            }
             await screen.update(<ModalCardFrame framed={false} header="none" bodyScroll="none">{content}</ModalCardFrame>);
             expect(screen.findByType('RetainedInput').props.value).toBe('entered');
             expect(retired).not.toHaveBeenCalled();

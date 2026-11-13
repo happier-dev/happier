@@ -156,6 +156,9 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
     // A fixed-height body gives an exact height: under a mere cap, native flex children below it still lay
     // out at their full height (iOS QA: the Customize list stayed 1122 pt tall in a 522 pt body).
     const boundsContent = (fixedHeight || bounded) && bodyScroll !== 'auto';
+    // Choose once at presentation: publishing chrome must not retire the body's pending input.
+    // Native raw/bounded content owns its inner scrolling; web keeps a scrollable host throughout.
+    const [usesScrollView] = React.useState(() => Platform.OS === 'web' || (framed && !boundsContent));
     const [bodyHeight, setBodyHeight] = React.useState(0);
     const onBodyLayout = React.useCallback((event: LayoutChangeEvent) => {
         const height = Math.round(event.nativeEvent.layout.height);
@@ -199,7 +202,7 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
         || typeof props.onClose === 'function');
 
     const body = (
-        <PopoverScrollSourceProvider scrollSourceRef={bodyScroll === 'auto' ? bodyScrollRef : inheritedScrollSource}>
+        <PopoverScrollSourceProvider scrollSourceRef={usesScrollView && bodyScroll === 'auto' ? bodyScrollRef : inheritedScrollSource}>
             <ModalCardBody fill={framed && bodyScroll !== 'auto'}
                 // Native flex children need the exact fixed viewport, rather than their intrinsic content height.
                 style={[boundsContent && bodyHeight > 0
@@ -277,16 +280,20 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
 
                 {/* A card (not fullscreen) is a contained scope: page lists inside take its width (R-APP-7). */}
                 <ContainedPageScopeProvider contained={framed && !fullscreen}>
-                    {boundsContent ? (
-                        <View testID="modal-card-body-viewport" style={styles.bodyBounded} onLayout={onBodyLayout}>
+                    {!usesScrollView ? (
+                        <View testID={boundsContent ? 'modal-card-body-viewport' : undefined}
+                            style={boundsContent ? styles.bodyBounded : styles.bodyUnscrolled}
+                            onLayout={boundsContent ? onBodyLayout : undefined}>
                             {body}
                         </View>
                     ) : <ScrollView
                         ref={bodyScrollRef}
-                        testID={bodyScroll === 'auto' ? 'modal-card-body-scroll' : undefined}
+                        testID={bodyScroll === 'auto' ? 'modal-card-body-scroll' : boundsContent ? 'modal-card-body-viewport' : undefined}
                         // Raw/overlay bodies keep their parent while publishing scrolling chrome, retaining pending input custody.
-                        style={bodyScroll === 'auto' ? styles.bodyScrollView : styles.bodyUnscrolled}
-                        contentContainerStyle={bodyScroll === 'auto' ? styles.bodyScrollContent : undefined}
+                        style={bodyScroll === 'auto' ? styles.bodyScrollView : boundsContent ? styles.bodyBounded : styles.bodyUnscrolled}
+                        onLayout={boundsContent ? onBodyLayout : undefined}
+                        contentContainerStyle={bodyScroll === 'auto' ? styles.bodyScrollContent
+                            : boundsContent ? [styles.bodyBounded, bodyHeight > 0 ? (fixedHeight ? { height: bodyHeight } : { maxHeight: bodyCap }) : null] : undefined}
                         scrollEnabled={bodyScroll === 'auto'}
                         keyboardShouldPersistTaps="handled"
                         nestedScrollEnabled={bodyScroll === 'auto'}
