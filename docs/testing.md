@@ -586,12 +586,16 @@ fixed CPU capacity can reserve as head. Larger waiters keep their arrival order
 and become eligible when achievable memory recovers; non-admitted pressure must
 not block smaller fitting work. When a request becomes head, capacity already
 free remains available to fitting younger requests, in arrival order. Memory
-and CPU released by this broker's slots afterward are pledged to the head up to
-its minimum floor. Recovered slots do not contribute releases to that pledge.
-The head is offered capacity first as soon as it fits, without runtime estimates,
-aging or new tunables. Its pledge clears on admission, refusal, withdrawal or
+and CPU released by this broker's slots remain reusable until the head has waited
+22m24s. This bound is the nearest-rank p95 of 63,482 successful targeted-validation
+wrapper durations measured on 2026-11-13; those durations include preparation and
+admission, so it is an opportunity window rather than a payload runtime estimate.
+Subsequent releases, including recovered slots, are then pledged up to the head's
+minimum floor. No new timer or tunable is used. The head is offered capacity first
+as soon as it fits. Its pledge clears on admission, refusal, withdrawal or
 replacement by another head. Status and read-only admission checks deduct the
-same pledge from unreserved memory and CPU.
+same pledge from unreserved memory and CPU. The sample exposes head age,
+`reservationDelayMs` and `reservationActive` alongside `reservationKiB`.
 Each admitted client retains a pathname socket listener
 for its payload's lifetime; closure of the broker's peer connection releases its reservation.
 Waiting clients block on their control sockets without polling or process walks.
@@ -1038,13 +1042,14 @@ In current 0.3 development, runtime builds use native AUTO to select and synchro
 
 In current 0.3 development, `admission_broker.mjs` is the Linux queue owner.
 It considers requests from oldest to newest. The oldest eligible waiter's
-pledge holds capacity released after it became head; capacity already free can
-backfill younger fitting requests. Eligibility requires the minimum floor to fit
+pledge holds subsequent releases only after its measured 22m24s wait bound;
+before then, released capacity can also backfill younger fitting requests. Eligibility requires the minimum floor to fit
 current achievable memory; an unachievable waiter retains its age and becomes
 eligible on recovery. Once its floor fits, the head receives capacity first.
 The broker's published `unreservedMemoryKiB` deducts the same pledge, so AUTO
 uses the owner's remaining capacity rather than recomputing head reservations.
-No aging deadline or cumulative backfill allowance is used. Workspace-busy
+The wait bound activates on existing release/recovery events, without a new
+timer or cumulative backfill allowance. Workspace-busy
 requests release their offered capacity and partial leases, then wait for their
 own resource changes. A head blocked by an active publication also waits without
 reserving its floor before its first offer. A physically fitting request can wait without an admission

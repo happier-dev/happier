@@ -270,6 +270,54 @@ async function fixture(t, { readMemory = () => ({ availableMemoryKiB: 100, total
   return { root, broker, sampleResources };
 }
 
+// Nearest-rank p95 of 63,482 successful targeted-validation wrapper durations.
+const headReservationDelayMs = 1_344_000;
+
+for (const starvation of [false, true]) test(`capped head reservation ${starvation ? 'prevents starvation under sustained small traffic' : 'keeps nl1/nl3 released capacity reusable before the bound'}`, linux, async t => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const { root } = await fixture(t);
+  const holder = await (await acquire(root, 70, t)).admit();
+  const head = await acquire(root, 38, t, { arrivedAt: now });
+  const sample = () => requestAdmissionSample(root);
+  const small = [];
+  if (!starvation) {
+    for (let i = 0; i < 6; i++) {
+      const backfill = await (await acquire(root, 5, t)).admit();
+      await backfill.release();
+      await sample();
+    }
+    const before = await sample();
+    assert.equal(before.unreservedMemoryKiB, 30, 'six completions must not hide the 30 physically free units');
+    await (await acquire(root, 5, t)).admit();
+    return;
+  }
+  for (let i = 0; i < 6; i++) small.push(await (await acquire(root, 5, t)).admit());
+  now += headReservationDelayMs - 1;
+  for (let i = 0; i < 12; i++) {
+    const index = i % small.length;
+    await small[index].release();
+    const before = await sample();
+    assert.equal(before.unreservedMemoryKiB, 5, 'sustained traffic may recycle capacity before the bound');
+    assert.equal(before.head.reservationActive, false);
+    small[index] = await (await acquire(root, 5, t)).admit();
+  }
+  now += 1;
+  for (let i = 0; i < small.length; i++) {
+    await small[i].release();
+    const after = await sample();
+    assert.equal(after.head.reservationActive, true);
+    assert.equal(after.head.reservationDelayMs, headReservationDelayMs);
+    assert.equal(after.head.ageMs, headReservationDelayMs);
+    assert.equal(after.head.reservationKiB, (i + 1) * 5);
+    const follower = await acquire(root, 5, t, { noWait: true });
+    assert.equal((await follower.next()).reason, 'HSTACK_MEMORY_BUSY', 'followers cannot consume the aged head pledge');
+  }
+  await holder.release();
+  await head.admit();
+  assert.equal((await sample()).waitingCount, 0, 'the head starts despite sustained smaller demand');
+});
+
 for (const resource of ['memory', 'CPU']) test(`${resource} backfills current free capacity and pledges later releases to the head`, linux, async t => {
   const reservations = [];
   const positions = [];
@@ -294,7 +342,7 @@ for (const resource of ['memory', 'CPU']) test(`${resource} backfills current fr
     const value = await client.next(); client.socket.destroy(); return value;
   };
   const held = await (await job(10)).admit();
-  const head = await job(17);
+  const head = await job(17, { arrivedAt: Date.now() - headReservationDelayMs });
   const followers = [];
   for (let id = 0; id < 3; id++) followers.push({ id, client: await job(2) });
   const initial = await barrier();
@@ -335,7 +383,7 @@ for (const resource of ['memory', 'CPU']) test(`recovered slots pledge ${resourc
     sampleResources, readCpuCapacity: () => 100 });
   await replacement.start();
   t.after(() => replacement.close());
-  const head = await job(70);
+  const head = await job(70, { arrivedAt: Date.now() - headReservationDelayMs });
   const small = await (await job(20)).admit();
   const barrier = async () => {
     const client = await request(root, { kind: 'sample' });
@@ -369,7 +417,7 @@ test('closing the waiting head clears its released-memory pledge', linux, async 
   });
   const { root } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 20, totalMemoryKiB: 20 }) });
   const held = await (await acquire(root, 10, t)).admit();
-  await acquire(root, 17, t);
+  await acquire(root, 17, t, { arrivedAt: Date.now() - headReservationDelayMs });
   const small = [];
   for (let i = 0; i < 3; i++) small.push(await acquire(root, 2, t));
   const barrier = await request(root, { kind: 'sample' });
@@ -855,7 +903,7 @@ test('the head floor survives a stream of small jobs, with backfill only from sp
   const held = await first.admit();
   const second = await acquire(root, 40, t);
   const alsoHeld = await second.admit();
-  const large = await acquire(root, 70, t);
+  const large = await acquire(root, 70, t, { arrivedAt: Date.now() - headReservationDelayMs });
   const small = await acquire(root, 20, t);
   // admission-backfill-1106: older holders cover the head's future floor.
   const placement = await request(root, { kind: 'sample' });
@@ -1350,8 +1398,9 @@ for (const adaptive of [false, true]) test(`an unachievable ${adaptive ? 'adapti
   const holder = await acquire(root, 20, t);
   const held = await holder.admit();
   const head = await acquire(root, adaptive ? 120 : 80, t, adaptive ? {
+    arrivedAt: Date.now() - headReservationDelayMs,
     floorOptions: [{ floorKiB: 120, workers: 2 }, { floorKiB: 80, workers: 1 }],
-  } : {});
+  } : { arrivedAt: Date.now() - headReservationDelayMs });
   const check = await request(root, { kind: 'check', floorKiB: 10, cpuCost: 1 });
   const spare = await check.next();
   check.socket.destroy();

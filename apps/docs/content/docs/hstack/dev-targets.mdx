@@ -1109,7 +1109,11 @@ of running against an older checkout. Reachable synchronization failures do not 
 In current 0.3 development, recognized Linux typecheck, Vitest, build-like and direct
 dependency-install commands share one host admission broker. It considers requests in arrival
 order and starts each request that fits its class's memory floor, without a fixed job-count ceiling
-or a backfill budget. Waiting commands block on their sockets rather than polling. The client keeps
+or a backfill budget. Smaller fitting jobs can reuse released capacity until the
+oldest eligible waiter has waited 22m24s, a bound derived from measured command
+durations. Later releases then accumulate for that waiter to prevent starvation.
+The broker sample shows its age, reservation delay and whether pledging is active.
+Waiting commands block on their sockets rather than polling. The client keeps
 a pathname socket listener for the payload's lifetime; the reservation ends when the broker's
 peer connection to that listener closes. Admission
 adds no available-memory percentage, PSI or CPU-load denial. Searches and ordinary control commands

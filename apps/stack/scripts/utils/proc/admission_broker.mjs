@@ -15,6 +15,11 @@ import { brokerAddress, readSlotAddress, slotAddress } from './admission_socket.
 import { readLinuxAdmissionMemory } from './admission_memory.mjs';
 export { brokerAddress } from './admission_socket.mjs';
 
+// Nearest-rank p95 of 63,482 successful targeted-validation wrapper durations
+// (2026-11-13 provenance census; includes preparation/admission). Give backfills
+// this measured opportunity window, then accumulate releases for the old head.
+const HEAD_RESERVATION_DELAY_MS = 1_344_000;
+
 const socketGone = error => error.code === 'ECONNREFUSED' || error.code === 'ENOENT';
 
 async function lockFile(fd) {
@@ -164,8 +169,10 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     if (headPledge?.item !== head) headPledge = head ? { item: head, memoryKiB: 0, cpuCores: 0 } : undefined;
   }
   function headReservation(head) {
-    const pledged = head && headPledge?.item === head;
+    const active = Boolean(head && Date.now() - head.arrivedAt >= HEAD_RESERVATION_DELAY_MS);
+    const pledged = active && headPledge?.item === head;
     return {
+      active,
       memoryKiB: pledged ? Math.min(head.floorOptions?.at(-1).floorKiB ?? head.floorKiB, headPledge.memoryKiB) : 0,
       cpuCores: pledged ? Math.min(minimumCpuCores(head), headPledge.cpuCores) : 0,
     };
@@ -200,7 +207,8 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     // Publication-blocked demand has no memory reservation.
     return { ...sample, ...budget,
       head: head ? { className: symbolicClass(head), minimumFloorKiB: minimumFloor(head),
-        ageMs: Math.max(0, Date.now() - head.arrivedAt), reservationKiB: reservation.memoryKiB } : null,
+        ageMs: Math.max(0, Date.now() - head.arrivedAt), reservationKiB: reservation.memoryKiB,
+        reservationActive: reservation.active, reservationDelayMs: HEAD_RESERVATION_DELAY_MS } : null,
       waitingByClassAndFloor: [...buckets.values()],
       unreservedCpuCores: Math.max(0, budget.unreservedCpuCores - reservation.cpuCores),
       queuedCpuCores: waiting.reduce((sum, item) => sum + (item.slot ? 0 : accountedCpuCores(item, item.floorOptions?.[0]?.workers)), 0),
@@ -375,9 +383,10 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   }
   function releaseReservation(slot) {
     if (!slots.delete(slot.address)) return false;
-    // Every release during this head's tenure is pledged, including live
-    // slots recovered at startup: their capacity was not free at head arrival.
-    if (headPledge) {
+    // Before the measured wait bound, releases remain reusable by backfills.
+    // After it, include recovered slots too so sustained traffic cannot starve
+    // the head. Evaluate on this release, never retroactively or on a new timer.
+    if (headReservation(headPledge?.item).active) {
       headPledge.memoryKiB += slot.floorKiB;
       headPledge.cpuCores += slot.cpuCores ?? 0;
     }
@@ -407,7 +416,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   }
   async function drain() {
     // Capacity already free when a request becomes head remains available to
-    // backfill; subsequent slot releases are held for that head.
+    // backfill; releases are held only after that head reaches the wait bound.
     const budget = slotResourceBudget();
     let availableMemoryKiB = budget.unreservedMemoryKiB;
     let availableCpuCores = budget.unreservedCpuCores;
