@@ -111,6 +111,7 @@
     // These specs drive real CLI producers; the test-only project (tsconfig.vitest.json) still resolves them.
     "sources/app/api/routes/actions/discussionExecutionAuthorization.sqlite.integration.spec.ts",
     "sources/app/api/routes/session/accountRunFollowDelivery.sqlite.integration.spec.ts",
+    "sources/app/deployments/environmentSecretLaunchAdmission.sqlite.integration.spec.ts",
     "sources/app/api/routes/session/sessionFollowPersonalProgress.sqlite.integration.spec.ts",
     "sources/app/api/routes/session/sessionFollowRoutes.sqlite.integration.spec.ts",
     "sources/app/api/socket/sessionUpdateHandler.sqlite.integration.spec.ts",
