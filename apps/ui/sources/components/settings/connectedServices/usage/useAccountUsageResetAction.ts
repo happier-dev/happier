@@ -6,7 +6,8 @@ import { useConnectedServiceRecoveryCreditMachineTarget } from '@/hooks/server/c
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { Modal } from '@/modal';
 import { resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey } from '@/sync/domains/connectedServices/connectedServiceQuotaRecoveryCreditReceiptPresentation';
-import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import { readMachineAdministrationTargetObservation } from '@/sync/domains/state/machineAdministrationUiState';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1, readSelectedMachineAdministrationTarget } from '@/sync/domains/machines/administration/selectionPreferences';
 import { doesMachineAdministrationTargetMatchActiveAccount, resolveFreshMachineAdministrationExecutionTarget } from '@/sync/domains/machines/administration/useTargetSelection';
 import { storage } from '@/sync/domains/state/storageStore';
 import { t } from '@/text';
@@ -44,9 +45,12 @@ export function useAccountUsageResetAction(params: Readonly<{
     const { legacyServiceId, accountId, snapshotFetchedAtMs, onApplied, machineId: admittedMachineId } = params;
     const use = React.useCallback(async (providerCreditId: string | null) => {
         if (pending) return;
-        const selected = storage.getState().settings.machineAdministrationTargetsLocalV1[
-            MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts
-        ] ?? null;
+        const state = storage.getState();
+        const selected = readSelectedMachineAdministrationTarget(
+            state.settings.machineAdministrationTargetsLocalV1,
+            MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts,
+            readMachineAdministrationTargetObservation(state.settingsScope, MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts),
+        );
         const selectedMachine = doesMachineAdministrationTargetMatchActiveAccount({
             target: selected, activeAccountServerId: activeServer.serverId,
         }) ? resolveFreshMachineAdministrationExecutionTarget(selected)?.machine.id ?? null : null;

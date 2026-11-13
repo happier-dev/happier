@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createQualifiedQuotaTestHarness, quotaTestRef as ref } from './qualifiedConnectedAccountQuotaTestHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { rememberMachineAdministrationTargetObservation, clearMachineAdministrationTargetObservation } from '@/sync/domains/state/machineAdministrationUiState';
 import { storage } from '@/sync/domains/state/storageStore';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import { resolveConnectedServiceSettingsErrorMessage } from '@/components/settings/connectedServices/connectedServiceSettingsErrors';
 import { refreshQualifiedConnectedAccountQuota } from '@/sync/api/account/qualifiedConnectedAccountQuotaTransport';
 
 vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -15,9 +17,12 @@ describe('qualified quota refresh Action authority', () => {
     let boundary: Awaited<ReturnType<typeof createQualifiedQuotaTestHarness>>;
 
     beforeEach(async () => { boundary = await createQualifiedQuotaTestHarness(); });
-    afterEach(async () => { await boundary?.dispose(); vi.restoreAllMocks(); });
+    afterEach(async () => { const scope = storage.getState().settingsScope; if (scope) clearMachineAdministrationTargetObservation(scope, MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts); await boundary?.dispose(); vi.restoreAllMocks(); });
 
-    it('refreshes through the persisted second machine rather than inventory order', async () => {
+    it('refreshes through the persisted second machine rather than inventory order or an automatic observation', async () => {
+        const scope = storage.getState().settingsScope;
+        if (!scope) throw new Error('Expected active settings scope');
+        rememberMachineAdministrationTargetObservation(scope, MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts, { serverIdentityId: boundary.account.home.serverIdentityId!, machineId: 'machine-first' });
         await expect(refreshQualifiedConnectedAccountQuota(boundary.context())).resolves.toBeUndefined();
         expect(boundary.controls).toEqual([{ machineId: 'machine-selected', command: {
             operation: 'describeService', service: ref.service, requiredOperation: 'quota_refresh',
@@ -42,9 +47,21 @@ describe('qualified quota refresh Action authority', () => {
         expect(boundary.refresh).not.toHaveBeenCalled();
     });
 
+    it('refreshes through the automatic device target when the explicit preference is empty', async () => {
+        storage.getState().applySettings({ ...storage.getState().settings, machineAdministrationTargetsLocalV1: {} }, 2);
+        const scope = storage.getState().settingsScope;
+        if (!scope) throw new Error('Expected active settings scope');
+        rememberMachineAdministrationTargetObservation(scope, MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts, { serverIdentityId: boundary.account.home.serverIdentityId!, machineId: 'machine-selected' });
+        await expect(refreshQualifiedConnectedAccountQuota(boundary.context())).resolves.toBeUndefined();
+        expect(boundary.controls[0]?.machineId).toBe('machine-selected');
+        expect(boundary.refresh).toHaveBeenCalledWith(ref);
+    });
+
     it('refuses a missing persisted selection even with available machines', async () => {
         storage.getState().applySettings({ ...storage.getState().settings, machineAdministrationTargetsLocalV1: {} }, 2);
-        await expect(refreshQualifiedConnectedAccountQuota(boundary.context())).rejects.toBeDefined();
+        const error = await refreshQualifiedConnectedAccountQuota(boundary.context()).catch(error => error);
+        expect(error).toMatchObject({ code: 'connected_account_machine_required' });
+        expect(resolveConnectedServiceSettingsErrorMessage(error)).toBe('settingsPlugins.registriesNoMachine');
         expect(boundary.controls).toEqual([]);
         expect(boundary.refresh).not.toHaveBeenCalled();
     });

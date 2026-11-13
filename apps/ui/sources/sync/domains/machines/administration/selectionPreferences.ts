@@ -81,6 +81,15 @@ export function readMachineAdministrationTargetPreference(
     return current[key] ?? null;
 }
 
+/** Explicit preference takes precedence over the device's automatic/last-used observation. */
+export function readSelectedMachineAdministrationTarget(
+    current: MachineAdministrationTargetsV1,
+    key: string,
+    observed: MachineAdministrationTargetV1 | null,
+): MachineAdministrationTargetV1 | null {
+    return readMachineAdministrationTargetPreference(current, key) ?? observed;
+}
+
 /**
  * Builds one device-local named-entry proposal. Validation remains domain-owned.
  */

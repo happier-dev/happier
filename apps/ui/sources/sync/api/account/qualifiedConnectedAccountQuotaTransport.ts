@@ -17,7 +17,8 @@ import type { ProviderAccountUsageRecordId } from '@happier-dev/protocol/connect
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import { readMachineAdministrationTargetObservation } from '@/sync/domains/state/machineAdministrationUiState';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1, readSelectedMachineAdministrationTarget } from '@/sync/domains/machines/administration/selectionPreferences';
 import { doesMachineAdministrationTargetMatchActiveAccount, resolveFreshMachineAdministrationExecutionTarget } from '@/sync/domains/machines/administration/useTargetSelection';
 import { storage } from '@/sync/domains/state/storageStore';
 import { parseToken } from '@/utils/auth/parseToken';
@@ -27,7 +28,7 @@ export type QualifiedConnectedAccountQuotaTransportContext = Readonly<{
     credentials: AuthCredentials;
     ref: QualifiedConnectedAccountRef;
     serverBasis: ExpectedActiveServerFetchBasis;
-    /** Null explicitly disables detail refresh; omission uses the exact persisted Account choice. */
+    /** Null explicitly disables detail refresh; omission uses the canonical Administration choice. */
     refreshMachineId?: string | null;
 }>;
 
@@ -119,15 +120,21 @@ export async function refreshQualifiedConnectedAccountQuota(
         || !areServerProfileIdentifiersEquivalent(active.serverId, context.serverBasis.serverId)) {
         throw Object.assign(new Error('STALE_SERVER_GENERATION'), { code: 'STALE_SERVER_GENERATION' });
     }
-    const selected = storage.getState().settings.machineAdministrationTargetsLocalV1[
-        MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts
-    ] ?? null;
+    const state = storage.getState();
+    const selected = readSelectedMachineAdministrationTarget(
+        state.settings.machineAdministrationTargetsLocalV1,
+        MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts,
+        readMachineAdministrationTargetObservation(state.settingsScope, MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts),
+    );
+    if (!selected) {
+        throw Object.assign(new Error('connected_account_machine_required'), { code: 'connected_account_machine_required' });
+    }
     const target = doesMachineAdministrationTargetMatchActiveAccount({
         target: selected, activeAccountServerId: context.serverBasis.serverId,
     }) ? resolveFreshMachineAdministrationExecutionTarget(selected) : null;
     if (!target || context.refreshMachineId === null
         || (context.refreshMachineId !== undefined && context.refreshMachineId !== target.machine.id)) {
-        throw Object.assign(new Error('connected_account_service_identity_unsupported'), { code: 'connected_account_service_identity_unsupported' });
+        throw Object.assign(new Error('connected_account_daemon_unavailable'), { code: 'connected_account_daemon_unavailable' });
     }
     // The shared Action owns V4 operation admission and the HTTP mutation;
     // every list/detail/sidebar caller reaches this same exact-target dispatch.

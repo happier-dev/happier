@@ -48,7 +48,7 @@ import {
     type MachineAdministrationCandidateInventoryRowV1,
 } from './targetState';
 import { resolveFreshMachineAdministrationExecutionTarget } from './executionTarget';
-import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1, readMachineAdministrationTargetPreference } from './selectionPreferences';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1, readMachineAdministrationTargetPreference, readSelectedMachineAdministrationTarget } from './selectionPreferences';
 export { resolveFreshMachineAdministrationExecutionTarget } from './executionTarget';
 
 export type MachineAdministrationExecutionTargetOptions = Readonly<{
@@ -149,12 +149,7 @@ export function useMachineAdministrationSelectedTarget(selectionKey: string): Ma
     const selections = useSetting('machineAdministrationTargetsLocalV1');
     const scope = useAccountSettingsScope();
     const observed = useMachineAdministrationTargetObservation(scope, selectionKey);
-    return readSelectedTarget(selections, selectionKey, observed);
-}
-
-function readSelectedTarget(selections: Parameters<typeof readMachineAdministrationTargetPreference>[0],
-    selectionKey: string, observed: MachineAdministrationTargetV1 | null): MachineAdministrationTargetV1 | null {
-    return readMachineAdministrationTargetPreference(selections, selectionKey) ?? observed;
+    return readSelectedMachineAdministrationTarget(selections, selectionKey, observed);
 }
 
 /** Presentation-only canonical Administration rows, without creating a persisted selection. */
@@ -266,7 +261,7 @@ export function useMachineAdministrationTargetSelection(
         setInitialTargetIntentState(released);
     }, [initialTargetKey]);
     const initialTargetPending = initialTargetKey !== undefined && !initialTargetIntent.current.applied;
-    const storedTarget = initialTargetPending ? initialTarget : readSelectedTarget(selections, selectionKey, automaticTarget);
+    const storedTarget = initialTargetPending ? initialTarget : readSelectedMachineAdministrationTarget(selections, selectionKey, automaticTarget);
     const selectionRevisionRef = React.useRef<MachineAdministrationSelectionRevisionState>({
         selectionKey,
         target: storedTarget,
@@ -347,8 +342,8 @@ export function useMachineAdministrationTargetSelection(
         if (!enabled) return null;
         if (initialTargetIntent.current.key !== initialTargetKey) return null;
         const target = initialTargetKey !== undefined && !initialTargetIntent.current.applied
-            ? initialTarget : readMachineAdministrationTargetPreference(storage.getState().settings.machineAdministrationTargetsLocalV1, selectionKey)
-                ?? readMachineAdministrationTargetObservation(expectedSettingsScope, selectionKey);
+            ? initialTarget : readSelectedMachineAdministrationTarget(storage.getState().settings.machineAdministrationTargetsLocalV1, selectionKey,
+                readMachineAdministrationTargetObservation(expectedSettingsScope, selectionKey));
         selectionRevisionRef.current = advanceMachineAdministrationSelectionRevision(
             selectionRevisionRef.current,
             selectionKey,

@@ -79,6 +79,8 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         : t('connectedServices.errors.generic');
 
     switch (code) {
+        case 'connected_account_machine_required':
+            return t('settingsPlugins.registriesNoMachine');
         case '-32081':
             return t('connectedServices.errors.quotaRefreshNoLogin');
         case '-32082':
