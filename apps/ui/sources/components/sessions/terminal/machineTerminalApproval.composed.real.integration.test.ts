@@ -22,6 +22,10 @@ import { resolveSessionTerminalIdentity } from './sessionTerminalMode';
 import { createLightSqliteHarness, type LightSqliteHarness } from '../../../../../server/sources/testkit/lightSqliteHarness';
 import { createAuthenticatedTestApp } from '../../../../../server/sources/app/api/testkit/sqliteFastify';
 import { db } from '../../../../../server/sources/storage/db';
+import { inTx } from '../../../../../server/sources/storage/inTx';
+import { setEligibleMachineAccessGrantInTx } from '../../../../../server/sources/testkit/machineAccessGrant.testkit';
+import { removeMachineAccessGrantInTx } from '../../../../../server/sources/app/machines/machineAccess';
+import { registerMachineSessionRpcHandlers } from '../../../../../cli/src/api/machine/rpcHandlers.sessions';
 import { artifactsRoutes } from '../../../../../server/sources/app/api/routes/artifacts/artifactsRoutes';
 import { createCliActionDeps } from '../../../../../cli/src/session/actions/createCliActionDeps';
 import { RpcHandlerManager } from '../../../../../cli/src/api/rpc/RpcHandlerManager';
@@ -83,6 +87,7 @@ import { startSocket } from '../../../../../server/sources/app/api/socket';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { removeServerProfile } from '@/sync/domains/server/serverProfiles';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { Modal } from '@/modal';
 import * as React from 'react';
 import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
@@ -299,6 +304,8 @@ describe('Machine terminal approval receipt across Home aliases (real SQLite)', 
     });
 
     it.each([
+        ['plain', 'restart', 'plain'], ['plain', 'own-restart', 'plain'],
+        ['e2ee', 'restart', 'plain'], ['e2ee', 'own-restart', 'e2ee'],
         ['plain', 'session', 'plain'], ['e2ee', 'session', 'plain'], ['plain', 'project', 'plain'], ['e2ee', 'project', 'plain'],
         ['e2ee', 'project', 'e2ee'], ['e2ee', 'own-session', 'e2ee'],
         ['e2ee', 'paired-terminal', 'plain'],
@@ -310,12 +317,12 @@ describe('Machine terminal approval receipt across Home aliases (real SQLite)', 
             ...(ownerMode === 'e2ee' ? createSignedAccountContentBinding(ownerKeys.publicKey) : {}) } });
         const requesterSecret = new Uint8Array(32).fill(42);
         const requesterKeys = nacl.box.keyPair.fromSecretKey(deriveAccountMachineKeyFromRecoverySecret(requesterSecret));
-        const requester = targetKind === 'own-session' ? owner : await db.account.create({ data: { encryptionMode: requesterMode,
+        const requester = targetKind === 'own-session' || targetKind === 'own-restart' ? owner : await db.account.create({ data: { encryptionMode: requesterMode,
             ...(requesterMode === 'e2ee' ? createSignedAccountContentBinding(requesterKeys.publicKey) : {}) } });
         const ownerToken = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
         const requesterToken = await auth.createToken(requester.id, undefined, { kind: 'account', authority: 'present_user' });
         const requesterCredentials = { token: requesterToken,
-            ...(requesterMode === 'e2ee' ? { secret: encodeBase64(targetKind === 'own-session' ? ownerSecret : requesterSecret, 'base64') } : {}) };
+            ...(requesterMode === 'e2ee' ? { secret: encodeBase64(requester.id === owner.id ? ownerSecret : requesterSecret, 'base64') } : {}) };
         const ownerCredentials = { token: ownerToken, encryption: ownerMode === 'e2ee'
             ? { type: 'legacy' as const, secret: ownerSecret } : null };
         const homeId = await initializeServerIdentityCache();
@@ -330,8 +337,8 @@ describe('Machine terminal approval receipt across Home aliases (real SQLite)', 
             metadata: codec.encodeStored({ host: 'r35-terminal', platform: 'linux', happyCliVersion: '0.3',
                 homeDir: database.baseDir, happyHomeDir: database.baseDir }),
             dataEncryptionKey: ownerEnvelope ?? new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')) } });
-        if (requester.id !== owner.id) await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: requester.id,
-            accessLevel: 'view', createdByAccountId: owner.id } });
+        if (requester.id !== owner.id) await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { machineId: machine.id, actorAccountId: owner.id,
+            principal: { kind: 'account', accountId: requester.id }, level: 'view' }));
         if (ownerEnvelope && requester.id !== owner.id) await db.machineKeyEnvelope.create({ data: { machineId: machine.id,
             recipientAccountId: requester.id, encryptedDataKey: sealEncryptedDataKeyEnvelopeV1({ dataKey: machineKey,
                 recipientPublicKey: requesterKeys.publicKey, randomBytes: nacl.randomBytes }),
@@ -439,9 +446,11 @@ describe('Machine terminal approval receipt across Home aliases (real SQLite)', 
         });
         context.onTestFinished(() => { probeProcessGroup.mockRestore(); });
         const ownerApi = await runWithServerHttpBaseUrl(endpoint, () => ApiClient.create(ownerCredentials));
+        const homeFeatures = await runWithServerHttpBaseUrl(endpoint, () => ownerApi.getServerFeaturesSnapshot({ refresh: true }));
         const published = await runWithServerHttpBaseUrl(endpoint, () => ownerApi.getMachine(machine.id));
         if (!published) throw new Error('Installed Machine read missing');
-        apiMachine = await runWithServerHttpBaseUrl(endpoint, () => ownerApi.machineSyncClient(published));
+        apiMachine = await runWithServerHttpBaseUrl(endpoint, () => ownerApi.machineSyncClient(published, undefined, {
+            resolveCurrentServerIdentityId: () => homeId, resolveServerFeaturesSnapshot: async () => homeFeatures }));
         const installed = apiMachine;
         context.onTestFinished(async () => { await installed.shutdown(); });
         const projectIo = createProjectNativeIo();
@@ -456,12 +465,13 @@ describe('Machine terminal approval receipt across Home aliases (real SQLite)', 
                 environmentIo: projectIo.environmentIo, resolveWorkspaceExecutionConfig: async () => null };
         };
         const lifecycle = await runWithServerHttpBaseUrl(endpoint, () => installed.setRPCHandlers({
-            spawnSession: runtime.spawnSession, stopSession: runtime.stopSession,
+            spawnSession: runtime.spawnSession, sessionSpawnV1OutcomeRequired: true, stopSession: runtime.stopSession,
             isSessionActive: runtime.isSessionAlreadyRunning,
             requestShutdown: () => { throw new Error('Unexpected OS daemon shutdown request'); },
         }, { currentMachineId: machine.id, currentServerId: daemonProfileId, workingDirectory: database.baseDir,
             externalActionIngressOwner: runtime.externalActionIngressOwner,
             ...(targetKind === 'project' ? { createProjectFiniteRuntime } : {}) }));
+        registerMachineSessionRpcHandlers({ rpcHandlerManager: installed.getMachineRoleRpcHandlerManager(), ...lifecycle.sessionsRoleFamily });
         // The real Machine transport creates its signed installed Socket and
         // owns registration, generation checks and RpcHandlerManager dispatch.
         await runWithServerHttpBaseUrl(endpoint, () => new Promise<void>(resolve => {
@@ -497,6 +507,45 @@ describe('Machine terminal approval receipt across Home aliases (real SQLite)', 
             { serverId: learned.id }, requesterCredentials);
         if (!credentials) throw new Error('Requester credential missing');
         context.onTestFinished(async () => { if (!await credentials.rollback()) throw new Error('Requester credential rollback failed'); });
+        if (targetKind === 'restart' || targetKind === 'own-restart') {
+            const executor = createDefaultActionExecutor();
+            // Replace only the native dialog boundary for this restart journey.
+            const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+            const dialog = createModalModuleMock({ confirmResult: true });
+            const confirm = dialog.spies.confirm;
+            const nativeConfirm = vi.spyOn(Modal, 'confirm').mockImplementation(confirm);
+            const show = vi.spyOn(Modal, 'show').mockImplementation(dialog.spies.show);
+            const hide = vi.spyOn(Modal, 'hide').mockImplementation(dialog.spies.hide);
+            context.onTestFinished(() => { nativeConfirm.mockRestore(); show.mockRestore(); hide.mockRestore(); });
+            // Session custody provides the member's admitted folder without replacing native identity policy.
+            // The owner control uses the Machine Shell; both reach the browser's public terminal Action relay.
+            const input = { serverId: learned.id, machineId: machine.id, terminalKey: 'restart-after-exit', cwd: database.baseDir,
+                ...(targetKind === 'restart' ? { sessionId: session.id } : {}) };
+            const click = { surface: 'ui' as const, authority: 'present_user' as const, serverId: learned.id,
+                expectedAccountId: requester.id };
+            const opened = await executor.execute('machines.terminal.open', input, click);
+            expect(opened, JSON.stringify(opened)).toMatchObject({ ok: true, result: { ok: true } });
+            if (!opened.ok) throw new Error('Initial Shell failed');
+            const first = DaemonTerminalEnsureResponseSchema.parse(opened.result);
+            if (!first.ok) throw new Error('Initial PTY absent');
+            const exit = lifecycle.getFiniteTerminalSessions().waitForExit({ terminalId: first.terminalId });
+            spawn.mock.results[0]!.value.kill();
+            expect(await exit).toMatchObject({ kind: 'exited', exit: { exitCode: 0 } });
+            confirm.mockResolvedValue(false);
+            expect(await executor.execute('machines.terminal.restart', input, click))
+                .toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+            expect(spawn).toHaveBeenCalledTimes(1);
+            confirm.mockClear().mockResolvedValue(true);
+            const restarted = await executor.execute('machines.terminal.restart', input, click);
+            expect(restarted, JSON.stringify(restarted)).toMatchObject({ ok: true, result: { ok: true, reused: false } });
+            if (!restarted.ok) throw new Error('Approved restart failed');
+            const second = DaemonTerminalEnsureResponseSchema.parse(restarted.result);
+            if (!second.ok) throw new Error('Restart PTY absent');
+            expect(second.terminalId).not.toBe(first.terminalId);
+            expect(spawn).toHaveBeenCalledTimes(2);
+            expect(confirm).toHaveBeenCalledTimes(1);
+            return;
+        }
         // Explicit Inbox policy keeps this journey independent of the default
         // direct-confirmation UI. The real settings writer seals E2EE content.
         const policyAccount = await captureLazyActionAccountContext(learned.id);
@@ -666,13 +715,14 @@ describe('Machine terminal approval receipt across Home aliases (real SQLite)', 
             await expect(wrongAccountCarrier.read({ terminalId: receipt.terminalId,
                 cursor: { mode: 'byte-offset', value: 0 } })).rejects.toMatchObject({ code: 'action_account_scope_changed' });
             // A previously admitted stream must recheck current Machine Use.
-            await db.machineAccountGrant.deleteMany({ where: { machineId: machine.id, accountId: requester.id } });
+            await inTx(tx => removeMachineAccessGrantInTx(tx, { machineId: machine.id, actorAccountId: owner.id,
+                principal: { kind: 'account', accountId: requester.id } }));
             await expect(carrier.read({ terminalId: receipt.terminalId,
                 cursor: { mode: 'byte-offset', value: 0 } })).rejects.toMatchObject({ code: 'admission_unavailable' });
             await expect(carrier.sendInput(receipt.terminalId, { t: 'text', text: 'forbidden input' }))
                 .rejects.toMatchObject({ code: 'admission_unavailable' });
-            await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: requester.id,
-                accessLevel: 'view', createdByAccountId: owner.id } });
+            await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { machineId: machine.id, actorAccountId: owner.id,
+                principal: { kind: 'account', accountId: requester.id }, level: 'view' }));
             const exit = lifecycle.getFiniteTerminalSessions().waitForExit({ terminalId: receipt.terminalId });
             const closed = await executor.execute('machines.terminal.close', { serverId: learned.id, machineId: machine.id,
                 terminalId: receipt.terminalId }, { ...uiContext, actionRequestId: crypto.randomUUID(),

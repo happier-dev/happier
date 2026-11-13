@@ -1,3 +1,4 @@
+import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { MACHINE_CAPABILITIES_DETECT_ACTION_ID, MACHINE_RUN_MARKERS_LIST_ACTION_ID } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
@@ -213,9 +214,14 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
                     return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
                 }
                 const requestId = context.actionRequestId;
+                const invocation = projectExternalActionRequesterInvocationV1({ actionId, account,
+                    target: { kind: 'machine', machineId: request.machineId },
+                    context: { ...context, actionCaller: context.actionCaller ?? { kind: 'host' },
+                        surface: context.surface ?? 'rpc', authority: context.authority ?? 'account_automation' } });
+                if (!invocation) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
                 const run = () => executeOriginalAccountMachineAction({ account, actionId,
-                        input: { ...request, serverId: account.serverId }, machineId: request.machineId,
-                        requestId, authority: context.authority ?? 'account_automation', foreignTargetOnly: true, ...(signal ? { signal } : {}) });
+                        input: request, machineId: request.machineId,
+                        requestId, authority: invocation.authority, invocation, foreignTargetOnly: true, ...(signal ? { signal } : {}) });
                 const execution = 'terminalKey' in request && typeof request.terminalKey === 'string'
                     ? await trackPendingMachineTerminalCreation(request.machineId, request.terminalKey, run,
                         { serverId: account.serverId, accountId: account.accountId, signal })
