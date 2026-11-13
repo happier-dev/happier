@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { MachineServicesDetailResultV1Schema, MachineServicesListResultV1Schema,
-    DeploymentChildRpcV1Schema, type DeploymentChildRpcV1 } from '@happier-dev/protocol';
+    DeploymentChildRpcV1Schema, type DeploymentChildRpcV1, type ActionExecutorContext } from '@happier-dev/protocol';
 import { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
     DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -38,12 +38,13 @@ import { createDeploymentChildRequesterHarness } from '@/testkit/backends/deploy
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { resolveAdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { registerDaemonDeploymentChildRpcHandler } from '@/deployments/daemonDeploymentChildRpc';
+import type { RequesterEnvironmentAccessObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopped' | 'removed' | 'partially-removed' = 'running',
     homeInventoryMode?: 'plain' | 'e2ee', sourceCase?: 'reused-container' | 'foreign-environment' | 'mixed-service-sources', publishedPorts = true, noHealthcheck = false,
-    primaryService = 'app', appliedServiceExports: DeploymentServiceExportV1[] = []) {
+    primaryService = 'app', appliedServiceExports: DeploymentServiceExportV1[] = [], restoration = false) {
     const root = await mkdtemp(join(tmpdir(), 'happier-retained-service-recovery-'));
     const home = createHash('sha256').update(root).digest('hex').slice(0, 12);
     const docker = await createOwnServerDockerBoundary(join(root, 'tools'), { engineId: `recovery-${home}`, accounting: { memoryBytes: 2097152 } });
@@ -78,7 +79,8 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
     const definition = { kind: 'stored' as const, contentRevision: 1, document,
         composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, profiles: [], services: composeServices };
     const admission = { ...sourceIdentity, ...target, deploymentId: sourceDeploymentId, installationId: 'installation-a',
-        artifactDirectory: join(root, 'artifacts'), definition, async assertCurrent() {} };
+        artifactDirectory: join(root, 'artifacts'), definition,
+        ...(restoration ? { restorationForDeploymentId: sourceDeploymentId } : {}), async assertCurrent() {} };
     const source = await createDeploymentSourceMaterializationPort({ registry: createScmBackendRegistry([]),
         async admit() { return admission; } }).materialize({ environmentId: sourceIdentity.environmentId, deploymentId: sourceDeploymentId });
     const retained = await captureOwnServerDeploymentSource({ source, admission });
@@ -89,7 +91,7 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
         '--project-directory', source.rootPath, '--file', join(source.rootPath, 'compose.yaml'), 'up', '--detach', '--no-build', '--pull', 'never']);
     let servingSource = retained;
     if (sourceCase === 'mixed-service-sources') {
-        const nextAdmission = { ...admission, deploymentId: servingDeploymentId };
+        const nextAdmission = { ...admission, deploymentId: servingDeploymentId, restorationForDeploymentId: undefined };
         const nextSource = await createDeploymentSourceMaterializationPort({ registry: createScmBackendRegistry([]),
             async admit() { return nextAdmission; } }).materialize({ environmentId: identity.environmentId, deploymentId: servingDeploymentId });
         servingSource = await captureOwnServerDeploymentSource({ source: nextSource, admission: nextAdmission });
@@ -155,7 +157,7 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
             environmentId: environment.id, id: 'deployment-newer-failed', state: 'failed', revision: 2,
             contentArtifactId: 'artifact-newer-failed', requestedAtMs: 2000, startedAtMs: 2001, settledAtMs: 2002 }),
             content: { ...receipt.content, machineResults: [] } });
-        const availableReceipts = [failed, receipt, ...(sourceCase === 'reused-container' ? [sourceReceipt] : [])];
+        const availableReceipts = [failed, receipt, ...(sourceCase === 'reused-container' || sourceCase === 'mixed-service-sources' ? [sourceReceipt] : [])];
         // Home HTTP and Account Artifact storage are genuine boundaries. The
         // real history projection selects the serving version; source custody
         // opens its historical receipt through the mode-correct Artifact owner.
@@ -264,6 +266,8 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
             } finally { await prepared?.dispose(); await channel.close(); }
         },
         sourcePath: source.rootPath, sourceDeploymentId, openedReceiptArtifacts, environmentRevision: environment.revision,
+        listMachine: (readable = true) => runtime.execute({ actionId: 'machines.services.list', input: target, context,
+            canReadEnvironments: async ids => new Set(readable ? ids : []) }),
         get inventoryReads() { return inventoryReads; },
         detail: async () => MachineServicesDetailResultV1Schema.parse(await runtime.execute({ actionId: 'machines.services.detail',
             input: { ...target, serviceId: service.serviceId }, context, canReadEnvironments: async ids => new Set(ids) })),
@@ -280,6 +284,75 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
 }
 
 describe('retained Environment service recovery on first use', () => {
+    it('keeps healthy services visible when a retained restoration source directory is missing', async () => {
+        const fixture = await createRestartedEnvironmentFixture('running', 'plain', 'mixed-service-sources', true, false, 'app', [], true);
+        try {
+            // Real OS loss after native creation reproduces the cold Services read;
+            // the other service's source and all domain owners remain real.
+            await rm(fixture.sourcePath, { recursive: true });
+            const listed = await fixture.listMachine();
+            expect(listed).toMatchObject({ kind: 'snapshot', services: expect.arrayContaining([
+                expect.objectContaining({ serviceId: fixture.service.serviceId, state: 'unknown',
+                    generation: null, unavailableReason: 'unavailable',
+                    failureCause: { phase: 'service.restoration', errorClass: 'Error', errorCode: 'ENOENT', httpStatus: null },
+                    capabilities: { exec: false, start: false, stop: false, restart: false, logs: false, accounting: false } }),
+                expect.objectContaining({ serviceId: fixture.serviceFor('worker').serviceId, state: 'healthy' }),
+            ]) });
+            const snapshot = MachineServicesListResultV1Schema.parse(listed);
+            expect(snapshot.kind === 'snapshot' && snapshot.services).toHaveLength(2);
+            expect(await fixture.listMachine()).toMatchObject({ kind: 'snapshot', services: expect.arrayContaining([
+                expect.objectContaining({ serviceId: fixture.service.serviceId, state: 'unknown', generation: null,
+                    failureCause: expect.objectContaining({ errorCode: 'ENOENT' }) }),
+                expect.objectContaining({ serviceId: fixture.serviceFor('worker').serviceId, state: 'healthy' }),
+            ]) });
+            expect(await fixture.listMachine(false)).toEqual({ kind: 'snapshot', services: [] });
+            expect(await fixture.detail()).toMatchObject({ kind: 'service', service: expect.objectContaining({
+                serviceId: fixture.service.serviceId, state: 'unknown', generation: null,
+                failureCause: { phase: 'service.restoration', errorClass: 'Error', errorCode: 'ENOENT', httpStatus: null },
+            }) });
+            const calls = await fixture.docker.readInvocations();
+            expect(calls.filter(call => call.args.includes('up'))).toHaveLength(1);
+            expect(calls.filter(call => call.args.includes('stop') || call.args.includes('down') || call.args.includes('rm'))).toEqual([]);
+        } finally { await fixture.dispose(); }
+    });
+    it('retires an unfiltered failed-only Services observation on its Environment access change', async () => {
+        const fixture = await createRestartedEnvironmentFixture('running', 'plain', undefined, true, false, 'app', [], true);
+        const demand = new AbortController();
+        let held: { dispose(): void | Promise<void> } | undefined;
+        let publishAccess: ((event: RequesterEnvironmentAccessObservation) => void) | undefined;
+        const observation: NonNullable<NonNullable<ActionExecutorContext['machineServicesListResource']>['observation']> = {
+            signal: demand.signal, invalidate() {}, retire() { demand.abort(); },
+            accept(subscription) { held = subscription; },
+        };
+        try {
+            await rm(fixture.sourcePath, { recursive: true });
+            const listed = await fixture.runtime.execute({ actionId: 'machines.services.list',
+                input: { serverId: fixture.readInput.serverId, machineId: fixture.readInput.machineId },
+                context: { ...fixture.context, machineServicesListResource: { observation } },
+                canReadEnvironments: async ids => new Set(ids),
+                // The external Account access feed is the subscription boundary;
+                // restoration, disclosure selection and stream retirement stay real.
+                async observeEnvironmentAccessChanges(listener) {
+                    publishAccess = listener;
+                    return { async dispose() { publishAccess = undefined; } };
+                },
+            });
+            expect(listed).toMatchObject({ kind: 'snapshot', services: [expect.objectContaining({
+                serviceId: fixture.service.serviceId, generation: null, state: 'unknown',
+                failureCause: expect.objectContaining({ errorCode: 'ENOENT' }),
+            })] });
+            expect(fixture.readHandle()).toBeNull();
+            if (!publishAccess) throw new Error('Expected admitted Account access subscription');
+            publishAccess({ kind: 'changes', environmentIds: ['unrelated-environment'] });
+            expect(demand.signal.aborted).toBe(false);
+            publishAccess({ kind: 'changes', environmentIds: [fixture.service.environmentId] });
+            expect(demand.signal.aborted).toBe(true);
+        } finally {
+            demand.abort();
+            await held?.dispose();
+            await fixture.dispose();
+        }
+    });
     it('restores applied Iroh export declarations on the recreated managed service handle', async () => {
         const appliedServiceExports: DeploymentServiceExportV1[] = [{ key: 'database', service: 'app', containerPort: 5432,
             scheme: 'postgres', exposure: 'loopback', transport: { kind: 'iroh' } }];

@@ -3058,7 +3058,7 @@ export class ApiMachineClient {
                 if (!installationId || !serverId) throw machineServiceAdmissionFailure(
                     !installationId ? 'service.installation' : 'service.home_identity');
                 const { restoreOwnServerServicesForHost } = await import('@/deployments/targets/ownServer/restoreOwnServerServicesForHost');
-                await restoreOwnServerServicesForHost({ serverId, machineId: this.machine.id, installationId, owner, signal,
+                return await restoreOwnServerServicesForHost({ serverId, machineId: this.machine.id, installationId, owner, signal,
                     acquireServiceExportForward: this.lifecycleDependencies.acquireServiceExportForward,
                     resolveRuntime: async workSignal => {
                         let reason = 'unavailable';

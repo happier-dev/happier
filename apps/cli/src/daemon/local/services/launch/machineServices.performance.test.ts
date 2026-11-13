@@ -630,7 +630,8 @@ describe('Machine Services exact demand cost', () => {
             } };
             expect(await detail()).toMatchObject({ kind: 'service', service: { name: 'Renamed worker' } });
             contentReady = false;
-            expect(await detail()).toEqual({ kind: 'unavailable', reason: 'admission_unavailable' });
+            expect(await detail()).toMatchObject({ ok: false, errorCode: 'admission_unavailable',
+                failureCause: { phase: 'service.metadata.read', errorCode: 'admission_unavailable' } });
             contentReady = true;
             expect(await detail()).toMatchObject({ kind: 'service', service: { name: 'Renamed worker' } });
         } finally { await runtime.dispose(); await fixture.dispose(); }

@@ -1,3 +1,4 @@
+import type { EnvironmentServiceRecoveryRow } from '@/plugins/runtime/invocation/services/environmentServiceRecovery';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema,
     DeploymentReceiptGetResultV1Schema, type ActionExecutorContext } from '@happier-dev/protocol';
 import { getDeploymentTargetLinkLineageV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
@@ -32,7 +33,7 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
     isCurrent(): boolean;
     resolveRuntime(signal: AbortSignal): Promise<MachineTerminalAccountReadRuntime | null>;
     acquireServiceExportForward?: OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
-}>): Promise<void> {
+}>): Promise<readonly EnvironmentServiceRecoveryRow[]> {
     input.signal.throwIfAborted();
     const runtime = await input.resolveRuntime(input.signal);
     if (!runtime || runtime.machineId !== input.machineId || !input.isCurrent()
@@ -65,6 +66,7 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
             return result.ok ? result : refuse(result.error);
         },
     };
+    const failures: EnvironmentServiceRecoveryRow[] = [];
     let cursor: string | undefined;
     do {
         const page = DeploymentEnvironmentListResultV1Schema.parse(await deploymentAction!('deployments.environments.list',
@@ -105,7 +107,7 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
             const version = projection.getVersions()[input.machineId];
             if (!version?.deploymentId || version.uncertain) continue;
             const receipt = opened.get(version.deploymentId) ?? await readReceipt(version.deploymentId);
-            await restoreOwnServerDeploymentServices({ ...input, receipt, readReceipt,
+            failures.push(...await restoreOwnServerDeploymentServices({ ...input, receipt, readReceipt,
                 async restoreServiceReferences({ docker, engine, onFailure }) {
                     const addresses = receipt.content.ownServer?.referenceAddresses ?? [];
                     if (!addresses.some(address => address.route?.kind === 'iroh')) return { async close() {} };
@@ -130,9 +132,10 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
                             readEnvironment: dependencies.readDeploymentEnvironment, docker, engine, onFailure });
                         return { async close() { try { await restored.close(); } finally { await lease.release(); } } };
                     } catch (error) { await lease.release(); throw error; }
-                } });
+                } }));
         }
         cursor = page.nextCursor ?? undefined;
     } while (cursor);
     await assertCurrent();
+    return failures;
 }

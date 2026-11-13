@@ -1,3 +1,4 @@
+import type { EnvironmentServiceRecoveryRow } from '@/plugins/runtime/invocation/services/environmentServiceRecovery';
 import type { MachineServiceUsageV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsHistoryV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -28,7 +29,7 @@ import { machineServiceAdmissionFailure } from './machineServiceFailure';
 type Invocation = Parameters<NonNullable<ActionExecutorDeps['machineServiceAction']>>[0] & MachineServiceDisclosureRequest;
 type ServiceHandle = ProjectManagedServiceHandle | MachineManagedServiceHandle;
 type ServiceSelection = Pick<MachineServicesListInputV1, 'environmentId' | 'composeService' | 'preflight'>;
-function matchesServiceSelection(handle: ServiceHandle, selection: ServiceSelection): boolean {
+function matchesServiceSelection(handle: Pick<ServiceHandle, 'kind'> & { environmentId?: string; composeService?: string }, selection: ServiceSelection): boolean {
     return !selection.environmentId || handle.kind === 'environment' && handle.environmentId === selection.environmentId
         && (!selection.composeService || handle.composeService === selection.composeService);
 }
@@ -47,7 +48,7 @@ export function createMachineServicesRuntime(input: Readonly<{
     target: Readonly<{ serverId: string; machineId: string }>;
     readMetadata(): MachineMetadataFieldReadV1;
     captureMetadataPort(): MachineMetadataFieldPortV1;
-    restoreEnvironmentServices?(owner: ResolvedExecutablePluginRuntimeRegistry['projectManagedServices'], signal: AbortSignal): Promise<void>;
+    restoreEnvironmentServices?(owner: ResolvedExecutablePluginRuntimeRegistry['projectManagedServices'], signal: AbortSignal): Promise<void | readonly EnvironmentServiceRecoveryRow[]>;
 }>): Readonly<{ execute(request: Invocation): Promise<MachineServiceActionOutput | ActionExecuteFailure>; sampleUsage(): Promise<readonly MachineServiceUsageV1[]>; canReadHistory(serviceId: string, request: MachineServiceDisclosureRequest): Promise<boolean>; reconcile(): Promise<void>; ensureEnvironmentServices(): Promise<void>; dispose(): Promise<void> }> {
     let disposed = false;
     const rows = createMachineServiceRowProjection(revision);
@@ -183,8 +184,8 @@ export function createMachineServicesRuntime(input: Readonly<{
         const { environmentId } = selection;
         const matchesPreflight = createMachineServicePreflightMatcher(selection.preflight);
         // Advisory selection consumes retained observations; it never restores an inventory or establishes saved watches.
+        const restorationFailures = selection.preflight ? [] : await readEnvironmentServices();
         if (!selection.preflight) {
-            await ensureEnvironmentServices();
             if (!environmentId) await reconcile(serviceId);
         }
         const intent = environmentId ? null : readIntent();
@@ -202,10 +203,19 @@ export function createMachineServicesRuntime(input: Readonly<{
             const owner = lease.registry.projectManagedServices;
             const handles: ServiceHandle[] = [];
             await owner.restoreProjectServices();
-            const projects = owner.listProjectServices();
-            handles.push(...await selectVisibleMachineProjectServices(target,
-                projects.filter(handle => matchesServiceSelection(handle, selection)
-                    && (!selection.preflight || matchesPreflight(owner.machineServiceRows.read(handle)))), request, serviceId));
+            const failed = restorationFailures.map(row => ({ kind: 'environment' as const,
+                serverId: target.serverId, machineId: target.machineId, environmentId: row.environmentId,
+                serviceId: row.serviceId, composeService: row.identity?.kind === 'deployment' ? row.identity.composeService : undefined, isCurrent: () => !disposed, retirementSignal: lifetime.signal, row }));
+            // Unavailable rows spend the same disclosure decision as retained
+            // handles. A failed source never grants another Account its identity.
+            const visible = await selectVisibleMachineProjectServices(target,
+                [...owner.listProjectServices(), ...failed].filter(handle => matchesServiceSelection(handle, selection)
+                    && (!selection.preflight || !('row' in handle) && matchesPreflight(owner.machineServiceRows.read(handle)))), request, serviceId);
+            const failedRows: MachineServiceRowV1[] = [];
+            for (const candidate of visible) {
+                if ('row' in candidate) failedRows.push(candidate.row);
+                else handles.push(candidate);
+            }
             const readRow = async (handle: ServiceHandle) => {
                 // Explicit list demand samples accounting; Resource snapshots project retained facts.
                 if (!selection.preflight && request.actionId === 'machines.services.list' && !request.context?.machineServicesListResource && handle.readAccounting) {
@@ -213,7 +223,7 @@ export function createMachineServicesRuntime(input: Readonly<{
                 }
                 return owner.machineServiceRows.read(handle);
             };
-            const projectedRows = await Promise.all(handles.map(readRow));
+            const projectedRows = [...await Promise.all(handles.map(readRow)), ...failedRows];
             if (environmentId) return { rows: projectedRows, handles };
             const current = readIntent();
             if (!current) throw machineServiceAdmissionFailure('service.metadata.read');
@@ -317,6 +327,7 @@ export function createMachineServicesRuntime(input: Readonly<{
                 const composeService = 'composeService' in parsed.data ? parsed.data.composeService : undefined;
                 const preflight = 'preflight' in parsed.data ? parsed.data.preflight : undefined;
                 const selection = { environmentId, composeService, preflight };
+                let projection: Awaited<ReturnType<typeof projectServices>> | undefined;
                 const matchesPreflight = createMachineServicePreflightMatcher(preflight);
                 const observation = request.actionId === 'machines.services.list' ? request.context.machineServicesListResource?.observation : undefined;
                 if (observation) {
@@ -377,7 +388,9 @@ export function createMachineServicesRuntime(input: Readonly<{
                                 if (observation.signal.aborted) return;
                                 if (event.kind === 'retired' || !establishing && (event.kind === 'reset'
                                     || (environmentId ? event.environmentIds.includes(environmentId)
-                                        : owner.listProjectServices().some(handle => handle.kind === 'environment'
+                                        : projection === undefined
+                                            || projection.rows.some(row => row.environmentId !== undefined && event.environmentIds.includes(row.environmentId))
+                                            || owner.listProjectServices().some(handle => handle.kind === 'environment'
                                             && handle.machineId === target.machineId && event.environmentIds.includes(handle.environmentId))))) {
                                     observation.retire();
                                 }
@@ -390,7 +403,7 @@ export function createMachineServicesRuntime(input: Readonly<{
                         if (observation.signal.aborted) { await dispose(); return machineServiceAdmissionFailure('service.observation.closed'); }
                     } finally { await lease.release(); }
                 }
-                const projection = await projectServices(request, serviceId, selection);
+                projection = await projectServices(request, serviceId, selection);
                 if (request.actionId === 'machines.services.list') result = { kind: 'snapshot', services: projection.rows,
                     ...(preflight ? { coverage: 'managed_services' as const } : {}) };
                 else {
@@ -470,14 +483,22 @@ export function createMachineServicesRuntime(input: Readonly<{
                 : { ok: false, ...normalizeActionExecutorThrownError(error) };
         }
     }
-    async function ensureEnvironmentServices(): Promise<void> {
-        if (!input.restoreEnvironmentServices || disposed) return;
+    async function readEnvironmentServices(): Promise<readonly EnvironmentServiceRecoveryRow[]> {
+        if (!input.restoreEnvironmentServices || disposed) return [];
         const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
-        if (!lease) return;
+        if (!lease) return [];
         try {
             const owner = lease.registry.projectManagedServices;
-            await owner.restoreEnvironmentServices(target, () => input.restoreEnvironmentServices!(owner, lifetime.signal), lifetime.signal);
+            return await owner.restoreEnvironmentServices(target, () => input.restoreEnvironmentServices!(owner, lifetime.signal), lifetime.signal);
         } finally { await lease.release(); }
+    }
+    async function ensureEnvironmentServices(): Promise<void> {
+        const failures = await readEnvironmentServices();
+        const failure = failures[0];
+        // Execution/discovery callers still require complete observation custody;
+        // the list/detail read alone can disclose an unavailable, inert row.
+        if (failure) throw { ok: false, errorCode: failure.failureCause?.errorCode ?? 'service_unavailable',
+            error: 'Service restoration is unavailable', failureCause: failure.failureCause };
     }
     // History consumes admitted handles only: no restore, discovery, or second sampling clock.
     async function sampleUsage(): Promise<readonly MachineServiceUsageV1[]> {

@@ -1,3 +1,4 @@
+import { ActionFailureCauseV1Schema } from '../../actionExecutionResult.js';
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { z } from '../../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
@@ -28,7 +29,7 @@ const id = () => z.string().check(z.trim(), z.minLength(1));
 const machineTarget = () => ({ serverId: id(), machineId: id() });
 const unavailable = lazyZodSchema(() => z.strictObject({ kind: z.literal('unavailable'), reason: ManagedServiceUnavailableReasonV1Schema }));
 
-/** A projection of the canonical admitted handle, never another native observation owner. */
+/** Canonical Services projection. An unavailable retained definition grants no executable or native custody. */
 export const MachineServiceRowV1Schema = lazyZodSchema(() => z.strictObject({
   /** The admitted identity for service-subject consumers; Workspace services have no such identity. */
   identity: z.optional(MachineServiceIdentityV1Schema),
@@ -37,6 +38,8 @@ export const MachineServiceRowV1Schema = lazyZodSchema(() => z.strictObject({
   lifecyclePurpose: MachineServiceWatchV1Schema.shape.lifecyclePurpose,
   generation: z.nullable(id()), state: z.enum(['starting', 'running', 'detecting', 'healthy', 'unhealthy', 'stopping', 'stopped', 'failed', 'unknown']),
   unavailableReason: z.optional(ManagedServiceUnavailableReasonV1Schema),
+  /** Sanitized restoration evidence; no executable or native custody is implied. */
+  failureCause: z.optional(ActionFailureCauseV1Schema),
   native: z.optional(ManagedServiceNativeStateV1Schema),
   configuration: z.optional(z.nullable(z.pick(DeploymentReviewServiceV1Schema, { ports: true }))),
   accounting: MachineServiceNativeRuntimeFactsV1Schema.shape.accounting,

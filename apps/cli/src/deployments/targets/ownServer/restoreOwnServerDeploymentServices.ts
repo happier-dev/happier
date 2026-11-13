@@ -1,3 +1,5 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { EnvironmentServiceRecoveryRow } from '@/plugins/runtime/invocation/services/environmentServiceRecovery';
 import type { DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
 import type { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { configuration } from '@/configuration';
@@ -29,7 +31,7 @@ export type RestoreOwnServerDeploymentServicesInput = Readonly<{
 
 /** Restore observations only. The receipt supplies definition/source custody;
  * the same cold native read as logs supplies surviving container identities. */
-export async function restoreOwnServerDeploymentServices(input: RestoreOwnServerDeploymentServicesInput): Promise<void> {
+export async function restoreOwnServerDeploymentServices(input: RestoreOwnServerDeploymentServicesInput): Promise<readonly EnvironmentServiceRecoveryRow[]> {
     const { receipt } = input;
     const basis = receipt.content.ownServer?.approvedInputBasis;
     if (!basis) throw Object.assign(new Error('Retained runtime definition is unavailable'), { code: 'deployment_source_unavailable' });
@@ -45,7 +47,7 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
         environmentId: identity.environmentId, environmentInstanceId: identity.environmentInstanceId, composeService,
         serviceId: `${identity.environmentInstanceId}/${composeService}` });
     if (projection.services.every(service => input.owner.resolveEnvironmentService(identity.homeServerIdentityId,
-        serviceIdentity(service))?.deploymentId === receipt.deployment.id)) return;
+        serviceIdentity(service))?.deploymentId === receipt.deployment.id)) return [];
     const assertCurrent = async () => {
         input.signal.throwIfAborted();
         if (!input.isCurrent()) throw Object.assign(new Error('Service observation is unavailable'), { code: 'service_unavailable' });
@@ -60,6 +62,21 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
     let launch: Awaited<ReturnType<typeof authorizePluginExecLaunchForHost>> | undefined;
     let serviceReferences: Readonly<{ close(): Promise<void> }> | undefined;
     const consumers: Awaited<ReturnType<typeof produceEnvironmentProjectServices>>[number][] = [];
+    const failures: EnvironmentServiceRecoveryRow[] = [];
+    const unavailable = (services: readonly string[], error: unknown) => {
+        input.signal.throwIfAborted();
+        const failureCause = projectActionFailureCauseV1(error, 'service.restoration');
+        for (const composeService of services) {
+            const service = serviceIdentity(composeService);
+            failures.push({ identity: service, serviceId: service.serviceId, name: composeService,
+                authority: 'project', lifecyclePurpose: 'deployment', environmentId: identity.environmentId,
+                generation: null, state: 'unknown', unavailableReason: 'unavailable', failureCause,
+                deployment: { deploymentId: receipt.deployment.id, installationId: input.installationId, service },
+                health: { status: 'unknown', observedAtMs: null, freshness: 'unavailable',
+                    ...(failureCause.errorCode ? { reason: failureCause.errorCode } : {}) },
+                capabilities: { exec: false, start: false, stop: false, restart: false, logs: false, accounting: false } });
+        }
+    };
     let referenceFailure: ActionExecuteFailure | undefined;
     let references = 1;
     const release = async () => {
@@ -92,7 +109,7 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
         const generation = generations[0];
         // A removed generation has no native resources to observe. Retained
         // source alone never manufactures an executable service generation.
-        if (!generation) return;
+        if (!generation) return [];
         serviceReferences = await input.restoreServiceReferences?.({ engine,
             onFailure(failure) { referenceFailure = failure ?? undefined; for (const consumer of consumers) consumer.reportDependencyFailure?.(failure); },
             docker: { engineId: engine.id,
@@ -110,41 +127,47 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
             servicesBySource.set(target.sourcePath, services);
         }
         for (const [sourcePath, services] of servicesBySource) {
-            const source = await custody(sourcePath);
-            if (!source) throw Object.assign(new Error('Retained source is unavailable'), { code: 'deployment_source_unavailable' });
-            const releaseSource = observeRetainedDeploymentSourceForHost({ environmentId: identity.environmentId,
-                environmentInstanceId: identity.environmentInstanceId, deploymentId: receipt.deployment.id,
-                machineId: input.machineId, installationId: input.installationId, rootPath: source.rootPath,
-                manifestFingerprint: projection.manifestFingerprint, manifest: source.manifest,
-                async assertCurrent() {
-                    await assertCurrent();
-                    if (!await custody(sourcePath)) throw Object.assign(new Error('Retained source is unavailable'), { code: 'deployment_source_unavailable' });
-                } });
-            const composeArgs = ['compose', '--project-name', projectName];
-            const handles = await produceEnvironmentProjectServices({ owner: input.owner, serverId: identity.homeServerIdentityId,
-                appliedServiceExports: basis.ownServer?.serviceExports,
-                release: releaseSource, specIdentity: receipt.deployment.id, signal: input.signal, isCurrent: input.isCurrent,
-                nativeEffects: { keys: [{ kind: 'composeProject', dockerEndpoint: engine.id, projectName }], settleNative: runtime.settleNative },
-                io: runtime.nativeIo, project: { composeArgs,
-                    services,
-                    nativeIdsForService: service => targets[projection.services.indexOf(service)]?.containerIds ?? [],
-                    // Retain structural facts from the exact cold native read,
-                    // without reconstructing the secret-bearing activation render.
-                    nativeFactsForService(service) {
-                        const configuration = targets[projection.services.indexOf(service)]?.configuration;
-                        return configuration ? { configuration, containerImages: [] } : undefined;
-                    },
-                    authorizeServiceObserver() {
-                        references += 1;
-                        let released = false;
-                        return { ...tuple, args: [...tuple.args, ...composeArgs], async release() {
-                            if (released) return;
-                            released = true;
-                            await release();
-                        } };
-                    } } });
-            consumers.push(...handles);
-            if (referenceFailure) for (const handle of handles) handle.reportDependencyFailure?.(referenceFailure);
+            try {
+                const source = await custody(sourcePath);
+                if (!source) throw Object.assign(new Error('Retained source is unavailable'), { code: 'deployment_source_unavailable' });
+                const releaseSource = observeRetainedDeploymentSourceForHost({ environmentId: identity.environmentId,
+                    environmentInstanceId: identity.environmentInstanceId, deploymentId: receipt.deployment.id,
+                    machineId: input.machineId, installationId: input.installationId, rootPath: source.rootPath,
+                    manifestFingerprint: projection.manifestFingerprint, manifest: source.manifest,
+                    async assertCurrent() {
+                        await assertCurrent();
+                        if (!await custody(sourcePath)) throw Object.assign(new Error('Retained source is unavailable'), { code: 'deployment_source_unavailable' });
+                    } });
+                const composeArgs = ['compose', '--project-name', projectName];
+                const handles = await produceEnvironmentProjectServices({ owner: input.owner, serverId: identity.homeServerIdentityId,
+                    appliedServiceExports: basis.ownServer?.serviceExports,
+                    release: releaseSource, specIdentity: receipt.deployment.id, signal: input.signal, isCurrent: input.isCurrent,
+                    nativeEffects: { keys: [{ kind: 'composeProject', dockerEndpoint: engine.id, projectName }], settleNative: runtime.settleNative },
+                    io: runtime.nativeIo, project: { composeArgs,
+                        services,
+                        nativeIdsForService: service => targets[projection.services.indexOf(service)]?.containerIds ?? [],
+                        // Retain structural facts from the exact cold native read,
+                        // without reconstructing the secret-bearing activation render.
+                        nativeFactsForService(service) {
+                            const configuration = targets[projection.services.indexOf(service)]?.configuration;
+                            return configuration ? { configuration, containerImages: [] } : undefined;
+                        },
+                        authorizeServiceObserver() {
+                            references += 1;
+                            let released = false;
+                            return { ...tuple, args: [...tuple.args, ...composeArgs], async release() {
+                                if (released) return;
+                                released = true;
+                                await release();
+                            } };
+                        } } });
+                consumers.push(...handles);
+                if (referenceFailure) for (const handle of handles) handle.reportDependencyFailure?.(referenceFailure);
+            } catch (error) { unavailable(services, error); }
         }
+    } catch (error) {
+        unavailable(projection.services.filter(service => !consumers.some(handle => handle.composeService === service)
+            && !failures.some(row => row.identity?.kind === 'deployment' && row.identity.composeService === service)), error);
     } finally { await release(); }
+    return failures;
 }
