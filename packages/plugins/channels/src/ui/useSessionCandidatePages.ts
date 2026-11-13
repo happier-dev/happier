@@ -64,13 +64,26 @@ type CandidatePageOptions = Readonly<{
   onUnavailable?: () => void;
 }>;
 
+export type CandidatePages = Readonly<{
+  candidates: readonly SessionCandidate[];
+  nextCursor: string | undefined;
+  loaded: boolean;
+  unavailable: boolean;
+  incomplete: boolean;
+  loading: boolean;
+  execution: ReturnType<typeof useExecutePluginAction<'session.list' | 'discussion.list'>>['execution'];
+  load: (cursor?: string) => Promise<void>;
+  retry: () => Promise<void>;
+  reset: () => void;
+}>;
+
 /** One cursor and read lifecycle for Channels' paged Account target pickers. */
 function useTargetCandidatePages(
   actionId: 'session.list' | 'discussion.list',
   parsePage: (value: unknown) => SessionCandidatePage | undefined,
   inputForCursor: (cursor?: string) => Readonly<Record<string, string | number>>,
   options: CandidatePageOptions,
-) {
+): CandidatePages {
   const action = useExecutePluginAction(actionId);
   const execute = action.execute;
   const optionsRef = React.useRef(options);
@@ -154,10 +167,10 @@ function useTargetCandidatePages(
 const sessionPageInput = (cursor?: string) => ({ view: 'awareness', limit: 100, ...(cursor === undefined ? {} : { cursor }) });
 const discussionPageInput = (cursor?: string) => ({ state: 'active', ...(cursor === undefined ? {} : { cursor }) });
 
-export function useSessionCandidatePages(options: CandidatePageOptions = {}) {
+export function useSessionCandidatePages(options: CandidatePageOptions = {}): CandidatePages {
   return useTargetCandidatePages('session.list', parseSessionCandidatePage, sessionPageInput, options);
 }
 
-export function useDiscussionCandidatePages(options: CandidatePageOptions = {}) {
+export function useDiscussionCandidatePages(options: CandidatePageOptions = {}): CandidatePages {
   return useTargetCandidatePages('discussion.list', parseDiscussionCandidatePage, discussionPageInput, options);
 }
