@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { adoptPersonalHomeProfileAndComplete, listServerProfiles, removeServerProfile, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { adoptPersonalHomeProfileAndComplete, listServerProfiles, removeServerProfile, setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 
 // `t` is a genuine module boundary owned by the testkit. Mocking it here keeps
 // these assertions about which message a failure maps to, rather than about the
@@ -25,13 +25,16 @@ describe('homeDisplayName', () => {
             source: 'desktop-personal-home',
         });
         const unnamed = await upsertServerProfile({ name: 'unnamed.example', serverUrl: 'https://unnamed.example' });
+        await setActiveServerId(named.id, { scope: 'device' });
 
         expect(homeDisplayName(named.id)).toBe('Studio');
         // The Personal Home of this device is "Personal Home", not the host it happens to run on.
         expect(homeDisplayName(personal.id)).toBe('personalHome.settings.defaultHomeLabel');
-        // Unnamed and unavailable Homes still get a human title, never an address or storage id.
+        // Only the current unnamed Home is "This Home"; peers remain distinguishable.
+        expect(homeDisplayName(unnamed.id)).toBe('https://unnamed.example');
+        expect(homeDisplayName('home-unknown')).toBe('common.homeProductName');
+        await setActiveServerId(unnamed.id, { scope: 'device' });
         expect(homeDisplayName(unnamed.id)).toBe('settingsAccount.thisHomeTitle');
-        expect(homeDisplayName('home-unknown')).toBe('settingsAccount.thisHomeTitle');
     });
 });
 

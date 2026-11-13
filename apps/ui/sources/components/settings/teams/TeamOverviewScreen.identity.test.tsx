@@ -24,11 +24,11 @@ installSettingsViewCommonModuleMocks({
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+const { TeamOverviewScreen } = await import('./TeamOverviewScreen');
 
 const TEAM_GET_PATH = '/v1/teams/get';
 
 async function renderOverview(serverId: string) {
-    const { TeamOverviewScreen } = await import('./TeamOverviewScreen');
     return renderScreen(<TeamOverviewScreen serverId={serverId} teamId="team-1" />);
 }
 
@@ -56,15 +56,6 @@ async function waitForTestId(
 
 beforeEach(async () => {
     const { Modal } = await import('@/modal');
-    // Modal is the host boundary. Reuse this fixture's person-choice controller
-    // for both ordinary confirmations and the real Action review dialog.
-    vi.mocked(Modal.show).mockReset().mockImplementation(config => {
-        if (config.chrome?.kind === 'card' && config.chrome.testID === 'actions.confirmation-review.modal') {
-            const props = config.props as { onAnswer(confirmed: boolean): void };
-            queueMicrotask(() => { void Modal.confirm('Action review', '').then(props.onAnswer); });
-        }
-        return 'action-review';
-    });
     vi.mocked(Modal.confirm).mockReset().mockResolvedValue(false);
     const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
     const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');

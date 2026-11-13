@@ -38,6 +38,8 @@ vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts',
 // executor, the governance engine and the local runtime controller below the screen are real.
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+const { HomeClaimSetup } = await import('./HomeClaimSetup');
+await import('@/sync/ops/actions/defaultActionExecutor');
 
 const CLAIM_PATH = '/v1/home/governance/claim';
 const GOVERNANCE_PATH = '/v1/home/governance/get';
@@ -99,7 +101,6 @@ function createDesktopBridge(purpose: Readonly<Record<string, unknown>> | null) 
 }
 
 async function renderClaim(serverId: string, runner?: SystemTaskRunner) {
-    const { HomeClaimSetup } = await import('./HomeClaimSetup');
     const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
     // The scope names the Home the way the credential binding does: by its identity once it has one.
     const scopeServerId = resolveServerProfileScopeIdForIdentifier(serverId);

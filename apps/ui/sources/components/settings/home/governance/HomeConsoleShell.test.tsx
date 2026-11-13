@@ -17,6 +17,7 @@ import { renderInCollectionLayout } from '@/dev/testkit/render/renderInCollectio
 import { renderScreen, type RenderScreenResult } from '@/dev/testkit/render/renderScreen';
 
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
+import { HOME_CONSOLE_DESTINATION_GROUPS } from './homeConsoleDestinations';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -57,6 +58,9 @@ installSettingsViewCommonModuleMocks({
 // the collection's split geometry below them are the production ones.
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+const { HomeConsoleLayout } = await import('./HomeConsoleLayout');
+const { HomeConsoleSidebar } = await import('./HomeConsoleNavigation');
+await import('@/sync/ops/actions/defaultActionExecutor');
 const { resetServerFeaturesClientForTests } = await import("@/sync/api/capabilities/serverFeaturesClient");
 
 const GOVERNANCE_PATH = '/v1/home/governance/get';
@@ -65,11 +69,7 @@ const LIST_PATH = '/v1/home/accounts/list';
 /** The page beside the rail and a 280px column at a 1100 window. */
 const MID_PANE_PX = 764;
 
-const OWNER_RAIL = [
-    'overview', 'people', 'teams', 'policies', 'sign-in-providers',
-    'reach', 'email', 'features', 'data', 'runtime', 'server-settings',
-    'activity',
-];
+const OWNER_RAIL = HOME_CONSOLE_DESTINATION_GROUPS.flatMap((group) => group.map((destination) => destination.id));
 
 async function addHome(projection: HomeGovernanceProjectionV1 = homeGovernanceProjectionFixture()): Promise<string> {
     const home = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'account-ada' });
@@ -85,14 +85,12 @@ async function resetEngine() {
 
 async function renderConsole(pathname: string): Promise<RenderScreenResult> {
     route.pathname = pathname;
-    const { HomeConsoleLayout } = await import('./HomeConsoleLayout');
     await resetEngine();
     return renderScreen(<HomeConsoleLayout />);
 }
 
 async function renderColumn(pathname: string, serverId: string): Promise<RenderScreenResult> {
     route.pathname = pathname;
-    const { HomeConsoleSidebar } = await import('./HomeConsoleNavigation');
     await resetEngine();
     return renderScreen(<HomeConsoleSidebar serverId={serverId} />);
 }

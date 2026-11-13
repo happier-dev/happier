@@ -47,6 +47,8 @@ installHomeGovernanceBoundaries(harness);
 const { resetServerFeaturesClientForTests } = await import("@/sync/api/capabilities/serverFeaturesClient");
 const { resetHomeSettingsEngineForTests } = await import('@/sync/engine/home/governance/homeSettingsEngine');
 const { resetHomeSettingsSnapshotsForTests } = await import('@/sync/store/home/governance/homeSettingsSnapshots');
+const { HomeAdministrationDataScreen } = await import('./HomeAdministrationDataScreen');
+const { resetHomeGovernanceEngineForTests } = await import('@/sync/engine/home/governance/homeGovernanceEngine');
 
 const GOVERNANCE_PATH = '/v1/home/governance/get';
 const SETTINGS_GET = '/v1/home/settings/get';
@@ -98,8 +100,6 @@ async function addHome(options?: Readonly<{ admin?: boolean }>): Promise<string>
 }
 
 async function renderData(serverId: string) {
-    const { HomeAdministrationDataScreen } = await import('./HomeAdministrationDataScreen');
-    const { resetHomeGovernanceEngineForTests } = await import('@/sync/engine/home/governance/homeGovernanceEngine');
     resetHomeGovernanceEngineForTests();
     const screen = await renderScreen(<HomeAdministrationDataScreen serverId={serverId} />);
     await waitForHomeGovernance(() => {

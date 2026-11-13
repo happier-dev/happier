@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { collectRenderedTestIds, renderScreen, standardCleanup, teamCapabilitiesFixture, teamInvitationRowFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installBrowserClipboardBoundary } from '@/dev/testkit/harness/browserClipboardBoundary';
 
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
@@ -91,6 +92,7 @@ beforeEach(async () => {
     await harness.selectHomes([]);
     setClipboardStringSafeMock.mockReset();
     setClipboardStringSafeMock.mockResolvedValue(true);
+    installBrowserClipboardBoundary(async (value) => { await setClipboardStringSafeMock(value); });
     shareTextSafeMock.mockReset();
     shareTextSafeMock.mockResolvedValue('shared');
     sharingAvailableMock.current = true;

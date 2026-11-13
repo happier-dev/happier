@@ -67,14 +67,15 @@ const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
 const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
+const { TeamMembersScreen } = await import('./TeamMembersScreen');
+const { NavigationContext, useNavigation } = await import('@react-navigation/native');
+const { SessionCockpitChromeRegistryProvider, useSessionCockpitBottomChromeHeightSetter } = await import('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry');
+const { HappierListDetailLayout } = await import('@happier-dev/plugin-ui/presentation');
 
 const TEAM_GET_PATH = '/v1/teams/get';
 const MEMBERS_LIST_PATH = '/v1/teams/members/list';
 
 async function renderMembers(serverId: string, split = false, bottomChromeHeight = 0) {
-    const { TeamMembersScreen } = await import('./TeamMembersScreen');
-    const { NavigationContext, useNavigation } = await import('@react-navigation/native');
-    const { SessionCockpitChromeRegistryProvider, useSessionCockpitBottomChromeHeightSetter } = await import('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry');
     function FloatingTabBar() {
         const setHeight = useSessionCockpitBottomChromeHeightSetter();
         React.useEffect(() => setHeight(bottomChromeHeight), [setHeight]);
@@ -88,7 +89,6 @@ async function renderMembers(serverId: string, split = false, bottomChromeHeight
             </SessionCockpitChromeRegistryProvider>
         );
     }
-    const { HappierListDetailLayout } = await import('@happier-dev/plugin-ui/presentation');
     const page = <TeamMembersScreen serverId={serverId} teamId="team-1" />;
     return renderScreen(split ? <HappierListDetailLayout testID="members-test-layout" list={null} detail={page} minListWidth={264} minDetailWidth={480} preferredListRatio={0.3} /> : page, { wrapper: NativeRoute });
 }
@@ -115,16 +115,6 @@ async function waitForTestId(
 }
 
 beforeEach(async () => {
-    const { Modal } = await import('@/modal');
-    // Modal is the host boundary. Reuse this fixture's person-choice controller
-    // for both ordinary confirmations and the real Action review dialog.
-    vi.mocked(Modal.show).mockReset().mockImplementation(config => {
-        if (config.chrome?.kind === 'card' && config.chrome.testID === 'actions.confirmation-review.modal') {
-            const props = config.props as { onAnswer(confirmed: boolean): void };
-            queueMicrotask(() => { void Modal.confirm('Action review', '').then(props.onAnswer); });
-        }
-        return 'action-review';
-    });
     resetTeamsSnapshotsForTests();
     resetTeamsDirectoryEngineForTests();
     await harness.reset();

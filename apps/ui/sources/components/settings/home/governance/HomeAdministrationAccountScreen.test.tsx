@@ -190,17 +190,6 @@ beforeEach(async () => {
     modalState.promptResult = 'Impersonation report';
     modalState.promptResults = [];
     modalState.prompts = [];
-    const { Modal } = await import('@/modal');
-    vi.mocked(Modal.show).mockImplementation(config => {
-        if (config.chrome?.testID !== 'actions.confirmation-review.modal') return 'modal-id';
-        const props = config.props as Readonly<{ onAnswer(accepted: boolean): void }>;
-        // The fixture's person-choice controller answers either host presentation.
-        // The real executor and review still prepare and present the decision.
-        queueMicrotask(() => {
-            void vi.mocked(Modal.confirm)('Action review', '').then(accepted => props.onAnswer(accepted));
-        });
-        return 'action-review';
-    });
     routerBack.mockReset();
     announceAccessibilityMessage.mockReset();
     sockets.clear();

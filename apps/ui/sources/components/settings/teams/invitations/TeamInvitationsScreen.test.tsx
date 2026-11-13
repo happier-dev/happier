@@ -101,6 +101,10 @@ const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
 const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
+// Load the real graph after transport installation, before a case owns an act scope.
+const { TeamInvitationsScreen } = await import('./TeamInvitationsScreen');
+const { NavigationContext } = await import('@react-navigation/native');
+const { createNavigationPropMock } = await import('@/dev/testkit/mocks/reactNavigation');
 
 const TEAM_GET_PATH = '/v1/teams/get';
 const INVITATIONS_LIST_PATH = '/v1/teams/invitations/list';
@@ -108,13 +112,10 @@ const INVITATION_REISSUE_PATH = '/v1/teams/invitations/reissue';
 const INVITATION_REVOKE_PATH = '/v1/teams/invitations/revoke';
 
 async function renderInvitations(serverId: string) {
-    const { TeamInvitationsScreen } = await import('./TeamInvitationsScreen');
-    const { NavigationContext, useNavigation } = await import('@react-navigation/native');
-    const { createNavigationPropMock } = await import('@/dev/testkit/mocks/reactNavigation');
     function NativeRoute({ children }: React.PropsWithChildren) {
         // A native navigator publishes a changed context on focus transitions;
         // a plain mutable flag cannot wake the real memoized destination owner.
-        return <NavigationContext.Provider value={createNavigationPropMock(useNavigation())}>{children}</NavigationContext.Provider>;
+        return <NavigationContext.Provider value={createNavigationPropMock({ isFocused: () => navigationState.focused })}>{children}</NavigationContext.Provider>;
     }
     return renderScreen(<TeamInvitationsScreen serverId={serverId} teamId="team-1" />, { wrapper: NativeRoute });
 }

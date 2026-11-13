@@ -24,6 +24,7 @@ export type ModalModuleMockOptions = Readonly<{
 
 export function createModalModuleMock(options: ModalModuleMockOptions = {}) {
     const confirmResult = options.confirmResult ?? false;
+    const confirm = vi.fn<IModal['confirm']>(options.spies?.confirm ?? (async () => confirmResult));
     // IModal's generic config is the boundary's own component/props contract.
     type CustomModalConfig = Parameters<IModal['show']>[0];
     let modals: ReadonlyArray<Readonly<{ id: string; config: CustomModalConfig }>> = [];
@@ -34,9 +35,18 @@ export function createModalModuleMock(options: ModalModuleMockOptions = {}) {
     const publish = () => { for (const listener of listeners) listener(); };
     const showImplementation = options.spies?.show ?? ((config: Parameters<IModal['show']>[0]) => {
         const candidate = config as Readonly<{
-            chrome?: Readonly<{ testID?: string }>;
-            props?: Readonly<{ onConfirm?(): void; onCancel?(): void }>;
+            chrome?: Readonly<{ testID?: string; title?: string; subtitle?: string }>;
+            props?: Readonly<{ onConfirm?(): void; onCancel?(): void; onAnswer?(confirmed: boolean): void }>;
         }>;
+        // Screen tests answer at the host boundary through their existing person-choice
+        // controller. Rendered reviews retain their real controls and settle themselves.
+        if (!options.renderCustomModals && candidate.chrome?.testID === 'actions.confirmation-review.modal') {
+            queueMicrotask(() => {
+                void modal.confirm(candidate.chrome?.title ?? '', candidate.chrome?.subtitle ?? '').then(
+                    accepted => candidate.props?.onAnswer?.(accepted),
+                );
+            });
+        }
         if (candidate.chrome?.testID === 'app-shell-transient-interaction-dialog' && options.settleTransientConfirmations !== false) {
             queueMicrotask(() => {
                 if (confirmResult) candidate.props?.onConfirm?.();
@@ -72,7 +82,6 @@ export function createModalModuleMock(options: ModalModuleMockOptions = {}) {
         alertImplementation?.(...args);
     });
     const promptImplementation = options.spies?.prompt ?? (async () => null);
-    const confirmImplementation = options.spies?.confirm ?? (async () => confirmResult);
     const spies = {
         show: vi.fn<IModal['show']>(showImplementation),
         hide: vi.fn<IModal['hide']>(hideImplementation),
@@ -81,7 +90,17 @@ export function createModalModuleMock(options: ModalModuleMockOptions = {}) {
         alert: alertImplementation ? vi.fn<IModal['alert']>(alertImplementation) : vi.fn<IModal['alert']>(),
         alertAsync: vi.fn<IModal['alertAsync']>(alertAsyncImplementation),
         prompt: vi.fn<IModal['prompt']>(promptImplementation),
-        confirm: vi.fn<IModal['confirm']>(confirmImplementation),
+        confirm,
+    };
+    const modal = {
+        show: spies.show,
+        hide: spies.hide,
+        update: spies.update,
+        hideAll: spies.hideAll,
+        alert: spies.alert,
+        alertAsync: spies.alertAsync,
+        prompt: spies.prompt,
+        confirm: spies.confirm,
     };
     const context = {
         state: { modals: [] },
@@ -124,16 +143,7 @@ export function createModalModuleMock(options: ModalModuleMockOptions = {}) {
     return {
         spies,
         module: {
-            Modal: {
-                show: spies.show,
-                hide: spies.hide,
-                update: spies.update,
-                hideAll: spies.hideAll,
-                alert: spies.alert,
-                alertAsync: spies.alertAsync,
-                prompt: spies.prompt,
-                confirm: spies.confirm,
-            },
+            Modal: modal,
             ModalProvider,
             useVisibleModalKind: () => React.useContext(VisibleModalKindContext),
             useModalContentId: () => React.useContext(ModalContentIdContext),

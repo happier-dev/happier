@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { act, renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { createModalModuleMock } from './modal';
 
@@ -12,6 +12,35 @@ vi.mock('react-native-unistyles', async () =>
 );
 
 afterEach(standardCleanup);
+
+it.each([false, true])('keeps an Action review pending until the public person-choice controller answers (%s)', async (accepted) => {
+    const decision = createDeferred<boolean>();
+    const { module: modal } = createModalModuleMock();
+    vi.spyOn(modal.Modal, 'confirm').mockImplementationOnce(() => decision.promise);
+    const onAnswer = vi.fn();
+    modal.Modal.show({
+        component: () => null,
+        props: { onAnswer },
+        chrome: { kind: 'card', title: 'Review this action', testID: 'actions.confirmation-review.modal' },
+    });
+    await vi.waitFor(() => expect(modal.Modal.confirm).toHaveBeenCalledOnce());
+    expect(onAnswer).not.toHaveBeenCalled();
+    decision.resolve(accepted);
+    await vi.waitFor(() => expect(onAnswer).toHaveBeenCalledWith(accepted));
+});
+
+it('leaves a rendered Action review open for its real controls', async () => {
+    const { module: modal } = createModalModuleMock({ renderCustomModals: true, confirmResult: true });
+    const onAnswer = vi.fn();
+    modal.Modal.show({
+        component: () => null,
+        props: { onAnswer },
+        chrome: { kind: 'card', title: 'Review this action', testID: 'actions.confirmation-review.modal' },
+    });
+    await Promise.resolve();
+    expect(modal.Modal.confirm).not.toHaveBeenCalled();
+    expect(onAnswer).not.toHaveBeenCalled();
+});
 
 it('publishes custom modal chrome without feeding it back into content, while preserving content updates', async () => {
     const { module: modal } = createModalModuleMock({ renderCustomModals: true });

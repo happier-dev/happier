@@ -43,15 +43,6 @@ beforeAll(async () => {
 beforeEach(async () => {
     const { Modal } = await import('@/modal');
     vi.mocked(Modal.confirm).mockReset().mockResolvedValue(false);
-    // Modal is the host boundary. Reuse this fixture's person-choice controller
-    // for both ordinary confirmations and the real Action review dialog.
-    vi.mocked(Modal.show).mockReset().mockImplementation(config => {
-        if (config.chrome?.kind === 'card' && config.chrome.testID === 'actions.confirmation-review.modal') {
-            const props = config.props as { onAnswer(confirmed: boolean): void };
-            queueMicrotask(() => { void Modal.confirm('Action review', '').then(props.onAnswer); });
-        }
-        return 'action-review';
-    });
     await harness.reset();
     const { resetScopedHomeActionExecutorsForTests } = await import(
         '@/sync/ops/actions/scopedHomeActionExecutor'

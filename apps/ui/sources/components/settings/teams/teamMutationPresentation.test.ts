@@ -48,9 +48,13 @@ describe('a Team read the person turned off in Settings, Actions', () => {
 });
 
 describe('teamMutationFailureLabel', () => {
-    it('uses the presenter owner for policy and managed-creation refusals', () => {
+    it('uses a single actionable sentence for a generic Team policy refusal', () => {
+        expect(teamMutationFailureLabel({ kind: 'invalid', retryable: false, code: 'invalid_team_input' }, 'policy'))
+            .toBe('teams.errors.policySaveFailed');
+    });
+
+    it('keeps managed Team creation causes at the presenter owner', () => {
         const failure = { kind: 'invalid' as const, retryable: false, code: 'invalid_team_input' };
-        expect(teamMutationFailureLabel(failure, 'policy')).toBe('teams.errors.policySaveFailed');
         expect(isTeamCreateOwnerRefusal(failure)).toBe(true);
         expect(teamCreateFailureLabel(failure, false)).toBe('teams.create.initialOwnerRequired');
         expect(teamCreateFailureLabel(failure, true)).toBe('teams.create.initialOwnerIneligible');

@@ -23,7 +23,6 @@ const clipboardSet = vi.hoisted(() => vi.fn(async () => true));
 const modalConfirm = vi.hoisted(() => vi.fn<typeof import('@/modal')['Modal']['confirm']>(async () => true));
 const modalAlert = vi.hoisted(() => vi.fn<typeof import('@/modal')['Modal']['alert']>());
 const routerReplace = vi.hoisted(() => vi.fn());
-const shownModals = vi.hoisted(() => [] as { chrome?: { testID?: string }; props?: Record<string, unknown> }[]);
 const navigationState = vi.hoisted(() => ({
     dispatch: vi.fn(),
     setOptions: vi.fn(),
@@ -70,15 +69,6 @@ installSettingsViewCommonModuleMocks({
             spies: {
                 confirm: modalConfirm,
                 alert: modalAlert,
-                show: (config) => {
-                    shownModals.push(config as (typeof shownModals)[number]);
-                    if (config.chrome?.testID === 'actions.confirmation-review.modal') {
-                        const props = config.props as { onAnswer(confirmed: boolean): void };
-                        // This spy controls the person's choice for either modal host presentation.
-                        queueMicrotask(() => { void modalConfirm('Action review', '').then(props.onAnswer); });
-                    }
-                    return 'modal-id';
-                },
             },
         }).module;
     },
@@ -167,7 +157,8 @@ async function chooseMember(
 ): Promise<void> {
     await waitForHomeGovernance(() => expect(screen.findAllByType(TeamCredentialAudiencePicker).find(node => node.props.testID === 'team-credential-external-assignee')?.props.disabled).toBe(false));
     await screen.pressByTestIdAsync('team-credential-external-assignee');
-    const picker = shownModals.find((modal) => modal.chrome?.testID === 'team-credential-audience-picker:modal');
+    const { Modal } = await import('@/modal');
+    const picker = vi.mocked(Modal.show).mock.calls.find(([modal]) => modal.chrome?.testID === 'team-credential-audience-picker:modal')?.[0];
     if (!picker) throw new Error('external_key_assignee_picker_missing');
     await act(async () => {
         (picker.props?.onChoose as (principal: { kind: 'member'; id: string; accountId: string; name: string }) => void)({
@@ -196,7 +187,8 @@ beforeEach(async () => {
     navigationState.setOptions.mockReset();
     navigationState.preventRemove = false;
     navigationState.onPreventRemove = null;
-    shownModals.length = 0;
+    const { Modal } = await import('@/modal');
+    vi.mocked(Modal.show).mockClear();
 });
 
 afterEach(() => standardCleanup());

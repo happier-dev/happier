@@ -702,14 +702,14 @@ describe('TeamCredentialDetailScreen', () => {
         await vi.waitFor(() => {
             expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-credential-test');
         });
-        screen.pressByTestId('team-credential-test');
+        act(() => screen.pressByTestId('team-credential-test'));
         await vi.waitFor(() => expect(modalConfirm).toHaveBeenCalledOnce());
         expect(harness.requestsFor('/v1/teams/credential-resources/test')).toHaveLength(0);
-        expect(screen.findByTestId('team-credential-test')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('team-credential-test')?.props.accessibilityState?.disabled).toBe(true);
         await screen.pressByTestIdAsync('team-credential-test');
         expect(modalConfirm).toHaveBeenCalledOnce();
         await act(async () => { confirmation.resolve(confirmed); });
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-test')?.props.disabled).toBe(false));
+        await vi.waitFor(() => expect(screen.findByTestId('team-credential-test')?.props.accessibilityState?.disabled).toBe(false));
         expect(harness.requestsFor('/v1/teams/credential-resources/test')).toHaveLength(confirmed ? 1 : 0);
         expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
     });

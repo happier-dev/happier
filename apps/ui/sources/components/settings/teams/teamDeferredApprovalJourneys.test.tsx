@@ -193,16 +193,6 @@ beforeEach(async () => {
     // The canonical factory wraps this controller in its own spy. Clear that
     // outer spy too, including unused one-shot choices from Portal cases.
     vi.mocked(Modal.confirm).mockReset().mockImplementation(modalConfirm);
-    vi.mocked(Modal.show).mockImplementation(config => {
-        if (config.chrome?.testID !== 'actions.confirmation-review.modal') return 'modal-id';
-        const props = config.props as Readonly<{ onAnswer(accepted: boolean): void }>;
-        // The fixture's person-choice controller answers either host presentation.
-        // The real executor and review still prepare and present the decision.
-        queueMicrotask(() => {
-            void vi.mocked(Modal.confirm)('Action review', '').then(accepted => props.onAnswer(accepted));
-        });
-        return 'action-review';
-    });
     pickImages.mockReset();
 });
 
