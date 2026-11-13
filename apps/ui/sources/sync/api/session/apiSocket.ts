@@ -100,6 +100,7 @@ import { userRequestLeaseOwner } from '@/sync/runtime/connectivity/userRequestLe
 import { SERVER_PEER_LIVENESS_WINDOW_MS } from '@/sync/runtime/connectivity/serverReachabilityTuning';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { runAdmittedMachineRpcRead, type MachineRpcReadAdmission } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcReadAdmission';
+import type { ScopedSocketClient } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import { createSocketAccountEncryptionObservation, invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { bindAccountEncryptionObservation, matchesAccountEncryptionObservationCredentials, type AccountEncryptionObservationBinding } from '@/sync/http/accountEncryptionObservationBinding';
 
@@ -982,6 +983,56 @@ class ApiSocket {
      */
     getSocketId(): string {
         return this.socket?.id ?? '';
+    }
+
+    /**
+     * Lend this connected Account socket to a scoped caller that names the same Home with the
+     * same bearer, so a page keeps one user-scoped socket per Account and Home. A second one
+     * would receive the Account's whole update stream for nobody. The lent client is pinned to
+     * this socket installation and credential: once either is replaced it reports disconnected
+     * and refuses to emit, so a captured caller can never be retargeted to another Home.
+     */
+    lendScopedSocketClient(target: Readonly<{ serverUrl: string; reachabilityServerUrl?: string; token: string }>): ScopedSocketClient | null {
+        const config = this.config;
+        const socket = this.socket;
+        if (!config || !socket?.connected || config.request || config.isCurrent?.() === false) return null;
+        if (this.socketClientType !== 'user-scoped' || this.currentConnectionState.phase === 'auth_failed') return null;
+        const token = config.token;
+        const endpointKey = createServerUrlComparableKey(config.endpoint);
+        if (!token || token !== target.token || !endpointKey
+            || endpointKey !== createServerUrlComparableKey(target.reachabilityServerUrl ?? target.serverUrl)) return null;
+        const isCurrent = () => this.socket === socket && this.config === config && config.token === token
+            && config.isCurrent?.() !== false;
+        const listeners: Array<readonly [string, (...args: any[]) => void]> = [];
+        let released = false;
+        const requireUsable = () => {
+            if (released || !isCurrent() || !socket.connected) {
+                throw createRpcCallError({ error: 'Socket not connected', errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE });
+            }
+            return socket;
+        };
+        return {
+            get connected() { return !released && isCurrent() && socket.connected; },
+            emitWithAck: (event, payload) => requireUsable().emitWithAck(event, payload),
+            timeout: (ms) => requireUsable().timeout(ms),
+            emit: (event, payload) => { requireUsable().emit(event, payload); },
+            on: (event, listener) => {
+                if (released) return;
+                socket.on(event, listener);
+                listeners.push([event, listener]);
+            },
+            off: (event, listener) => {
+                socket.off(event, listener);
+                const index = listeners.findIndex(([e, l]) => e === event && l === listener);
+                if (index >= 0) listeners.splice(index, 1);
+            },
+            getSocketId: () => !released && isCurrent() && socket.connected ? socket.id ?? '' : '',
+            // The connection owner keeps the socket; a caller's disconnect only drops its listeners.
+            disconnect: () => {
+                released = true;
+                for (const [event, listener] of listeners.splice(0)) socket.off(event, listener);
+            },
+        };
     }
 
     /**
