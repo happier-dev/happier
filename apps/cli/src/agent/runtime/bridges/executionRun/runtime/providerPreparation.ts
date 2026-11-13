@@ -50,7 +50,12 @@ export async function prepareExecutionRunRuntimeProviderLaunch(
     const accountSettingsSnapshot = await trace('account_snapshot', () => resolveAccountSettingsSnapshot?.()) ?? null;
     const selection = input.selection;
     const nativeTeam = input.teamCredentialModel?.deliveryMode === 'vendor-native' ? input.teamCredentialModel : undefined;
-    if (providerLaunch && (selection?.providerConnectionId || nativeTeam || (input.connectedServices != null && hasConnectedExecutionRunBinding(input.connectedServices)))) {
+    // A brokered or direct Team model is opened only by the Run Team preparer,
+    // the Session host's daemon binding owner that Session launches use too.
+    // The pinned service carries native Team delivery alone; handing it any
+    // other Team Run would launch without the Team tuple (own-account fallback).
+    const pinnedTeamEligible = !input.teamCredentialModel || nativeTeam;
+    if (providerLaunch && pinnedTeamEligible && (selection?.providerConnectionId || nativeTeam || (input.connectedServices != null && hasConnectedExecutionRunBinding(input.connectedServices)))) {
         const expectedAccountSettingsScopeKey = accountSettingsSnapshot?.scopeKey;
         if (!expectedAccountSettingsScopeKey) {
             if (nativeTeam) throw new SessionTeamCredentialLaunchUnavailableError();

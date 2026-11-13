@@ -20,7 +20,7 @@ import { createRunnerExecutionRunProviderLaunchServices, projectRunnerExecutionR
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { AgentRuntimeDaemonServiceRequestV1Schema, AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { ExecutionRunHostBridge } from '../ExecutionRunHostBridge';
-import { prepareExecutionRunProviderLaunch, type ExecutionRunProviderLaunchRequest } from './providerLaunch';
+import { prepareExecutionRunProviderLaunch, type ExecutionRunProviderLaunchRequest, type ExecutionRunTeamCredentialProviderBindingPreparer } from './providerLaunch';
 import { createExecutionRunRuntime } from './create';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
@@ -29,7 +29,11 @@ import * as controlClient from '@/daemon/controlClient';
 import * as persistence from '@/persistence';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 
-async function createRecoveryFixture(publishCatalog = false) {
+async function createRecoveryFixture(publishCatalog = false, options: Readonly<{
+    // The Session host's Run Team opener: its daemon/Home side is composed in
+    // the attached-Run broker journey; here it is the boundary under the Run.
+    prepareRunTeamCredentialProviderBinding?: ExecutionRunTeamCredentialProviderBindingPreparer;
+}> = {}) {
     const nativeRequests: AgentSessionOpenRequest[] = [];
     const open = async (request: AgentSessionOpenRequest): Promise<AgentSessionRuntime> => {
         nativeRequests.push(request);
@@ -158,7 +162,7 @@ async function createRecoveryFixture(publishCatalog = false) {
     const bridge = new ExecutionRunHostBridge({ parentProvider: 'codex', cwd: fixture.happyHomeDir, happyHomeDir: fixture.happyHomeDir,
         machineId: 'machine', sendAcp: async () => {}, resolveProvidersFeatureEnabled: () => true,
         sessionInteractionHost: { session, machineId: 'machine', permissionHandler,
-            prepareRunTeamCredentialProviderBinding: async () => null },
+            prepareRunTeamCredentialProviderBinding: options.prepareRunTeamCredentialProviderBinding ?? (async () => null) },
         resolveRunReportPolicy: async () => ({ preset: 'important' }),
         resolveAccountSettingsSnapshot: async () => snapshot,
         resolveExecutionRunProfileCatalog: async () => ({ engineRegistry, profileCatalog,
@@ -200,6 +204,76 @@ describe('real custom Provider Run recovery', () => {
             expect(test.nativeRequests).toHaveLength(1);
         } finally { await test.cleanup(); release.mockRestore(); materialize.mockRestore(); credentialRead.mockRestore(); }
     });
+    // VOICE-TEAM-MUSE-RUN-1113 A2/C9: a brokered Team model on a connected Run
+    // reached the pinned daemon preparation without its Team tuple and opened
+    // natively on the person's own account.
+    function connectedRunBoundaries(test: Awaited<ReturnType<typeof createRecoveryFixture>>) {
+        const bindings = { v: 2 as const, bindingsByServiceId: {
+            'happier.agent.claude/claude-subscription': { source: 'connected' as const, selection: 'profile' as const, profileId: 'synthetic-profile' },
+        } };
+        const credentialRead = vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue({ token: 'synthetic-token', encryption: null });
+        const sourceCustody = test.fixture.registry.readPluginSourceCustody?.('test.provider-recovery');
+        if (!sourceCustody) throw new Error('Expected admitted source custody');
+        const materialize = vi.spyOn(controlClient, 'requestExecutionRunConnectedServicesMaterialization').mockImplementation(async request => ({
+            ok: true, result: { activationId: 'synthetic-activation', env: {}, connectedServicesBindings: bindings,
+                registration: { v: 1, activationId: 'synthetic-activation', runKey: request.runId, agentId: test.input.agentId,
+                    agentContribution: { pluginId: 'test.provider-recovery', localId: 'agent', sourceCustody },
+                    materializationKey: request.runId, connectedServicesBindings: bindings, connectedServiceSelectionsEnv: {},
+                    sessionDirectory: test.fixture.happyHomeDir, materializedRoot: test.fixture.happyHomeDir } },
+        }));
+        const release = vi.spyOn(controlClient, 'releaseExecutionRunConnectedServices').mockResolvedValue({ ok: true, released: true });
+        return { bindings, restore() { release.mockRestore(); materialize.mockRestore(); credentialRead.mockRestore(); } };
+    }
+    const brokeredTeamModel = (agentTargetKey: string) => ({ kind: 'team_credential_provider_model' as const,
+        resourceId: 'resource-muse', teamId: 'team-muse', expectedResourceRevision: 3,
+        agentTargetKey, modelId: 'muse-spark-1.3', deliveryMode: 'brokered' as const });
+
+    it('opens a brokered Team Run with connected services through the Team binding, never the own account', async () => {
+        const teamOpens: Array<Parameters<ExecutionRunTeamCredentialProviderBindingPreparer>[0]> = [];
+        const teamCleanup = vi.fn(async () => undefined);
+        const test = await createRecoveryFixture(true, { prepareRunTeamCredentialProviderBinding: async request => {
+            teamOpens.push(request);
+            return { providerBinding: {
+                source: { kind: 'team_resource' as const, resourceId: 'resource-muse', resourceRevision: 3 },
+                model: { id: 'muse-spark-1.3', name: 'muse-spark-1.3' },
+                upstream: { protocol: 'openai-responses' as const, normalizedUrl: 'http://127.0.0.1:43123/v1', credential: 'apiKey' as const },
+                materialization: { v: 1 as const, kind: 'spawnEnv' as const },
+            }, environmentOverlay: [], additionalRedactionValues: [], cleanup: teamCleanup };
+        } });
+        const boundaries = connectedRunBoundaries(test);
+        const teamCredentialModel = brokeredTeamModel(test.input.selection.agentTargetKey);
+        try {
+            const started = await test.bridge.start({ sessionId: 'parent', intent: 'agent', backendTarget: test.input.backendTarget,
+                teamCredentialModel, connectedServices: boundaries.bindings, instructions: 'Use the Team model.',
+                permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response' });
+            await test.bridge.waitForTerminal(started.runId);
+            expect(teamOpens, JSON.stringify(test.bridge.getLatestToolResult(started.runId)))
+                .toEqual([expect.objectContaining({ runId: started.runId, selection: teamCredentialModel })]);
+            // No preparation decided this launch without the Team tuple.
+            expect(test.requests.filter(request => !request.teamCredentialModel)).toEqual([]);
+            expect(test.nativeRequests).toHaveLength(1);
+            expect(test.nativeRequests[0]?.providerBinding).toMatchObject({
+                source: { kind: 'team_resource', resourceId: 'resource-muse' }, model: { id: 'muse-spark-1.3' } });
+            expect(test.bridge.getPublic(started.runId)).toMatchObject({ status: 'succeeded' });
+        } finally { await test.cleanup(); boundaries.restore(); }
+    });
+
+    it('refuses a brokered Team Run with connected services when no Team opener is available, before opening its Agent', async () => {
+        const test = await createRecoveryFixture(true);
+        const boundaries = connectedRunBoundaries(test);
+        try {
+            const started = await test.bridge.start({ sessionId: 'parent', intent: 'agent', backendTarget: test.input.backendTarget,
+                teamCredentialModel: brokeredTeamModel(test.input.selection.agentTargetKey),
+                connectedServices: boundaries.bindings, instructions: 'Never fall back to my account.',
+                permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response' });
+            await test.bridge.waitForTerminal(started.runId);
+            expect(test.bridge.getPublic(started.runId)).toMatchObject({ status: 'failed',
+                error: { code: 'team_credential_provider_selection_not_current' } });
+            expect(test.nativeRequests).toHaveLength(0);
+            expect(test.requests.filter(request => !request.teamCredentialModel)).toEqual([]);
+        } finally { await test.cleanup(); boundaries.restore(); }
+    });
+
     it('admits an explicit-effort Run exactly once through real start before opening its Agent', async () => {
         const test = await createRecoveryFixture();
         try {
