@@ -505,8 +505,9 @@ describe('WidgetFrame', () => {
             const state = screen.root.findAllByType(SurfaceStateCard).find(card => card.props.testID === 'usage-empty')!;
             return state.findByType(HappierSurfaceState).props as { size?: string; layout?: string };
         };
-        const body = { kind: 'content' as const, children: <UsageBodyInsufficient testID="usage-empty" title="No usage in this period"
-            reason="Usage shows here once your agents run." /> };
+        // A body state that leaves its size to the frame (a Usage "not enough data" state is always one line: USAGE-ACCEPT #5).
+        const body = { kind: 'content' as const, children: <SurfaceStateCard testID="usage-empty" kind="empty" replacesContent
+            title="No usage in this period" reason="Usage shows here once your agents run." /> };
         const card = await renderFrame({ body });
         expect(stateOf(card)).toMatchObject({ size: 'pane' });
         expect(stateOf(card).layout).toBeUndefined();

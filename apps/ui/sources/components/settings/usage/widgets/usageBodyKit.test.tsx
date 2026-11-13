@@ -16,6 +16,7 @@ import { Heatmap, StackedSeriesChart } from '@happier-dev/plugin-ui/presentation
 import { UsageDailyWidget } from './UsageDailyWidget';
 import { UsageFlowWidget } from './UsageFlowWidget';
 import { UsageRhythmWidget } from './UsageRhythmWidget';
+import { WidgetFrameBodyCaptionContext, WidgetFrameBodyIdentityContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccountingFixture';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { UsageWidgetBatchProvider } from './usageWidgetBatch';
@@ -216,6 +217,43 @@ describe('shared Usage identity and dependent coverage', () => {
         expect(points).toHaveLength(relative ? 7 : 8);
         expect(points.slice(0, relative ? 4 : 5).every(point => point.y === null)).toBe(true);
         expect(accounting.insights!.activeDays).toBe(calendar.filter(cell => (cell.value ?? 0) > 0).length);
+    });
+    it('leaves the period\'s unread end off the flow, but keeps a read zero day (USAGE-ACCEPT #18)', async () => {
+        const { trimUsageFlowUnreadTail } = await import('./UsageFlowWidget');
+        const at = (...ys: (number | null)[]) => ({ points: ys.map(y => ({ y })) });
+        const trimmed = trimUsageFlowUnreadTail([at(5, 3, 0), at(2, 4, null)]);
+        expect(trimmed.map(entry => entry.points.map(point => point.y))).toEqual([[5, 3], [2, 4]]);
+        const zero = trimUsageFlowUnreadTail([at(5, 3, 0), at(2, 4, 0)]);
+        expect(zero.map(entry => entry.points.length)).toEqual([3, 3]);
+        const partial = trimUsageFlowUnreadTail([at(5, 3, 1), at(2, 4, null)]);
+        expect(partial.map(entry => entry.points.length)).toEqual([3, 3]);
+    });
+    it('keeps a body-replacing insufficient state to one line at a full-width footprint (USAGE-ACCEPT #5)', async () => {
+        const { UsageBodyInsufficient } = await import('./usageBodyKit');
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        const screen = await renderScreen(<WidgetPresentationProvider value={{ size: 'large',
+            footprint: { columns: 2, columnSpan: 2, rowSpan: 2, width: 'full', height: 'regular' }, geometry: { width: 1060, height: 300 } }}>
+            <UsageBodyInsufficient testID="loop.empty" title="No steering recorded in this period" reason="Steers appear here." />
+        </WidgetPresentationProvider>);
+        const card = screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'loop.empty')!;
+        expect(card.props.size).toBe('line');
+        expect(card.props.replacesContent).toBe(true);
+    });
+    it('names a Rhythm card by its Style and keeps only the measure in its caption (USAGE-ACCEPT #11)', async () => {
+        const query = normalizeUsageQuery({ period: { relative: '7days' }, includeActivity: true, activityResolution: 'both' });
+        const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: usageQaAccountingFixture() }] }).results[0]!;
+        const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
+            freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
+        const identity = vi.fn();
+        const caption = vi.fn();
+        await renderScreen(<WidgetFrameBodyIdentityContext.Provider value={identity}>
+            <WidgetFrameBodyCaptionContext.Provider value={caption}>
+                <UsageRhythmWidget query={query} slice={slice} model={model} serverId="home" id="usage_rhythm" testID="tide"
+                    presentation={{ style: 'weekTide' }} />
+            </WidgetFrameBodyCaptionContext.Provider>
+        </WidgetFrameBodyIdentityContext.Provider>);
+        expect(identity).toHaveBeenLastCalledWith({ title: t('usage.board.charts.inputWeekTide') });
+        expect(caption.mock.lastCall?.[0]).not.toContain(t('usage.board.charts.inputWeekTide'));
     });
     it('draws the weekday × hour matrix at a half-width card and the 24-hour rhythm only where a phone cannot hold it', async () => {
         const query = normalizeUsageQuery({ period: { relative: '7days' }, includeActivity: true, activityResolution: 'both' });

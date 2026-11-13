@@ -111,6 +111,20 @@ describe('Agent chart exact data targets', () => {
     } finally { chart.unmount(); }
   });
 
+  it('leaves the unread end of a phone Score week out instead of drawing empty day strips (acceptance 1113 #14)', () => {
+    const week = (read: number) => Array.from({ length: 7 }, (_, day) => day < read ? Array.from({ length: 24 }, (_, hour) => hour === 9 ? 20 : 0) : Array.from({ length: 24 }, () => null));
+    const chart = mount(<UsageScore {...common} width={390} model={{ weekStart: '2026-11-09', encoding: 'minutes', rows: [{ agentId: 'claude', hours: week(5) }] }}
+      labels={{ day: (day) => `Day ${day}`, clock: (hour) => `${hour}:00`, unknownAgent: 'Unknown',
+        key: { light: 'Light', medium: 'Medium', strong: 'Strong', presence: 'Present', presenceNote: '' },
+        values: { ...values, agentColumn: 'Agent', dayColumn: 'Day', hoursColumn: 'Hours', formatHours: () => '' } }} />);
+    try {
+      const texts = [...chart.container.querySelectorAll('svg text')].map((node) => node.textContent);
+      expect(texts).toContain('Day 4');
+      expect(texts).not.toContain('Day 5');
+      expect(texts).not.toContain('Day 6');
+    } finally { chart.unmount(); }
+  });
+
   it.each([720, 390])('exposes Score hour values at width %s without exposing unrecorded hours', (width) => {
     const chart = mount(<UsageScore {...common} width={width} model={{ weekStart: '2026-10-26', encoding: 'minutes', rows: [
       { agentId: 'claude', hours: [[12.345, null]] },

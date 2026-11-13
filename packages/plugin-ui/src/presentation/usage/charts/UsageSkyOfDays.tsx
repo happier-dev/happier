@@ -649,7 +649,9 @@ function layoutSky(
   const days = model.days;
   const count = Math.max(2, days.length);
   const ordinal = model.encoding === 'ordinal';
-  const top = small ? 26 : 38;
+  // A phone draws its guide labels inside the plot above their line, so the top guide's label needs the streak
+  // bracket to sit clear above it (USAGE-ACCEPT #11: the label ran through the bracket).
+  const top = small ? 40 : 38;
   const bottom = height - 20;
   const right = width - (small ? 6 : ordinal ? 64 : 78);
   // A short period (a day, a week, a fortnight) gives each day its own column with the star at its centre and a larger
@@ -776,7 +778,7 @@ function layoutSky(
     brackets.push({
       from,
       to,
-      y: top - (small ? 12 : 18),
+      y: top - (small ? 22 : 18),
       anchorEnd: small || from > width - 280,
       run,
       kind,

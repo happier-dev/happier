@@ -452,7 +452,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     <>
       {publication}
       <UsagePageHeader facts={facts} retry={pageReadRetry ? retryRead : null} history={history}
-        homeUnavailable={homeUnavailable}
+        homeUnavailable={homeUnavailable} phone={phone}
         layouts={layoutsFact} {...(props.sessionId ? { sessionId: props.sessionId } : {})} />
       {/* One Session is one view: the Account's named views (Plans, Sources…) mean nothing here. A phone
           keeps choosing a view but not arranging one (D23): no + and no ⋯ (rename, reorder, delete). */}
@@ -537,6 +537,8 @@ type UsagePageNotice = Readonly<{
   tone: 'neutral' | 'warning';
   busy?: boolean;
   action?: Readonly<{ label: string; onPress: () => void; testID: string }>;
+  /** The one word a phone's single header line shows in its place, with the sentence one press away. */
+  short?: string;
 }>;
 
 function resolveUsagePageNotice(
@@ -572,7 +574,7 @@ function resolveUsagePageNotice(
       action: { label: t('usage.board.coach.firstUseAction'), onPress: startSession, testID: 'usage-page.header.nothingRecordedAction' } };
   }
   if (newerServer) return { testID: 'usage-page.header.newerServer', reason: newerServer, tone: 'neutral' };
-  if (partial) return { testID: 'usage-page.header.partial', reason: partial, tone: 'neutral' };
+  if (partial) return { testID: 'usage-page.header.partial', reason: partial, tone: 'neutral', short: t('usage.board.charts.coveragePartialShort') };
   if (pending) return { testID: 'usage-page.header.reading', reason: pending, tone: 'neutral', busy: true };
   return null;
 }
@@ -593,9 +595,13 @@ function UsagePageHeader(
     layouts?: Readonly<{ retry: () => void }> | null;
     /** A session's own usage: the page is about that session, so it opens with its name (`surf-SES`). */
     sessionId?: string;
+    phone?: boolean;
   }>,
 ) {
-  const { retry, history, layouts } = props;
+  const { retry, history, layouts, phone } = props;
+  // A phone's header line cannot hold the partial sentence: it says "Partial" and opens the sentence on demand,
+  // never an ellipsis mid-word (USAGE-ACCEPT #16).
+  const [noticeOpen, setNoticeOpen] = React.useState(false);
   const sessionTitle = useSessionDisplayTitles(React.useMemo(() => props.sessionId ? [{ sessionId: props.sessionId }] : [], [props.sessionId]))[0] ?? null;
   const { observedAtMs, machines, agents } = props.facts;
   const openNewSession = useOpenNewSession();
@@ -612,24 +618,28 @@ function UsagePageHeader(
       </SurfaceFreshnessOnSheetProvider>
     );
     const resolved = resolveUsagePageNotice(props.facts, retry, history, layouts, startSession);
+    const shortened = phone && resolved?.short && !resolved.action ? resolved.short : null;
     // A plain line under the purpose, on the title's edge: the page header is not a surface to band. It is drawn as
     // tall as the facts line it replaces, its Retry right after the sentence, so no view's header is taller (R139).
     return resolved ? (
       <SurfaceFreshnessOnSheetProvider>
         <View style={styles.headerLine}>
         <SurfaceFreshnessLine
-          presentation="inline"
+          presentation={shortened && noticeOpen ? 'line' : 'inline'}
+          {...(shortened && noticeOpen ? { glyph: 'clock' as const } : {})}
           testID={resolved.testID}
           asOf={props.facts.observedAtMs}
-          reason={resolved.reason}
+          reason={shortened && !noticeOpen ? shortened : resolved.reason}
           tone={resolved.tone}
           {...(resolved.busy ? { busy: true } : {})}
-          {...(resolved.action ? { action: resolved.action } : {})}
+          {...(resolved.action ? { action: resolved.action } : shortened ? { action: {
+            label: noticeOpen ? t('usage.showLess') : t('common.details'), testID: `${resolved.testID}.detail`,
+            onPress: () => setNoticeOpen(open => !open) } } : {})}
         />
         </View>
       </SurfaceFreshnessOnSheetProvider>
     ) : null;
-  }, [props.facts, props.homeUnavailable, retry, history, layouts, startSession]);
+  }, [props.facts, props.homeUnavailable, retry, history, layouts, startSession, phone, noticeOpen]);
   const facts = React.useMemo((): PageHeaderMetaFact[] => [
     ...(observedAtMs !== null
       ? [{ key: 'asOf', icon: 'clock' as const, text: t('usage.board.page.asOf', { time: formatUsageObservedAt(observedAtMs) }) }]

@@ -76,6 +76,26 @@ describe('Sky of days', () => {
       expect(last!.getAttribute('text-anchor')).toBe('end');
     } finally { mount.unmount(); }
   });
+  it('keeps a phone week\'s top guide label clear below its streak bracket (acceptance 1113 #11)', () => {
+    const start = Date.UTC(2026, 10, 7);
+    const days = Array.from({ length: 7 }, (_, index) => ({
+      date: new Date(start + index * 86_400_000).toISOString().slice(0, 10),
+      state: 'active' as const, value: 30 + index, leader: null,
+    }));
+    const run = { startDate: days[0]!.date, endDate: days[6]!.date, days: 7 };
+    const mount = mountThroughReactNativeWeb(<UsageSkyOfDays theme={SURFACE_CONTEXT_THEME_FIXTURE} paint={paint} agents={agents}
+      model={{ encoding: 'amount', colourBy: 'leadingAgent', days, best: run, current: run }} labels={labels} label="Sky of days" width={340} testID="sky-phone" />);
+    try {
+      const top = [...mount.container.querySelectorAll('svg text')].filter(node => node.textContent === '36 min');
+      expect(top.length).toBeGreaterThan(0);
+      const bracket = [...mount.container.querySelectorAll('svg path')].map(node => node.getAttribute('d') ?? '')
+        .map(d => /^M[\d.]+,([\d.]+)V([\d.]+)H/.exec(d)).find(Boolean);
+      expect(bracket).toBeTruthy();
+      const legsEnd = Number(bracket![1]);
+      // The label's cap height (about 11 px above its baseline) must start below the bracket's legs.
+      for (const node of top) expect(Number(node.getAttribute('y')) - 11).toBeGreaterThan(legsEnd);
+    } finally { mount.unmount(); }
+  });
   it('says each day exactly, keeps unknown apart from no activity, and names a tie by both Agents', () => {
     const model: UsageSkyModel = { encoding: 'amount', colourBy: 'leadingAgent', days: [
       { date: '2026-09-01', state: 'active', value: 90, leader: { kind: 'agent', agentId: 'claude' } },

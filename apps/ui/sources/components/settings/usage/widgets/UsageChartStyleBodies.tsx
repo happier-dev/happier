@@ -7,7 +7,7 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 import { t } from '@/text';
 import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
-import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { useWidgetFrameBodyCaption, useWidgetFrameBodyIdentity } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { usageCrewLabels, usageOrbitLabels, usagePlanetLabels, usageShippedLabels, usageSkyLabels } from './usageChartLabels';
 import { formatUsageDuration } from './usageHowYouWorkPresentation';
 import {
@@ -78,6 +78,16 @@ export function useStyleCaption(style: string, detail?: string | null) {
   useWidgetFrameBodyCaption(detail ? `${style} · ${detail}` : style);
 }
 
+/**
+ * A Rhythm Style is the card's name ("Sky of days", "Week tide"): sibling Rhythm cards must not all read "Rhythm"
+ * (USAGE-ACCEPT #11). The caption keeps only the measure. A name the person gave the widget still wins at the frame.
+ */
+export function useRhythmStyleName(style: string, detail: string | null) {
+  const identity = React.useMemo(() => ({ title: style }), [style]);
+  useWidgetFrameBodyIdentity(identity);
+  useWidgetFrameBodyCaption(detail);
+}
+
 /* ═════ Rhythm · Sky of days | Week tide | Daylight ═════ */
 
 export function UsageSkyStyleBody(props: UsageChartStyleBodyProps) {
@@ -96,7 +106,7 @@ export function UsageSkyStyleBody(props: UsageChartStyleBodyProps) {
   }, [model, host.agent]);
   const metricName = usageChartMetricName(metric);
   const ghost = useChartGhost(props.serverId);
-  useStyleCaption(t('usage.board.charts.inputSky'), metricName);
+  useRhythmStyleName(t('usage.board.charts.inputSky'), metricName);
   if (!model) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID} title={t('usage.board.charts.needsDataTitle')} reason={t('usage.board.charts.needsCalendarReason')} />;
   if (calendar && (isMeasureUnrecorded(calendar.coverage, metric) || !model.days.some((day) => day.state !== 'unknown')))
     return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID} title={t('usage.board.charts.metricNotRecordedTitle', { metric: metricName })} reason={t('usage.board.charts.metricNotRecordedHint')}
@@ -115,7 +125,7 @@ export function UsageWeekTideStyleBody(props: UsageChartStyleBodyProps) {
   const metric = resolveUsageChartMetric(props.query.metric, 'busy');
   const model = React.useMemo(() => calendar ? projectUsageWeekHours(calendar, metric) : null, [calendar, metric]);
   const ghost = useChartGhost(props.serverId);
-  useStyleCaption(t('usage.board.charts.inputWeekTide'), usageChartMetricName(metric));
+  useRhythmStyleName(t('usage.board.charts.inputWeekTide'), usageChartMetricName(metric));
   if (!model || (calendar && isMeasureUnrecorded(calendar.coverage, metric))) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID}
     ghost={calendar ? ghost('tide', props.testID, { rows: usageChartWeekdays() }) : undefined} title={calendar && isMeasureUnrecorded(calendar.coverage, metric) ? t('usage.board.charts.metricNotRecordedTitle', { metric: usageChartMetricName(metric) }) : t('usage.board.charts.needsDataTitle')}
     reason={!calendar ? t('usage.board.charts.needsCalendarReason') : isMeasureUnrecorded(calendar.coverage, metric)
@@ -135,7 +145,7 @@ export function UsageDaylightStyleBody(props: UsageChartStyleBodyProps) {
   const metric = resolveUsageChartMetric(props.query.metric, 'busy');
   const model = React.useMemo(() => calendar ? projectUsageDaylight(calendar, metric, props.slice) : null, [calendar, metric, props.slice]);
   const ghost = useChartGhost(props.serverId);
-  useStyleCaption(t('usage.board.charts.inputDaylight'), usageChartMetricName(metric));
+  useRhythmStyleName(t('usage.board.charts.inputDaylight'), usageChartMetricName(metric));
   if (!model || (calendar && isMeasureUnrecorded(calendar.coverage, metric))) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID}
     ghost={calendar ? ghost('daylight', props.testID) : undefined} title={calendar && isMeasureUnrecorded(calendar.coverage, metric) ? t('usage.board.charts.metricNotRecordedTitle', { metric: usageChartMetricName(metric) }) : t('usage.board.charts.needsDataTitle')}
     reason={!calendar ? t('usage.board.charts.needsCalendarReason') : isMeasureUnrecorded(calendar.coverage, metric)

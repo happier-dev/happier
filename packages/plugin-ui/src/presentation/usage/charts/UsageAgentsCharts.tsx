@@ -85,8 +85,13 @@ export function UsageScore(props: AgentsProps & Readonly<{ model: UsageScoreMode
     // A phone recomposes the week into seven day strips: the day's name on its own line, then one row of 24 dots
     // per Agent across the full width (a side gutter cannot hold "Wed 11" at body size; native N5).
     const step = width / 24, head = svgText.styles.body.lineHeight ?? (svgText.styles.body.fontSize ?? 13) + 4;
+    // Days outside the read period (the rest of this week, a period that starts mid-week) have no hour at all: a
+    // phone leaves them out instead of drawing empty strips (USAGE-ACCEPT #14: ~200 px of blank Sat/Sun).
+    const read = Array.from({ length: 7 }, (_, day) => rows.some((row) => (row.hours[day] ?? []).some((minutes) => minutes !== null)));
+    const first = read.indexOf(true), last = read.lastIndexOf(true);
+    const days = first < 0 ? [] : Array.from({ length: last - first + 1 }, (_, index) => first + index);
     chart = <ChartDrawing accessibilityLabel={props.label} style={{ gap: 4 }}>
-      {Array.from({ length: 7 }, (_, day) => {
+      {days.map((day) => {
         const height = head + 6 + rows.length * 7 + 4;
         return <View key={day} style={{ height }}><Svg width={width} height={height}>
           {svgText.draw({ x: 0, y: head - 4, text: props.labels.day(day), tone: 'secondary', size: 'body' })}

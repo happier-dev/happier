@@ -5,6 +5,7 @@ import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { ChartDatum, formatHappierDataExactShare, formatHappierDataValue } from '@happier-dev/plugin-ui/presentation';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { Text } from '@/components/ui/text/Text';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -54,6 +55,7 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
   // The viewer's own advice target, as echoed by the same allowance read; never a default.
   const target = readUsagePersonalPaceTarget(props.slice.quota?.[0]?.targets ?? []);
   useWidgetFrameBodyCaption(t('usage.board.plans.planFitCaption'));
+  const [caveatsOpen, setCaveatsOpen] = React.useState(false);
   if (projection.accounts.length === 0) {
     return (
       <View style={styles.body}>
@@ -89,6 +91,12 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
   const noneEndedOnce = drawn.filter((account) => account.read?.current
     && summarizeUsagePlanFit(account, target).observed === 0).length > 1;
   const planFitGaps = readPlanFitGaps(props.slice.planInsights);
+  // A gap more readings cure is one quiet promise; attribution says what it needs.
+  const caveats = [noPriceOnce ? t('usage.board.plans.planNoPriceAll') : null,
+    noneEndedOnce ? t('usage.board.plans.fitNoneEndedOnce') : null,
+    unreadCount > 0 ? t('usage.board.plans.capacityNotRead', { count: unreadCount }) : null,
+    planFitGaps.attribution ? t('usage.board.plans.attributionNote') : null,
+    planFitGaps.history ? t('usage.board.plans.moreDetailLater') : null].filter((line): line is string => line !== null);
   return (
     <View style={styles.body} testID={`${props.testID}.planFit`}>
       <View style={styles.rows} accessibilityRole="list">
@@ -109,26 +117,16 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
           />
         ))}
       </View>
-      {noPriceOnce || noneEndedOnce || unreadCount > 0 ? (
-        <Text testID={`${props.testID}.once`} style={[styles.quiet, text.detail]}>
-          {[noPriceOnce ? t('usage.board.plans.planNoPriceAll') : null,
-            noneEndedOnce ? t('usage.board.plans.fitNoneEndedOnce') : null,
-            unreadCount > 0 ? t('usage.board.plans.capacityNotRead', { count: unreadCount }) : null].filter(Boolean).join(' · ')}
-        </Text>
+      {/* The list's caveats are one quiet line: the first, with the rest one press away, never a run-on line plus
+          a sentence (USAGE-ACCEPT #7). */}
+      {caveats.length > 0 ? (
+        <SurfaceFreshnessLine testID={`${props.testID}.once`} tone="neutral" glyph="info"
+          reason={caveatsOpen ? caveats.join('\n') : caveats[0]!}
+          {...(caveats.length > 1 ? { action: { label: caveatsOpen ? t('usage.showLess') : t('common.details'),
+            testID: `${props.testID}.once.detail`, onPress: () => setCaveatsOpen(open => !open) } } : {})} />
       ) : null}
       {props.slice.planInsights?.recordedWeek.status === 'available'
         ? <RecordedWeek value={props.slice.planInsights.recordedWeek} compact={tile} testID={`${props.testID}.recordedWeek`} /> : null}
-      {/* A gap more readings cure is one quiet promise; attribution says what it needs; a missing price is already said above. */}
-      {planFitGaps.attribution ? (
-        <Text testID={`${props.testID}.attribution`} style={[styles.quiet, text.detail]}>
-          {t('usage.board.plans.attributionNote')}
-        </Text>
-      ) : null}
-      {planFitGaps.history ? (
-        <Text testID={`${props.testID}.notRecorded`} style={[styles.quiet, text.detail]}>
-          {t('usage.board.plans.moreDetailLater')}
-        </Text>
-      ) : null}
       <UsagePlanAccountStates accounts={projection.accounts} nameOf={nameOf} slice={props.slice}
         onRetry={props.model.refresh} testID={`${props.testID}.state`} />
       {/* The pace these rows are read against is set here: the one route from a plan's value to its target. */}

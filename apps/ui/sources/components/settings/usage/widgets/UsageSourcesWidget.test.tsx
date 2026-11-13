@@ -22,6 +22,7 @@ import { UsageBodySettledReportContext } from './usageBodyHeightMemory';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { act } from 'react-test-renderer';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { PluginUiScrollActivityProvider } from '@happier-dev/plugin-ui/advanced';
 import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
@@ -46,6 +47,8 @@ it('retains source inventory but withdraws execution from machines with locked c
     createMachineFixture({ id: 'locked', activeAt: Date.now(), availability: { kind: 'locked', reason: 'encryption_material_unavailable' } }),
     createMachineFixture({ id: 'ready', activeAt: Date.now() }),
   ];
+  // Presence is unknown until answered (canonical presence owner); answer both rows so only availability differs.
+  publishMachineActivityForTest(machines);
   expect(projectUsageSourcesMachines(machines, Date.now(), { serverId: 'home', accountId: 'account' }).map(machine => [machine.id, machine.online]))
     .toEqual([['ready', true], ['locked', false]]);
 });

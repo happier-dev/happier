@@ -87,7 +87,7 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
     `${byModel ? t('usage.board.page.byModel') : t('usage.board.page.byAgent')} · ${usagePeriodPhrase(props.query)}`,
   );
   const series = React.useMemo(
-    () => {
+    () => trimUsageFlowUnreadTail((() => {
       if (sourceSeries.length > 0) return sourceSeries;
       if (cost && view) {
         const trend = usagePageCostTrend(view.pageCost);
@@ -116,7 +116,7 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
                   : usageAgentTitle(mix.keys[index]!.key, entry.label),
           }))
         : [];
-    },
+    })()),
     [mix, sourceSeries, cost, view, range, theme, byModel, props.query, props.slice.accounting?.coverage],
   );
   // Choosing an Agent in the lens or the legend narrows the page's one filter row to it.
@@ -226,4 +226,20 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
       />
     </View>
   );
+}
+
+/**
+ * The period's unread end (today before its first reading lands: some series unknown, none above zero) is left off the
+ * flow. Drawn, a stacked area ends in a vertical cut where one series is unknown while its neighbours fall to zero
+ * (USAGE-ACCEPT #18). A measured zero day with every series read stays.
+ */
+export function trimUsageFlowUnreadTail<Series extends Readonly<{ points: readonly Readonly<{ y: number | null }>[] }>>(series: readonly Series[]): Series[] {
+  const length = Math.max(0, ...series.map(entry => entry.points.length));
+  let end = length;
+  while (end > 2) {
+    const at = series.map(entry => entry.points[end - 1]?.y ?? null);
+    if (!at.some(value => value === null) || at.some(value => value !== null && value > 0)) break;
+    end -= 1;
+  }
+  return end === length ? [...series] : series.map(entry => ({ ...entry, points: entry.points.slice(0, end) }) as Series);
 }

@@ -29,7 +29,7 @@ import { projectUsagePlanetFamilyModels } from './usageChartModels';
 import {
   UsageChartPending,
   UsageOrbitBody,
-  useStyleCaption,
+  useRhythmStyleName,
 } from './UsageChartStyleBodies';
 
 /**
@@ -104,7 +104,7 @@ export function UsageCalendarArtStyleBody(
   props: UsageBodyProps & Readonly<{ style: UsageCalendarArtStyle }>,
 ) {
   const styleName = t(CALENDAR_STYLE_NAME[props.style]);
-  useStyleCaption(styleName);
+  useRhythmStyleName(styleName, usagePeriodPhrase(props.query));
   const host = useUsageChartHost(props.serverId);
   const models = usePlanetFamilyModels(props);
   if (!models) return <Pending {...props} />;

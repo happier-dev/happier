@@ -38,10 +38,11 @@ export function useWidgetFrameBodyMeta(meta: React.ReactNode): void {
 /**
  * The same lending for the header's name: a body whose widget is named by what it shows (a Metric by its
  * metric: "CPU" with the CPU mark) lends that name and mark in place of its definition's generic ones. A name the
- * person gave the widget always wins, so a host applies this only to an unnamed instance. Pass an
+ * person gave the widget always wins, so a host applies this only to an unnamed instance. Without a mark the
+ * definition's own mark stays. Pass an
  * identity-stable value: a new one re-lends it.
  */
-export type WidgetFrameBodyIdentity = Readonly<{ title: string; mark: IconName }>;
+export type WidgetFrameBodyIdentity = Readonly<{ title: string; mark?: IconName }>;
 export const WidgetFrameBodyIdentityContext = React.createContext<
   ((identity: WidgetFrameBodyIdentity | null) => void) | null
 >(null);

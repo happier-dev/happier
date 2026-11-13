@@ -320,10 +320,11 @@ export function UsagePlanIdentity(
           <ConnectedAccountIdentityText
             value={split.identity}
             style={[styles.identityQualifier, text.detail]}
-            // Two lines, broken once between the name and the domain: a one-line cell cut every address to
-            // "codex3@…" at 1440 (R6 #12). A longer local part still loses its domain tail, never the part that
-            // tells same-name accounts apart; the cell's accessibility label keeps it whole.
+            // One line that gives up its middle ("codex3@ha…er.dev"): a tail cut read "codex3@…" (R6 #12) and a
+            // two-line wrap broke every address at "@" and floated the rank badge mid-tile (USAGE-ACCEPT #7). The
+            // start that tells same-name accounts apart stays; the cell's accessibility label keeps it whole.
             numberOfLines={2}
+            ellipsize="middle"
           />
         ) : null}
         {qualifier && !props.compact ? (
@@ -469,7 +470,9 @@ const styles = StyleSheet.create((theme) => ({
     flexWrap: 'wrap',
     columnGap: theme.space.s6,
   },
-  identityColumn: { flexDirection: 'column', alignItems: 'flex-start' },
+  // One stretched, unwrapped column: a wrapping column sizes its line to the widest child, so a one-line address
+  // overflowed the cell instead of giving up its middle.
+  identityColumn: { flexDirection: 'column', alignItems: 'stretch', flexWrap: 'nowrap' },
   identityTitle: {
     ...Typography.default('semiBold'),
     color: theme.colors.text.primary,

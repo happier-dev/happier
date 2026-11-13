@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { renderScreen as renderScreenAtHost, standardCleanup } from '@/dev/testkit';
@@ -459,10 +460,12 @@ it('shows the canonical capacity weather and insufficient model/reset basis insi
   expect(screen.getTextContent()).not.toContain('—');
   expect(screen.getTextContent()).not.toContain(t('usage.board.plans.planNoPriceShort'));
   const sharedPriceReason = t('usage.board.plans.planNoPriceAll');
-  expect(String(screen.findByTestId('fit.once')!.props.children)).toContain(sharedPriceReason);
+  // The list's caveats are one quiet line (USAGE-ACCEPT #7): the first leads, the rest open under Details.
+  expect(screen.findAllByType(SurfaceFreshnessLine).find(line => line.props.testID === 'fit.once')!.props.reason).toBe(sharedPriceReason);
   expect(screen.getTextContent().split(sharedPriceReason), 'one shared cause across the accounts').toHaveLength(2);
   // The plan row itself opens its details (lab p2sheet-D: one row per plan); no "Details" line repeats under every plan.
-  expect(screen.getTextContent()).not.toContain(t('usage.board.plans.planDetails'));
+  // The one "Details" is the list caveat's (its other caveats open there), never one per plan row.
+  expect(screen.getTextContent().split(t('usage.board.plans.planDetails'))).toHaveLength(2);
   await screen.pressByTestIdAsync('fit.plan.work.details-header');
   expect(screen.findByTestId('fit.plan.work.weather.weekly')).toBeTruthy();
   // What no account has a basis for yet is one line for the whole widget, never one per account.
@@ -1632,11 +1635,11 @@ it('promises later detail only for history gaps', async () => {
     return renderScreen(wrap(<UsagePlanFitWidget {...props} slice={slice} id="usage_plan_fit" testID="fit" />));
   };
   const priceGap = await render('period_price_unavailable');
-  expect(priceGap.findByTestId('fit.notRecorded')).toBeFalsy();
-  expect(priceGap.findByTestId('fit.attribution')).toBeFalsy();
+  expect(priceGap.getTextContent()).not.toContain(t('usage.board.plans.moreDetailLater'));
+  expect(priceGap.getTextContent()).not.toContain(t('usage.board.plans.attributionNote'));
   await priceGap.unmount();
   const historyGap = await render('recorded_resets_unavailable');
-  expect(historyGap.findByTestId('fit.notRecorded')).toBeTruthy();
+  expect(historyGap.getTextContent()).toContain(t('usage.board.plans.moreDetailLater'));
   await historyGap.unmount();
 });
 

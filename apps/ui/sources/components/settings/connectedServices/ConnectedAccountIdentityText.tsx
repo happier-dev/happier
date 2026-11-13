@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform, type StyleProp, type TextStyle } from 'react-native';
 
 import { Text } from '@/components/ui/text/Text';
+import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
 import { splitMaskedConnectedAccountIdentity } from '@/sync/domains/connectedServices/maskAccountEmail';
 import { t } from '@/text';
 
@@ -17,10 +18,13 @@ export const ConnectedAccountIdentityText = React.memo(function ConnectedAccount
     value: string;
     style?: StyleProp<TextStyle>;
     numberOfLines?: number;
+    /** One line that gives up its middle ("codex3@ha…er.dev"), never a wrap at "@" in a narrow cell. */
+    ellipsize?: 'middle';
     testID?: string;
 }>) {
     const parts = splitMaskedConnectedAccountIdentity(props.value);
     const masked = parts.some((part) => part.masked);
+    if (props.ellipsize === 'middle' && !masked) return <MiddleEllipsisText testID={props.testID} style={props.style} value={props.value} />;
     if (!masked || Platform.OS !== 'web') {
         // An address wraps once, between its name and its domain, never mid-word: the domain is one atomic
         // inline, which is a soft wrap opportunity on either side of it (the text stays one string).

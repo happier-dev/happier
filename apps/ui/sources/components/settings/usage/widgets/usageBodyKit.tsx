@@ -685,8 +685,9 @@ export function UsageBodyInsufficient(
     action?: Readonly<{ label: string; onPress: (callerContext?: ActionExecutorContext) => void }>;
   }>,
 ) {
-  // A state that replaces the body is the widget's empty state: the frame sizes it (centred in a card with
-  // room, one line in a compact footprint or a column). A sub-section beside admitted facts stays one line.
+  // Not enough data (or a measured zero) is one quiet line at every footprint: a full-width card never grows a
+  // page-size empty state for it (USAGE-ACCEPT #5). Replacing the body, it still reports itself to the frame so the
+  // card holds a line's height; a sub-section beside admitted facts also sits inline.
   const replacesContent = props.replacesContent !== false;
   const action = props.action;
   const commands = useCurrentUiContextLocalCommands(action ? [{ key: 'action', title: action.label,
@@ -696,7 +697,8 @@ export function UsageBodyInsufficient(
       testID={props.testID}
       kind="empty"
       replacesContent={replacesContent}
-      {...(replacesContent ? {} : { layout: 'inline' as const, size: 'line' as const })}
+      size="line"
+      {...(replacesContent ? {} : { layout: 'inline' as const })}
       title={props.title}
       {...(props.reason ? { reason: props.reason } : {})}
       {...(props.action
@@ -774,6 +776,12 @@ function usageCoverageHeadlineKey(gaps: readonly Pick<UsageQuerySourceState, 'st
         : 'usage.board.page.coveragePending' as const;
 }
 
+/** The headline names its sources, except the unknown-coverage line, which takes none. */
+function formatUsageCoverageHeadline(gaps: readonly Pick<UsageQuerySourceState, 'status'>[], sources: string): string {
+  const key = usageCoverageHeadlineKey(gaps);
+  return key === 'usage.board.sources.coverageUnknown' ? t(key) : t(key, { sources });
+}
+
 /**
  * The one quiet clause a body's own line carries when its host has no Sources detail (Home, a Board): a read
  * still going or failed names its sources (a failure with its Retry); an incomplete read says only "Partial
@@ -836,7 +844,7 @@ export function usageCoverageDescription(slice: UsageQueryResultSlice, sources: 
   const reasons = sources.includes('accounting')
     ? [...new Set(slice.accounting?.coverage?.reasons ?? [])].map(reason => t(COVERAGE_REASON_KEYS[reason])) : [];
   return [
-    ...(rest.length ? [t(usageCoverageHeadlineKey(rest), { sources: nameGaps(rest) })] : []),
+    ...(rest.length ? [formatUsageCoverageHeadline(rest, nameGaps(rest))] : []),
     ...(newer.length ? [t('usage.board.page.coverageNeedsNewerServer', { sources: nameGaps(newer) })] : []),
     ...reasons,
   ].join(' · ');
