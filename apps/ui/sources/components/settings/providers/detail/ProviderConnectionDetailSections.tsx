@@ -13,10 +13,10 @@ import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/Cor
 import { endpointHeadersCopy } from '../endpointHeadersCopy';
 import { Switch } from '@/components/ui/forms/Switch';
 import { StatusPill } from '@/components/ui/status/StatusPill';
-import { presentProviderCompatibilityReasons } from '@/providers/connection/compatibilityReasonPresentation';
+import { presentProviderCompatibilityReasons, type ProviderCompatibilityReasonDescriptionKey } from '@/providers/connection/compatibilityReasonPresentation';
 import { endpointProtocolLabel } from '@/providers/connection/endpointProtocolLabel';
 import type { ProviderModelPickerVisibility } from '@/providers/hooks/useProviderModelPickerVisibility';
-import { t, type TranslationKeyNoParams } from '@/text';
+import { t } from '@/text';
 
 type CompatibilitySummary = DaemonProviderConnectionViewV1['compatibility'][number];
 type Endpoint = DaemonProviderConnectionViewV1['endpoints'][number];
@@ -59,7 +59,7 @@ const COMPATIBILITY_ORDER: Readonly<Record<CompatibilitySummary['status'], numbe
  * What a row adds to its pill: the reasons that set it apart, else the consequence of an experimental pairing.
  * A reason the section already states (`said`) is not repeated; a row left with nothing new says nothing.
  */
-function compatibilityDetail(summary: CompatibilitySummary, said: ReadonlySet<TranslationKeyNoParams> = new Set()): string | undefined {
+function compatibilityDetail(summary: CompatibilitySummary, said: ReadonlySet<ProviderCompatibilityReasonDescriptionKey> = new Set()): string | undefined {
     const all = presentProviderCompatibilityReasons(summary.reasons);
     const reasons = all.filter((reason) => !said.has(reason.descriptionKey)).map((reason) => t(reason.descriptionKey));
     if (reasons.length > 0) return reasons.join(' · ');
@@ -68,7 +68,7 @@ function compatibilityDetail(summary: CompatibilitySummary, said: ReadonlySet<Tr
 }
 
 /** The reasons every usable agent shares: said once in the section description instead of under each agent. */
-function sharedCompatibilityReasons(summaries: readonly CompatibilitySummary[]): readonly TranslationKeyNoParams[] {
+function sharedCompatibilityReasons(summaries: readonly CompatibilitySummary[]): readonly ProviderCompatibilityReasonDescriptionKey[] {
     if (summaries.length < 2) return [];
     const [first, ...rest] = summaries.map((summary) =>
         new Set(presentProviderCompatibilityReasons(summary.reasons).map((reason) => reason.descriptionKey)));

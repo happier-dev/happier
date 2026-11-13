@@ -31,10 +31,19 @@ const REASON_DESCRIPTION_KEYS = Object.freeze({
     adapter_contract_invalid: 'settingsProviders.compatibility.reasons.adapterInvalid',
 } satisfies Record<ProviderCompatibilityReasonCodeV1, TranslationKeyNoParams>);
 
-const UNKNOWN_REASON_KEY: TranslationKeyNoParams = 'settingsProviders.compatibility.reasons.unknown';
+const UNKNOWN_REASON_KEY = 'settingsProviders.compatibility.reasons.unknown' satisfies TranslationKeyNoParams;
+
+/**
+ * The few keys a reason can present as. Callers keep sets of these instead of `TranslationKeyNoParams`:
+ * relating `Set` to `ReadonlySet` over the whole key union (thousands of literals) does not finish
+ * under ES2025 Set typings, which reach this program through a dependency's `lib` reference.
+ */
+export type ProviderCompatibilityReasonDescriptionKey =
+    | (typeof REASON_DESCRIPTION_KEYS)[ProviderCompatibilityReasonCodeV1]
+    | typeof UNKNOWN_REASON_KEY;
 
 export function presentProviderCompatibilityReason(input: unknown): Readonly<{
-    descriptionKey: TranslationKeyNoParams;
+    descriptionKey: ProviderCompatibilityReasonDescriptionKey;
     known: boolean;
 }> {
     const parsed = ProviderCompatibilityReasonCodeV1Schema.safeParse(input);
@@ -45,8 +54,8 @@ export function presentProviderCompatibilityReason(input: unknown): Readonly<{
 
 export function presentProviderCompatibilityReasons(
     inputs: readonly unknown[],
-): readonly Readonly<{ descriptionKey: TranslationKeyNoParams; known: boolean }>[] {
-    const seen = new Set<TranslationKeyNoParams>();
+): readonly Readonly<{ descriptionKey: ProviderCompatibilityReasonDescriptionKey; known: boolean }>[] {
+    const seen = new Set<ProviderCompatibilityReasonDescriptionKey>();
     return inputs.flatMap((input) => {
         const presentation = presentProviderCompatibilityReason(input);
         if (seen.has(presentation.descriptionKey)) return [];
