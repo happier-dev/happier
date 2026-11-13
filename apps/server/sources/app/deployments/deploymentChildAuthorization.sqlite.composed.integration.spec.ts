@@ -1316,7 +1316,7 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
-    it.each(['plain', 'e2ee'] as const)('retains current %s Artifact custody checks during accepted controller HTTP reads', async contentMode => {
+    it.each(['plain', 'e2ee'] as const)('retains admitted %s Artifact custody until controller settlement', async contentMode => {
         const f = await fixture('team', 'account', { separateMemberCustodian: true, separateContentOwner: true,
             readableEnvironment: true, contentMode });
         const history = await db.deployment.create({ data: { environmentId: f.environment.id, targetLinkId: f.link.id,
@@ -1344,15 +1344,27 @@ describe('deployment children retain their controller Action authority', () => {
                 data: { role: 'owner' } });
             expect(await inTx(tx => removeTeamMemberForActorInTx(tx, { teamId: f.team!.id, actorAccountId: f.account.id })))
                 .toMatchObject({ ok: true });
-            for (const read of reads) {
-                const after = await app.inject(request(read));
-                expect(after.statusCode, after.body).toBe(409);
-                expect(after.json()).toEqual({ ok: false, error: 'deployment_content_unavailable' });
-            }
+            const queries: string[] = [];
+            const stop = observeSqliteRequests({ before: query => { queries.push(query.model ?? query.action); } });
+            try {
+                for (const read of reads) {
+                    const after = await app.inject(request(read));
+                    expect(after.statusCode, after.body).toBe(200);
+                    expect(after.json()).toMatchObject({ ok: true });
+                }
+            } finally { stop(); }
+            expect(queries.filter(model => ['TeamMembership', 'ArtifactGrant'].includes(model)),
+                'admitted controller content reads must consume custody rather than current grants').toEqual([]);
             const listing = await app.inject(request({ actionId: 'deployments.receipts.list',
                 path: `/v1/deployments/environments/${f.environment.id}/deployments?serverId=${serverId}` }));
             expect(listing.statusCode, listing.body).toBe(200);
             expect(listing.json().items.map((item: { id: string }) => item.id)).toEqual(expect.arrayContaining([f.receipt.id, history.id]));
+            await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded' } });
+            for (const read of reads) {
+                const settled = await app.inject(request(read));
+                expect(settled.statusCode, settled.body).toBe(404);
+                expect(settled.json()).toEqual({ ok: false, error: 'deployment_unavailable' });
+            }
         }, { authentication: 'real' });
     });
 
@@ -1455,7 +1467,8 @@ describe('deployment children retain their controller Action authority', () => {
         { workflowOrigin: false, templateRoot: true, membershipWithdrawal: false },
         { workflowOrigin: false, templateRoot: false, membershipWithdrawal: true }])('uses only accepted-job and installation reads for controller calls after credential withdrawal (%j)', async options => {
         const f = await fixture(options.membershipWithdrawal ? 'team' : 'account', 'account', { ...options,
-            separateMemberCustodian: options.membershipWithdrawal });
+            separateMemberCustodian: options.membershipWithdrawal,
+            separateContentOwner: options.membershipWithdrawal });
         const receiptSpec = getActionSpec('deployments.receipts.get');
         if (!receiptSpec.serverTransport) throw new Error('Receipt reads need their canonical transport');
         const receiptInput = { serverId, deploymentId: f.receipt.id };
@@ -1486,11 +1499,16 @@ describe('deployment children retain their controller Action authority', () => {
             expect.soft(queries.filter(model => ['Account', 'ApiToken', 'TeamMembership', 'ProjectSource', 'SimpleCache'].includes(model))).toEqual([]);
             expect.soft(queries.length, `${read.path}: ${queries.join(', ')}`).toBeLessThanOrEqual(2);
         }
-        const forwardAdmittedMember = async () => {
+        const forwardAdmittedMember = async (duringNativeStep?: () => Promise<void>) => {
             const request = f.rpc();
             const receiver = { id: 'withdrawal-deployment-receiver', data: { clientType: 'machine-scoped',
                 machineId: f.member.id, verifiedMachineInstallationId: f.member.installationId },
-                timeout: () => ({ emitWithAck: async () => ({ accepted: true }) }) };
+                // Native execution is the remote boundary; Home admission and
+                // the controller's signed return/settlement remain real.
+                timeout: () => ({ emitWithAck: async () => {
+                    await duringNativeStep?.();
+                    return { accepted: true };
+                } }) };
             qualifyCurrentAccountStoredContentSocket(receiver);
             const io = createSocketRoomDiscoveryHarness(async room =>
                 room === `rpc:${f.member.accountId}:${request.method}` || room === receiver.id ? [receiver] : []);
@@ -1511,18 +1529,20 @@ describe('deployment children retain their controller Action authority', () => {
                 data: { accessLevel: 'admin' } });
             await forwardAdmittedMember();
         }
-        await db.account.update({ where: { id: f.account.id }, data: { tokenEpoch: { increment: 1 } } });
-        if (options.membershipWithdrawal) {
-            await db.teamMembership.delete({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } } });
-            const envelope = { ...f.originalActionEnvelope, requestId: crypto.randomUUID() };
-            await expect(auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
-                accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch + 1 },
-                actionId: f.authorization.binding.actionId, machineId: f.controller.id, target: envelope.target,
-                requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
-            { input: envelope.input })).rejects.toMatchObject({ code: 'credential_scope_denied' });
-        }
+        const withdrawRequester = async () => {
+            await db.account.update({ where: { id: f.account.id }, data: { tokenEpoch: { increment: 1 } } });
+            if (options.membershipWithdrawal) {
+                await db.teamMembership.delete({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } } });
+                const envelope = { ...f.originalActionEnvelope, requestId: crypto.randomUUID() };
+                await expect(auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+                    accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch + 1 },
+                    actionId: f.authorization.binding.actionId, machineId: f.controller.id, target: envelope.target,
+                    requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
+                { input: envelope.input })).rejects.toMatchObject({ code: 'credential_scope_denied' });
+            }
+        };
+        if (!options.membershipWithdrawal) await withdrawRequester();
         for (const read of reads) expect.soft(await verify(read), read.path).not.toBeNull();
-        if (options.membershipWithdrawal) await forwardAdmittedMember();
         expect(await verify(reads[0], f.outsider.keys.secretKey)).toBeNull();
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             let revision = f.receipt.revision;
@@ -1550,7 +1570,39 @@ describe('deployment children retain their controller Action authority', () => {
                 const changed = DeploymentReceiptResultV1Schema.parse(response.json());
                 if (!changed.ok || !('deploymentRevision' in changed)) throw new Error('Accepted deployment transition has no receipt revision');
                 revision = changed.deploymentRevision;
+                if (state === 'running') {
+                    if (options.membershipWithdrawal) {
+                        await forwardAdmittedMember(async () => {
+                            expect(await db.deployment.findUniqueOrThrow({ where: { id: f.receipt.id } }))
+                                .toMatchObject({ state: 'running', settledAt: null });
+                            await withdrawRequester();
+                        });
+                        for (const read of reads) expect.soft(await verify(read), read.path).not.toBeNull();
+                        await forwardAdmittedMember();
+                        expect(await verify(reads[0], f.outsider.keys.secretKey)).toBeNull();
+                    }
+                    // #148 native-return hop: verification alone is insufficient.
+                    // The resource owner must consume the accepted controller's
+                    // content custody after Team withdrawal, before activation settles.
+                    for (const read of reads.slice(0, 2)) {
+                        const readHeaders = { ...f.admissionHeaders };
+                        delete readHeaders[EXTERNAL_ACTION_REVIEWED_CHILD_HEADER];
+                        const response = await app.inject({ method: 'GET', url: read.path, headers: {
+                            ...readHeaders,
+                            [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: read.effectActionId,
+                            [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                                authorizationToken: f.authorization.token, effectActionId: read.effectActionId,
+                                target: f.authorization.binding.target, installationId: f.controller.installationId,
+                                requestId: f.authorization.binding.requestId, method: 'GET', path: read.path,
+                                privateKey: f.controller.keys.secretKey }),
+                        } });
+                        expect.soft(response.statusCode, `${read.path}: ${response.body}`).toBe(200);
+                        expect.soft(response.json()).toMatchObject({ ok: true });
+                    }
+                }
             }
+            expect(await db.deployment.findUniqueOrThrow({ where: { id: f.receipt.id } }))
+                .toMatchObject({ state: 'succeeded' });
             expect(await f.verify(DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'retention', actionId: 'deployments.deploy', input: f.input,
                 machineId: f.member.id, installationId: f.member.installationId, deploymentId: f.receipt.id,
                 actionOperationId: f.receipt.actionOperationId, settledTargetLinkRevision: f.link.revision + 1,
@@ -1690,12 +1742,21 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
-    it.each([false, true])('scopes own-server teardown history and candidate publication to its signed controller root (Workflow: %s)', async workflowOrigin => {
+    it.each([false, true].flatMap(workflowOrigin => [false, true].map(removed => ({ workflowOrigin, removed }))))
+    ('scopes own-server teardown history and candidate publication to its signed controller root (Workflow: $workflowOrigin; removed: $removed)', async ({ workflowOrigin, removed }) => {
         const f = await fixture('account', 'account', { workflowOrigin });
+        // The native lifecycle journey covers removal itself; this DB boundary
+        // fixture captures its retained Environment, target and Source custody.
+        const environment = removed ? await db.deploymentEnvironment.update({ where: { id: f.environment.id },
+            data: { deletedAt: new Date(), runtimeTargetLinkId: null, revision: { increment: 1 } } }) : null;
+        const link = removed ? await db.deploymentTargetLink.update({ where: { id: f.link.id },
+            data: { deletedAt: new Date(), revision: { increment: 1 } } }) : f.link;
+        if (removed) await db.projectSource.update({ where: { id: f.environment.projectSourceId },
+            data: { deletedAt: new Date(), revision: { increment: 1 } } });
         const actionId = 'deployments.teardown' as const;
         const target = { kind: 'machine' as const, machineId: f.controller.id };
         const input = { serverId, environmentId: f.environment.id, targetLinkId: f.link.id,
-            expectedRevision: f.environmentRevision, expectedTargetLinkRevision: f.link.revision,
+            expectedRevision: environment?.revision ?? f.environmentRevision, expectedTargetLinkRevision: link.revision,
             requestKey: crypto.randomUUID(), reason: 'manual' as const };
         const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
         const mint = () => auth.mintExternalActionExecutionAuthorization({
@@ -1729,6 +1790,33 @@ describe('deployment children retain their controller Action authority', () => {
         const forbiddenPublication = `/v1/artifacts/${crypto.randomUUID()}/access/recipients`;
         await expectHttpRefusalWarning({ phase: 'deployment_publication_purpose', method: 'GET', path: forbiddenPublication },
             async () => { expect(await verify(forbiddenPublication)).toBeNull(); }, [authorization.token]);
+        if (removed) {
+            const restartInput = getActionSpec('deployments.restart').inputSchema.parse({ serverId,
+                environmentId: f.environment.id, targetLinkId: f.link.id, deploymentId: f.receipt.id,
+                machineId: f.member.id, installationId: f.member.installationId,
+                service: { kind: 'deployment', machineId: f.member.id, environmentId: f.environment.id,
+                    environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' },
+                expectedGeneration: 'generation' });
+            for (const denied of [
+                { actionId: 'deployments.deploy', input: f.input, machineId: f.controller.id },
+                { actionId: 'deployments.restart', input: restartInput, machineId: f.member.id },
+            ]) {
+                const deniedTarget = { kind: 'machine' as const, machineId: denied.machineId };
+                const deniedEnvelope = { v: 1 as const, requestId: crypto.randomUUID(), target: deniedTarget, input: denied.input };
+                await expect(auth.mintExternalActionExecutionAuthorization({ accountId: f.account.id,
+                    serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+                    actionId: denied.actionId, machineId: denied.machineId, target: deniedTarget,
+                    requestId: deniedEnvelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(deniedEnvelope),
+                }, { input: denied.input })).rejects.toMatchObject({ code: 'credential_scope_denied' });
+            }
+            const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+            await db.projectSource.update({ where: { id: f.environment.projectSourceId }, data: {
+                owner: { kind: 'account', accountId: owner.id },
+                audience: [{ principal: { kind: 'account', accountId: f.account.id }, level: 'view' }],
+            } });
+            // Creator identity and readable Source access do not grant removal.
+            await expect(mint()).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        }
         if (f.workflowActionOrigin) {
             await db.automationRun.update({ where: { id: f.workflowActionOrigin.runId }, data: { state: 'paused' } });
             // Approval spends the already issued finite root, without admitting new work.
