@@ -61,8 +61,10 @@ function createTx() {
                 settingsVersion: 0,
             })),
         },
+        pluginCollectionRow: { findMany: vi.fn(async () => []) },
         accountPluginIntent: {
             findUnique: vi.fn(async () => null),
+            findMany: vi.fn(async () => []),
         },
     };
 }

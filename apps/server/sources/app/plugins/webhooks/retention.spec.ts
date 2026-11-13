@@ -153,7 +153,7 @@ describe("plugin webhook discard Account encryption fence", () => {
         });
         await Promise.resolve();
 
-        expect(mocks.acquireFence).toHaveBeenCalledWith(mocks.tx, "account-1");
+        expect(mocks.acquireFence).toHaveBeenCalledWith(mocks.tx, "account-1", "content");
         expect(mocks.findUnique).not.toHaveBeenCalled();
         expect(mocks.updateMany).not.toHaveBeenCalled();
 
@@ -192,7 +192,7 @@ describe("plugin webhook discard Account encryption fence", () => {
             now: new Date("2026-08-10T00:00:00.000Z"),
             batchSize: 100,
         })).resolves.toEqual({ payloadsPurged: 0, metadataDeleted: 0, tombstonesDeleted: 0 });
-        expect(mocks.acquireFence).toHaveBeenCalledWith(mocks.tx, "account-1");
+        expect(mocks.acquireFence).toHaveBeenCalledWith(mocks.tx, "account-1", "content");
         expect(mocks.updateMany).not.toHaveBeenCalled();
         expect(mocks.deleteMany).not.toHaveBeenCalled();
     });

@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createAccountCursorRawQueryTransactionModel, createPrismaTransactionBoundary } from "@/app/api/testkit/txHarness";
+import { inTxPostgresControlStatementMock } from "@/app/api/testkit/dbMocks";
 
 import {
     type PluginWebhookDeliveryContentV1,
@@ -13,7 +15,10 @@ const mocks = vi.hoisted(() => {
         create: vi.fn(),
         updateMany: vi.fn(),
     };
+    const account = { update: vi.fn(async () => ({ seq: 123 })) };
+    const accountChange = { upsert: vi.fn(async () => ({})) };
     const tx = {
+        account, accountChange,
         pluginWebhookEndpoint: { findFirst: vi.fn(), updateMany: vi.fn() },
         pluginWebhookDelivery: delivery,
     };
@@ -22,17 +27,16 @@ const mocks = vi.hoisted(() => {
         delivery,
         acquireFence: vi.fn(),
         resolveTarget: vi.fn(),
-        afterTx: vi.fn((_tx: unknown, callback: () => void) => callback()),
-        markAccountChanged: vi.fn(async () => 123),
+
     };
 });
 
-vi.mock("@/storage/inTx", () => ({
-    inTx: async (fn: (tx: typeof mocks.tx) => Promise<unknown>) => await fn(mocks.tx),
-    afterTx: mocks.afterTx,
-}));
 vi.mock("@/storage/db", () => ({
-    db: { pluginWebhookDelivery: mocks.delivery },
+    db: { pluginWebhookDelivery: mocks.delivery,
+        $transaction: createPrismaTransactionBoundary(() => ({
+            ...inTxPostgresControlStatementMock, ...mocks.tx,
+            $queryRawUnsafe: createAccountCursorRawQueryTransactionModel(mocks.tx),
+        })) },
     isPrismaErrorCode: (error: unknown, code: string) => (
         typeof error === "object"
         && error !== null
@@ -49,9 +53,7 @@ vi.mock("@/app/plugins/availability/operations", () => ({
 vi.mock("@/app/serverIdentity/serverIdentity", () => ({
     getOrCreateServerIdentityId: async () => "server-1",
 }));
-vi.mock("./accountChange", () => ({
-    markPluginWebhookAccountChangedInTxV1: mocks.markAccountChanged,
-}));
+
 
 import { admitPluginWebhookDeliveryV1, movePendingPluginWebhookDeliveriesV1 } from "./deliveryStore";
 import { createPluginWebhookStoredEnvelopeV1 } from "./storedEnvelope";
@@ -162,7 +164,9 @@ describe("plugin webhook delivery store exact-target admission", () => {
             }),
         }));
         expect(mocks.delivery.create.mock.calls[0]?.[0]?.data).not.toHaveProperty("targetServerIdentityId");
-        expect(mocks.afterTx).toHaveBeenCalledTimes(1);
+        expect(mocks.tx.accountChange.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({ accountId: "account-1", cursor: 123, kind: "pluginDomain" }),
+        }));
         expect(wake).toHaveBeenCalledWith({
             accountId: "account-1",
             targetMachineId: "machine-1",
@@ -216,7 +220,6 @@ describe("plugin webhook delivery store exact-target admission", () => {
         mocks.delivery.count.mockResolvedValue(0);
         mocks.delivery.aggregate.mockResolvedValue({ _sum: { payloadBytes: 0n } });
         mocks.delivery.create.mockResolvedValue({ id: "delivery-2" });
-        mocks.markAccountChanged.mockResolvedValue(123);
 
         await expect(admitPluginWebhookDeliveryV1({
             endpointId: "endpoint-1",

@@ -124,10 +124,27 @@ vi.mock("@/storage/db", () => ({
         $transaction: createPrismaTransactionBoundary(() => ({
             ...boundary.transactionSnapshot,
             ...inTxPostgresControlStatementMock,
+            async $queryRaw(query: unknown) {
+                if (Array.isArray(query)) return inTxPostgresControlStatementMock.$queryRaw(query as unknown as TemplateStringsArray);
+                if (typeof query !== 'object' || query === null || !('sql' in query)
+                    || typeof query.sql !== 'string' || !query.sql.includes('availabilityCursor')) {
+                    throw new Error('Unexpected Availability fixture SQL');
+                }
+                const account = await boundary.transactionSnapshot.account.findUnique();
+                const intent = await boundary.transactionSnapshot.accountPluginIntent.findUnique();
+                return [{ availabilityCursor: account.seq, ...intent,
+                    writableCollectionsText: JSON.stringify(intent.writableCollections), releaseLessDeclarationText: null }];
+            },
         })),
     },
     isPrismaErrorCode: () => false,
 }));
+
+// Only substitute database runtime initialization; build real provider SQL.
+vi.mock("@/storage/prisma", async importOriginal => {
+    const actual = await importOriginal<typeof import("@/storage/prisma")>();
+    return { ...actual, getActivePrismaRuntime: () => actual.prismaRuntime };
+});
 
 import { createPluginAvailabilityOperations } from "./operations";
 import { registerPluginAvailabilityRoutes } from "./routes";

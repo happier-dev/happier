@@ -1080,7 +1080,7 @@ export async function preparePluginCollectionRelationReplacementInTx(input: Read
         // Collection or host targets (including private uniqueness collisions).
         // Compare only the admitted source rows' existing edges, then retain them
         // without resolving targets in the owner's authority.
-        const edgeIdentity = (sourceRowDbId: string, relationId: string, targetRowId: string) =>
+        const edgeIdentity = (sourceRowDbId: string, relationId: string, targetRowId: string | null) =>
             JSON.stringify([sourceRowDbId, relationId, targetRowId]);
         const retained = new Set(edges.map(edge => edgeIdentity(edge.change.rowDbId, edge.relation.id, edge.targetRowId)));
         let existingCount = 0;
