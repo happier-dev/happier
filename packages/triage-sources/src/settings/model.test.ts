@@ -952,6 +952,19 @@ describe('the source failure sentence', () => {
 
 
 describe('administration refusal identity at settings presentation', () => {
+  it('keeps the resolver admission operands in the shared refusal disclosure', () => {
+    const admission = { caller: { kind: 'plugin', pluginId: 'happier.sentry', contributionId: 'triage-sources' },
+      surface: 'ui', candidateCount: 2 };
+    const detail = 'The caller could not be resolved to one admitted source with a declared purpose.';
+    const outcome = readTriageSourceConfiguration({ status: 'success', requestId: 'request-admin-123',
+      result: { kind: 'invalidCaller', admission,
+        failure: { class: 'permission', code: 'sourceAdministrationCallerNotAdmitted', detail } } });
+    expect(outcome).toMatchObject({ kind: 'sourceNotAdmitted', failure: {
+      code: 'sourceAdministrationCallerNotAdmitted', requestId: 'request-admin-123',
+      detail: `${detail}\n${JSON.stringify(admission)}`,
+    } });
+  });
+
   it.each([
     ['sourceAdministrationPurposeMismatch', 'The draft purpose does not match the admitted source.'],
     ['sourceAdministrationInstanceNotOwned', 'This source does not own the configured instance.'],

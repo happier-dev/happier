@@ -407,8 +407,15 @@ export function readTriageSourceConfiguration(
       return { kind: 'restored', sourceInstanceId: result.sourceInstanceId };
     case 'removed':
       return { kind: 'removed', sourceInstanceId: result.sourceInstanceId };
-    case 'invalidCaller':
-      return { kind: 'sourceNotAdmitted', failure: projectTriageSourceReadFailureV1(execution, 'invalidCaller', 'invalidCaller', result.failure ?? { class: 'permission', code: 'invalidCaller' }) };
+    case 'invalidCaller': {
+      const failure: TriageSourceFailureV1 = result.failure ?? { class: 'permission', code: 'invalidCaller' };
+      return { kind: 'sourceNotAdmitted', failure: projectTriageSourceReadFailureV1(execution, 'invalidCaller', 'invalidCaller', {
+        ...failure,
+        ...(result.admission === undefined ? {} : {
+          detail: [failure.detail, JSON.stringify(result.admission)].filter(value => value !== undefined).join('\n'),
+        }),
+      }) };
+    }
     case 'currentnessConflict':
       return { kind: 'raced' };
     case 'conflict':
