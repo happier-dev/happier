@@ -372,7 +372,7 @@ export async function createDeploymentDomainInTx(tx: Tx, actorAccountId: string,
         const controller = await tx.machine.findFirst({ where: { id: loaded.row.controllerMachineId,
             revokedAt: null, replacedByMachineId: null }, select: { id: true, installationId: true, installationPublicKey: true } });
         if (!controller?.installationId || !controller.installationPublicKey
-            || executionBinding && executionBinding.installationId !== controller.installationId) return deploymentMachineUnavailable(controller.id, 'controller');
+            || executionBinding && executionBinding.installationId !== controller.installationId) return deploymentMachineUnavailable(loaded.row.controllerMachineId, 'controller');
         const capturedPlacements = DeploymentDomainProviderCaptureV1Schema.parse({ kind: 'provider',
             placement: { serverId: input.serverId, accountId: actorAccountId, environmentId: input.environmentId,
                 targetLinkId: link.id, domainId: input.domainId, controller: { machineId: controller.id,
@@ -548,7 +548,7 @@ export async function removeDeploymentDomainInTx(tx: Tx, actorAccountId: string,
         const controller = await tx.machine.findFirst({ where: { id: loaded.row.controllerMachineId,
             revokedAt: null, replacedByMachineId: null }, select: { id: true, installationId: true, installationPublicKey: true } });
         if (!controller?.installationId || !controller.installationPublicKey
-            || executionBinding && executionBinding.installationId !== controller.installationId) return deploymentMachineUnavailable(controller.id, 'controller');
+            || executionBinding && executionBinding.installationId !== controller.installationId) return deploymentMachineUnavailable(loaded.row.controllerMachineId, 'controller');
         const changed = await tx.deploymentDomain.update({ where: { id: row.id }, data: { state: 'removing', revision: { increment: 1 },
             capturedPlacements: { ...provider, installationPublicKey: encodeBase64(controller.installationPublicKey, 'base64url'),
                 placement: { ...provider.placement, accountId: actorAccountId, controller: {

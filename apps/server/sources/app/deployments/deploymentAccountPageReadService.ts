@@ -91,7 +91,8 @@ async function capturePortablePage(tx: Tx, input: Input, kind: Kind, cursor: str
 
 function listAccountPage(tx: Tx, actorAccountId: string, input: Input, kind: 'domains', authentication: DeploymentAuthentication): Promise<DeploymentDomainPageSuccessV1 | DeploymentFailure>;
 function listAccountPage(tx: Tx, actorAccountId: string, input: Input, kind: 'data', authentication: DeploymentAuthentication): Promise<DeploymentDataPageSuccessV1 | DeploymentFailure>;
-async function listAccountPage(tx: Tx, actorAccountId: string, input: Input, kind: Kind, authentication: DeploymentAuthentication) {
+async function listAccountPage(tx: Tx, actorAccountId: string, input: Input, kind: Kind, authentication: DeploymentAuthentication,
+): Promise<DeploymentDomainPageSuccessV1 | DeploymentDataPageSuccessV1 | DeploymentFailure> {
     const cursorInput = { ...input, pageKind: kind };
     let cursor: string | undefined;
     try {
@@ -159,9 +160,10 @@ async function listAccountPage(tx: Tx, actorAccountId: string, input: Input, kin
         else data.push({ environment });
         for (const artifact of opened) artifacts.set(artifact.id, artifact);
     }
-    return { ok: true as const, items: kind === 'domains' ? domains : data, artifacts: [...artifacts.values()],
+    const page = { artifacts: [...artifacts.values()],
         nextCursor: candidates.length > limit ? sealDeploymentReadCursor(actorAccountId, cursorInput, candidates[limit - 1]!.key) : null,
         coverage: partial ? 'partial' as const : 'complete' as const };
+    return kind === 'domains' ? { ok: true as const, items: domains, ...page } : { ok: true as const, items: data, ...page };
 }
 
 export function listDeploymentDomainPageInTx(tx: Tx, actorAccountId: string, input: DeploymentDomainPageInputV1, authentication: DeploymentAuthentication = {}) {

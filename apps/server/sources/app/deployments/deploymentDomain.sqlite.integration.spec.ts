@@ -17,7 +17,7 @@ import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymen
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 import { projectDeploymentDomainHeader, projectDeploymentDomainMachineReferences, prepareDeploymentTeardownDomainsInTx,
-    readAcceptedDeploymentTeardownDomainContentInTx, readMemberDeploymentDomainContentInTx } from './deploymentDomainService';
+    readAcceptedDeploymentTeardownDomainContentInTx, readMemberDeploymentDomainContentInTx, createDeploymentDomainInTx } from './deploymentDomainService';
 import { loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import { DeploymentDomainCapturedPlacementsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { deploymentDomainProviderObservationProofPayloadV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
@@ -38,7 +38,7 @@ describe('public Domain storage and native custody', () => {
         const foreign = await db.account.create({ data: { encryptionMode: 'plain' } });
         const key = nacl.sign.keyPair();
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
-            metadata: '{}', installationId: crypto.randomUUID(), installationPublicKey: key.publicKey } });
+            metadata: '{}', installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(key.publicKey) } });
         const source = await db.projectSource.create({ data: { createdByAccountId: owner.id,
             owner: { kind: 'account', accountId: owner.id }, name: 'Domain owner', audience: [], attachments: [] } });
         const content = async (kind: string) => {
@@ -64,6 +64,40 @@ describe('public Domain storage and native custody', () => {
         await db.deploymentEnvironment.update({ where: { id: environment.id }, data: { runtimeTargetLinkId: target.id } });
         return { owner, foreign, machine, key, environment, target, content };
     }
+
+    it('returns the structured controller failure when a provider Domain cannot acquire its controller key', async () => {
+        const f = await fixture();
+        await db.deploymentTargetLink.update({ where: { id: f.target.id }, data: {
+            sourceKind: 'plugin', hostTargetId: null, pluginId: 'happier.deploy.vercel', contributionLocalId: 'runtime', targetKind: 'vercel' } });
+        await db.machine.update({ where: { id: f.machine.id }, data: { installationPublicKey: null } });
+        const content = await f.content('deployment-domain.v1');
+        const result = await inTx(tx => createDeploymentDomainInTx(tx, f.owner.id, {
+            serverId, domainId: crypto.randomUUID(), environmentId: f.environment.id, expectedRevision: 1,
+            targetLinkId: f.target.id, expectedTargetLinkRevision: 1, requestKey: crypto.randomUUID(),
+            actionOperationId: crypto.randomUUID(), requestId: crypto.randomUUID(), provider: true, placements: [],
+            ...content,
+        }));
+        expect(DeploymentDomainMutationResultV1Schema.parse(result)).toEqual({ ok: false, error: 'machine_unavailable',
+            role: 'controller', machineIds: [f.machine.id], nextActions: ['start', 'chooseAnother'] });
+        expect(await db.deploymentDomain.count({ where: { environmentId: f.environment.id } })).toBe(0);
+    });
+
+    it('returns the structured controller failure when a provider Domain controller was revoked', async () => {
+        const f = await fixture();
+        await db.deploymentTargetLink.update({ where: { id: f.target.id }, data: {
+            sourceKind: 'plugin', hostTargetId: null, pluginId: 'happier.deploy.vercel', contributionLocalId: 'runtime', targetKind: 'vercel' } });
+        await db.machine.update({ where: { id: f.machine.id }, data: { revokedAt: new Date() } });
+        const content = await f.content('deployment-domain.v1');
+        const result = await inTx(tx => createDeploymentDomainInTx(tx, f.owner.id, {
+            serverId, domainId: crypto.randomUUID(), environmentId: f.environment.id, expectedRevision: 1,
+            targetLinkId: f.target.id, expectedTargetLinkRevision: 1, requestKey: crypto.randomUUID(),
+            actionOperationId: crypto.randomUUID(), requestId: crypto.randomUUID(), provider: true, placements: [],
+            ...content,
+        }));
+        expect(DeploymentDomainMutationResultV1Schema.parse(result)).toEqual({ ok: false, error: 'machine_unavailable',
+            role: 'controller', machineIds: [f.machine.id], nextActions: ['start', 'chooseAnother'] });
+        expect(await db.deploymentDomain.count({ where: { environmentId: f.environment.id } })).toBe(0);
+    });
 
     it.each(['plain', 'e2ee'] as const)('admits a provider Domain without fabricating native placements in %s', async mode => {
         const f = await fixture(mode);
@@ -212,7 +246,7 @@ describe('public Domain storage and native custody', () => {
     it.each(['plain', 'e2ee'] as const)('creates and lists a multi-Machine local-hostname Domain in %s through the public route, records native facts and tombstones only signed complete removal', async mode => {
         const f = await fixture(mode);
         const secondMachine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: f.owner.id,
-            metadata: '{}', installationId: crypto.randomUUID(), installationPublicKey: f.key.publicKey } });
+            metadata: '{}', installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(f.key.publicKey) } });
         await db.deploymentTargetLink.update({ where: { id: f.target.id }, data: { machines: { create: {
             machineId: secondMachine.id, installationId: secondMachine.installationId!, position: 1, state: 'active',
         } } } });
@@ -323,7 +357,8 @@ describe('public Domain storage and native custody', () => {
                 return { ...observation, proof: signMachineInstallationProof({ privateKey: f.key.secretKey,
                     payload: deploymentDomainObservationProofPayloadV1({ expectedDomainRevision: revision, observation }) }) };
             };
-            const transition = (revision: number, observations: ReturnType<typeof signed>[]) => app.inject({ method: 'POST',
+            // Accepts deliberately malformed observations too: the route schema is what is under test.
+            const transition = (revision: number, observations: readonly unknown[]) => app.inject({ method: 'POST',
                 url: `${url}/transitions`, headers, payload: { serverId, environmentId: f.environment.id,
                     domainId: input.domainId, expectedDomainRevision: revision, observations } });
             const valid = result.domain.placements!.map(capture => signed(capture, 1, 'active', true));

@@ -57,10 +57,10 @@ export async function listDeploymentTargetLinksInTx(tx: Tx, actorAccountId: stri
     const items: Extract<DeploymentTargetLinksListResultV1, { ok: true }>['items'] = [];
     let coverage: 'complete' | 'partial' = 'complete';
     for (const row of rows.slice(0, limit)) {
-        let source = sources.get(row.environment.projectSourceId);
-        if (!source) {
-            source = await resolveDeploymentEnvironmentAdmissionInTx(tx, actorAccountId,
-                { serverId: input.serverId, projectSourceId: row.environment.projectSourceId }, authentication);
+        const cachedSource = sources.get(row.environment.projectSourceId);
+        const source = cachedSource ?? await resolveDeploymentEnvironmentAdmissionInTx(tx, actorAccountId,
+            { serverId: input.serverId, projectSourceId: row.environment.projectSourceId }, authentication);
+        if (!cachedSource) {
             sources.set(row.environment.projectSourceId, source);
         }
         if (!source.ok || source.admission.owner.kind !== scope.kind

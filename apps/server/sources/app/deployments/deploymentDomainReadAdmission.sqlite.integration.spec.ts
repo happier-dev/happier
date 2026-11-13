@@ -1,4 +1,5 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import nacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
@@ -85,7 +86,7 @@ describe('Home-signed Environment metadata reads', () => {
         const binding = { serverIdentityId: serverId, accountId: own.account.id, authentication, actionId, target, requestId };
         const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(9) };
         const randomBytes = (length: number) => new Uint8Array(length).fill(2);
-        const envelope = version === 1 ? { v: 1 as const, requestId, target, input }
+        const envelope = version === 1 ? { v: 1 as const, requestId, target, input: normalizeStrictJsonValue(input) }
             : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input, material, randomBytes });
         let forwardedAuthorization: ExternalActionExecutionAuthorizationV1 | undefined;
         let forwardFailure: unknown;

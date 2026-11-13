@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import * as privacyKit from 'privacy-kit';
 import nacl from 'tweetnacl';
 import {
@@ -112,7 +113,7 @@ describe('adopt create preparation admission', () => {
           MACHINE_PLAIN_DATA_KEY_MARKER,
         ),
         installationId: crypto.randomUUID(),
-        installationPublicKey: key.publicKey,
+        installationPublicKey: new Uint8Array(key.publicKey),
       },
     });
     const adoptInput = (projectSourceId: string) => ({
@@ -134,7 +135,7 @@ describe('adopt create preparation admission', () => {
         deployerMode: 'managers' as const,
       },
     });
-    const mint = async (actionId: string, input: Record<string, unknown>) => {
+    const mint = async (actionId: string, input: JsonValue) => {
       const envelope = {
         v: 1 as const,
         requestId: crypto.randomUUID(),

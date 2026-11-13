@@ -106,7 +106,7 @@ function deploymentMachineReferenceWhere(machineId: string) {
 /** Machine removal reads only matching relational custody, including retained/tombstoned links. */
 export async function readDeploymentMachineReferencesInTx(tx: Tx, actorAccountId: string,
     input: MachineDeploymentReferencesInputV1, authentication: DeploymentAuthentication = {},
-): Promise<MachineDeploymentReferencesPageV1 | ReturnType<typeof deploymentFailure>> {
+): Promise<MachineDeploymentReferencesPageV1 | ReturnType<typeof deploymentFailure<'deployment_unavailable'>>> {
     if (await readCurrentServerIdentityId(process.env, tx) !== input.homeId) return deploymentFailure('deployment_unavailable', { phase: 'deployment.machine.references.server', causeKind: 'server_mismatch' });
     const access = await resolveEffectiveMachineAccessForMachinesInTx(tx, { accountIds: [actorAccountId], machineIds: [input.machineId] });
     if (!access.get(input.machineId)?.get(actorAccountId)) return deploymentFailure('deployment_unavailable', { phase: 'deployment.machine.references.access', causeKind: 'access_denied' });
@@ -129,12 +129,9 @@ export async function readDeploymentMachineReferencesInTx(tx: Tx, actorAccountId
     const sources = new Map<string, Awaited<ReturnType<typeof resolveDeploymentEnvironmentAdmissionInTx>>>();
     let coverage: MachineDeploymentReferencesPageV1['coverage'] = 'complete';
     for (const row of rows.slice(0, limit)) {
-        let admitted = sources.get(row.projectSourceId);
-        if (!admitted) {
-            admitted = await resolveDeploymentEnvironmentAdmissionInTx(tx, actorAccountId,
-                { serverId: input.homeId, projectSourceId: row.projectSourceId }, authentication);
-            sources.set(row.projectSourceId, admitted);
-        }
+        const admitted = sources.get(row.projectSourceId) ?? await resolveDeploymentEnvironmentAdmissionInTx(tx, actorAccountId,
+            { serverId: input.homeId, projectSourceId: row.projectSourceId }, authentication);
+        sources.set(row.projectSourceId, admitted);
         // Hidden Source identities stay hidden, but cannot become a false "unused" fact.
         if (!admitted.ok) { coverage = 'partial'; continue; }
         const roles = new Set<NonNullable<MachineReferenceV1['deploymentRoles']>[number]>();
@@ -362,12 +359,9 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
     let coverage: 'complete' | 'partial' = 'complete';
     const selectedRepository = input.previewRepository ? normalizeScmHostingRepositoryIdentity(input.previewRepository) : null;
     for (const row of selected) {
-        let source = sources.get(row.projectSourceId);
-        if (!source) {
-            source = await resolveDeploymentEnvironmentAdmissionInTx(tx, actorAccountId,
-                { serverId: input.serverId, projectSourceId: row.projectSourceId }, authentication);
-            sources.set(row.projectSourceId, source);
-        }
+        const source = sources.get(row.projectSourceId) ?? await resolveDeploymentEnvironmentAdmissionInTx(tx, actorAccountId,
+            { serverId: input.serverId, projectSourceId: row.projectSourceId }, authentication);
+        sources.set(row.projectSourceId, source);
         if (!source.ok) { coverage = 'partial'; continue; }
         if (input.previewRepository) {
             const selector = source.admission.source.repository;

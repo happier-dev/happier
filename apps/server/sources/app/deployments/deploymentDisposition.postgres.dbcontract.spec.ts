@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, it } from 'vitest';
+import type { LightMyRequestResponse } from 'fastify';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
     MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
@@ -72,7 +73,7 @@ it.each(['delete', 'unlink', 'detach'] as const)('%s survives a concurrent Accou
             : action === 'unlink' ? `targets/${f.link.id}/unlink` : 'teardown'}`;
         const payload = action === 'delete' ? f.input : { ...f.input, targetLinkId: f.link.id,
             expectedTargetLinkRevision: f.link.revision, ...(action === 'detach' ? { detachKeepRunning: true, reason: 'manual' } : {}) };
-        const request = () => app.inject({ method: 'POST', url, headers: { 'x-test-user-id': f.owner.id }, payload });
+        const request = (): Promise<LightMyRequestResponse> => app.inject({ method: 'POST', url, headers: { 'x-test-user-id': f.owner.id }, payload });
         // Publish on the same Account after the Environment snapshot/domain writes,
         // immediately before the real terminal Account lock. No internal owner is mocked.
         const { result, advances } = await withAccountPublicationBeforeTransactionSql(f.owner.id,

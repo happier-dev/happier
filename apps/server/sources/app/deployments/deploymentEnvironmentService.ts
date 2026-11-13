@@ -354,7 +354,8 @@ async function createDeploymentEnvironmentForSourceInTx(tx: Tx, actorAccountId: 
         // Pending identities are admitted without claiming completed routing or grants.
         referencedSavedSecretRevisions: pending?.captures ?? [],
         ...deploymentContentReference(input),
-    }, include: { deployers: { select: { principalKind: true, principalId: true } } } });
+    }, include: { deployers: { select: { principalKind: true, principalId: true } },
+        previewCompanionOfEnvironment: { select: { previewTemplateEnvironmentId: true } } } });
     let revision = row.revision;
     let runtimeTargetLinkId: string | undefined;
     if (input.firstTargetLink) {
@@ -486,7 +487,8 @@ export async function updateDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
             }
             const provenance = content.content.template;
             const definition = content.content.definition;
-            if (!provenance || definition.kind !== 'stored' || provenance.definition.contentRevision !== definition.contentRevision
+            if (!provenance || definition.kind !== 'stored' || provenance.definition.kind !== 'stored'
+                || provenance.definition.contentRevision !== definition.contentRevision
                 || provenance.definition.composeDigest !== definition.composeDigest) return deploymentFailure('deployment_conflict');
         }
         if (candidate.kind === 'stored') {
