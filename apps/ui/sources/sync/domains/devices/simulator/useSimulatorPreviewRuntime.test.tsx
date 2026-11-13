@@ -216,11 +216,11 @@ describe('useSimulatorPreviewSessionSurfaceRuntime', () => {
         }));
     });
 
-    it('loads daemon simulator snapshots and dispatches default actions through machine rpc', async () => {
+    it.each([true, false])('loads daemon simulator snapshots with server capability enabled=%s', async capabilityEnabled => {
         testState.useFeatureDecision.mockReturnValue(simulatorPreviewDecision('enabled'));
         testState.useFeatureDetails.mockReturnValue({
-            enabled: true,
-            available: true,
+            enabled: capabilityEnabled,
+            available: capabilityEnabled,
             supportedPlatforms: ['ios'],
             availableDevices: [],
             captureSupported: true,

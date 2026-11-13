@@ -177,7 +177,8 @@ export function useSimulatorPreviewSessionSurfaceRuntime(
     const nowMs = resolveNowMsFn(input.nowMs);
     const nowMsRef = React.useRef(nowMs);
     const featureEnabled = featureDecision?.state === 'enabled';
-    const daemonRuntimeAvailable = (input.enabled ?? true) && Boolean(machineId) && featureEnabled && capabilities.enabled;
+    // The feature decision admits discovery; device availability comes from the selected daemon.
+    const daemonRuntimeAvailable = (input.enabled ?? true) && Boolean(machineId) && featureEnabled;
     const daemonRuntimeEnabled = daemonRuntimeAvailable && active;
     const actionScope = React.useRef<AbortController | null>(null);
     React.useEffect(() => {
