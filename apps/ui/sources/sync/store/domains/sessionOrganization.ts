@@ -6,6 +6,7 @@ import type {
     SessionOrganizationPin,
     SessionOrganizationSnapshot,
     SessionOrganizationSessionAppearance,
+    SessionOrganizationSessionAppearancePresentation,
     SessionOrganizationTag,
 } from '@happier-dev/protocol';
 
@@ -69,7 +70,9 @@ export type SessionOrganizationDomain = {
     sessionOrganizationPinsBySessionKey: Record<string, SessionOrganizationPin>;
     sessionOrganizationAttentionStandingsBySessionKey: Record<string, SessionAttentionStanding>;
     sessionOrganizationAppearancesBySessionKey: Record<string, SessionOrganizationSessionAppearance>;
+    sessionOrganizationAppearancePresentationsBySessionKey: Record<string, SessionOrganizationSessionAppearancePresentation>;
     sessionOrganizationSessionAppearancesSupportedByServerId: Record<string, boolean>;
+    sessionOrganizationAppearancePresentationsSupportedByServerId: Record<string, boolean>;
     sessionOrganizationFoldersByFolderKey: Record<string, SessionOrganizationFolder>;
     sessionOrganizationFolderAssignmentsBySessionKey: Record<string, string | null>;
     sessionOrganizationTagsByTagKey: Record<string, SessionOrganizationTag>;
@@ -88,6 +91,7 @@ export type SessionOrganizationDomain = {
     setSessionAttentionStandingOptimistic: (serverId: string, sessionId: string, standing: SessionAttentionStanding | null) => string;
     setSessionAppearanceOptimistic: (serverId: string, sessionId: string, appearance: SessionOrganizationSessionAppearance | null) => string;
     confirmSessionAppearanceOptimistic: (recordId: string, sessionId: string, appearance: SessionOrganizationSessionAppearance | null) => void;
+    applySessionAppearancePresentation: (serverId: string, sessionId: string, presentation: SessionOrganizationSessionAppearancePresentation | null) => void;
     setSessionOrganizationFolderAssignmentOptimistic: (serverId: string, sessionId: string, folderId: string | null) => string;
     setSessionTagAssignmentsOptimistic: (serverId: string, sessionId: string, tagIds: readonly string[]) => string;
     upsertSessionOrganizationFolderOptimistic: (serverId: string, folder: SessionOrganizationFolder) => string;
@@ -548,7 +552,9 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
         sessionOrganizationPinsBySessionKey: {},
         sessionOrganizationAttentionStandingsBySessionKey: {},
         sessionOrganizationAppearancesBySessionKey: {},
+        sessionOrganizationAppearancePresentationsBySessionKey: {},
         sessionOrganizationSessionAppearancesSupportedByServerId: {},
+        sessionOrganizationAppearancePresentationsSupportedByServerId: {},
         sessionOrganizationFoldersByFolderKey: {},
         sessionOrganizationFolderAssignmentsBySessionKey: {},
         sessionOrganizationTagsByTagKey: {},
@@ -578,6 +584,20 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
                 const appearancesSupported = options?.includeSessionAppearances === true
                     ? setRecordValue(state.sessionOrganizationSessionAppearancesSupportedByServerId, serverId, snapshot.sessionAppearances !== undefined)
                     : state.sessionOrganizationSessionAppearancesSupportedByServerId;
+                const appearancePresentations = snapshot.sessionAppearancePresentations === undefined
+                    ? state.sessionOrganizationAppearancePresentationsBySessionKey
+                    : replaceServerRecord(
+                        state.sessionOrganizationAppearancePresentationsBySessionKey,
+                        serverId,
+                        snapshot.sessionAppearancePresentations.map((entry) => [entry.sessionId, entry] as const),
+                    );
+                const appearancePresentationsSupported = options?.includeSessionAppearances === true
+                    ? setRecordValue(
+                        state.sessionOrganizationAppearancePresentationsSupportedByServerId,
+                        serverId,
+                        snapshot.sessionAppearancePresentations !== undefined,
+                    )
+                    : state.sessionOrganizationAppearancePresentationsSupportedByServerId;
                 // Standings only ride along when the request asked for them, so an absent
                 // array means "not fetched" and must not clear what the store already knows.
                 const attentionStandings = snapshot.attentionStandings === undefined
@@ -639,7 +659,9 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
                     sessionOrganizationPinsBySessionKey: pins,
                     sessionOrganizationAttentionStandingsBySessionKey: attentionStandings,
                     sessionOrganizationAppearancesBySessionKey: appearances,
+                    sessionOrganizationAppearancePresentationsBySessionKey: appearancePresentations,
                     sessionOrganizationSessionAppearancesSupportedByServerId: appearancesSupported,
+                    sessionOrganizationAppearancePresentationsSupportedByServerId: appearancePresentationsSupported,
                     sessionOrganizationFoldersByFolderKey: folders,
                     sessionOrganizationFolderAssignmentsBySessionKey: folderAssignments,
                     sessionFolderAssignmentsBySessionKey: folderAssignments,
@@ -1014,6 +1036,16 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
                 } as Partial<S>;
             });
         },
+        applySessionAppearancePresentation: (serverId, sessionId, presentation) => {
+            const key = buildSessionOrganizationServerKey(serverId, sessionId);
+            set((state) => ({
+                sessionOrganizationAppearancePresentationsBySessionKey: setRecordValue(
+                    state.sessionOrganizationAppearancePresentationsBySessionKey,
+                    key,
+                    presentation ?? undefined,
+                ),
+            }) as Partial<S>);
+        },
         clearSessionOrganizationForServer: (serverId) => {
             set((state) => {
                 const folderAssignments = removeServerRecordEntries(state.sessionOrganizationFolderAssignmentsBySessionKey, serverId);
@@ -1024,7 +1056,9 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
                     sessionOrganizationPinsBySessionKey: removeServerRecordEntries(state.sessionOrganizationPinsBySessionKey, serverId),
                     sessionOrganizationAttentionStandingsBySessionKey: removeServerRecordEntries(state.sessionOrganizationAttentionStandingsBySessionKey, serverId),
                     sessionOrganizationAppearancesBySessionKey: removeServerRecordEntries(state.sessionOrganizationAppearancesBySessionKey, serverId),
+                    sessionOrganizationAppearancePresentationsBySessionKey: removeServerRecordEntries(state.sessionOrganizationAppearancePresentationsBySessionKey, serverId),
                     sessionOrganizationSessionAppearancesSupportedByServerId: setRecordValue(state.sessionOrganizationSessionAppearancesSupportedByServerId, serverId, undefined),
+                    sessionOrganizationAppearancePresentationsSupportedByServerId: setRecordValue(state.sessionOrganizationAppearancePresentationsSupportedByServerId, serverId, undefined),
                     sessionOrganizationFoldersByFolderKey: removeServerRecordEntries(state.sessionOrganizationFoldersByFolderKey, serverId),
                     sessionOrganizationFolderAssignmentsBySessionKey: folderAssignments,
                     sessionFolderAssignmentsBySessionKey: folderAssignments,

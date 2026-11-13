@@ -4,6 +4,17 @@ import { resolveSpawnChildEnvironment } from './resolveSpawnChildEnvironment';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 
 describe('resolveSpawnChildEnvironment (mcp selection)', () => {
+  it('exports an explicit session role for the spawned runner metadata seed, and nothing without one', async () => {
+    const resolve = (options: SpawnSessionOptions) => resolveSpawnChildEnvironment({
+      options, profileEnvironmentVariables: {}, daemonSpawnHooks: null, processEnv: {},
+      logDebug: () => {}, logInfo: () => {}, logWarn: () => {}, connectedServiceAuth: null,
+    });
+    const withRole = await resolve({ directory: '.', sessionRoleV1: { v: 1, role: 'reviewer' } } as SpawnSessionOptions);
+    const withoutRole = await resolve({ directory: '.' } as SpawnSessionOptions);
+    expect(withRole.ok && withRole.extraEnvForChild.HAPPIER_SESSION_ROLE_V1_JSON).toBe(JSON.stringify({ v: 1, role: 'reviewer' }));
+    expect(withoutRole.ok && withoutRole.extraEnvForChild.HAPPIER_SESSION_ROLE_V1_JSON).toBeUndefined();
+  });
+
   it('exports session-scoped MCP selection JSON for the spawned runner', async () => {
     const options: SpawnSessionOptions = {
       directory: '.',

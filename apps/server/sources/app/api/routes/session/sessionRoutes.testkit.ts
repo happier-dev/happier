@@ -198,7 +198,8 @@ vi.mock("@/app/session/sessionDelete", () => ({ sessionDelete: vi.fn(async () =>
 export const markAccountChanged = vi.fn(async () => 1);
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 vi.mock("@/app/share/types", () => ({ PROFILE_SELECT: {}, toShareUserProfile: vi.fn() }));
-vi.mock("@/storage/inTx", () => ({
+vi.mock("@/storage/inTx", async (importOriginal) => ({
+    ...await importOriginal<typeof import("@/storage/inTx")>(),
     inTx: vi.fn(async (fn: any) => await fn(txDbMocks.db)),
     afterTx: vi.fn(),
 }));

@@ -6,12 +6,13 @@ import { worktreeSpecFromDir } from '../utils/git/worktrees.mjs';
 import {
   getStackRuntimeStatePath,
   isPidAlive,
+  isUnverifiedProcessInstance,
   readStackRuntimeStateFile,
   readStackServerLifecycle,
 } from '../utils/stack/runtime_state.mjs';
 import { isTcpPortListening, listListenPidsWithStatus } from '../utils/net/ports.mjs';
-import { createListenerOwnershipObservationScope } from '../utils/server/listener_ownership.mjs';
-import { getProcessGroupId, isPidOwnedByStack, resolvePidStackOwnership } from '../utils/proc/ownership.mjs';
+import { createListenerOwnershipCommandScope, proveRecordedServerListener } from '../utils/server/listener_ownership.mjs';
+import { getProcessGroupId, resolvePidStackOwnership } from '../utils/proc/ownership.mjs';
 import { readTextOrEmpty } from '../utils/fs/ops.mjs';
 import { resolveDefaultRepoEnv } from './stack_environment.mjs';
 import { resolveStackRuntimeMode } from '../runtime/shared/runtime_mode.mjs';
@@ -41,9 +42,11 @@ async function resolveStackComponentRuntime({
   cliHomeDir,
   listListenPidsWithStatusImpl = listListenPidsWithStatus,
   isTcpPortListeningImpl = isTcpPortListening,
-  isPidOwnedByStackImpl = isPidOwnedByStack,
   getProcessGroupIdImpl = getProcessGroupId,
   listenerObservationScope,
+  recordedIdentity = null,
+  resolvePidStackOwnershipImpl = resolvePidStackOwnership,
+  fetchReadyIdentityImpl,
 }) {
   const expectedPort = normalizePort(port);
   const runtimePid = normalizePid(recordedPid);
@@ -87,38 +90,84 @@ async function resolveStackComponentRuntime({
     listenerPids.length > 0 ||
     (await isTcpPortListeningImpl(expectedPort, { host: '127.0.0.1' }).catch(() => false));
 
-  const ownedListenerPids = [];
-  for (const pid of listenerPids) {
-    if (runtimePidAlive && pid === runtimePid) {
-      ownedListenerPids.push(pid);
-      continue;
-    }
-    // eslint-disable-next-line no-await-in-loop
-    if (await isPidOwnedByStackImpl(pid, { stackName, envPath, cliHomeDir })) {
-      ownedListenerPids.push(pid);
-      continue;
-    }
-    if (runtimePidAlive && runtimePid) {
-      // eslint-disable-next-line no-await-in-loop
-      const [runtimePgid, listenerPgid] = await Promise.all([
-        getProcessGroupIdImpl(runtimePid),
-        getProcessGroupIdImpl(pid),
-      ]);
-      if (runtimePgid && runtimePgid === runtimePid && listenerPgid === runtimePgid) {
-        ownedListenerPids.push(pid);
-      }
-    }
-  }
+  // Every process on this port is judged here, inside the one command budget.
+  const judgeProcess = async (pid, context = {}) => {
+    const ownership = await listenerObservationScope.withProcessProbeBudget((budget) => resolvePidStackOwnershipImpl(
+      pid,
+      { stackName, envPath, cliHomeDir, ...context },
+      budget,
+    )).catch(() => null);
+    if (!ownership || ownership.status === 'inconclusive') return 'unresolved';
+    return ownership.owned === true ? 'owned' : 'foreign';
+  };
+  // A matching number proves nothing: the recorded process is judged by its identity, once.
+  let recordedProcessVerdict = null;
+  const judgeRecordedProcess = () => {
+    if (isUnverifiedProcessInstance(recordedIdentity, runtimePid)) return 'unresolved';
+    const fingerprint = Number(recordedIdentity?.pid) === runtimePid ? recordedIdentity?.fingerprint : null;
+    recordedProcessVerdict ??= judgeProcess(runtimePid, fingerprint ? { processInstanceFingerprint: fingerprint } : {});
+    return recordedProcessVerdict;
+  };
+  const judgeListener = async (pid) => {
+    if (runtimePidAlive && pid === runtimePid) return await judgeRecordedProcess();
+    const rowVerdict = await judgeProcess(pid);
+    if (rowVerdict !== 'foreign' || !runtimePidAlive) return rowVerdict;
+    // A shared process group only counts if its leader is still the recorded process.
+    const leaderVerdict = await judgeRecordedProcess();
+    if (leaderVerdict !== 'owned') return leaderVerdict;
+    const groups = await listenerObservationScope.withProcessProbeBudget((budget) => Promise.all([
+      getProcessGroupIdImpl(runtimePid, budget),
+      getProcessGroupIdImpl(pid, budget),
+    ])).catch(() => null);
+    if (!Array.isArray(groups)) return 'unresolved';
+    return groups[0] && groups[0] === runtimePid && groups[1] === groups[0] ? 'owned' : 'foreign';
+  };
+
+  // Ownership is a claim about everything on this port, so every row has to agree. Rows are judged
+  // together: one after another, a stalled row would use up the budget and hide a foreign row.
+  const listenerVerdicts = await Promise.all(listenerPids.map(async (pid) => ({
+    pid,
+    verdict: await judgeListener(pid),
+  })));
+  const hasForeignListener = listenerVerdicts.some(({ verdict }) => verdict === 'foreign');
+  const hasUnresolvedListener = listenerVerdicts.some(({ verdict }) => verdict === 'unresolved');
+  const ownedListenerPids = hasForeignListener || hasUnresolvedListener
+    ? []
+    : listenerVerdicts.map(({ pid }) => pid);
+
+  // OS discovery concluded but listed nothing, yet something answers on this port. Only the
+  // evidence that proved this server at startup, read again now, can say it is still that server.
+  const recordedProof = listenerDiscoveryStatus === 'ok'
+    && listenerPids.length === 0
+    && portListening
+    && runtimePidAlive
+    && Number(recordedIdentity?.pid) === runtimePid
+    && recordedIdentity?.fingerprint
+    && recordedIdentity?.apiInstanceId
+    ? await proveRecordedServerListener(
+        { port: expectedPort, pid: runtimePid, identity: recordedIdentity, stackName, envPath, cliHomeDir },
+        {
+          observationScope: listenerObservationScope,
+          resolvePidStackOwnershipImpl,
+          ...(fetchReadyIdentityImpl ? { fetchReadyIdentityImpl } : {}),
+        },
+      )
+    : null;
+  if (recordedProof === 'proven') ownedListenerPids.push(runtimePid);
 
   const effectivePid = ownedListenerPids[0] ?? runtimePid;
   const effectivePidAlive = effectivePid ? isPidAlive(effectivePid) : false;
   const ownershipStatus = ownedListenerPids.length > 0
     ? 'owned'
-    : listenerDiscoveryStatus === 'ok'
+    : hasForeignListener
       ? 'not_owned'
-      : runtimePidAlive && portListening
+      : hasUnresolvedListener
         ? 'unknown'
-        : 'unverified';
+        : listenerDiscoveryStatus === 'ok' && recordedProof !== 'inconclusive'
+          ? 'not_owned'
+          : runtimePidAlive && portListening
+            ? 'unknown'
+            : 'unverified';
   const running = ownedListenerPids.length > 0 || (ownershipStatus === 'unknown' && runtimePidAlive && portListening);
 
   return {
@@ -139,22 +188,17 @@ export async function readStackInfoSnapshot({
   stackName,
   listListenPidsWithStatusImpl = listListenPidsWithStatus,
   isTcpPortListeningImpl = isTcpPortListening,
-  isPidOwnedByStackImpl = isPidOwnedByStack,
   getProcessGroupIdImpl = getProcessGroupId,
   resolvePidStackOwnershipImpl = resolvePidStackOwnership,
-  listenerObservationTimeoutMs = 1_000,
+  listenerObservationTimeoutMs,
+  getObservedStackDaemonImpl = getObservedStackDaemonAsync,
+  fetchReadyIdentityImpl,
 }) {
   const baseDir = resolveStackEnvPath(stackName).baseDir;
   const envPath = resolveStackEnvPath(stackName).envPath;
   const envRaw = await readExistingEnv(envPath);
   const stackEnv = envRaw ? parseEnvToObject(envRaw) : {};
   const daemonExpected = String(getEnvValueAny(stackEnv, ['HAPPIER_STACK_DAEMON']) ?? '1').trim() !== '0';
-  const listenerObservationScope = createListenerOwnershipObservationScope({
-    totalTimeoutMs: listenerObservationTimeoutMs,
-    attemptTimeoutMs: listenerObservationTimeoutMs,
-    retryInconclusive: false,
-    listListenPidsWithStatusImpl,
-  });
   const runtimeStatePath = getStackRuntimeStatePath(stackName);
 
   const serverComponent = getEnvValueAny(stackEnv, ['HAPPIER_STACK_SERVER_COMPONENT']) || 'happier-server-light';
@@ -230,7 +274,7 @@ export async function readStackInfoSnapshot({
   const expoTailscaleForwarderPid = normalizePid(runtimeState?.processes?.expoTailscaleForwarderPid);
   const cliHomeDir = join(baseDir, 'cli');
   const observedDaemon = daemonExpected
-    ? await getObservedStackDaemonAsync({
+    ? await getObservedStackDaemonImpl({
         cliHomeDir,
         internalServerUrl: Number.isFinite(serverPort) && serverPort > 0 ? `http://127.0.0.1:${serverPort}` : '',
         runtimeDaemonPid: runtimeState?.processes?.daemonPid ?? null,
@@ -246,27 +290,39 @@ export async function readStackInfoSnapshot({
 
   const ownerAlive = ownerPid ? isPidAlive(ownerPid) : false;
   const serverRuntimePid = proxyMode === 'proxy' ? proxyPid : serverPid;
+  // Created here so the budget covers listener evidence only: its deadline starts at creation, and
+  // the daemon work above can take longer than the whole budget.
+  const listenerObservationScope = createListenerOwnershipCommandScope({
+    listListenPidsWithStatusImpl,
+    ...(listenerObservationTimeoutMs
+      ? { totalTimeoutMs: listenerObservationTimeoutMs, attemptTimeoutMs: listenerObservationTimeoutMs }
+      : {}),
+  });
+  const recordedIdentities = runtimeState?.processInstances?.processes ?? {};
+  const recordedProofDependencies = { resolvePidStackOwnershipImpl, fetchReadyIdentityImpl };
   const serverComponentRuntime = await resolveStackComponentRuntime({
     port: serverPort,
     recordedPid: serverRuntimePid,
+    recordedIdentity: recordedIdentities[proxyMode === 'proxy' ? 'proxyPid' : 'serverPid'],
+    ...recordedProofDependencies,
     stackName,
     envPath,
     cliHomeDir,
     listListenPidsWithStatusImpl,
     isTcpPortListeningImpl,
-    isPidOwnedByStackImpl,
     getProcessGroupIdImpl,
     listenerObservationScope,
   });
   const serverBackendComponentRuntime = await resolveStackComponentRuntime({
     port: serverBackendPort,
     recordedPid: serverBackendPid,
+    recordedIdentity: recordedIdentities.serverBackendPid,
+    ...recordedProofDependencies,
     stackName,
     envPath,
     cliHomeDir,
     listListenPidsWithStatusImpl,
     isTcpPortListeningImpl,
-    isPidOwnedByStackImpl,
     getProcessGroupIdImpl,
     listenerObservationScope,
   });
@@ -281,19 +337,19 @@ export async function readStackInfoSnapshot({
           cliHomeDir,
           listListenPidsWithStatusImpl,
           isTcpPortListeningImpl,
-          isPidOwnedByStackImpl,
           getProcessGroupIdImpl,
           listenerObservationScope,
         })
     : await resolveStackComponentRuntime({
         port: expoUiPort,
         recordedPid: expoPid,
+        recordedIdentity: recordedIdentities.expoPid,
+        ...recordedProofDependencies,
         stackName,
         envPath,
         cliHomeDir,
         listListenPidsWithStatusImpl,
         isTcpPortListeningImpl,
-        isPidOwnedByStackImpl,
         getProcessGroupIdImpl,
         listenerObservationScope,
       });

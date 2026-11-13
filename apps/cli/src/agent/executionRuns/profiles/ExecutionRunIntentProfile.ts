@@ -4,6 +4,7 @@ import type {
   ExecutionRunIntent,
   ExecutionRunIoMode,
   ExecutionRunRetentionPolicy,
+  ExecutionRunRole,
 } from '@happier-dev/protocol';
 
 export type ExecutionRunProfileStartParams = Readonly<{
@@ -21,6 +22,8 @@ export type ExecutionRunProfileStartParams = Readonly<{
   runClass: ExecutionRunClass;
   ioMode: ExecutionRunIoMode;
   startedAtMs: number;
+  /** Run-scoped role snapshot from the run's launch record; composed by `buildExecutionRunPrompt`. */
+  role?: Readonly<{ id: ExecutionRunRole; name: string; instructions: string }>;
 }>;
 
 export type ExecutionRunStructuredMeta = Readonly<{ kind: string; payload: unknown }>;

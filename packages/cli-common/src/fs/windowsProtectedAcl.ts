@@ -83,7 +83,16 @@ const WINDOWS_ACL_APPLY_SCRIPT = [
   '$inheritance = if ($Kind -eq "directory") { "OICI" } else { "" }',
   '$sddl = "D:P(A;$inheritance;FA;;;$Sid)(A;$inheritance;FA;;;$SystemSid)"',
   '$acl.SetSecurityDescriptorSddlForm($sddl, [System.Security.AccessControl.AccessControlSections]::Access)',
-  'Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop',
+  '$item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop',
+  'if ($Kind -eq "directory") {',
+  '  if (-not $item.PSIsContainer) { throw "Windows protected ACL target is not a directory" }',
+  '  $item.SetAccessControl([System.Security.AccessControl.DirectorySecurity]$acl)',
+  '} elseif ($Kind -eq "file") {',
+  '  if ($item.PSIsContainer) { throw "Windows protected ACL target is not a file" }',
+  '  $item.SetAccessControl([System.Security.AccessControl.FileSecurity]$acl)',
+  '} else {',
+  '  throw "Unsupported Windows protected ACL path kind: $Kind"',
+  '}',
   '}',
 ].join('\n');
 

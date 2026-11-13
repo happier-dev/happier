@@ -1,3 +1,4 @@
+import { recordResolvedCodingPrompt } from './resolvedCodingPromptRecord';
 import {
   buildCodingSessionPromptPlanBaseV1,
   buildPromptPlanDiagnosticsV1,
@@ -26,6 +27,8 @@ type ResolveEffectiveCodingPromptArgs = Readonly<{
   profileId: string | null | undefined;
   sessionMetadata?: unknown;
   baseOverride?: string | null;
+  /** False only when an earlier prompt fragment of the same provider prompt already carries the role. */
+  includeSessionRole?: boolean;
   executionRunsFeatureEnabled?: boolean;
   memoryRecallGuidanceEnabled?: boolean;
   providerId?: string | null | undefined;
@@ -70,6 +73,7 @@ export async function resolveEffectiveCodingPromptPlan(
     settings: basePromptSettings,
     sessionMetadata: args.sessionMetadata,
     base: args.baseOverride === null ? '' : args.baseOverride,
+    ...(args.includeSessionRole === false ? { includeSessionRole: false } : {}),
     executionRunsFeatureEnabled: args.executionRunsFeatureEnabled === true,
     memoryRecallGuidanceEnabled,
   });
@@ -115,9 +119,12 @@ export async function resolveEffectiveCodingPromptPlan(
     blocks: [...basePlan.blocks, ...promptStackBlocks, ...providerBehaviorBlocks, ...toolDeliveryBlocks],
   });
 
+  const text = renderPromptPlanV1(plan);
+  // The runtime prompt preview (plan 2J) reports exactly this resolution.
+  recordResolvedCodingPrompt({ plan, text, launchForm: 'fresh', providerId: args.providerId ?? null });
   return {
     plan,
-    text: renderPromptPlanV1(plan),
+    text,
     diagnostics: buildPromptPlanDiagnosticsV1(plan),
   };
 }

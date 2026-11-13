@@ -1,3 +1,8 @@
+import { listExecutionRunMarkers } from '@/daemon/executionRunRegistry';
+import { buildSessionPromptPreviewV1 } from '@/agent/prompting/coding/resolvedCodingPromptRecord';
+import { createTeamAssemblyRuntime } from '@/session/teamAssembly/createTeamAssemblyRuntime';
+import { createExecutionRunChildReporter } from '@/api/session/executionRunChildReporter';
+import { createVisibleRunSessionPort, reportExecutionRunChildTurnToParent } from '@/session/services/visibleRunSessionPort';
 import { logger } from '@/ui/logger'
 import { buildSessionEventContent } from './sessionEventContent';
 import { EventEmitter } from 'node:events'
@@ -64,7 +69,7 @@ import type { PermissionRequestPushSender } from '@/agent/permissions/BasePermis
 import { getOrCreateSessionPermissionRpcRouter, type SessionPermissionRpcRouter } from '@/agent/permissions/sessionPermissionRpcRouter';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import { readCredentials, readAccountChangesCursor } from '@/persistence';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import {
     applyAccountSettingsV2Update,
@@ -153,8 +158,7 @@ function readExplicitUserRecoveryStatus(metadata: Metadata | null) {
 }
 
 function hasBlockingExplicitUserRecoveryEvidence(metadata: Metadata | null): boolean {
-    const status = readExplicitUserRecoveryStatus(metadata);
-    return status === 'waiting' || status === 'armed' || status === 'checking';
+    return isSessionUsageLimitRecoveryInProgressV1(metadata);
 }
 
 function hasClearedConnectedServiceTransitionConstraint(metadata: Metadata | null): boolean {
@@ -169,6 +173,7 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import {
     SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
     SessionUsageLimitRecoveryV1Schema,
+    isSessionUsageLimitRecoveryInProgressV1,
     SESSION_RUNTIME_ACTIVITY_CLOSE_EVENT,
     SessionRuntimeActivityCloseAckSchema,
     SessionRuntimeActivityCloseRequestSchema,
@@ -612,6 +617,12 @@ export class ApiSessionClient extends EventEmitter {
     private executionRunPermissionHandler: CodexLikePermissionHandler | null = null;
     private readonly rpcLifecycleRegistrations: RpcLifecycleRegistration[] = [];
     private executionRunLifecycleRegistration: RpcLifecycleRegistration | null = null;
+    /** Visible runs (R21): this runner bound its own pending inputs to a turn. */
+    private notifyExecutionRunParentInputBound: ((localIds: readonly string[]) => void) | null = null;
+    /** Visible runs: wakes the parent runner after each completed turn while this session is linked. */
+    private executionRunChildReporter: ReturnType<typeof createExecutionRunChildReporter> | null = null;
+    /** Team assembly (plan 2E): only this Lead's runner creates its placeholders. */
+    private teamAssemblyRuntime: ReturnType<typeof createTeamAssemblyRuntime> | null = null;
     private agentStateLock = new AsyncLock();
     private requestSettlementAdmissionLock = new AsyncLock();
     private metadataLock = new AsyncLock();
@@ -1183,8 +1194,16 @@ export class ApiSessionClient extends EventEmitter {
             getEphemeralStreamConnectionEpoch: () => this.getEphemeralStreamConnectionEpoch(),
         };
 
-        this.executionRunLifecycleRegistration = registerExecutionRunHandlers(this.rpcHandlerManager, {
+        const executionRunHandlers = registerExecutionRunHandlers(this.rpcHandlerManager, {
             sessionId: this.sessionId,
+            visibleRunSessionPort: createVisibleRunSessionPort({
+                readCredentials: async () => await readCredentials(),
+                resolveHostDirectory: () => this.resolveWorkingDirectory(),
+                resolveHostMachineId: () => {
+                    const machineId = (this.metadata as { machineId?: unknown } | null)?.machineId;
+                    return typeof machineId === 'string' && machineId.trim() ? machineId.trim() : null;
+                },
+            }),
             cwd: this.resolveWorkingDirectory(),
             resolveCwd: () => this.resolveWorkingDirectory(),
             serverUrl: configuration.serverUrl,
@@ -1243,7 +1262,47 @@ export class ApiSessionClient extends EventEmitter {
             },
         });
 
+        this.executionRunLifecycleRegistration = executionRunHandlers;
+        this.notifyExecutionRunParentInputBound = executionRunHandlers.notifyParentInputBound;
+        // A restarted runner reinstalls its running visible runs from their daemon markers (plan 2B).
+        void listExecutionRunMarkers()
+            .then((markers) => executionRunHandlers.rehydrateVisibleRuns(markers.filter((marker) => marker.happySessionId === this.sessionId)))
+            .catch((error) => logger.warn('[EXECUTION RUN] Visible run rehydration skipped', { error: error instanceof Error ? error.message : String(error) }));
         this.rpcLifecycleRegistrations.push(this.executionRunLifecycleRegistration);
+        this.executionRunChildReporter = createExecutionRunChildReporter({
+            sessionId: this.sessionId,
+            readMetadata: () => (this.metadata as Record<string, unknown> | null) ?? null,
+            updateMetadata: async (updater) => {
+                await this.updateMetadata((metadata) => updater(metadata as Record<string, unknown>) as Metadata);
+            },
+            reportToParent: async (parentSessionId, request) => {
+                const credentials = await readCredentials();
+                if (!credentials) throw new Error('Visible run child reports require an authenticated runner');
+                return await reportExecutionRunChildTurnToParent({ credentials, parentSessionId, request });
+            },
+        });
+        this.teamAssemblyRuntime = createTeamAssemblyRuntime({
+            leadSessionId: this.sessionId,
+            readCredentials: async () => await readCredentials(),
+            readLeadMetadata: () => (this.metadata as Record<string, unknown> | null) ?? null,
+            readSettings: async () => getActiveAccountSettingsSnapshot()?.settings ?? null,
+            updateLeadMetadata: async (updater) => {
+                await this.updateMetadata((metadata) => updater(metadata as Record<string, unknown>) as Metadata);
+            },
+            postNotice: (text) => this.sendSessionEvent({ type: 'message', message: text }),
+            resolveLeadDirectory: () => this.resolveWorkingDirectory(),
+        });
+        this.on('metadata-updated', () => {
+            void this.executionRunChildReporter?.onMetadataObserved();
+            this.teamAssemblyRuntime?.observe();
+        });
+        void this.executionRunChildReporter.onMetadataObserved();
+        this.teamAssemblyRuntime.observe();
+
+        // The actual runtime prompt preview (plan 2J), answered from this runner's own resolution.
+        this.rpcHandlerManager.registerHandler(SESSION_RPC_METHODS.SESSION_PROMPT_PREVIEW_GET_V1, async () => (
+            buildSessionPromptPreviewV1(this.sessionId)
+        ));
 
         registerEphemeralTaskHandlers(this.rpcHandlerManager, {
           workingDirectory: this.resolveWorkingDirectory(),
@@ -1267,6 +1326,7 @@ export class ApiSessionClient extends EventEmitter {
             sessionId: this.sessionId,
             enqueueSessionTurn: createSessionTurnMutationWriter(this.sessionMutationOutbox).enqueueSessionTurn,
             onTurnInputBound: ({ turnId, localIds }) => {
+                this.notifyExecutionRunParentInputBound?.(localIds);
                 for (const localId of this.normalizeProviderAcceptedUserMessageLocalIds(localIds)) {
                     const publication = this.ensureCanonicalPendingTurnPublication(localId);
                     if (!publication) continue;
@@ -1291,6 +1351,10 @@ export class ApiSessionClient extends EventEmitter {
                 }
                 this.observeTurnLifecycleForPendingDrain(event, terminalStatus);
                 void this.notifyDaemonConnectedServiceTurnLifecycle(event, terminalStatus, turnId);
+                if (event === 'assistant_message_end') {
+                    // A failed turn is reported too, so a visible run's parent can evaluate or fail it.
+                    void this.executionRunChildReporter?.onTurnCompleted(terminalStatus === 'failed' ? { turnStatus: 'failed' } : undefined);
+                }
             },
         });
         void this.usageLimitRecoveryRuntime.restore().catch(this.usageLimitRecoveryRuntime.reportError);
@@ -3016,6 +3080,9 @@ export class ApiSessionClient extends EventEmitter {
         }
         const localId = readPendingLocalId(message.localId);
         const committedSeq = this.recordCommittedUserMessageSeq(localId, message.seq);
+        // R21: a committed user row is the receipt point for a visible run's relayed completion on
+        // delivery paths that emit no turn-input binding (for example Claude remote).
+        if (localId !== null && committedSeq !== null) this.notifyExecutionRunParentInputBound?.([localId]);
         if (
             localId === null
             || committedSeq === null

@@ -27,11 +27,12 @@ import {
     sendExecutionRunMessage,
     startExecutionRun,
     startExecutionRunStream,
+    startExecutionRunV2,
     stopExecutionRun,
     waitForExecutionRun,
 } from './executionRuns';
 import { fingerprintExecutionRunStartRequest } from '@/agent/executionRuns/executionRunStartFingerprint';
-import { markRpcRequestDisposition } from '@/session/transport/rpc/rpcRequestDisposition';
+import { createRpcAcknowledgementError, markRpcRequestDisposition } from '@/session/transport/rpc/rpcRequestDisposition';
 import { SocketRpcDisconnectBeforeAcknowledgementError } from '@/session/transport/rpc/socketRpcDisconnectGuard';
 
 function createRun(params: Readonly<{
@@ -1152,5 +1153,63 @@ describe('waitForExecutionRun', () => {
             'sess-1:execution.run.wait',
             'sess-1:execution.run.get',
         ]);
+    });
+});
+
+describe('startExecutionRunV2', () => {
+    beforeEach(() => {
+        callSessionRpc.mockReset();
+        listExecutionRunMarkers.mockReset();
+    });
+
+    const ctx = { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' } as const;
+
+    it('calls only the exact execution.run.start.v2 method under caller lifecycle ownership', async () => {
+        callSessionRpc.mockResolvedValueOnce({ ok: true, data: { runId: 'run-1' } });
+        await startExecutionRunV2({ token: 'token', sessionId: 'sess-1', ctx, request: { intent: 'review', visibility: 'session' } });
+        expect(callSessionRpc).toHaveBeenCalledTimes(1);
+        expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({ method: 'sess-1:execution.run.start.v2', timeoutMs: null }));
+    });
+
+    it('reports a server forward timeout after the request was sent as ambiguous, with its start request id for the resume', async () => {
+        // A server that cuts the forward acknowledges { ok: false, error: 'operation has timed out' } (socket.io ack timeout).
+        callSessionRpc.mockRejectedValueOnce(markRpcRequestDisposition(createRpcAcknowledgementError({ error: 'operation has timed out' }), 'outcomeUnknown'));
+        await expect(startExecutionRunV2({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx,
+            request: { intent: 'review', visibility: 'session', startRequestId: 'action-request-9' },
+        })).resolves.toEqual({
+            ok: false,
+            code: 'execution_run_start_ambiguous',
+            message: 'operation has timed out',
+            details: { startRequestId: 'action-request-9', retrySafe: true, reconcileVia: 'retry_execution_run_start' },
+        });
+    });
+
+    it.each([
+        ['visible', { intent: 'review', visibility: 'session' }, 'execution_run_visibility_unsupported'],
+        ['role-bearing', { intent: 'review', visibility: 'hidden', role: 'reviewer', roleSource: 'explicit' }, 'execution_run_role_unsupported'],
+    ] as const)('fails closed with a typed error when the runner lacks the method (%s), never falling back', async (_case, request, code) => {
+        callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
+        await expect(startExecutionRunV2({ token: 'token', sessionId: 'sess-1', ctx, request })).resolves.toEqual(expect.objectContaining({ ok: false, code }));
+        callSessionRpc.mockResolvedValueOnce({ ok: false, error: 'Method not found', errorCode: 'RPC_METHOD_NOT_FOUND' });
+        await expect(startExecutionRunV2({ token: 'token', sessionId: 'sess-1', ctx, request })).resolves.toEqual(expect.objectContaining({ ok: false, code }));
+        expect(callSessionRpc).toHaveBeenCalledTimes(2);
+        for (const call of callSessionRpc.mock.calls) expect(call[0].method).toBe('sess-1:execution.run.start.v2');
+    });
+});
+
+describe('startExecutionRun rejects v2-only fields', () => {
+    beforeEach(() => callSessionRpc.mockReset());
+
+    it.each(['visibility', 'role', 'roleSource', 'targetSessionId'] as const)('never sends %s through execution.run.start', async (field) => {
+        await expect(startExecutionRun({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            request: { intent: 'review', [field]: field === 'visibility' ? 'session' : 'x' },
+        })).resolves.toEqual(expect.objectContaining({ ok: false }));
+        expect(callSessionRpc).not.toHaveBeenCalled();
     });
 });

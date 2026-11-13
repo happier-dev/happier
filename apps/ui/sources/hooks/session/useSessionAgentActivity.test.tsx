@@ -8,6 +8,7 @@ import {
 } from '@happier-dev/protocol';
 
 import * as testkit from '@/dev/testkit';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { storage } from '@/sync/domains/state/storageStore';
 import { useSessionAgentActivity } from './useSessionAgentActivity';
 
@@ -206,6 +207,44 @@ describe('useSessionAgentActivity', () => {
         // "Agent activity" is not a row and is not a fourth agent.
         expect(activity.entries).toHaveLength(4);
         expect(activity.counts).toMatchObject({ total: 3, live: 2 });
+    }, 120_000);
+
+    it('uses the display alias for a built-in child-session role in the activity list', async () => {
+        const fixture = seed({ subagents: [] });
+        const parent = buildSessionListRenderableFromSession(fixture.session);
+        const childBase = buildSessionListRenderableFromSession(testkit.createSessionFixture({ id: 'child-session' }));
+        const child = {
+            ...childBase,
+            metadata: {
+                ...childBase.metadata!,
+                name: 'Child session',
+                sessionOriginV1: { v: 1 as const, kind: 'agent' as const, creatorSessionId: SESSION_ID },
+                sessionRole: 'worker' as const,
+                sessionRoleName: 'Worker',
+            },
+        };
+        storage.setState((state) => ({
+            ...state,
+            settings: {
+                ...state.settings,
+                sessionRoleProfilesV1: {
+                    v: 1,
+                    instructionsByRole: {},
+                    displayNamesByRole: { worker: 'Builder' },
+                },
+            },
+            sessionListViewDataByServerId: {
+                ...state.sessionListViewDataByServerId,
+                'server-a': [
+                    { type: 'session', session: parent },
+                    { type: 'session', session: child },
+                ],
+            },
+        }));
+
+        const { getCurrent } = await renderActivity();
+
+        expect(getCurrent().entries.find((entry) => entry.sessionId === child.id)?.metaDetail).toBe('Builder');
     }, 120_000);
 
     // THE quiet failure this phase exists to prevent.

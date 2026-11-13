@@ -1,4 +1,4 @@
-import { AcpCatalogSettingsV1Schema, BackendTargetRefSchema, LlmTaskRunnerConfigV1Schema, buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
+import { AcpCatalogSettingsV1Schema, BackendTargetRefSchema, DEFAULT_SESSION_ROLE_PROFILES_V1, LlmTaskRunnerConfigV1Schema, SessionRoleProfilesV1Schema, buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
 import { z } from 'zod';
 import { isAgentId } from '@/agents/registry/registryCore';
 
@@ -185,6 +185,23 @@ export const ACCOUNT_RUNTIME_SETTING_DEFINITIONS = defineSettingDefinitions({
             privacy: 'count_only',
             identityScope: 'person',
             serializeCurrentProperties: buildExecutionRunsGuidanceSummaryProperties,
+        },
+    },
+    sessionRoleProfilesV1: {
+        schema: SessionRoleProfilesV1Schema,
+        default: DEFAULT_SESSION_ROLE_PROFILES_V1,
+        description: 'Account-wide instruction overrides for Planner, Project Manager, Worker, and Reviewer session roles',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'count',
+            privacy: 'count_only',
+            identityScope: 'person',
+            // Instruction text is private; only how many roles are customized is tracked.
+            serializeCurrentProperties: (value: unknown) => ({
+                customizedRoleCount: Object.keys(SessionRoleProfilesV1Schema.safeParse(value).data?.instructionsByRole ?? {}).length,
+            }),
         },
     },
     sessionTmuxByMachineId: {

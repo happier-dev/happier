@@ -100,26 +100,35 @@ export async function waitForBackgroundStackReadiness({
     const daemonPid = Number(daemonState?.pid);
     const runtimeDaemonPid = Number(runtimeState?.processes?.daemonPid);
     const observedFingerprint = String(daemonState?.distClosureFingerprint ?? '').trim().toLowerCase();
+    const serverConnected = typeof daemonState?.serverConnected === 'boolean' ? daemonState.serverConnected : null;
     lastObservation = {
       status: daemonState?.status ?? null,
       daemonPid: Number.isFinite(daemonPid) ? daemonPid : null,
       runtimeDaemonPid: Number.isFinite(runtimeDaemonPid) ? runtimeDaemonPid : null,
       distClosureFingerprint: observedFingerprint || null,
+      serverConnected,
     };
     if (
       daemonState?.status === 'running'
       && daemonPid > 1
       && runtimeDaemonPid === daemonPid
       && (!expectedFingerprint || observedFingerprint === expectedFingerprint)
+      && serverConnected !== false
     ) {
+      if (serverConnected === null) {
+        console.warn(
+          `[stack] ${stackName}: daemon pid=${daemonPid} does not report its server connection; ` +
+            'readiness proves its control port only.',
+        );
+      }
       return;
     }
     await new Promise((resolvePromise) => setTimeout(resolvePromise, Math.min(250, remainingMs)));
   }
 
   throw new Error(
-    `[stack] ${stackName}: server became healthy but requested daemon readiness was not authenticated ` +
-      `and published before timeout (${JSON.stringify(lastObservation)}).`,
+    `[stack] ${stackName}: server became healthy but requested daemon readiness was not authenticated, ` +
+      `connected and published before timeout (${JSON.stringify(lastObservation)}).`,
   );
 }
 

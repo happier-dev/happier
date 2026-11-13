@@ -50,7 +50,7 @@ import {
 } from '@/sync/domains/sessionHandoff/resolveSessionHandoffUiAvailability';
 import { readDisplayMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
-import { getActionSpec } from '@happier-dev/protocol';
+import { getActionSpec, readTeamAssemblyV1 } from '@happier-dev/protocol';
 import { SessionRetentionNotice } from '@/components/sessions/info/SessionRetentionNotice';
 import { useSessionRouteServerScope, type SessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
@@ -487,6 +487,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const localDevModeEnabled = useLocalSetting('devModeEnabled');
     const devModeEnabled = isSessionDebugInformationEnabled(localDevModeEnabled);
     const sessionName = getSessionName(session);
+    const teamAssembly = readTeamAssemblyV1(session.metadata);
     const sessionStatus = useSessionStatus(session, {
         subscribeToSession: false,
         subscribeToTranscript: false,
@@ -1149,6 +1150,18 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                             router={router}
                         />
                     ) : null}
+                    <Item
+                        testID="session-info-runtime-prompt-preview"
+                        title={t('promptLibrary.runtimePreview')}
+                        subtitle={t('promptLibrary.runtimePreviewSubtitle')}
+                        icon={<Icon name="eye" size={29} color={theme.colors.accent.indigo} />}
+                        onPress={() => router.push(session.active && session.presence === 'online' && sessionServerId
+                            ? {
+                                pathname: '/settings/prompts/preview',
+                                params: { sessionId: session.id, serverId: sessionServerId },
+                            }
+                            : '/settings/prompts/preview')}
+                    />
                     {showAutomations ? (
                         <Item
                             title={t('sessionInfo.automationsTitle')}
@@ -1222,6 +1235,20 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                 {/* Metadata */}
                 {session.metadata && (
                     <ItemGroup title={t('sessionInfo.metadata')}>
+                        {teamAssembly ? (
+                            <Item
+                                testID="session-info-team-assembly"
+                                title={t('visibleAgents.teamGroupTitle')}
+                                subtitle={t('visibleAgents.teamReadback', {
+                                    created: teamAssembly.created.length,
+                                    skipped: teamAssembly.skipped.length,
+                                    failed: teamAssembly.failed.length,
+                                })}
+                                detail={new Date(teamAssembly.completedAt).toLocaleString()}
+                                icon={<Icon name="users" size={29} color={theme.colors.accent.indigo} />}
+                                showChevron={false}
+                            />
+                        ) : null}
                         <Item
                             title={t('sessionInfo.host')}
                             subtitle={session.metadata.host}

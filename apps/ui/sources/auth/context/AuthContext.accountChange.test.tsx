@@ -89,7 +89,19 @@ function installServer(
         if (pathname === '/v2/sessions/active') return Response.json({ sessions: [], nextCursor: null, hasNext: false });
         if (pathname === '/v1/machines') return Response.json([]);
         if (pathname === ENCRYPTION_MODE_PATH) return Response.json({ mode: 'plain', updatedAt: 0 });
+        if (pathname === '/v2/account/settings') {
+            return Response.json({
+                content: {
+                    t: 'plain',
+                    v: { sessionRoleProfilesV1: { v: 1, instructionsByRole: {}, customRoles: [] } },
+                },
+                version: 1,
+            });
+        }
         if (pathname === '/v2/session-organization') return Response.json({ snapshot: organizationBySub[sub] });
+        if (pathname === '/v2/session-organization/appearance-presentations') {
+            return Response.json({ error: 'Not found' }, { status: 404 });
+        }
         if (pathname === '/v2/session-organization/import') {
             return Response.json({ imported: { pins: 0, folders: 0, tags: 0, orderEntries: 0, labels: 0 } });
         }

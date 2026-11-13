@@ -176,13 +176,19 @@ describe('ChatHeaderView', () => {
         const screen = await renderScreen(
             <ChatHeaderView
                 title="Title"
-                badges={['Direct', 'Codex · happy-host']}
+                badges={[
+                    'Direct',
+                    { key: 'role', label: 'Quality Gate', color: '#abcdef' },
+                    'Codex · happy-host',
+                ]}
             />,
         );
 
         expect(() => screen.findByProps({ testID: 'session-header-badge:0' })).not.toThrow();
         expect(() => screen.findByProps({ testID: 'session-header-badge:1' })).not.toThrow();
+        expect(screen.findByProps({ testID: 'session-header-badge:1' }).props.dotColor).toBe('#abcdef');
         expect(screen.getTextContent()).toContain('Direct');
+        expect(screen.getTextContent()).toContain('Quality Gate');
         expect(screen.getTextContent()).toContain('Codex · happy-host');
     });
 

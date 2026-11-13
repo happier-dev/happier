@@ -283,25 +283,16 @@ describe('syncSettings local-only server-selection settings', () => {
             );
         (encryptionStub.decryptRaw as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
 
-        await syncSettings({
+        await expect(syncSettings({
             credentials,
             encryption: encryptionStub,
             pendingSettings: {},
             clearPendingSettings: () => {},
-        });
+        })).rejects.toThrow('Failed to open encrypted account settings');
 
         expect(mocks.serverFetch).toHaveBeenCalledTimes(2);
         expect(encryptionStub.encryptRaw).not.toHaveBeenCalled();
-        expect(mocks.storageState.applySettings).toHaveBeenCalledWith(
-            expect.objectContaining({
-                analyticsOptOut: false,
-                serverSelectionGroups: undefined,
-                serverSelectionActiveTargetKind: undefined,
-                serverSelectionActiveTargetId: undefined,
-                terminalConnectLegacySecretExportEnabled: false,
-            }),
-            12,
-        );
+        expect(mocks.storageState.applySettings).not.toHaveBeenCalled();
     });
 
     it('does not rewrite when GET ciphertext is decryptable', async () => {
@@ -440,6 +431,12 @@ describe('syncSettings local-only server-selection settings', () => {
 
     it('reloads pending settings for the captured scope before applying fetched settings', async () => {
         const settingsScope = { serverId: 'server-b', accountId: 'account-b' };
+        const existingAccountCiphertext = sealAccountScopedBlobCiphertext({
+            kind: 'account_settings',
+            material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
+            payload: { sessionRoleProfilesV1: { v: 1, instructionsByRole: {}, customRoles: [] } },
+            randomBytes: (length) => new Uint8Array(length).fill(7),
+        });
         mocks.storageState.settingsScope = settingsScope;
         mocks.loadPendingAccountSettings.mockReturnValueOnce({
             sessionReplayEnabled: true,
@@ -459,7 +456,7 @@ describe('syncSettings local-only server-selection settings', () => {
                 }),
             )
             .mockResolvedValueOnce(
-                new Response(JSON.stringify({ content: null, version: 4 }), {
+                new Response(JSON.stringify({ content: { t: 'encrypted', c: existingAccountCiphertext }, version: 4 }), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
                 }),

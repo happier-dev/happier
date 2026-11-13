@@ -44,6 +44,12 @@ let collapsedGroupKeysV1: Record<string, boolean> = {};
 const setCollapsedGroupKeysV1 = vi.fn();
 let sessionFolderViewModeV1: 'off' | 'tree' = 'off';
 let foldersFeatureEnabled = true;
+let lineageAppearancePresetsEnabled = false;
+let sessionListDensity: 'detailed' | 'cozy' | 'narrow' = 'detailed';
+let sessionLineageAppearancePresetsV1: {
+    parent?: { density?: 'detailed' | 'cozy' | 'narrow' };
+    child?: { density?: 'detailed' | 'cozy' | 'narrow' };
+} | null = null;
 const folderFeatureListeners = new Set<() => void>();
 const setSessionFolderViewModeV1 = vi.fn();
 let sessionFoldersV1: any = { v: 1, folders: [] };
@@ -507,6 +513,8 @@ installSessionShellCommonModuleMocks({
                 useSetting: (key: string) => {
                     if (key === 'compactSessionView') return false;
                     if (key === 'compactSessionViewMinimal') return false;
+                    if (key === 'sessionListDensity') return sessionListDensity;
+                    if (key === 'sessionLineageAppearancePresetsV1') return sessionLineageAppearancePresetsV1;
                     if (key === 'sessionListIdentityDisplay') return sessionListIdentityDisplay;
                     if (key === 'sessionTagsEnabled') return true;
                     if (key === 'rememberLastProjectSessionSelections') return rememberLastProjectSessionSelections;
@@ -629,7 +637,11 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
     useFeatureDecision: (featureId: string) => {
         const enabled = React.useSyncExternalStore(
             React.useCallback((listener: () => void) => { folderFeatureListeners.add(listener); return () => { folderFeatureListeners.delete(listener); }; }, []),
-            () => featureId === 'sessions.folders' ? foldersFeatureEnabled : true,
+            () => featureId === 'sessions.folders'
+                ? foldersFeatureEnabled
+                : featureId === 'sessions.lineageAppearancePresets'
+                    ? lineageAppearancePresetsEnabled
+                    : true,
         );
         return { state: enabled ? 'enabled' : 'disabled' };
     },
@@ -817,6 +829,9 @@ describe('SessionsList (native virtualization)', () => {
         collapsedGroupKeysV1 = {};
         sessionFolderViewModeV1 = 'off';
         foldersFeatureEnabled = true;
+        lineageAppearancePresetsEnabled = false;
+        sessionListDensity = 'detailed';
+        sessionLineageAppearancePresetsV1 = null;
         sessionFoldersV1 = { v: 1, folders: [] };
         sessionListOrderingModeV1 = 'custom';
         sessionListIdentityDisplay = 'avatar';
@@ -1314,6 +1329,36 @@ describe('SessionsList (native virtualization)', () => {
         });
     });
 
+    it.each([true, false])('keeps a pinned parent row as the single operable child disclosure when Today collapsed=%s', async (todayCollapsed) => {
+        const parent = { ...sessionB, id: 'sess_parent' };
+        const child = { ...sessionA, id: 'sess_child', metadata: { ...sessionA.metadata,
+            sessionOriginV1: { v: 1, kind: 'agent', creatorSessionId: 'sess_parent' } } };
+        collapsedGroupKeysV1 = todayCollapsed ? { [groupKey]: true } : {};
+        mockVisibleSessionListViewData = [
+            { type: 'header', title: 'Pinned', headerKind: 'pinned', groupKey: 'pinned', serverId: 'server_a', serverName: 'Server A' },
+            { type: 'session', session: parent, pinned: true, groupKey: 'pinned', groupKind: 'pinned', serverId: 'server_a', serverName: 'Server A' },
+            { type: 'header', title: 'Inactive', headerKind: 'inactive', groupKey: 'inactive', serverId: 'server_a', serverName: 'Server A' },
+            { type: 'header', title: 'Today', headerKind: 'date', groupKey, serverId: 'server_a', serverName: 'Server A' },
+            { type: 'session', session: child, groupKey, groupKind: 'date', serverId: 'server_a', serverName: 'Server A' },
+        ];
+
+        const screen = await renderSessionsList();
+
+        // SessionItem is the rendering boundary here; its disclosure renders from these projected row props.
+        const parentRows = screen.findAllByTestId('session-list-session:sess_parent');
+        expect(parentRows).toHaveLength(1);
+        expect(parentRows[0]?.props.rowModel).toMatchObject({ hasChildren: true, childrenCollapsed: false, nestingDepth: 0 });
+        // The child follows its pinned parent, not its original (possibly collapsed) date section.
+        const childRows = screen.findAllByTestId('session-list-session:sess_child');
+        expect(childRows).toHaveLength(1);
+        expect(childRows[0]?.props.rowModel).toMatchObject({ parentSessionId: 'sess_parent', nestingDepth: 1, hasChildren: false });
+        await act(async () => { parentRows[0]?.props.onToggleSessionChildren?.('sessionChildren:server_a:sess_parent'); });
+        expect(setCollapsedGroupKeysV1).toHaveBeenLastCalledWith({
+            ...(todayCollapsed ? { [groupKey]: true } : {}),
+            'sessionChildren:server_a:sess_parent': true,
+        });
+    });
+
     it('shows matching sessions from collapsed groups while header filters are active', async () => {
         collapsedGroupKeysV1 = { [groupKey]: true };
         mockVisibleSessionListViewData = [
@@ -1434,6 +1479,52 @@ describe('SessionsList (native virtualization)', () => {
         // do not force a remount.
         expect(list.props.getItemType?.(visibleSessionListViewData[1], 1)).toBe('session:default:body');
         expect(list.props.getItemType?.(visibleSessionListViewData[2], 2)).toBe('session:default:tail');
+    });
+
+    it('keys recycling pools from each row effective lineage density and updates with presets', async () => {
+        platformOs = 'android';
+        lineageAppearancePresetsEnabled = true;
+        sessionListDensity = 'cozy';
+        sessionLineageAppearancePresetsV1 = {
+            parent: { density: 'detailed' },
+            child: { density: 'narrow' },
+        };
+        const parent = { ...sessionB, id: 'sess_density_parent' };
+        const child = {
+            ...sessionA,
+            id: 'sess_density_child',
+            metadata: {
+                ...sessionA.metadata,
+                sessionOriginV1: { v: 1, kind: 'agent', creatorSessionId: parent.id },
+            },
+        };
+        mockVisibleSessionListViewData = [
+            { type: 'header', title: 'Active', headerKind: 'active', groupKey: 'active', serverId: 'server_a', serverName: 'Server A' },
+            { type: 'session', session: parent, groupKey: 'active', groupKind: 'active', serverId: 'server_a', serverName: 'Server A' },
+            { type: 'session', session: child, groupKey: 'active', groupKind: 'active', serverId: 'server_a', serverName: 'Server A' },
+        ];
+
+        const screen = await renderSessionsList();
+        let list = expectPresent(
+            screen.root.findAll((node) => String(node.type) === 'FlashListCompat')[0],
+            'expected native FlashListCompat',
+        );
+        let rows = list.props.data as SessionListViewItem[];
+        expect(list.props.getItemType?.(rows[1], 1)).toBe('session:default:body');
+        expect(list.props.getItemType?.(rows[2], 2)).toBe('session:minimal:tail');
+
+        sessionLineageAppearancePresetsV1 = {
+            parent: { density: 'detailed' },
+            child: { density: 'cozy' },
+        };
+        const { SessionsList } = await import('./SessionsList');
+        await screen.update(<SessionsList surfaceOwnership={{ ownerKey: 'preset-change' }} />);
+        list = expectPresent(
+            screen.root.findAll((node) => String(node.type) === 'FlashListCompat')[0],
+            'expected updated native FlashListCompat',
+        );
+        rows = list.props.data as SessionListViewItem[];
+        expect(list.props.getItemType?.(rows[2], 2)).toBe('session:compact:tail');
     });
 
     it('uses the shared virtualized surface for first-page-sized web lists', async () => {

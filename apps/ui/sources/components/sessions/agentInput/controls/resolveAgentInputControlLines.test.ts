@@ -119,6 +119,7 @@ describe('resolveAgentInputControlLines', () => {
             'files',
             'reviewComments',
             'storage',
+            'sessionRole',
             'windowsRemoteSessionMode',
             'providerOption',
             'shortcuts',

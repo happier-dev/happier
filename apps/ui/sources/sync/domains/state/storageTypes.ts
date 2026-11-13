@@ -599,6 +599,8 @@ export const MachineMetadataSchema = z.object({
     windowsRemoteSessionConsole: z.enum(['hidden', 'visible']).optional(),
     daemonTerminalSessionAttachSupported: z.boolean().optional(),
     daemonSessionGoalControlsSupported: z.boolean().optional(),
+    /** Diagnostic only; role-bearing spawn admission uses the exact role-aware RPC method. */
+    daemonSessionRoleV1SpawnSupported: z.boolean().optional(),
     // Daemon status fields
     daemonLastKnownStatus: z.enum(['running', 'shutting-down']).optional(),
     daemonLastKnownPid: z.number().optional(),

@@ -28,6 +28,8 @@ export async function stopExecutionRun(args: Readonly<{
       }
       return;
     }
+    // Visible runs are stopped by their coordinator; the linked child Session stays open.
+    if (ctrl.kind === 'session') return;
     await args.voiceAgentManager.stop({ voiceAgentId: ctrl.voiceAgentId });
   });
   ctrl.cancellationPromise = leafCancellation;

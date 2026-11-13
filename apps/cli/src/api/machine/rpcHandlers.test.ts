@@ -767,6 +767,83 @@ describe('registerMachineRpcHandlers', () => {
     }));
   });
 
+  it('forwards current roles for fresh creation, rejects fresh legacy roles, and retains legacy roles for resume', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+      deps: {
+        readAccountSettings: () => ({
+          sessionRoleProfilesV1: {
+            v: 1,
+            instructionsByRole: {},
+            customRoles: [{
+              id: 'custom:123e4567-e89b-12d3-a456-426614174000',
+              name: 'Architect',
+              color: '#123456',
+              instructions: 'Design.',
+            }],
+          },
+        }),
+      },
+    });
+    const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION)!;
+    const sessionRoleV1 = { v: 1, role: 'reviewer', instructions: 'Review snapshot.', assignmentId: 'a-1', assignedAt: 1 };
+
+    await handler({ directory: '/tmp', sessionRoleV1 });
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({ sessionRoleV1 }));
+
+    const customSnapshot = {
+      v: 1,
+      role: 'custom:123e4567-e89b-12d3-a456-426614174000',
+      name: 'Architect',
+      color: '#123456',
+      instructions: 'Design.',
+      assignmentId: 'assignment-custom',
+      assignedAt: 2,
+    };
+    const currentCustom = await handler({ directory: '/tmp', sessionRoleV1: customSnapshot });
+    expect(currentCustom).toEqual({ type: 'success', sessionId: 's1' });
+    expect(spawnSession).toHaveBeenLastCalledWith(expect.objectContaining({ sessionRoleV1: customSnapshot }));
+
+    spawnSession.mockClear();
+    const deletedCustom = await handler({
+      directory: '/tmp',
+      sessionRoleV1: { ...customSnapshot, role: 'custom:323e4567-e89b-12d3-a456-426614174000' },
+    });
+    expect(deletedCustom).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST });
+    expect(spawnSession).not.toHaveBeenCalled();
+
+    const legacyRoleV1 = { v: 1, role: 'delegate', instructions: 'Retained legacy snapshot.' };
+    const legacyFresh = await handler({ directory: '/tmp', sessionRoleV1: legacyRoleV1 });
+    expect(legacyFresh).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST });
+    expect(spawnSession).not.toHaveBeenCalled();
+
+    const legacyResume = await handler({ type: 'resume-session', sessionId: 'sess-legacy', directory: '/tmp', sessionRoleV1: legacyRoleV1 });
+    expect(legacyResume).toMatchObject({ type: 'success' });
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      existingSessionId: 'sess-legacy',
+      sessionRoleV1: legacyRoleV1,
+    }));
+
+    spawnSession.mockClear();
+    // A requested role is never silently dropped into an unlabelled session.
+    const malformed = await handler({ directory: '/tmp', sessionRoleV1: { v: 1, role: 'architect' } });
+    expect(malformed).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST });
+    expect(spawnSession).not.toHaveBeenCalled();
+  });
+
   it('passes through sessionConfigOptionOverrides when spawning a session', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
@@ -958,6 +1035,7 @@ describe('registerMachineRpcHandlers', () => {
 
     const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE);
     expect(handler).toBeDefined();
+    expect(registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION_ROLE_V1)).toBeDefined();
 
     await expect(handler!({
       directory: '/tmp',
@@ -973,6 +1051,78 @@ describe('registerMachineRpcHandlers', () => {
       result: { type: 'success', sessionId: 'session-from-custody' },
     })));
     expect(emitActionOperationRevision.mock.calls.map(([snapshot]) => snapshot.revision)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('requires an explicit role snapshot on the role-aware RPC before spawn execution', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+    const spawnSession = vi.fn(async () => ({ type: 'success' as const, sessionId: 'session-with-role' }));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+    const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION_ROLE_V1);
+    expect(handler).toBeDefined();
+
+    for (const sessionRoleV1 of [
+      undefined,
+      null,
+      { v: 1, role: 'reviewer' },
+      { v: 1, role: 'reviewer', instructions: '' },
+      { v: 1, role: 'reviewer', instructions: '   ', assignmentId: 'assignment-blank', assignedAt: 1 },
+      { v: 1, role: 'reviewer', instructions: 'Review.', assignedAt: 1 },
+      { v: 1, role: 'reviewer', instructions: 'Review.', assignmentId: 'assignment-no-time' },
+    ]) {
+      await expect(handler!({ directory: '/tmp', sessionRoleV1 })).resolves.toMatchObject({
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+      });
+    }
+    expect(spawnSession).not.toHaveBeenCalled();
+
+    const sessionRoleV1 = {
+      v: 1,
+      role: 'project_lead',
+      instructions: 'Coordinate this bounded delivery.',
+      assignmentId: 'assignment-project-lead',
+      assignedAt: 7,
+    };
+    await expect(handler!({ directory: '/tmp', sessionRoleV1 })).resolves.toMatchObject({
+      type: 'success',
+      sessionId: 'session-with-role',
+    });
+    expect(spawnSession).toHaveBeenCalledOnce();
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({ sessionRoleV1 }));
+
+    await expect(handler!({
+      directory: '/tmp',
+      sessionRoleV1: {
+        v: 1,
+        role: 'custom:123e4567-e89b-12d3-a456-426614174000',
+        name: 'Deleted custom role',
+        color: '#123456',
+        instructions: 'Must not be newly assigned.',
+      },
+    })).resolves.toMatchObject({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+    });
+    await expect(handler!({
+      directory: '/tmp',
+      sessionRoleV1: { v: 1, role: 'delegate', instructions: 'Legacy readable only.' },
+    })).resolves.toMatchObject({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+    });
+    expect(spawnSession).toHaveBeenCalledOnce();
   });
 
   it('resolves accepted spawn identity before returning success on the released legacy RPC', async () => {
@@ -7570,4 +7720,32 @@ describe('registerMachineRpcHandlers', () => {
     expect(registered.has((RPC_METHODS as any).DAEMON_SESSION_HANDOFF_STATUS_GET)).toBe(true);
   });
 
+});
+
+describe('machine spawn RPC (visible agents seeding)', () => {
+  it('forwards the run link and creation origin for fresh creation and refuses malformed ones', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: { spawnSession, stopSession: async () => true, requestShutdown: () => {} },
+      deps: { readAccountSettings: () => ({}) },
+    });
+    const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION)!;
+    const executionRunLinkV1 = { v: 1, parentSessionId: 'lead', runId: 'run_1', turnEpoch: 0 };
+    const sessionOriginV1 = { v: 1, kind: 'agent', creatorSessionId: 'lead', via: { kind: 'execution_run', runId: 'run_1' } };
+
+    await handler({ directory: '/tmp', executionRunLinkV1, sessionOriginV1 });
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({ executionRunLinkV1, sessionOriginV1 }));
+
+    spawnSession.mockClear();
+    const malformed = await handler({ directory: '/tmp', executionRunLinkV1: { v: 1, runId: 'run_1' } });
+    expect(malformed).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST });
+    expect(spawnSession).not.toHaveBeenCalled();
+  });
 });

@@ -13,12 +13,17 @@ export type SessionAppearanceSelectorState = Readonly<{
     sessionOrganizationAppearancesBySessionKey?: Readonly<Record<string, SessionOrganizationSessionAppearance>>;
     sessionOrganizationLabelsByLabelKey?: Readonly<Record<string, SessionOrganizationLabel>>;
     sessionOrganizationSessionAppearancesSupportedByServerId?: Readonly<Record<string, boolean>>;
+    sessionOrganizationAppearancePresentationsSupportedByServerId?: Readonly<Record<string, boolean>>;
 }>;
 
 const EMPTY_MACHINES = Object.freeze({});
 
 export function selectSessionAppearancesSupported(state: SessionAppearanceSelectorState, serverId: string | null | undefined): boolean {
     return !!serverId && state.sessionOrganizationSessionAppearancesSupportedByServerId?.[serverId.trim()] === true;
+}
+
+export function selectSessionAppearancePresentationsSupported(state: SessionAppearanceSelectorState, serverId: string | null | undefined): boolean {
+    return !!serverId && state.sessionOrganizationAppearancePresentationsSupportedByServerId?.[serverId.trim()] === true;
 }
 
 /** The session's own override (not the inherited workspace colour); what its colour menu marks and removes. */

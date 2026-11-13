@@ -2,11 +2,15 @@ import { randomUUID } from 'node:crypto';
 
 import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { AcpSendFn } from '@/agent/acp/bridge/acpSessionForwarding';
-import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import { readBackendResumableChildSessionId } from '@/agent/executionRuns/controllers/types';
 import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
+import type {
+  FinishExecutionRun,
+  FinishExecutionRunNext,
+  FinishExecutionRunToolResult,
+} from '@/agent/executionRuns/runtime/executionRunFinishRun';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import { writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
 import { buildExecutionRunConnectedServicesLaunchV1 } from '@/daemon/connectedServices/runsBridge/contract';
@@ -16,33 +20,11 @@ type EnqueueMarkerWrite = (runId: string, write: () => Promise<void>) => Promise
 
 type SendAcp = AcpSendFn;
 
-type FinishRunNext = Omit<
-  ExecutionRunState,
-  | 'runId'
-  | 'callId'
-  | 'sidechainId'
-  | 'sessionId'
-  | 'depth'
-  | 'intent'
-  | 'backendTarget'
-  | 'backendId'
-  | 'instructions'
-  | 'permissionMode'
-  | 'retentionPolicy'
-  | 'runClass'
-  | 'ioMode'
-  | 'startedAtMs'
-  | 'resumeHandle'
-> & {
-  status: ExecutionRunState['status'];
-  finishedAtMs: number;
-};
-
 export function finishExecutionRun(args: Readonly<{
   runId: string;
-  next: FinishRunNext;
-  toolResult: { output: any; isError?: boolean; meta?: Record<string, unknown> };
-  structuredMeta?: ExecutionRunStructuredMeta;
+  next: FinishExecutionRunNext;
+  toolResult: FinishExecutionRunToolResult;
+  structuredMeta?: Parameters<FinishExecutionRun>[3];
   runs: Map<string, ExecutionRunState>;
   controllers: Map<string, ExecutionRunController>;
   budgetRegistry: ExecutionBudgetRegistry | null;

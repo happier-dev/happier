@@ -14,6 +14,7 @@ import {
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
 import { sessionTagKey } from '../sessionTagUtils';
 import { areSessionAppearanceColorsEqual, sessionAppearanceColorKey } from '@/sync/domains/session/organization/appearanceColor';
+import { READABLE_SESSION_ROLES, SessionRoleProfilesV1Schema } from '@happier-dev/protocol';
 
 type CacheEntry = Readonly<{
     model: SessionListRowModel;
@@ -46,12 +47,19 @@ const SESSION_LIST_ROW_MODEL_ADJACENCY_VALUES: ReadonlyArray<SessionListRowModel
     Object.freeze({ isFirst: true, isLast: true, isSingle: true }),
 ]);
 
+const SESSION_ROLE_PROFILES_DISPLAY_SIGNATURES = new WeakMap<object, string>();
+
 type StablePresentationSettingsRefs = Readonly<{
     currentUserId: SessionListRowPresentationSettings['currentUserId'];
+    sessionRoleProfilesV1: SessionListRowPresentationSettings['sessionRoleProfilesV1'];
     density: SessionListRowPresentationSettings['density'];
+    baseDensity: SessionListRowPresentationSettings['baseDensity'];
+    lineageAppearanceEnabled: SessionListRowPresentationSettings['lineageAppearanceEnabled'];
+    lineageAppearancePresets: SessionListRowPresentationSettings['lineageAppearancePresets'];
     compact: SessionListRowPresentationSettings['compact'];
     compactMinimal: SessionListRowPresentationSettings['compactMinimal'];
     identityDisplay: SessionListRowPresentationSettings['identityDisplay'];
+    appearancePresentationSupported: SessionListRowPresentationSettings['appearancePresentationSupported'];
     activeColorMode: SessionListRowPresentationSettings['activeColorMode'];
     workingIndicatorMode: SessionListRowPresentationSettings['workingIndicatorMode'];
     workingTextMode: SessionListRowPresentationSettings['workingTextMode'];
@@ -100,6 +108,33 @@ function appendSignatureList(parts: string[], values: readonly unknown[]): void 
     }
 }
 
+function resolveSessionRoleProfilesDisplaySignature(
+    profiles: SessionListRowPresentationSettings['sessionRoleProfilesV1'],
+): string {
+    if (!profiles) return '';
+    const cached = SESSION_ROLE_PROFILES_DISPLAY_SIGNATURES.get(profiles);
+    if (cached !== undefined) return cached;
+
+    const parsed = SessionRoleProfilesV1Schema.safeParse(profiles);
+    const parts: string[] = [];
+    if (parsed.success) {
+        for (const role of READABLE_SESSION_ROLES) {
+            appendSignaturePart(parts, parsed.data.displayNamesByRole?.[role]);
+            appendSignaturePart(parts, parsed.data.colorsByRole?.[role]);
+        }
+        const customRoles = parsed.data.customRoles ?? [];
+        appendSignaturePart(parts, customRoles.length);
+        for (const role of customRoles) {
+            appendSignaturePart(parts, role.id);
+            appendSignaturePart(parts, role.name);
+            appendSignaturePart(parts, role.color);
+        }
+    }
+    const signature = parts.join('|');
+    SESSION_ROLE_PROFILES_DISPLAY_SIGNATURES.set(profiles, signature);
+    return signature;
+}
+
 function normalizeServerId(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
 }
@@ -115,10 +150,15 @@ function buildStablePresentationSettingsRefs(
 ): StablePresentationSettingsRefs {
     return {
         currentUserId: settings.currentUserId,
+        sessionRoleProfilesV1: settings.sessionRoleProfilesV1,
         density: settings.density,
+        baseDensity: settings.baseDensity,
+        lineageAppearanceEnabled: settings.lineageAppearanceEnabled,
+        lineageAppearancePresets: settings.lineageAppearancePresets,
         compact: settings.compact,
         compactMinimal: settings.compactMinimal,
         identityDisplay: settings.identityDisplay,
+        appearancePresentationSupported: settings.appearancePresentationSupported,
         activeColorMode: settings.activeColorMode,
         workingIndicatorMode: settings.workingIndicatorMode,
         workingTextMode: settings.workingTextMode,
@@ -145,10 +185,15 @@ function areStablePresentationSettingsRefsEqual(
     next: StablePresentationSettingsRefs,
 ): boolean {
     return previous.currentUserId === next.currentUserId
+        && previous.sessionRoleProfilesV1 === next.sessionRoleProfilesV1
         && previous.density === next.density
+        && previous.baseDensity === next.baseDensity
+        && previous.lineageAppearanceEnabled === next.lineageAppearanceEnabled
+        && previous.lineageAppearancePresets === next.lineageAppearancePresets
         && previous.compact === next.compact
         && previous.compactMinimal === next.compactMinimal
         && previous.identityDisplay === next.identityDisplay
+        && previous.appearancePresentationSupported === next.appearancePresentationSupported
         && previous.activeColorMode === next.activeColorMode
         && previous.workingIndicatorMode === next.workingIndicatorMode
         && previous.workingTextMode === next.workingTextMode
@@ -186,6 +231,11 @@ function buildInputSignature(input: Readonly<{
     appendSignaturePart(parts, item.groupKind);
     appendSignaturePart(parts, item.folderId);
     appendSignaturePart(parts, item.folderDepth);
+    appendSignaturePart(parts, item.parentSessionId);
+    appendSignaturePart(parts, item.nestingDepth);
+    appendSignaturePart(parts, item.hasChildren);
+    appendSignaturePart(parts, item.childrenCollapsed);
+    appendSignaturePart(parts, item.identityOverride);
     appendSignaturePart(parts, item.pinned === true ? 1 : 0);
     appendSignaturePart(parts, (item as SessionListRowSessionItem & { selected?: boolean }).selected === true ? 1 : 0);
     // Placement reasons decide what the row SAYS about itself (why it is in the
@@ -201,10 +251,18 @@ function buildInputSignature(input: Readonly<{
     appendSignaturePart(parts, input.adjacency.isLast ? 1 : 0);
     appendSignaturePart(parts, input.adjacency.isSingle ? 1 : 0);
     appendSignaturePart(parts, settings.currentUserId);
+    appendSignaturePart(parts, resolveSessionRoleProfilesDisplaySignature(settings.sessionRoleProfilesV1));
     appendSignaturePart(parts, settings.density);
+    appendSignaturePart(parts, settings.baseDensity);
+    appendSignaturePart(parts, settings.lineageAppearanceEnabled ? 1 : 0);
+    appendSignaturePart(parts, settings.lineageAppearancePresets?.parent?.density);
+    appendSignaturePart(parts, settings.lineageAppearancePresets?.parent?.avatarStyle);
+    appendSignaturePart(parts, settings.lineageAppearancePresets?.child?.density);
+    appendSignaturePart(parts, settings.lineageAppearancePresets?.child?.avatarStyle);
     appendSignaturePart(parts, settings.compact ? 1 : 0);
     appendSignaturePart(parts, settings.compactMinimal ? 1 : 0);
     appendSignaturePart(parts, settings.identityDisplay);
+    appendSignaturePart(parts, settings.appearancePresentationSupported ? 1 : 0);
     appendSignaturePart(parts, settings.activeColorMode);
     appendSignaturePart(parts, settings.workingIndicatorMode);
     appendSignaturePart(parts, settings.workingTextMode);
@@ -318,13 +376,21 @@ export function resolveSessionListRowModelAdjacency(
     index: number,
 ): SessionListRowModelAdjacency {
     const item = items[index];
-    const groupKey = isSessionItem(item) ? String(item.groupKey ?? '').trim() : '';
     const prev = index > 0 ? items[index - 1] : null;
     const next = index < items.length - 1 ? items[index + 1] : null;
-    const prevGroupKey = prev && isSessionItem(prev) ? String(prev.groupKey ?? '').trim() : '';
-    const nextGroupKey = next && isSessionItem(next) ? String(next.groupKey ?? '').trim() : '';
-    const isFirst = !groupKey || prevGroupKey !== groupKey;
-    const isLast = !groupKey || nextGroupKey !== groupKey;
+    const shareVisualGroup = (left: SessionListViewItem | null | undefined, right: SessionListViewItem | null | undefined): boolean => {
+        if (!left || !right || !isSessionItem(left) || !isSessionItem(right)) return false;
+        const leftGroupKey = String(left.groupKey ?? '').trim();
+        const rightGroupKey = String(right.groupKey ?? '').trim();
+        if (leftGroupKey && leftGroupKey === rightGroupKey) return true;
+        const leftNestingDepth = Math.max(0, Math.trunc(left.nestingDepth ?? 0));
+        const rightNestingDepth = Math.max(0, Math.trunc(right.nestingDepth ?? 0));
+        // Placement emits each family as one depth-first run. Original section/group keys remain
+        // useful facts, but they must not insert a tail margin inside that projected family.
+        return rightNestingDepth > 0 && (leftNestingDepth > 0 || left.hasChildren === true);
+    };
+    const isFirst = !shareVisualGroup(prev, item);
+    const isLast = !shareVisualGroup(item, next);
     return SESSION_LIST_ROW_MODEL_ADJACENCY_VALUES[(isFirst ? 1 : 0) | (isLast ? 2 : 0)];
 }
 

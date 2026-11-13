@@ -36,7 +36,11 @@ vi.mock("@/storage/db", () => ({
     },
 }));
 
-vi.mock("@/storage/inTx", () => ({ inTx, afterTx: vi.fn() }));
+vi.mock("@/storage/inTx", async (importOriginal) => ({
+    ...await importOriginal<typeof import("@/storage/inTx")>(),
+    inTx,
+    afterTx: vi.fn(),
+}));
 
 describe("registerAccountUsageRoutes usage writes", () => {
     beforeEach(() => {

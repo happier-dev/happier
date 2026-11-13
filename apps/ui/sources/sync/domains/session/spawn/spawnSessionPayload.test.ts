@@ -7,6 +7,31 @@ import {
 } from './spawnSessionPayload';
 
 describe('buildSpawnHappySessionRpcParams', () => {
+    it('sends an explicit role assignment snapshot as sessionRoleV1 and nothing for No role', () => {
+        const base = { machineId: 'm1', directory: '/repo', backendTarget: { kind: 'builtInAgent', agentId: 'codex' } } as const;
+        const sessionRoleAssignment = { v: 1, role: 'custom:123e4567-e89b-12d3-a456-426614174000', name: 'Architect', color: '#123456', instructions: 'Snapshot.', assignmentId: 'a-1', assignedAt: 1 } as const;
+        expect(buildSpawnHappySessionRpcParams({ ...base, sessionRoleAssignment }).sessionRoleV1).toEqual(sessionRoleAssignment);
+        expect(buildSpawnHappySessionRpcParams({ ...base, sessionRoleAssignment: null })).not.toHaveProperty('sessionRoleV1');
+        expect(buildSpawnHappySessionRpcParams(base)).not.toHaveProperty('sessionRoleV1');
+    });
+
+    it('keeps the current payload, and the role, for a daemon whose version cannot be ordered', () => {
+        const options = {
+            machineId: 'm1',
+            directory: '/repo',
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            sessionRoleAssignment: { v: 1, role: 'reviewer', instructions: 'Snapshot.', assignmentId: 'a-1', assignedAt: 1 },
+        } as const;
+        // A local or custom build identity is not evidence of an old daemon.
+        const opaque = buildCompatibleSpawnHappySessionRpcParams({ options, daemonCliVersion: '0.2.20-local.role.20261105' });
+        expect(opaque).toHaveProperty('backendTarget', options.backendTarget);
+        expect(opaque).toHaveProperty('sessionRoleV1', options.sessionRoleAssignment);
+        // A daemon known to predate backend-target spawns still receives the legacy shape.
+        const old = buildCompatibleSpawnHappySessionRpcParams({ options, daemonCliVersion: '0.0.9' });
+        expect(old).toHaveProperty('agent', 'codex');
+        expect(old).not.toHaveProperty('sessionRoleV1');
+    });
+
     it('preserves exact nonblank opaque model identifiers', () => {
         expect(buildSpawnHappySessionRpcParams({
             machineId: 'machine-1',

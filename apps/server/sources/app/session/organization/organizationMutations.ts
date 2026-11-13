@@ -17,6 +17,8 @@ import {
     type SetSessionAttentionStandingRequest,
     type SetSessionAppearanceRequest,
     type SetSessionAppearanceResponse,
+    type SetSessionAppearancePresentationRequest,
+    type SetSessionAppearancePresentationResponse,
     type SetSessionPinRequest,
     type SetSessionTagAssignmentsRequest,
     type UpsertSessionOrganizationLabelRequest,
@@ -24,7 +26,7 @@ import {
 
 import { createV2SessionListVisibilityWhere } from "@/app/api/routes/session/v2SessionListRows";
 import { markSessionReadInTx } from "@/app/session/sessionWriteService";
-import { inTx } from "@/storage/inTx";
+import { inTx, IN_TX_OPERATION_LABELS } from "@/storage/inTx";
 import {
     areSessionOrganizationDisplayEnvelopesAllowedForAccount,
     isSessionOrganizationDisplayEnvelopeAllowedForAccount,
@@ -44,6 +46,7 @@ import { hashSessionOrganizationKey } from "./hashKeys";
 import {
     mapSessionAttentionStanding,
     mapSessionAppearance,
+    mapSessionAppearancePresentation,
     mapSessionOrganizationFolder,
     mapSessionOrganizationLabel,
     mapSessionOrganizationPin,
@@ -361,7 +364,10 @@ export async function setSessionPin(params: Readonly<{
     sessionId: string;
     request: SetSessionPinRequest;
 }>): Promise<Readonly<{ pin: ReturnType<typeof mapSessionOrganizationPin> | null }> | { error: "session-pin-limit-exceeded" | "session-not-found" }> {
-    return await inTx(async (tx) => await setSessionPinInTx(tx, params));
+    return await inTx(
+        async (tx) => await setSessionPinInTx(tx, params),
+        { diagnostics: { operation: IN_TX_OPERATION_LABELS.sessionOrganizationPin } },
+    );
 }
 
 /**
@@ -523,7 +529,18 @@ export async function setSessionAppearanceInTx(tx: SessionOrganizationTx, params
     request: SetSessionAppearanceRequest;
 }>): Promise<SetSessionAppearanceResponse | { error: "session-not-found" | "invalid-display-envelope" | "session-appearance-limit-exceeded" }> {
     if (params.request.display === null) {
-        await tx.sessionAppearance.deleteMany({ where: { accountId: params.accountId, sessionId: params.sessionId } });
+        const existing = await tx.sessionAppearance.findUnique({
+            where: { accountId_sessionId: { accountId: params.accountId, sessionId: params.sessionId } },
+            select: { presentationDbValue: true },
+        });
+        if (existing?.presentationDbValue) {
+            await tx.sessionAppearance.update({
+                where: { accountId_sessionId: { accountId: params.accountId, sessionId: params.sessionId } },
+                data: { displayCleared: true },
+            });
+        } else {
+            await tx.sessionAppearance.deleteMany({ where: { accountId: params.accountId, sessionId: params.sessionId } });
+        }
         await markSessionOrganizationChanged(tx, {
             accountId: params.accountId, scope: "sessionAppearances", sessionIds: [params.sessionId],
         });
@@ -557,8 +574,8 @@ export async function setSessionAppearanceInTx(tx: SessionOrganizationTx, params
     const displayDbValue = serializeSessionOrganizationDisplayEnvelope(params.request.display)!;
     const appearance = await tx.sessionAppearance.upsert({
         where: { accountId_sessionId: { accountId: params.accountId, sessionId: params.sessionId } },
-        create: { accountId: params.accountId, sessionId: params.sessionId, displayDbValue },
-        update: { displayDbValue },
+        create: { accountId: params.accountId, sessionId: params.sessionId, displayDbValue, displayCleared: false },
+        update: { displayDbValue, displayCleared: false },
         select: { sessionId: true, displayDbValue: true, updatedAt: true },
     });
     await markSessionOrganizationChanged(tx, {
@@ -573,6 +590,61 @@ export async function setSessionAppearance(params: Readonly<{
     request: SetSessionAppearanceRequest;
 }>): Promise<SetSessionAppearanceResponse | { error: "session-not-found" | "invalid-display-envelope" | "session-appearance-limit-exceeded" }> {
     return await inTx(async (tx) => await setSessionAppearanceInTx(tx, params));
+}
+
+export async function setSessionAppearancePresentationInTx(tx: SessionOrganizationTx, params: Readonly<{
+    accountId: string;
+    sessionId: string;
+    request: SetSessionAppearancePresentationRequest;
+}>): Promise<SetSessionAppearancePresentationResponse | { error: "session-not-found" | "invalid-display-envelope" | "session-appearance-limit-exceeded" }> {
+    const existing = await tx.sessionAppearance.findUnique({
+        where: { accountId_sessionId: { accountId: params.accountId, sessionId: params.sessionId } },
+        select: { id: true, displayCleared: true },
+    });
+    if (params.request.presentation === null) {
+        if (existing?.displayCleared) {
+            await tx.sessionAppearance.deleteMany({ where: { accountId: params.accountId, sessionId: params.sessionId } });
+        } else if (existing) {
+            await tx.sessionAppearance.update({
+                where: { accountId_sessionId: { accountId: params.accountId, sessionId: params.sessionId } },
+                data: { presentationDbValue: null },
+            });
+        }
+        await markSessionOrganizationChanged(tx, {
+            accountId: params.accountId, scope: "sessionAppearances", sessionIds: [params.sessionId],
+        });
+        return { presentation: null };
+    }
+
+    if (!await canAccessVisibleUnarchivedSessionForOrganizationInTx(tx, params)) return { error: "session-not-found" };
+    if (!await isSessionOrganizationDisplayEnvelopeAllowedForAccount({
+        tx, accountId: params.accountId, display: params.request.presentation,
+    })) return { error: "invalid-display-envelope" };
+    if (!existing) {
+        const count = await tx.sessionAppearance.count({
+            where: { accountId: params.accountId, session: createVisibleUnarchivedOrganizationSessionWhere(params.accountId) },
+        });
+        if (count >= SESSION_ORGANIZATION_MAX_SESSION_APPEARANCES) return { error: "session-appearance-limit-exceeded" };
+    }
+    const presentationDbValue = serializeSessionOrganizationDisplayEnvelope(params.request.presentation)!;
+    const row = await tx.sessionAppearance.upsert({
+        where: { accountId_sessionId: { accountId: params.accountId, sessionId: params.sessionId } },
+        create: { accountId: params.accountId, sessionId: params.sessionId, displayDbValue: "", displayCleared: true, presentationDbValue },
+        update: { presentationDbValue },
+        select: { sessionId: true, displayDbValue: true, presentationDbValue: true, updatedAt: true },
+    });
+    await markSessionOrganizationChanged(tx, {
+        accountId: params.accountId, scope: "sessionAppearances", sessionIds: [params.sessionId],
+    });
+    return { presentation: mapSessionAppearancePresentation({ ...row, presentationDbValue }) };
+}
+
+export async function setSessionAppearancePresentation(params: Readonly<{
+    accountId: string;
+    sessionId: string;
+    request: SetSessionAppearancePresentationRequest;
+}>): Promise<SetSessionAppearancePresentationResponse | { error: "session-not-found" | "invalid-display-envelope" | "session-appearance-limit-exceeded" }> {
+    return await inTx(async (tx) => await setSessionAppearancePresentationInTx(tx, params));
 }
 
 export async function upsertSessionOrganizationFolderInTx(tx: SessionOrganizationTx, params: Readonly<{

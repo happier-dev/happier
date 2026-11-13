@@ -26,6 +26,11 @@ export type SessionListIndexItem =
     | Readonly<{
         type: 'session';
         sessionId: string;
+        parentSessionId?: string;
+        nestingDepth?: number;
+        hasChildren?: boolean;
+        childrenCollapsed?: boolean;
+        identityOverride?: 'independent';
         storageKind?: SessionStorageKind;
         section?: 'active' | 'inactive';
         groupKey?: string;
@@ -45,6 +50,7 @@ export type SessionListIndexItem =
 
 export type SessionListIndexFolderDragEligibilityReason =
     | 'eligible'
+    | 'lineage-placement'
     | 'feature-disabled'
     | 'unsupported-item';
 
@@ -118,6 +124,11 @@ export function areSessionListIndexItemsEqual(
             && previous.serverName === next.serverName
             && (previous.folderId ?? null) === (next.folderId ?? null)
             && (previous.folderDepth ?? null) === (next.folderDepth ?? null)
+            && previous.parentSessionId === next.parentSessionId
+            && previous.nestingDepth === next.nestingDepth
+            && previous.hasChildren === next.hasChildren
+            && previous.childrenCollapsed === next.childrenCollapsed
+            && previous.identityOverride === next.identityOverride
             && areWorkspaceRefsEqual(previous.workspace ?? null, next.workspace ?? null);
     }
 
@@ -179,6 +190,11 @@ export function buildSessionListIndexItemFromViewItem(item: SessionListViewItem)
         serverName: item.serverName,
         folderId: item.folderId,
         folderDepth: item.folderDepth,
+        parentSessionId: item.parentSessionId,
+        nestingDepth: item.nestingDepth,
+        hasChildren: item.hasChildren,
+        childrenCollapsed: item.childrenCollapsed,
+        identityOverride: item.identityOverride,
         workspace: item.workspace,
     };
 }
@@ -301,6 +317,11 @@ export function buildSessionListIndexFromViewData(
     return next;
 }
 
+/** Lineage placement is edited through presentation actions, not flat folder ordering. */
+export function canReorderSessionListItem(item: SessionListIndexItem | SessionListViewItem): boolean {
+    return item.type !== 'session' || (!item.parentSessionId && !item.hasChildren);
+}
+
 export function resolveSessionListIndexFolderDragEligibility(
     item: SessionListIndexItem,
     options: ResolveSessionListIndexFolderDragEligibilityOptions,
@@ -317,9 +338,9 @@ export function resolveSessionListIndexFolderDragEligibility(
     if (item.type === 'session') {
         const storageKind = item.storageKind ?? 'persisted';
         return {
-            canUseSessionFolders: true,
+            canUseSessionFolders: canReorderSessionListItem(item),
             foldersFeatureEnabled: true,
-            reason: 'eligible',
+            reason: canReorderSessionListItem(item) ? 'eligible' : 'lineage-placement',
             storageKind,
         };
     }

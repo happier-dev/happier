@@ -43,4 +43,23 @@ describe('resolveSessionAgentToolPresentation', () => {
 
     expect(resolved.map((tool) => tool.name)).toContain('subagents_delegate_start');
   });
+
+  it('projects current built-in and custom role inputs for both role-assignment tools', () => {
+    const resolved = resolveSessionAgentToolPresentation({
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }),
+      defaultSessionId: 'sess-1',
+      defaultSessionMachineId: 'machine-1',
+      requiredDirectActionIds: ['session.role.set', 'session.spawn_new'],
+    });
+
+    for (const toolName of ['session_role_set', 'session_spawn_new']) {
+      const tool = resolved.find((candidate) => candidate.name === toolName);
+      expect(tool?.inputSchema).toMatchObject({
+        type: 'object',
+        properties: {
+          role: expect.objectContaining({}),
+        },
+      });
+    }
+  });
 });

@@ -1,4 +1,5 @@
 import React from 'react';
+import { canReorderSessionListItem } from '@/sync/domains/session/listing/sessionListIndex';
 import { Platform } from 'react-native';
 
 import { storage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
@@ -71,8 +72,10 @@ export type SessionListRowModelBoundaryProps = Readonly<{
     getRowSetTagsHandler: (sessionKey: string) => (newTags: string[]) => void;
     getRowTogglePinnedHandler: (sessionKey: string) => () => void;
     onSetSessionAppearance?: SessionItemProps['onSetSessionAppearance'];
+    onToggleSessionChildren?: SessionItemProps['onToggleSessionChildren'];
     groupKey: string;
     item: SessionListRowSessionItem;
+    nestedDescendantItems?: readonly SessionListRowSessionItem[];
     nativeContextMenuSessionKey: string | null;
     onDragCancel: (event: UseSessionInlineDragCancelEvent) => void;
     onDragStart: (sessionKey: string) => void;
@@ -321,7 +324,7 @@ const SessionListRowModelBoundaryContent = React.memo(function SessionListRowMod
             onUnregisterTreeRowBounds={props.onUnregisterTreeRowBounds}
             isDragActive={props.draggingSessionKey != null}
             isBeingDragged={sessionKey != null && sessionKey === props.draggingSessionKey}
-            dragEnabled={props.dragEnabled}
+            dragEnabled={props.dragEnabled && canReorderSessionListItem(props.item)}
             dataIndex={props.dataIndex}
             overlayShared={props.overlayShared}
             rowModel={rowModel}
@@ -340,6 +343,8 @@ const SessionListRowModelBoundaryContent = React.memo(function SessionListRowMod
             onSetTags={onSetTags}
             tagsEnabled={rowModel.tagsEnabled}
             onSetSessionAppearance={props.onSetSessionAppearance}
+            onToggleSessionChildren={props.onToggleSessionChildren}
+            nestedDescendantItems={props.nestedDescendantItems ?? []}
             selected={rowModel.isSelected}
             isFirst={rowModel.adjacency.isFirst}
             isLast={rowModel.adjacency.isLast}
@@ -350,13 +355,15 @@ const SessionListRowModelBoundaryContent = React.memo(function SessionListRowMod
             forkActionContext={props.forkActionContext}
             onMoveToFolder={props.folderActionsEnabled ? moveActionHandlers.onMoveToFolder : undefined}
             onMoveToWorkspaceRoot={props.folderActionsEnabled ? moveActionHandlers.onMoveToWorkspaceRoot : undefined}
-            onMoveUp={props.folderViewEnabled ? moveActionHandlers.onMoveUp : undefined}
-            onMoveDown={props.folderViewEnabled ? moveActionHandlers.onMoveDown : undefined}
+            onMoveUp={props.folderViewEnabled && canReorderSessionListItem(props.item) ? moveActionHandlers.onMoveUp : undefined}
+            onMoveDown={props.folderViewEnabled && canReorderSessionListItem(props.item) ? moveActionHandlers.onMoveDown : undefined}
             secondaryLineMode={rowModel.secondaryLineMode}
             compact={rowModel.compact}
             compactMinimal={rowModel.compactMinimal}
+            avatarStyle={rowModel.avatarStyle}
+            appearancePresentationSupported={rowModel.appearancePresentationSupported}
             rowAttentionAnimationEnabled={rowAttentionAnimationEnabled}
-            {...(isIos && sessionKey != null && props.dragEnabled
+            {...(isIos && sessionKey != null && props.dragEnabled && canReorderSessionListItem(props.item)
                 ? {
                     nativeInlineDragEnabled: true,
                 }

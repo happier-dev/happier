@@ -1,5 +1,7 @@
+import { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
 
+import { renderHook } from '@/dev/testkit';
 import { buildSessionActionFieldOptionsResolver } from './sessionActionFieldOptions';
 
 /**
@@ -77,5 +79,54 @@ describe('session action field options', () => {
             options: [{ value: 'all', label: 'All changes' }, { value: '', label: 'dropped' }],
         } as never);
         expect(options).toEqual([{ value: 'all', label: 'All changes' }]);
+    });
+
+    it('refreshes a mounted role field when the active account catalog changes', async () => {
+        const { SEEDED_PRODUCT_LEAD_ROLE_PROFILE_V1 } = await import('@happier-dev/protocol');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { useSessionActionFieldOptionsForRowHeight } = await import('./useSessionActionFieldOptions');
+        const originalProfiles = storage.getState().settings.sessionRoleProfilesV1;
+        const architectId = 'custom:123e4567-e89b-12d3-a456-426614174000' as const;
+        const researcherId = 'custom:223e4567-e89b-12d3-a456-426614174000' as const;
+        const roleField = { optionsSourceId: 'session.roles.assignable_or_clear' } as const;
+
+        storage.setState((state) => ({ ...state, settings: { ...state.settings,
+            sessionRoleProfilesV1: { v: 1, instructionsByRole: {}, customRoles: [
+                { id: architectId, name: 'Architect', instructions: 'Design.', color: '#123456' },
+                SEEDED_PRODUCT_LEAD_ROLE_PROFILE_V1,
+            ] },
+        } }));
+
+        try {
+            const hook = await renderHook(() => useSessionActionFieldOptionsForRowHeight('mounted-session'));
+            expect(hook.getCurrent()(roleField).map((option) => option.value)).toEqual([
+                SEEDED_PRODUCT_LEAD_ROLE_PROFILE_V1.id,
+                'project_lead',
+                'planner',
+                'worker',
+                'reviewer',
+                architectId,
+                'none',
+            ]);
+
+            await act(async () => {
+                storage.setState((state) => ({ ...state, settings: { ...state.settings,
+                    sessionRoleProfilesV1: { v: 1, instructionsByRole: {}, customRoles: [
+                        { id: researcherId, name: 'Researcher', instructions: 'Research.', color: '#654321' },
+                    ] },
+                } }));
+            });
+            await hook.rerender();
+
+            const labels = hook.getCurrent()(roleField).map((option) => option.label);
+            expect(labels).toContain('Researcher');
+            expect(labels).not.toContain('Architect');
+        } finally {
+            await act(async () => {
+                storage.setState((state) => ({ ...state, settings: { ...state.settings,
+                    sessionRoleProfilesV1: originalProfiles,
+                } }));
+            });
+        }
     });
 });

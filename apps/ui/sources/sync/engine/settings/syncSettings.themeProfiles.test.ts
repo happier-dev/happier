@@ -19,6 +19,7 @@ const profile = (id: string, name = id): ThemeProfileV1 => ({
     createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
     base: { light: 'light', dark: 'dark' }, assetAppearance: 'dark', overrides: { light: {}, dark: {} },
 });
+const existingRoleProfiles = { v: 1 as const, instructionsByRole: {}, customRoles: [] };
 
 describe('account theme library migration', () => {
     const credentials = { token: 'plain-token' };
@@ -70,7 +71,10 @@ describe('account theme library migration', () => {
                 return Response.json({ success: true, version: ++serverVersion });
             }
             if (path === '/v2/account/settings') {
-                return Response.json({ content: { t: 'plain', v: { themeProfiles: serverLibrary } }, version: serverVersion });
+                return Response.json({
+                    content: { t: 'plain', v: { themeProfiles: serverLibrary, sessionRoleProfilesV1: existingRoleProfiles } },
+                    version: serverVersion,
+                });
             }
             throw new Error(`Unexpected request: ${path}`);
         });
@@ -130,7 +134,7 @@ describe('account theme library migration', () => {
         expect(serverLibrary.map(entry => [entry.id, entry.name])).toEqual([
             ['cloud', 'cloud'], ['local', 'Edited before sync'],
         ]);
-        expect(Object.keys(writes[0])).toEqual(['themeProfiles']);
+        expect(Object.keys(writes[0])).toEqual(['themeProfiles', 'sessionRoleProfilesV1']);
     });
 
     it('retains unrelated edits awaiting the existing quiet flush while staging a migration attempt', async () => {

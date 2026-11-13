@@ -43,8 +43,12 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 import type { SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
-import { useSessionAppearancesSupported } from '@/hooks/session/useSessionAppearance';
+import {
+    useSessionAppearancePresentationsSupported,
+    useSessionAppearancesSupported,
+} from '@/hooks/session/useSessionAppearance';
 import { storage } from '@/sync/domains/state/storageStore';
+import { buildSessionParentPlacementProjection } from '@/sync/domains/session/listing/sessionParentPlacement';
 
 import {
     countCollapsedSessionListGroups,
@@ -74,8 +78,13 @@ import { useSessionListSnapshotWhenInactive } from '../surface/useSessionListSna
 import { resolveSessionOrganizationMutationScope, type SessionOrganizationMutationScope } from '@/sync/domains/session/organization/mutationScope';
 
 const EMPTY_SESSION_KEYS: ReadonlyArray<string> = Object.freeze([]);
+const subscribeToNoAppearanceChanges = () => () => undefined;
 const EMPTY_SESSION_LIST_GROUP_ORDER: Readonly<Record<string, ReadonlyArray<string> | undefined>> = Object.freeze({});
 const EMPTY_SESSION_WORKSPACE_ORDER: Readonly<Record<string, ReadonlyArray<string> | undefined>> = Object.freeze({});
+const EMPTY_SESSION_DESCENDANTS = new Map<string, readonly Extract<SessionListViewItem, { type: 'session' }>[]>() as ReadonlyMap<
+    string,
+    readonly Extract<SessionListViewItem, { type: 'session' }>[]
+>;
 
 const useSessionFolderViewModeMutable = useSettingMutable as unknown as (
     name: 'sessionFolderViewModeV1'
@@ -170,6 +179,7 @@ export function useSessionListViewState({
     const workspaceMachineSubtitlesEnabled = useSetting('workspaceMachineSubtitlesEnabled') !== false;
     const [collapsedGroupKeysV1, setCollapsedGroupKeysV1] = useCollapsedGroupKeysMutable('collapsedGroupKeysV1');
     const sessionListDensity = useSetting('sessionListDensity');
+    const sessionLineageAppearancePresetsV1 = useSetting('sessionLineageAppearancePresetsV1');
     const profile = useProfile();
     const machineDisplayById = useMachineDisplayById();
     const renderMachineDisplayById = useSessionListSnapshotWhenInactive(
@@ -184,6 +194,7 @@ export function useSessionListViewState({
         projection: organizationProjection,
     }), [activeOrganizationServerId, organizationProjection]);
     const sessionFoldersDecision = useFeatureDecision('sessions.folders');
+    const sessionLineageAppearanceDecision = useFeatureDecision('sessions.lineageAppearancePresets');
 
     const hideInactiveSessions = hideInactiveSessionsSetting === true;
     const compactSessionView = sessionListDensity === 'cozy' || sessionListDensity === 'narrow';
@@ -194,6 +205,7 @@ export function useSessionListViewState({
     const showPinnedServerBadge = selection.enabled && selectedServerCount > 1;
     const selectable = isTablet;
     const folderActionsEnabled = sessionFoldersDecision?.state === 'enabled';
+    const sessionLineageAppearancePresetsEnabled = sessionLineageAppearanceDecision?.state === 'enabled';
     const sessionFolderViewMode: SessionFolderViewModeV1 = sessionFolderViewModeRaw === 'tree' ? 'tree' : 'off';
     const sessionListSavedFolderSortMode = normalizeSessionListFolderSortMode(sessionListFolderSortModeRaw);
     const sessionListOrderingMode = normalizeSessionListOrderingModeV1(sessionListOrderingModeRaw);
@@ -217,6 +229,7 @@ export function useSessionListViewState({
     const workspaceColorsV1 = organizationListViewState.workspaceColorsV1;
     const workspaceLabelsByLabelKey = storage((state) => state.sessionOrganizationLabelsByLabelKey);
     const sessionAppearancesSupported = useSessionAppearancesSupported(activeOrganizationServerId);
+    const sessionAppearancePresentationsSupported = useSessionAppearancePresentationsSupported(activeOrganizationServerId);
     const currentGroupOrderMap = sessionListGroupOrderV1 ?? EMPTY_SESSION_LIST_GROUP_ORDER;
     const currentWorkspaceOrderMap = sessionWorkspaceOrderV1 ?? EMPTY_SESSION_WORKSPACE_ORDER;
 
@@ -402,18 +415,6 @@ export function useSessionListViewState({
 
     const headerFiltersActive = hasActiveSessionListHeaderFilters(headerFilters);
 
-    const collapsedListItems = React.useMemo(() => {
-        return measureSessionListRenderDerivation(
-            'ui.sessionsList.render.collapsedFiltering',
-            folderPresentedData,
-            () => ({ collapsedGroups: countCollapsedSessionListGroups(collapsedGroupKeysV1) }),
-            () => {
-                if (!folderPresentedData || headerFiltersActive) return folderPresentedData;
-                return filterCollapsedSessionListItems(folderPresentedData, collapsedGroupKeysV1);
-            },
-        );
-    }, [folderPresentedData, headerFiltersActive, collapsedGroupKeysV1]);
-
     const focusedFolderState = useSessionListFocusedFolderState({
         canInvalidateFocusedFolder: sessionListSurfaceDataActive,
         folderViewEnabled,
@@ -421,9 +422,9 @@ export function useSessionListViewState({
     });
 
     const focusedListItems = React.useMemo(() => {
-        if (!folderViewEnabled || !focusedFolderState.focusedFolderId || !collapsedListItems) return collapsedListItems;
-        return filterSessionListItemsByFocusedFolder(collapsedListItems, focusedFolderState.focusedFolderId);
-    }, [collapsedListItems, focusedFolderState.focusedFolderId, folderViewEnabled]);
+        if (!folderViewEnabled || !focusedFolderState.focusedFolderId || !folderPresentedData) return folderPresentedData;
+        return filterSessionListItemsByFocusedFolder(folderPresentedData, focusedFolderState.focusedFolderId);
+    }, [folderPresentedData, focusedFolderState.focusedFolderId, folderViewEnabled]);
 
     const selectionScopeBaseListItems = React.useMemo(() => {
         if (!folderViewEnabled || !focusedFolderState.focusedFolderId || !folderPresentedData) return folderPresentedData;
@@ -438,13 +439,58 @@ export function useSessionListViewState({
         });
     }, [selectionScopeBaseListItems, headerFilters, sessionTagsV1]);
 
-    const filteredListItems = React.useMemo(() => {
+    const filteredUngroupedItems = React.useMemo(() => {
         if (!focusedListItems || !headerFilters) return focusedListItems;
         return filterSessionListItemsForHeaderControls(focusedListItems, {
             ...headerFilters,
             sessionTags: sessionTagsV1 ?? {},
         });
     }, [focusedListItems, headerFilters, sessionTagsV1]);
+
+    const appearanceSnapshot = React.useRef(storage.getState().sessionOrganizationAppearancesBySessionKey);
+    const readAppearances = React.useCallback(() => {
+        if (sessionListSurfaceDataActive) appearanceSnapshot.current = storage.getState().sessionOrganizationAppearancesBySessionKey;
+        return appearanceSnapshot.current;
+    }, [sessionListSurfaceDataActive]);
+    const renderSessionAppearances = React.useSyncExternalStore(
+        sessionListSurfaceDataActive ? storage.subscribe : subscribeToNoAppearanceChanges,
+        readAppearances, readAppearances,
+    );
+    const appearancePresentationSnapshot = React.useRef(storage.getState().sessionOrganizationAppearancePresentationsBySessionKey);
+    const readAppearancePresentations = React.useCallback(() => {
+        if (sessionListSurfaceDataActive) {
+            appearancePresentationSnapshot.current = storage.getState().sessionOrganizationAppearancePresentationsBySessionKey;
+        }
+        return appearancePresentationSnapshot.current;
+    }, [sessionListSurfaceDataActive]);
+    const renderSessionAppearancePresentations = React.useSyncExternalStore(
+        sessionListSurfaceDataActive ? storage.subscribe : subscribeToNoAppearanceChanges,
+        readAppearancePresentations,
+        readAppearancePresentations,
+    );
+    // Parent placement sees every filtered row before group collapse, so a child whose own
+    // group is collapsed still nests under (and is disclosed by) its visible parent.
+    const parentPlacementProjection = React.useMemo(() => filteredUngroupedItems
+        ? buildSessionParentPlacementProjection(filteredUngroupedItems, renderSessionAppearances,
+            headerFiltersActive ? undefined : collapsedGroupKeysV1, sessionFolderAssignmentsBySessionKey,
+            renderSessionAppearancePresentations)
+        : null,
+    [filteredUngroupedItems, renderSessionAppearances, renderSessionAppearancePresentations,
+        headerFiltersActive, collapsedGroupKeysV1, sessionFolderAssignmentsBySessionKey]);
+    const placedListItems = parentPlacementProjection?.items ?? filteredUngroupedItems;
+
+    const collapsedListItems = React.useMemo(() => {
+        return measureSessionListRenderDerivation(
+            'ui.sessionsList.render.collapsedFiltering',
+            placedListItems,
+            () => ({ collapsedGroups: countCollapsedSessionListGroups(collapsedGroupKeysV1) }),
+            () => {
+                if (!placedListItems || headerFiltersActive) return placedListItems;
+                return filterCollapsedSessionListItems(placedListItems, collapsedGroupKeysV1);
+            },
+        );
+    }, [placedListItems, headerFiltersActive, collapsedGroupKeysV1]);
+    const filteredListItems = collapsedListItems;
 
     const folderBreadcrumbRootTitle = React.useMemo(() => {
         if (focusedFolderState.folderBreadcrumbs.length === 0 || !filteredListItems) return null;
@@ -534,12 +580,16 @@ export function useSessionListViewState({
         setWorkspaceColor,
         setSessionAppearance,
         sessionAppearancesSupported,
+        sessionAppearancePresentationsSupported,
         workspaceFaviconsEnabled,
         workspaceMachineSubtitlesEnabled,
         collapsedGroupKeysV1,
         setCollapsedGroupKeysV1,
         compactSessionView,
         compactSessionViewMinimal,
+        sessionListDensity,
+        sessionLineageAppearancePresetsV1,
+        sessionLineageAppearancePresetsEnabled,
         currentUserId,
         selection,
         showServerBadge,
@@ -554,6 +604,7 @@ export function useSessionListViewState({
         focusedListItems: filteredListItems,
         visibleListItems,
         listItems: (visibleListItems ?? []) as Array<SessionListViewItem | (Extract<SessionListViewItem, { type: 'session' }> & { selected?: boolean })>,
+        nestedDescendantsBySessionKey: parentPlacementProjection?.descendantsByParentKey ?? EMPTY_SESSION_DESCENDANTS,
         sessionListIndex,
         sessionListIndexRef,
         reachabilityModels,

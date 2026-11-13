@@ -54,8 +54,13 @@ describe('syncSettings without account encryption material', () => {
         expect(boundary.serverFetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
     });
 
-    it('writes pending plain settings and preserves plain secrets through local projection', async () => {
-        serve({ t: 'plain', v: { analyticsOptOut: false, secrets: [secret] } });
+    it('writes pending plain settings and preserves newer lineage preset/toggle keys through the released 0.2.21 raw-baseline merge', async () => {
+        const retained = {
+            secrets: [secret],
+            featureToggles: { 'sessions.lineageAppearancePresets': true },
+            sessionLineageAppearancePresetsV1: { future: 'keep', parent: { density: 'cozy' } },
+        };
+        serve({ t: 'plain', v: { analyticsOptOut: false, ...retained } });
         const encryption = await createEncryptionFromAuthCredentials(credentials);
         const pendingSettings: Partial<Settings> = { analyticsOptOut: true };
         savePendingSettings(pendingSettings);
@@ -65,10 +70,10 @@ describe('syncSettings without account encryption material', () => {
 
         const post = boundary.serverFetch.mock.calls.find(([, init]) => init?.method === 'POST');
         expect(JSON.parse(String(post?.[1]?.body))).toEqual({
-            content: { t: 'plain', v: { analyticsOptOut: true, secrets: [secret] } },
+            content: { t: 'plain', v: { analyticsOptOut: true, ...retained } },
             expectedVersion: 4,
         });
-        expect(storage.getState().settings).toMatchObject({ analyticsOptOut: true, secrets: [secret] });
+        expect(storage.getState().settings).toMatchObject({ analyticsOptOut: true, ...retained });
         expect(storage.getState().settingsVersion).toBe(5);
         expect(clearPendingSettings).toHaveBeenCalledWith({});
     });

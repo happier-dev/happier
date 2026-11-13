@@ -118,6 +118,10 @@
       "types": "./dist/firstPartyRuntime/selfHostServerEnv.d.ts",
       "default": "./dist/firstPartyRuntime/selfHostServerEnv.js"
     },
+    "./firstPartyRuntime/serverStartupReceipt": {
+      "types": "./dist/firstPartyRuntime/serverStartupReceipt.d.ts",
+      "default": "./dist/firstPartyRuntime/serverStartupReceipt.js"
+    },
     "./firstPartyRuntime/serverRuntimeArtifactLayout": {
       "types": "./dist/firstPartyRuntime/serverRuntimeArtifactLayout.d.ts",
       "default": "./dist/firstPartyRuntime/serverRuntimeArtifactLayout.js"

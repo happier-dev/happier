@@ -1,4 +1,11 @@
 import React from 'react';
+import { readSessionOriginV1, readSessionOriginViaV1, type AssignableSessionRole, type AssignableSessionRoleProfileV1, type SessionRole } from '@happier-dev/protocol';
+import { resolveAssignableSessionRoleProfilesForServer, setSessionRoleWithDelivery, type SessionRoleDeliveryResult } from '@/sync/ops/sessionRoleAssignment';
+import { resolveAssignableSessionRoleProfileDisplayName, resolveSessionRoleDisplayName } from '@/components/sessions/roles/sessionRoleLabels';
+import { listUiAssignableSessionRoleProfiles } from '@/components/sessions/roles/sessionRoleProfileOrder';
+import { presentSessionParentPlacementDeliveryResult, showSessionParentPicker } from '@/components/sessions/selection/showSessionParentPicker';
+import { setSessionParentPlacementForServerWithDelivery } from '@/sync/ops/sessionOrganization/setSessionAppearance';
+import { sessionChildrenCollapseKey } from '@/sync/domains/session/listing/sessionParentPlacement';
 import { Animated, Platform, Pressable, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import { GestureDetector, Swipeable, type ComposedGesture, type GestureType } from 'react-native-gesture-handler';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -25,7 +32,11 @@ import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 import { SessionRowAttentionIndicator } from './row/SessionRowAttentionIndicator';
 import type { SessionRowAttentionState, SessionRowPresentation } from './row/resolveSessionRowPresentation';
-import type { SessionListRowModel } from './row/sessionListRowModelTypes';
+import type { SessionListRowModel, SessionListRowSessionItem } from './row/sessionListRowModelTypes';
+import {
+    formatExecutionRunDeliveryState,
+    formatExecutionRunTurnState,
+} from '@/components/sessions/runs/executionRunLinkStatusLabels';
 import {
     normalizeSessionListActiveColorMode,
     resolveSessionRowTitleColorRole,
@@ -35,7 +46,6 @@ import {
     SESSION_LIST_ROW_HEIGHT_COMPACT,
     SESSION_LIST_ROW_HEIGHT_DEFAULT,
     SESSION_LIST_ROW_HEIGHT_MINIMAL,
-    SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE_PHONE,
 } from './sessionListRowHeights';
 import {
     SESSION_LIST_ROW_CORNER_RADIUS,
@@ -43,6 +53,8 @@ import {
     SESSION_LIST_ROW_IDENTITY_METRICS,
     SESSION_LIST_ROW_STATUS_TEXT_METRICS,
     SESSION_LIST_ROW_TITLE_TEXT_METRICS,
+    resolveSessionListRowHeight,
+    resolveSessionListRowInteractiveTargetSize,
     shouldUseReadableNativePhoneMinimalSessionRow,
 } from './sessionListRowDensity';
 import { planSessionTagDisplay } from './sessionTagPlacement';
@@ -54,6 +66,7 @@ import { resolveSessionAppearanceColor } from '@/sync/domains/session/organizati
 import { formatSessionAttentionReminderDateTime } from './row/actionMenu/sessionAttentionReminderAction';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
 import { executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
+import { stopLinkedExecutionRunBeforeArchive } from '@/components/sessions/actions/stopLinkedExecutionRunBeforeArchive';
 import {
     SESSION_ACTION_ARCHIVE_ID,
     SESSION_ACTION_PIN_ID,
@@ -81,6 +94,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
 import { resolveMachineTargetForSessionFromState } from '@/sync/ops/sessionMachineTarget';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import type { AvatarStyleId } from '@/sync/domains/settings/registry/account/avatarStyleSetting';
 
 const SESSION_LIST_MINIMAL_IDENTITY_GAP = 8;
 const CONTEXT_MENU_PRESS_SUPPRESSION_TIMEOUT_MS = 600;
@@ -89,6 +103,68 @@ const SESSION_IDENTITY_SKELETON_ANIMATION_MS = 900;
 const SESSION_FOLDER_ROW_CHROME_INDENT_BASE = 38;
 const SESSION_FOLDER_ROW_CHROME_INDENT_STEP = 12;
 const SESSION_FOLDER_ROW_INDENT_CAP = 3;
+const SESSION_PLACEMENT_NEST_UNDER_ID = 'sessionPlacement.nestUnder';
+const SESSION_PLACEMENT_MAKE_STANDALONE_ID = 'sessionPlacement.makeStandalone';
+const SESSION_ROLE_MENU_ID = 'sessionRole';
+const SESSION_ROLE_NONE_ID = `${SESSION_ROLE_MENU_ID}:none`;
+
+/** `undefined` means the item is not a role choice; `null` clears the role. */
+function resolveSessionRoleMenuSelection(
+    itemId: string,
+    profiles: readonly AssignableSessionRoleProfileV1[],
+): AssignableSessionRole | null | undefined {
+    if (itemId === SESSION_ROLE_NONE_ID) return null;
+    if (!itemId.startsWith(`${SESSION_ROLE_MENU_ID}:`)) return undefined;
+    const value = itemId.slice(SESSION_ROLE_MENU_ID.length + 1);
+    return profiles.find((profile) => profile.id === value)?.id;
+}
+
+/** The badge and the queued instruction must not silently disagree: surface either failure honestly. */
+function presentSessionRoleDeliveryResult(result: SessionRoleDeliveryResult): void {
+    if (result.ok) return;
+    if (result.stage === 'settings') {
+        Modal.alert(t('common.error'), t('sessionRole.profilesUnavailable'));
+        return;
+    }
+    // Nothing changed in either case (the menu never resumes, so `not_current` is defensive).
+    if (result.stage === 'metadata' || result.stage === 'not_current') {
+        Modal.alert(t('common.error'), t('sessionRole.updateFailed'));
+        return;
+    }
+    // Neutral for assign, reassign, and clear alike: the change is saved, the instruction is pending.
+    Modal.alert(t('common.error'), t('sessionRole.changeNotDelivered'), [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('common.retry'), onPress: () => { void result.retry().then(presentSessionRoleDeliveryResult); } },
+    ]);
+}
+
+function buildSessionRoleMenuItem(
+    current: SessionRole | null,
+    profiles: readonly AssignableSessionRoleProfileV1[],
+    iconColor: string,
+): DropdownMenuItem {
+    const check = <Icon name="check" size={16} color={iconColor} />;
+    const choice = (id: string, title: string, selected: boolean): DropdownMenuItem => ({
+        id,
+        title,
+        ...(selected ? { rightElement: check } : {}),
+    });
+    return {
+        id: SESSION_ROLE_MENU_ID,
+        title: t('sessionRole.setRole'),
+        icon: <Icon name="user-circle" size={16} color={iconColor} />,
+        submenu: {
+            items: [
+                ...profiles.map((profile) => choice(
+                    `${SESSION_ROLE_MENU_ID}:${profile.id}`,
+                    resolveAssignableSessionRoleProfileDisplayName(profile),
+                    current === profile.id,
+                )),
+                choice(SESSION_ROLE_NONE_ID, t('sessionRole.none'), current === null),
+            ],
+        },
+    };
+}
 const SESSION_DELETE_DRAFT_MENU_ITEM_ID = 'session-draft.delete';
 
 let sessionForkStrategyFlowModulePromise:
@@ -136,6 +212,7 @@ type SessionItemBaseProps = Readonly<{
     tagsEnabled?: boolean;
     /** The list's canonical session-colour writer; absent hides the row's colour action. */
     onSetSessionAppearance?: SetSessionAppearance | null;
+    appearancePresentationSupported?: boolean;
     selected?: boolean;
     isFirst?: boolean;
     isLast?: boolean;
@@ -145,6 +222,7 @@ type SessionItemBaseProps = Readonly<{
     activityTimeMode?: SessionItemActivityTimeMode;
     compact?: boolean;
     compactMinimal?: boolean;
+    avatarStyle?: AvatarStyleId | null;
     reorderHandleGesture?: GestureType | ComposedGesture;
     isBeingDragged?: boolean;
     nativeInlineDragEnabled?: boolean;
@@ -152,6 +230,15 @@ type SessionItemBaseProps = Readonly<{
     onNativeContextMenuOpenChange?: (next: boolean) => void;
     rowAttentionAnimationEnabled?: boolean;
     folderDepth?: number;
+    agentStarted?: boolean;
+    role?: SessionRole | null;
+    roleName?: string | null;
+    roleColor?: `#${string}` | null;
+    parentSessionId?: string;
+    nestingDepth?: number;
+    hasChildSessions?: boolean;
+    childSessionsCollapsed?: boolean;
+    onToggleSessionChildren?: (key: string) => void;
     onMoveDown?: () => void;
     onMoveToFolder?: () => void;
     onMoveToWorkspaceRoot?: () => void;
@@ -160,6 +247,7 @@ type SessionItemBaseProps = Readonly<{
         replayEnabled: boolean;
         executionRunsEnabled: boolean;
     }>;
+    nestedDescendantItems?: readonly SessionListRowSessionItem[];
 }>;
 
 export type SessionItemProps = SessionItemBaseProps & Readonly<{
@@ -172,6 +260,7 @@ type SessionItemRenderProps = Omit<SessionItemBaseProps, 'activityTimeMode' | 's
     sessionNameResolved: string;
     sessionSubtitle: string;
     pendingCount: number;
+    executionRunStatus: SessionListRowModel['executionRunStatus'];
     hasUnreadMessages: boolean;
     draft: SessionListRowModel['draft'];
     reminder: SessionListRowModel['reminder'];
@@ -261,9 +350,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     sessionItemMinimal: {
         height: SESSION_LIST_ROW_HEIGHT_MINIMAL,
         paddingHorizontal: 8,
-    },
-    sessionItemMinimalNativePhone: {
-        height: SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE_PHONE,
     },
     sessionItemSelected: {
         backgroundColor: theme.colors.surface.selected,
@@ -505,6 +591,53 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
         ...Typography.default('semiBold'),
     },
+    // Leading role label inside the card: it shifts avatar/title right but never the card edge.
+    roleBadge: {
+        flexShrink: 0,
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginRight: 10,
+        borderRadius: 999,
+        paddingHorizontal: 7,
+        paddingVertical: 2,
+        borderWidth: 1,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset,
+    },
+    roleBadgeCompact: {
+        marginRight: 8,
+        paddingHorizontal: 6,
+        paddingVertical: 1,
+    },
+    roleBadgeMinimal: {
+        marginRight: 6,
+    },
+    roleBadgeText: {
+        fontSize: 10,
+        color: theme.colors.text.primary,
+        ...Typography.default('semiBold'),
+    },
+    roleBadgeTextCompact: {
+        fontSize: 9,
+    },
+    roleBadgeColorDot: {
+        width: 7,
+        height: 7,
+        borderRadius: 999,
+        marginRight: 4,
+    },
+    // Final trailing control; minimal rows stretch it to the full row height.
+    childrenToggle: {
+        minWidth: 44,
+        minHeight: 44,
+        marginLeft: 4,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    childrenToggleMinimal: {
+        minHeight: 0,
+        alignSelf: 'stretch',
+    },
     rightArea: {
         marginLeft: 8,
         flexDirection: 'row',
@@ -623,6 +756,29 @@ const stylesheet = StyleSheet.create((theme) => ({
         minHeight: 16,
         gap: 4,
     },
+    executionRunStatusRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        minHeight: 16,
+        gap: 4,
+        overflow: 'hidden',
+    },
+    executionRunIndicator: {
+        minWidth: 0,
+        maxWidth: '50%',
+        flexShrink: 1,
+        borderRadius: 999,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset,
+        paddingHorizontal: 5,
+        paddingVertical: 1,
+    },
+    executionRunIndicatorText: {
+        ...SESSION_LIST_ROW_STATUS_TEXT_METRICS.default,
+        color: theme.colors.text.secondary,
+        ...Typography.default('semiBold'),
+    },
     secondaryLineRowMinimal: {
         minHeight: 12,
         gap: 3,
@@ -710,21 +866,34 @@ const SessionItemContent = React.memo(
         secondaryLineMode,
         compact,
         compactMinimal,
+        avatarStyle,
+        appearancePresentationSupported,
         reorderHandleGesture,
         isBeingDragged,
         nativeInlineDragEnabled,
         nativeContextMenuOpen,
         onNativeContextMenuOpenChange,
         folderDepth,
+        agentStarted,
+        role,
+        roleName,
+        roleColor,
+        parentSessionId,
+        nestingDepth,
+        hasChildSessions,
+        childSessionsCollapsed,
+        onToggleSessionChildren,
         onMoveDown,
         onMoveToFolder,
         onMoveToWorkspaceRoot,
         onMoveUp,
         forkActionContext,
+        nestedDescendantItems,
         sessionStatus,
         sessionNameResolved,
         sessionSubtitle,
         pendingCount,
+        executionRunStatus,
         hasUnreadMessages,
         draft,
         reminder,
@@ -801,6 +970,14 @@ const SessionItemContent = React.memo(
                 sessionStatus.isConnected,
             ],
         );
+        const nestedDescendantTargets = React.useMemo(() => (nestedDescendantItems ?? []).map((item) => (
+            createSessionActionTarget({
+                session: item.session,
+                serverId: item.serverId ?? null,
+                currentUserId: currentUserId ?? null,
+                isPinned: Boolean(item.pinned),
+            })
+        )), [currentUserId, nestedDescendantItems]);
         const isMinimal = Boolean(compact && compactMinimal);
         const canArchiveSession = sessionActionTarget.canArchive;
         const swipeEnabled = Platform.OS !== 'web' && nativeInlineDragEnabled !== true && canArchiveSession;
@@ -809,6 +986,9 @@ const SessionItemContent = React.memo(
         const [tagMenuOpen, setTagMenuOpen] = React.useState(false);
         const [tagMenuEverOpened, setTagMenuEverOpened] = React.useState(false);
         const [moreMenuOpen, setMoreMenuOpen] = React.useState(false);
+        const [assignableRoleProfiles, setAssignableRoleProfiles] = React.useState<readonly AssignableSessionRoleProfileV1[]>(
+            () => listUiAssignableSessionRoleProfiles(null),
+        );
         const copyFeedback = useTemporaryCopyFeedback();
         const [rowWidth, setRowWidth] = React.useState<number | null>(null);
         const isWeb = Platform.OS === 'web';
@@ -820,6 +1000,15 @@ const SessionItemContent = React.memo(
             isTablet,
             platform: Platform.OS,
         });
+        const rowHeight = resolveSessionListRowHeight({
+            compact: Boolean(compact),
+            compactMinimal: Boolean(compactMinimal),
+            isTablet,
+            platform: Platform.OS,
+        });
+        const nativeInteractiveTargetSize = isNativeMobile
+            ? resolveSessionListRowInteractiveTargetSize(Platform.OS)
+            : null;
         const showRowActions = isWeb && (isRowHovered || isActionsHovered || tagMenuOpen || moreMenuOpen || isBeingDragged === true);
         const rowActionIconColor = theme.colors.text.secondary;
         const resolveSessionDebugInformation = React.useCallback(() => {
@@ -905,6 +1094,28 @@ const SessionItemContent = React.memo(
             return items;
         }, [draft, onDeleteDraft, rowActionIconColor, showForkAction]);
         const handleSelectCustomMenuItem = React.useCallback(async (itemId: string) => {
+            if (serverId && itemId === SESSION_PLACEMENT_NEST_UNDER_ID) {
+                showSessionParentPicker(serverId, resolvedSession.id);
+                return;
+            }
+            if (serverId && itemId === SESSION_PLACEMENT_MAKE_STANDALONE_ID) {
+                // Presentation placement only: provenance, role, identity, and runtime control are untouched.
+                presentSessionParentPlacementDeliveryResult(await setSessionParentPlacementForServerWithDelivery({
+                    serverId,
+                    sessionId: resolvedSession.id,
+                    placement: { kind: 'topLevel' },
+                }));
+                return;
+            }
+            const selectedRole = resolveSessionRoleMenuSelection(itemId, assignableRoleProfiles);
+            if (selectedRole !== undefined) {
+                presentSessionRoleDeliveryResult(await setSessionRoleWithDelivery({
+                    sessionId: resolvedSession.id,
+                    role: selectedRole,
+                    serverId: serverId ?? null,
+                }));
+                return;
+            }
             if (itemId === SESSION_DELETE_DRAFT_MENU_ITEM_ID) {
                 await confirmDeleteDraft();
                 return;
@@ -918,7 +1129,7 @@ const SessionItemContent = React.memo(
             if (copied) {
                 copyFeedback.markCopied(resolvedSession.id);
             }
-        }, [confirmDeleteDraft, copyFeedback, openForkFlow, resolvedSession.id, resolveSessionDebugInformation]);
+        }, [assignableRoleProfiles, confirmDeleteDraft, copyFeedback, openForkFlow, resolvedSession.id, resolveSessionDebugInformation, serverId]);
         const supportsPin = typeof onTogglePinned === 'function';
         const supportsTag = tagsEnabled === true && typeof onSetTags === 'function';
         const handleTogglePinnedAction = React.useCallback(() => {
@@ -942,6 +1153,16 @@ const SessionItemContent = React.memo(
         const contextMenuAnchorRef = React.useRef<View>(null);
         const [uncontrolledContextMenuOpen, setUncontrolledContextMenuOpen] = React.useState(false);
         const contextMenuOpen = nativeContextMenuOpen ?? uncontrolledContextMenuOpen;
+        const roleMenuOpen = moreMenuOpen || contextMenuOpen;
+        React.useEffect(() => {
+            if (!roleMenuOpen) return;
+            let cancelled = false;
+            setAssignableRoleProfiles(listUiAssignableSessionRoleProfiles(null));
+            void resolveAssignableSessionRoleProfilesForServer(serverId ?? null).then((profiles) => {
+                if (!cancelled && profiles) setAssignableRoleProfiles(profiles);
+            });
+            return () => { cancelled = true; };
+        }, [roleMenuOpen, serverId]);
         const setContextMenuOpen = onNativeContextMenuOpenChange ?? setUncontrolledContextMenuOpen;
         const trailingMenuItems = React.useMemo(() => (contextMenuOpen || moreMenuOpen) ? [createSessionCopyMenuItem({
             iconColor: rowActionIconColor,
@@ -1101,6 +1322,43 @@ const SessionItemContent = React.memo(
             onSetSessionAppearance,
         });
         const appearanceStripeColor = resolveSessionAppearanceColor(appearanceColor, theme);
+        const roleDisplayName = role ? resolveSessionRoleDisplayName({
+            role,
+            snapshotName: roleName,
+            displayName: roleName,
+        }) : null;
+        const creatorSessionId = readSessionOriginV1(resolvedSession.metadata)?.creatorSessionId;
+        const originVia = readSessionOriginViaV1(resolvedSession.metadata);
+        const originTitle = originVia?.kind === 'execution_run'
+            ? t('session.subagents.kind.execution_run')
+            : originVia?.kind === 'team_assembly'
+                ? t('visibleAgents.teamGroupTitle')
+                : creatorSessionId
+                    ? t('sessionLineage.createdBy', { sessionId: creatorSessionId })
+                    : '';
+        const originSubtitle = originVia && creatorSessionId
+            ? t('sessionLineage.createdBy', { sessionId: creatorSessionId })
+            : undefined;
+        const presentationMenuItems = React.useMemo((): DropdownMenuItem[] => [
+            ...leadingMenuItems,
+            ...(creatorSessionId ? [{ id: 'lineage.provenance', title: originTitle,
+                subtitle: originSubtitle, disabled: true }] : []),
+        ], [leadingMenuItems, creatorSessionId, originSubtitle, originTitle]);
+        const isNestedUnderSession = typeof parentSessionId === 'string' && parentSessionId.length > 0;
+        const placementMenuItem = React.useMemo((): DropdownMenuItem | null => {
+            if (!appearanceMenu || !appearancePresentationSupported || !serverId) return null;
+            return isNestedUnderSession
+                ? {
+                    id: SESSION_PLACEMENT_MAKE_STANDALONE_ID,
+                    title: t('sessionLineage.makeStandalone'),
+                    subtitle: t('sessionLineage.standaloneHelper'),
+                }
+                : { id: SESSION_PLACEMENT_NEST_UNDER_ID, title: t('sessionLineage.nestUnder') };
+        }, [appearanceMenu, appearancePresentationSupported, isNestedUnderSession, serverId]);
+        const roleMenuItem = React.useMemo(
+            () => roleMenuOpen ? buildSessionRoleMenuItem(role ?? null, assignableRoleProfiles, rowActionIconColor) : null,
+            [assignableRoleProfiles, role, roleMenuOpen, rowActionIconColor],
+        );
         const closeRowMenus = React.useCallback(() => {
             setMoreMenuOpen(false);
             setContextMenuOpen(false);
@@ -1126,7 +1384,9 @@ const SessionItemContent = React.memo(
             onSetTags,
             onTogglePinned,
             onMoveToFolder,
-            leadingMenuItems,
+            leadingMenuItems: presentationMenuItems,
+            placementMenuItem,
+            roleMenuItem,
             trailingMenuItems,
             onSelectCustomMenuItem: handleSelectCustomMenuItem,
             selectionModeAvailable: Boolean(resolvedSelectionKey),
@@ -1142,6 +1402,8 @@ const SessionItemContent = React.memo(
             archiving: sessionStatus.state === 'archiving',
             appearance: appearanceMenu,
             closeMenus: closeRowMenus,
+            nestedDescendantTargets,
+            beforeArchiveNestedDescendant: stopLinkedExecutionRunBeforeArchive,
         });
 
         const handleSwipeAction = React.useCallback(async () => {
@@ -1191,6 +1453,12 @@ const SessionItemContent = React.memo(
         const rowDensity = isMinimal ? 'minimal' : compact ? 'compact' : 'default';
         const effectiveSecondaryLineMode = rowPresentation.secondaryLine === 'path' ? 'path' : 'status';
         const statusLineText = rowPresentation.statusTextKey ? t(rowPresentation.statusTextKey) : sessionStatus.statusText;
+        const executionRunTurnLabel = executionRunStatus
+            ? formatExecutionRunTurnState(executionRunStatus.turnState, statusLineText)
+            : null;
+        const executionRunDeliveryLabel = executionRunStatus
+            ? formatExecutionRunDeliveryState(executionRunStatus.deliveryState)
+            : null;
         const rowStatusColor = rowPresentation.backgroundActivityStatusLine === true
             ? theme.colors.text.secondary
             : resolveSessionRowAttentionStateColor(rowAttentionState, theme);
@@ -1216,11 +1484,11 @@ const SessionItemContent = React.memo(
         const shouldUsePathSubtitleStartEllipsis = shouldShowPathSecondaryLine && effectiveSubtitleEllipsizeMode === 'head';
         const shouldUseWebPathSubtitleStartEllipsis = shouldUsePathSubtitleStartEllipsis && isWeb;
         const shouldShowIdentitySubtitleSkeleton = !isMinimal && isSessionIdentityLoading && requestedSecondaryLineMode === 'path';
-        const showStandardSecondaryLine = !isMinimal && (
+        const showStandardSecondaryLine = executionRunStatus !== null || (!isMinimal && (
             shouldShowIdentitySubtitleSkeleton
             || shouldShowStatusSecondaryLine
             || shouldShowPathSecondaryLine
-        );
+        ));
         const shouldEmphasizeTitle = rowPresentation.titleTone === 'emphasized';
         const shouldMuteTitle = rowPresentation.titleTone === 'quiet';
         const trailingAttentionIndicator = isMinimal ? rowPresentation.attentionIndicator : 'none';
@@ -1268,9 +1536,8 @@ const SessionItemContent = React.memo(
         });
         const avatarSize = identityMetrics.slotSize;
         const agentLogoSize = identityMetrics.agentLogoSize;
-        const normalizedFolderDepth = typeof folderDepth === 'number' && Number.isFinite(folderDepth)
-            ? Math.max(0, Math.min(SESSION_FOLDER_ROW_INDENT_CAP, Math.trunc(folderDepth)))
-            : 0;
+        const normalizedFolderDepth = Math.max(0, Math.min(SESSION_FOLDER_ROW_INDENT_CAP, Math.trunc(folderDepth ?? 0)))
+            + Math.max(0, Math.min(SESSION_FOLDER_ROW_INDENT_CAP, Math.trunc(nestingDepth ?? 0)));
         const identityTitleLoadingStyle = isMinimal
             ? styles.sessionTitleLoadingMinimal
             : compact
@@ -1343,7 +1610,7 @@ const SessionItemContent = React.memo(
                     isLast ? styles.sessionItemLast : null,
                     compact ? styles.sessionItemCompact : null,
                     isMinimal ? styles.sessionItemMinimal : null,
-                    useReadableNativePhoneMinimalRow ? styles.sessionItemMinimalNativePhone : null,
+                    { height: rowHeight },
                     selected || rowSelection.isSelected ? styles.sessionItemSelected : null,
                     embedded && !embeddedIsLast ? styles.embeddedSeparator : null,
                 ]}
@@ -1370,6 +1637,25 @@ const SessionItemContent = React.memo(
                             { backgroundColor: appearanceStripeColor },
                         ]}
                     />
+                ) : null}
+                {role ? (
+                    <View
+                        style={[
+                            styles.roleBadge,
+                            compact ? styles.roleBadgeCompact : null,
+                            isMinimal ? styles.roleBadgeMinimal : null,
+                            roleColor ? { borderColor: roleColor } : null,
+                        ]}
+                    >
+                        {roleColor ? <View style={[styles.roleBadgeColorDot, { backgroundColor: roleColor }]} /> : null}
+                        <Text
+                            testID={`session-role-badge-${resolvedSession.id}`}
+                            style={[styles.roleBadgeText, compact || isMinimal ? styles.roleBadgeTextCompact : null]}
+                            numberOfLines={1}
+                        >
+                            {roleDisplayName}
+                        </Text>
+                    </View>
                 ) : null}
                 {shouldRenderSessionListIdentity || shouldRenderSelectionCheckbox ? (
                     <View
@@ -1410,10 +1696,12 @@ const SessionItemContent = React.memo(
                             <SessionListIdentity
                                 session={resolvedSession}
                                 display={resolvedSessionListIdentityDisplay}
+                                avatarStyle={avatarStyle ?? undefined}
                                 avatarSize={avatarSize}
                                 agentLogoSize={agentLogoSize}
                                 monochrome={shouldRenderAvatarMonochrome}
                                 color={sessionTitleColor}
+                                agentStarted={agentStarted}
                             />
                         )}
                         {!isMinimal && shouldRenderSessionListAvatar && pendingBadge ? (
@@ -1520,6 +1808,41 @@ const SessionItemContent = React.memo(
                                     { opacity: identitySkeletonOpacity },
                                 ]}
                             />
+                        ) : executionRunStatus && executionRunTurnLabel && executionRunDeliveryLabel ? (
+                            <View
+                                testID={`session-list-execution-run-status-${resolvedSession.id}`}
+                                style={[
+                                    styles.executionRunStatusRow,
+                                    isMinimal ? styles.secondaryLineRowMinimal : null,
+                                ]}
+                            >
+                                <View style={styles.executionRunIndicator}>
+                                    <Text
+                                        testID={`session-list-turn-status-${resolvedSession.id}`}
+                                        style={[
+                                            styles.executionRunIndicatorText,
+                                            compact ? styles.statusTextCompact : null,
+                                            isMinimal ? styles.statusTextMinimal : null,
+                                        ]}
+                                        numberOfLines={1}
+                                    >
+                                        {executionRunTurnLabel}
+                                    </Text>
+                                </View>
+                                <View style={styles.executionRunIndicator}>
+                                    <Text
+                                        testID={`session-list-delivery-status-${resolvedSession.id}`}
+                                        style={[
+                                            styles.executionRunIndicatorText,
+                                            compact ? styles.statusTextCompact : null,
+                                            isMinimal ? styles.statusTextMinimal : null,
+                                        ]}
+                                        numberOfLines={1}
+                                    >
+                                        {executionRunDeliveryLabel}
+                                    </Text>
+                                </View>
+                            </View>
                         ) : effectiveSecondaryLineMode === 'status' ? (
                             <View
                                 testID={`session-list-status-subtitle-${resolvedSession.id}-${rowAttentionState}`}
@@ -1752,6 +2075,25 @@ const SessionItemContent = React.memo(
                         </View>
                     ) : null}
                 </View>
+                {hasChildSessions && onToggleSessionChildren ? (
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityState={{ expanded: !childSessionsCollapsed }}
+                        accessibilityLabel={t(childSessionsCollapsed ? 'sessionLineage.expand' : 'sessionLineage.collapse')}
+                        testID={`session-children-toggle-${resolvedSession.id}`}
+                        onPress={event => { event.stopPropagation(); onToggleSessionChildren(sessionChildrenCollapseKey(serverId ?? '', resolvedSession.id)); }}
+                        style={[
+                            styles.childrenToggle,
+                            isMinimal ? styles.childrenToggleMinimal : null,
+                            nativeInteractiveTargetSize === null ? null : {
+                                minWidth: nativeInteractiveTargetSize,
+                                minHeight: nativeInteractiveTargetSize,
+                            },
+                        ]}
+                    >
+                        <Icon name={childSessionsCollapsed ? 'caret-right' : 'caret-down'} size={16} color={theme.colors.text.secondary} />
+                    </Pressable>
+                ) : null}
             </Pressable>
         );
 
@@ -1900,15 +2242,25 @@ function SessionItemFromRowModel(props: SessionItemProps & { rowModel: SessionLi
             secondaryLineMode={itemProps.secondaryLineMode ?? rowModel.secondaryLineMode}
             compact={itemProps.compact ?? rowModel.compact}
             compactMinimal={itemProps.compactMinimal ?? rowModel.compactMinimal}
+            appearancePresentationSupported={itemProps.appearancePresentationSupported ?? rowModel.appearancePresentationSupported}
             folderDepth={itemProps.folderDepth ?? rowModel.folder.depth}
             sessionStatus={rowModel.status}
             sessionNameResolved={rowModel.title}
             sessionSubtitle={itemProps.subtitleOverride ?? rowModel.subtitle}
             pendingCount={rowModel.pendingCount}
+            executionRunStatus={rowModel.executionRunStatus}
             hasUnreadMessages={rowModel.hasUnreadMessages}
             draft={rowModel.draft}
             reminder={rowModel.reminder}
             appearanceColor={rowModel.appearanceColor}
+            agentStarted={rowModel.agentStarted}
+            role={rowModel.role}
+            roleName={rowModel.roleName}
+            roleColor={rowModel.roleColor}
+            parentSessionId={rowModel.parentSessionId}
+            nestingDepth={rowModel.nestingDepth}
+            hasChildSessions={rowModel.hasChildren}
+            childSessionsCollapsed={rowModel.childrenCollapsed}
             agentActivityLabel={rowModel.agentActivityLabel}
             isSessionIdentityLoading={rowModel.isIdentityLoading}
             activityTimeLabel={rowModel.activity.label}

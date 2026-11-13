@@ -8,6 +8,17 @@
  */
 
 import os from 'node:os';
+import {
+    ExecutionRunLinkV1Schema,
+    SessionOriginV1Schema,
+    StandaloneSessionPromptV1Schema,
+    buildStandaloneSessionPromptSnapshotV1,
+    readSessionRoleV1,
+    SessionRoleV1Schema,
+    type ExecutionRunLinkV1,
+    type SessionOriginV1,
+    type SessionRoleV1,
+} from '@happier-dev/protocol';
 import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import { resolve } from 'node:path';
 
@@ -82,12 +93,21 @@ export interface CreateSessionMetadataOptions {
     modelUpdatedAt?: number;
     /** Generic ACP transport marker for sessions that run through an ACP backend. */
     acpProviderId?: string;
+    /**
+     * Account settings already loaded by a terminal-started runner; the source of its standalone
+     * prompt snapshot. Daemon starts receive the text through the child environment instead.
+     */
+    accountSettings?: Readonly<Record<string, unknown>> | null;
 }
 
 function consumeSessionEnv(
     name:
         | 'HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON'
         | 'HAPPIER_SESSION_MCP_SELECTION_JSON'
+        | 'HAPPIER_SESSION_ROLE_V1_JSON'
+        | 'HAPPIER_SESSION_ORIGIN_V1_JSON'
+        | 'HAPPIER_EXECUTION_RUN_LINK_V1_JSON'
+        | 'HAPPIER_STANDALONE_SESSION_PROMPT_V1_JSON'
         | typeof HAPPIER_SESSION_CONNECTED_SERVICE_BROKER_SELECTION_IDENTITY_ENV_KEY
         | typeof HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY
         | typeof HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY,
@@ -95,6 +115,29 @@ function consumeSessionEnv(
     const raw = process.env[name];
     delete process.env[name];
     return typeof raw === 'string' && raw.trim().length > 0 ? raw : null;
+}
+
+/** Unknown or malformed roles seed no role. */
+function parseSessionRoleV1Json(raw: string | null): SessionRoleV1 | null {
+    if (raw === null) return null;
+    try {
+        // Keep the exact assignment snapshot; unknown or malformed roles seed no role.
+        const parsed = SessionRoleV1Schema.safeParse(JSON.parse(raw));
+        return parsed.success && readSessionRoleV1({ sessionRoleV1: parsed.data }) ? parsed.data : null;
+    } catch {
+        return null;
+    }
+}
+
+/** Parses one daemon-seeded JSON value; malformed or newer values seed nothing. */
+function parseSeededJson<T>(raw: string | null, schema: Readonly<{ safeParse: (value: unknown) => { success: true; data: T } | { success: false } }>): T | null {
+    if (raw === null) return null;
+    try {
+        const parsed = schema.safeParse(JSON.parse(raw));
+        return parsed.success ? parsed.data : null;
+    } catch {
+        return null;
+    }
 }
 
 function parseSessionConfigOptionOverridesFromEnvironment(): ReturnType<typeof AcpConfigOptionOverridesV1Schema.parse> | null {
@@ -169,6 +212,14 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
     const profileIdEnv = process.env.HAPPIER_SESSION_PROFILE_ID;
     const profileId = profileIdEnv === undefined ? undefined : (profileIdEnv.trim() || null);
     const mcpSelection = parseSessionMcpSelectionV1Json(consumeSessionEnv('HAPPIER_SESSION_MCP_SELECTION_JSON'));
+    const sessionRoleV1 = parseSessionRoleV1Json(consumeSessionEnv('HAPPIER_SESSION_ROLE_V1_JSON'));
+    const sessionOriginV1: SessionOriginV1 | null = parseSeededJson(consumeSessionEnv('HAPPIER_SESSION_ORIGIN_V1_JSON'), SessionOriginV1Schema);
+    const executionRunLinkV1: ExecutionRunLinkV1 | null = parseSeededJson(consumeSessionEnv('HAPPIER_EXECUTION_RUN_LINK_V1_JSON'), ExecutionRunLinkV1Schema);
+    const seededStandalonePrompt = parseSeededJson(consumeSessionEnv('HAPPIER_STANDALONE_SESSION_PROMPT_V1_JSON'), StandaloneSessionPromptV1Schema);
+    const standaloneSessionPromptSnapshotV1 = buildStandaloneSessionPromptSnapshotV1({
+        settings: seededStandalonePrompt ? { standaloneSessionPromptV1: seededStandalonePrompt } : opts.accountSettings ?? null,
+        metadata: sessionRoleV1 ? { sessionRoleV1 } : {},
+    });
     const connectedServices = parseSessionConnectedServicesBindingsJson(
         consumeSessionEnv(HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY),
     );
@@ -238,6 +289,10 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
               }
             : {}),
         ...(mcpSelection ? { mcpSelectionV1: mcpSelection } : {}),
+        ...(sessionRoleV1 ? { sessionRoleV1 } : {}),
+        ...(sessionOriginV1 ? { sessionOriginV1 } : {}),
+        ...(executionRunLinkV1 ? { executionRunLinkV1 } : {}),
+        ...(standaloneSessionPromptSnapshotV1 ? { standaloneSessionPromptSnapshotV1 } : {}),
         ...(connectedServices ? { connectedServices } : {}),
         ...(connectedServiceMaterializationIdentityV1
             ? { connectedServiceMaterializationIdentityV1 }

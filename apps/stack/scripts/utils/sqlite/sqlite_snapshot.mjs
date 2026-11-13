@@ -18,11 +18,47 @@ import {
   sep,
 } from 'node:path';
 import { DatabaseSync, backup } from 'node:sqlite';
+import { createWindowsProtectedAclBoundary } from '@happier-dev/cli-common/fs/windowsProtectedAcl';
 
 const MANIFEST_FORMAT = 'happier-sqlite-snapshot-v1';
 const MANIFEST_MAX_BYTES = 64 * 1024;
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
+
+function createPrivatePathBoundary({
+  platform = process.platform,
+  windowsProtectedAclBoundary,
+} = {}) {
+  if (platform === 'win32') {
+    const windowsAcl = windowsProtectedAclBoundary ?? createWindowsProtectedAclBoundary();
+    return {
+      async applyAndVerify({ path, kind }) {
+        await windowsAcl.applyAndVerify({ path, kind });
+      },
+      async verify({ path, kind }) {
+        await windowsAcl.verify({ path, kind });
+      },
+    };
+  }
+
+  const verify = async ({ path, kind, label }) => {
+    const expectedMode = kind === 'directory' ? PRIVATE_DIRECTORY_MODE : PRIVATE_FILE_MODE;
+    const metadata = await lstat(path);
+    if ((metadata.mode & 0o777) !== expectedMode) {
+      throw new Error(
+        `${label} must have private ${expectedMode.toString(8).padStart(4, '0')} permissions: ${path}`,
+      );
+    }
+  };
+  return {
+    async applyAndVerify(input) {
+      const mode = input.kind === 'directory' ? PRIVATE_DIRECTORY_MODE : PRIVATE_FILE_MODE;
+      await chmod(input.path, mode);
+      await verify(input);
+    },
+    verify,
+  };
+}
 
 function requireAbsolutePath(label, path) {
   if (typeof path !== 'string' || path.length === 0 || !isAbsolute(path)) {
@@ -76,8 +112,8 @@ async function inspectDirectory(label, path) {
   return { path, resolvedPath, identity };
 }
 
-async function secureInspectedDirectory(label, directory) {
-  await chmod(directory.path, PRIVATE_DIRECTORY_MODE);
+async function secureInspectedDirectory(label, directory, privatePaths) {
+  await privatePaths.applyAndVerify({ path: directory.path, kind: 'directory', label });
   const securedMetadata = await lstat(directory.path);
   if (
     securedMetadata.isSymbolicLink()
@@ -89,8 +125,8 @@ async function secureInspectedDirectory(label, directory) {
   return directory;
 }
 
-async function secureDirectory(label, path) {
-  return await secureInspectedDirectory(label, await inspectDirectory(label, path));
+async function secureDirectory(label, path, privatePaths) {
+  return await secureInspectedDirectory(label, await inspectDirectory(label, path), privatePaths);
 }
 
 async function assertSameDirectory(label, directory) {
@@ -128,10 +164,10 @@ async function requireAbsent(label, path) {
   throw new Error(`${label} already exists: ${path}`);
 }
 
-async function resolveNewOutputPath({ outputPath, disposableRoot }) {
+async function resolveNewOutputPath({ outputPath, disposableRoot, privatePaths }) {
   const absoluteOutput = requireAbsolutePath('output', outputPath);
   const absoluteRoot = requireAbsolutePath('disposable root', disposableRoot);
-  const root = await secureDirectory('disposable root', absoluteRoot);
+  const root = await secureDirectory('disposable root', absoluteRoot, privatePaths);
   const outputParentPath = dirname(absoluteOutput);
   const inspectedOutputParent = outputParentPath === root.path
     ? root
@@ -141,7 +177,7 @@ async function resolveNewOutputPath({ outputPath, disposableRoot }) {
   }
   const outputParent = outputParentPath === root.path
     ? root
-    : await secureInspectedDirectory('output parent', inspectedOutputParent);
+    : await secureInspectedDirectory('output parent', inspectedOutputParent, privatePaths);
 
   const manifestPath = `${absoluteOutput}.manifest.json`;
   await requireAbsent('output', absoluteOutput);
@@ -157,10 +193,10 @@ async function resolveNewOutputPath({ outputPath, disposableRoot }) {
   };
 }
 
-async function requireInputWithinRoot({ label, inputPath, disposableRoot }) {
+async function requireInputWithinRoot({ label, inputPath, disposableRoot, privatePaths }) {
   const absoluteInput = requireAbsolutePath(label, inputPath);
   const absoluteRoot = requireAbsolutePath('disposable root', disposableRoot);
-  const root = await secureDirectory('disposable root', absoluteRoot);
+  const root = await secureDirectory('disposable root', absoluteRoot, privatePaths);
   const metadata = await requireRegularFile(label, absoluteInput);
   const resolvedInput = await realpath(absoluteInput);
   if (!isWithin(root.resolvedPath, resolvedInput)) {
@@ -356,7 +392,7 @@ async function copyExactRegularFile({
   await assertSameRegularFile('snapshot partial', outputPath, outputIdentity);
 }
 
-async function finalizeTemporaryDatabase(path) {
+async function finalizeTemporaryDatabase(path, privatePaths) {
   const database = new DatabaseSync(path);
   let inspection;
   try {
@@ -368,7 +404,7 @@ async function finalizeTemporaryDatabase(path) {
     database.close();
   }
   await removeStandaloneSidecars(path);
-  await chmod(path, PRIVATE_FILE_MODE);
+  await privatePaths.applyAndVerify({ path, kind: 'file', label: 'SQLite output' });
   await syncFile(path);
   const contentSha256 = await sha256File(path);
   return {
@@ -381,11 +417,9 @@ async function finalizeTemporaryDatabase(path) {
   };
 }
 
-async function inspectFinalDatabase(path) {
+async function inspectFinalDatabase(path, privatePaths) {
   const metadata = await requireRegularFile('SQLite output', path);
-  if ((metadata.mode & 0o777) !== PRIVATE_FILE_MODE) {
-    throw new Error(`SQLite output must have private 0600 permissions: ${path}`);
-  }
+  await privatePaths.verify({ path, kind: 'file', label: 'SQLite output' });
   const identity = identityOf(metadata);
   const database = new DatabaseSync(path, { readOnly: true });
   let inspection;
@@ -548,7 +582,6 @@ async function createPrivateFile(path) {
   const handle = await open(path, 'wx', PRIVATE_FILE_MODE);
   let identity;
   try {
-    await handle.chmod(PRIVATE_FILE_MODE);
     identity = identityOf(await handle.stat());
   } finally {
     await handle.close();
@@ -561,7 +594,6 @@ async function writePrivateManifest(path, manifest) {
   const handle = await open(path, 'wx', PRIVATE_FILE_MODE);
   let identity;
   try {
-    await handle.chmod(PRIVATE_FILE_MODE);
     identity = identityOf(await handle.stat());
     await handle.writeFile(`${JSON.stringify(manifest)}\n`, 'utf8');
     await handle.sync();
@@ -572,7 +604,7 @@ async function writePrivateManifest(path, manifest) {
   return identity;
 }
 
-async function readManifest(path, expectedIdentity = null) {
+async function readManifest(path, expectedIdentity = null, privatePaths) {
   const metadata = expectedIdentity
     ? await assertSameRegularFile('snapshot manifest', path, expectedIdentity)
     : await requireRegularFile('snapshot manifest', path);
@@ -580,6 +612,7 @@ async function readManifest(path, expectedIdentity = null) {
   if (!hasIdentity(metadata, identity)) {
     throw new Error(`snapshot manifest identity changed or was replaced: ${path}`);
   }
+  await privatePaths.verify({ path, kind: 'file', label: 'snapshot manifest' });
   let parsed;
   try {
     const text = await readBoundedManifestText(path, identity);
@@ -590,6 +623,7 @@ async function readManifest(path, expectedIdentity = null) {
     throw new Error(`snapshot manifest is not valid JSON: ${path}`, { cause: error });
   }
   await assertSameRegularFile('snapshot manifest', path, identity);
+  await privatePaths.verify({ path, kind: 'file', label: 'snapshot manifest' });
   return { identity, manifest: validateManifest(parsed) };
 }
 
@@ -612,6 +646,7 @@ async function copyWithSafePublication({
   expectedFingerprints = null,
   beforeAccept = null,
   copyMode = 'online-backup',
+  privatePaths,
 }) {
   const temporaryPath = join(
     output.root.path,
@@ -632,6 +667,8 @@ async function copyWithSafePublication({
   try {
     await assertSameRegularFile('source', sourcePath, sourceIdentity);
     temporaryIdentity = await createPrivateFile(temporaryPath);
+    await privatePaths.applyAndVerify({ path: temporaryPath, kind: 'file', label: 'private partial file' });
+    await assertSameRegularFile('private partial file', temporaryPath, temporaryIdentity);
     let copyError = null;
     if (copyMode === 'online-backup') {
       source.exec('PRAGMA busy_timeout = 5000;');
@@ -661,10 +698,10 @@ async function copyWithSafePublication({
     }
     await assertSameRegularFile('snapshot partial', temporaryPath, temporaryIdentity);
     if (copyError) throw copyError;
-    await chmod(temporaryPath, PRIVATE_FILE_MODE);
+    await privatePaths.applyAndVerify({ path: temporaryPath, kind: 'file', label: 'snapshot partial' });
     const temporary = copyMode === 'exact-file'
-      ? await inspectFinalDatabase(temporaryPath)
-      : await finalizeTemporaryDatabase(temporaryPath);
+      ? await inspectFinalDatabase(temporaryPath, privatePaths)
+      : await finalizeTemporaryDatabase(temporaryPath, privatePaths);
     await assertSameRegularFile('snapshot partial', temporaryPath, temporaryIdentity);
     if (expectedFingerprints) compareFingerprints(temporary.fingerprints, expectedFingerprints);
 
@@ -678,8 +715,8 @@ async function copyWithSafePublication({
       throw new Error('published SQLite output identity differs from its private partial');
     }
     publishedIdentity = temporaryIdentity;
-    await chmod(output.outputPath, PRIVATE_FILE_MODE);
-    const published = await inspectFinalDatabase(output.outputPath);
+    await privatePaths.applyAndVerify({ path: output.outputPath, kind: 'file', label: 'SQLite output' });
+    const published = await inspectFinalDatabase(output.outputPath, privatePaths);
     if (!hasIdentity(await lstat(output.outputPath), publishedIdentity)) {
       throw new Error('published SQLite output identity changed during verification');
     }
@@ -690,11 +727,10 @@ async function copyWithSafePublication({
       fingerprints: published.fingerprints,
     };
     manifestTemporaryIdentity = await writePrivateManifest(manifestTemporaryPath, manifest);
-    const preparedManifest = await readManifest(manifestTemporaryPath, manifestTemporaryIdentity);
+    await privatePaths.applyAndVerify({ path: manifestTemporaryPath, kind: 'file', label: 'snapshot manifest' });
+    const preparedManifest = await readManifest(manifestTemporaryPath, manifestTemporaryIdentity, privatePaths);
     compareFingerprints(published.fingerprints, preparedManifest.manifest.fingerprints);
-    if (((await lstat(manifestTemporaryPath)).mode & 0o777) !== PRIVATE_FILE_MODE) {
-      throw new Error(`snapshot manifest must have private 0600 permissions: ${manifestTemporaryPath}`);
-    }
+    await privatePaths.verify({ path: manifestTemporaryPath, kind: 'file', label: 'snapshot manifest' });
     await assertSameDirectory('disposable root', output.root);
     await assertSameDirectory('output parent', output.outputParent);
     await assertSameRegularFile('source', sourcePath, sourceIdentity);
@@ -705,7 +741,7 @@ async function copyWithSafePublication({
     let finalPublished;
     try {
       await assertSameRegularFile('published SQLite output', output.outputPath, publishedIdentity);
-      finalPublished = await inspectFinalDatabase(output.outputPath);
+      finalPublished = await inspectFinalDatabase(output.outputPath, privatePaths);
       if (!hasIdentity(await lstat(output.outputPath), publishedIdentity)) {
         throw new Error('published SQLite output identity changed during final verification');
       }
@@ -718,7 +754,7 @@ async function copyWithSafePublication({
     if (expectedFingerprints) compareFingerprints(finalPublished.fingerprints, expectedFingerprints);
     await assertSameDirectory('disposable root', output.root);
     await assertSameDirectory('output parent', output.outputParent);
-    const finalManifest = await readManifest(manifestTemporaryPath, manifestTemporaryIdentity);
+    const finalManifest = await readManifest(manifestTemporaryPath, manifestTemporaryIdentity, privatePaths);
     compareFingerprints(finalPublished.fingerprints, finalManifest.manifest.fingerprints);
     await assertSameRegularFile('source', sourcePath, sourceIdentity);
     await requireAbsent('output manifest', output.manifestPath);
@@ -745,16 +781,18 @@ export async function createSqliteSnapshot({
   sourcePath,
   outputPath,
   disposableRoot,
-}) {
+}, boundary = {}) {
+  const privatePaths = createPrivatePathBoundary(boundary);
   const absoluteSource = requireAbsolutePath('source', sourcePath);
   const sourceMetadata = await requireRegularFile('source', absoluteSource);
   const sourceIdentity = identityOf(sourceMetadata);
-  const output = await resolveNewOutputPath({ outputPath, disposableRoot });
+  const output = await resolveNewOutputPath({ outputPath, disposableRoot, privatePaths });
 
   const result = await copyWithSafePublication({
     sourcePath: absoluteSource,
     sourceIdentity,
     output,
+    privatePaths,
   });
   return {
     operation: 'snapshot',
@@ -771,21 +809,24 @@ export async function restoreSqliteSnapshot({
   snapshotPath,
   outputPath,
   disposableRoot,
-}) {
+}, boundary = {}) {
+  const privatePaths = createPrivatePathBoundary(boundary);
   const snapshot = await requireInputWithinRoot({
     label: 'snapshot',
     inputPath: snapshotPath,
     disposableRoot,
+    privatePaths,
   });
   const sourceManifestPath = `${snapshot.inputPath}.manifest.json`;
   const manifestInput = await requireInputWithinRoot({
     label: 'snapshot manifest',
     inputPath: sourceManifestPath,
     disposableRoot,
+    privatePaths,
   });
-  const output = await resolveNewOutputPath({ outputPath, disposableRoot });
-  const sourceManifest = await readManifest(sourceManifestPath, manifestInput.identity);
-  const snapshotInspection = await inspectFinalDatabase(snapshot.inputPath);
+  const output = await resolveNewOutputPath({ outputPath, disposableRoot, privatePaths });
+  const sourceManifest = await readManifest(sourceManifestPath, manifestInput.identity, privatePaths);
+  const snapshotInspection = await inspectFinalDatabase(snapshot.inputPath, privatePaths);
   if (!hasIdentity(await lstat(snapshot.inputPath), snapshot.identity)) {
     throw new Error(`snapshot identity changed or was replaced while verifying: ${snapshot.inputPath}`);
   }
@@ -797,13 +838,14 @@ export async function restoreSqliteSnapshot({
     output,
     expectedFingerprints: sourceManifest.manifest.fingerprints,
     copyMode: 'exact-file',
+    privatePaths,
     beforeAccept: async () => {
-      const finalSnapshot = await inspectFinalDatabase(snapshot.inputPath);
+      const finalSnapshot = await inspectFinalDatabase(snapshot.inputPath, privatePaths);
       if (!hasIdentity(await lstat(snapshot.inputPath), snapshot.identity)) {
         throw new Error(`snapshot identity changed or was replaced during final verification: ${snapshot.inputPath}`);
       }
       compareFingerprints(finalSnapshot.fingerprints, sourceManifest.manifest.fingerprints);
-      const finalSourceManifest = await readManifest(sourceManifestPath, manifestInput.identity);
+      const finalSourceManifest = await readManifest(sourceManifestPath, manifestInput.identity, privatePaths);
       compareFingerprints(finalSnapshot.fingerprints, finalSourceManifest.manifest.fingerprints);
     },
   });

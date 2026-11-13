@@ -79,7 +79,7 @@ describe('ThemeColorPicker', () => {
         expect(screen.findByTestId('theme-color-picker')).toBeNull();
     });
 
-    it('can present an always-open opaque picker that only commits opaque hex colours', async () => {
+    it('normalizes opaque picker output and rejects translucent picker output when alpha is disabled', async () => {
         Object.defineProperty(globalThis, 'window', {
             configurable: true,
             value: { addEventListener: () => {}, removeEventListener: () => {}, innerWidth: 1024, innerHeight: 768 },
@@ -102,6 +102,20 @@ describe('ThemeColorPicker', () => {
 
         expect(screen.findByTestId('theme-color-picker:panel')).not.toBeNull();
         expect(screen.findByTestId('theme-color-picker:opacity')).toBeNull();
+
+        const picker = screen.find((node) => typeof node.props.onChangeJS === 'function');
+        await act(async () => {
+            picker.props.onChangeJS({ hex: '#e91e63ff', rgba: 'rgba(233, 30, 99, 1)' });
+        });
+        expect(onValidityChange).toHaveBeenLastCalledWith(true);
+        expect(onChange).toHaveBeenLastCalledWith('#E91E63');
+
+        onChange.mockClear();
+        await act(async () => {
+            picker.props.onChangeJS({ hex: '#e91e6380', rgba: 'rgba(233, 30, 99, 0.5)' });
+        });
+        expect(onValidityChange).toHaveBeenLastCalledWith(false);
+        expect(onChange).not.toHaveBeenCalled();
 
         const input = screen.findByTestId('theme-color-input') as any;
         await act(async () => {

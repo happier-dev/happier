@@ -8,8 +8,11 @@ import type { SessionFolderWorkspaceRefV1, SessionFoldersV1 } from '@/sync/domai
 import { applySessionListTreeDropOperation } from '../applySessionListTreeDropOperation';
 import { buildSessionListTreeRows } from '../../drop-resolution/buildSessionListTreeRows';
 import { resolveSessionListInstruction } from '../../drop-resolution/resolveSessionListInstruction';
+import { resolveSessionListDragEligibilityBlock } from '../../drop-resolution/resolveSessionListInstruction';
 import { buildSessionListDragSource } from '../../drop-resolution/buildSessionListDragSource';
 import { treeRowId } from '../../drop-resolution/treeRowId';
+import { buildSessionListKeyboardMoveResult } from '../../move-sheet/buildSessionListKeyboardMoveResult';
+import { buildSessionListMoveSheetTargets } from '../../move-sheet/buildSessionListMoveSheetTargets';
 
 const workspaceA: SessionFolderWorkspaceRefV1 = {
     t: 'workspaceScope',
@@ -269,6 +272,72 @@ describe('applySessionListTreeDropOperation', () => {
         expect(setSessionFolderAssignment).not.toHaveBeenCalled();
     });
 
+    function lineageTree(params: Readonly<{ crossWorktree?: boolean }> = {}) {
+        return buildSessionListTreeRows({ items: [
+            projectHeader('project-a'),
+            folderHeader({ id: 'folder-a', groupKey: 'project-a:folder:folder-a', depth: 0 }),
+            { ...sessionItem({ id: 'planner', groupKey: 'project-a', folderId: null, depth: 0 }), hasChildren: true },
+            ...['implementer-a', 'implementer-b'].map(id => ({
+                ...sessionItem({ id, groupKey: id, folderId: null, depth: 0 }),
+                workspace: params.crossWorktree === false
+                    ? workspaceA
+                    : { ...workspaceA, rootPath: `/worktrees/${id}` },
+                parentSessionId: 'planner', nestingDepth: 1,
+            })),
+            sessionItem({ id: 'unrelated', groupKey: 'project-a', folderId: null, depth: 0 }),
+        ] });
+    }
+
+    it.each(['planner', 'implementer-a', 'implementer-b'])('blocks lineage directional and pointer moves for %s across worktrees', id => {
+        const tree = lineageTree();
+        const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.session('server-a', id) });
+        expect(resolveSessionListDragEligibilityBlock({ source, foldersFeatureEnabled: true })).not.toBeNull();
+        for (const direction of ['up', 'down'] as const) {
+            expect(buildSessionListKeyboardMoveResult({ tree, source, direction }).instruction.kind).toBe('blocked');
+        }
+    });
+
+    it.each(['planner', 'implementer-a', 'implementer-b'])('refuses lineage reorder commits for %s but retains explicit folder assignment', async id => {
+        const tree = lineageTree({ crossWorktree: false });
+        const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.session('server-a', id) });
+        const initialOrder = { 'project-a': ['server-a:planner', 'server-a:unrelated'] };
+        let order: Record<string, string[]> = initialOrder;
+        const assignments: unknown[] = [];
+        const context = {
+            sessionFoldersV1: folders(), sessionListGroupOrderV1: order, now: () => 100,
+            setSessionFoldersV1: vi.fn(),
+            setSessionListGroupOrderV1: (next: typeof order) => { order = next; },
+            setSessionFolderAssignment: async (next: unknown) => { assignments.push(next); },
+        };
+        const applied = await applySessionListTreeDropOperation({ tree, source, context, result: {
+            instruction: { kind: 'reorder-after', targetId: treeRowId.session('server-a', 'unrelated'),
+                containerId: treeRowId.workspaceRoot('project-a'), parentId: null, depth: 0 },
+            visual: { kind: 'none' },
+        } });
+        expect(applied).toMatchObject({ ok: false, reason: 'lineage-placement' });
+        expect(order).toBe(initialOrder);
+        expect(assignments).toEqual([]);
+        const folder = buildSessionListMoveSheetTargets({ tree, source }).find(target => target.id === 'folder:folder-a');
+        expect(folder?.disabled).toBe(false);
+        if (!folder) throw new Error('Missing folder assignment target');
+        expect(await applySessionListTreeDropOperation({ tree, source, context, result: folder.result })).toMatchObject({ ok: true });
+        expect(assignments).toEqual([{ serverId: 'server-a', sessionId: id, folderId: 'folder-a' }]);
+        expect(order).toBe(initialOrder);
+    });
+
+    it.each([{ hasChildren: true }, { parentSessionId: 'planner', nestingDepth: 1 }])('rejects a lineage reorder at commit without changing persisted order: %j', async lineage => {
+        const { tree, source, result } = resolveRootSessionSiblingDrop();
+        const lineageSource = { ...source, metadata: { ...source.metadata, item: { ...source.metadata.item, ...lineage } } };
+        let order: unknown = {};
+        const applied = await applySessionListTreeDropOperation({ tree, source: lineageSource, result, context: {
+            sessionFoldersV1: folders(), sessionListGroupOrderV1: {}, now: () => 100,
+            setSessionFoldersV1: () => undefined,
+            setSessionListGroupOrderV1: value => { order = value; },
+            setSessionFolderAssignment: async () => { throw new Error('Unexpected folder mutation'); },
+        } });
+        expect(applied.ok).toBe(false);
+        expect(order).toEqual({});
+    });
     it('commits same-container session sibling reorder in custom mode', async () => {
         const { tree, source, result } = resolveRootSessionSiblingDrop();
         const setSessionFolderAssignment = vi.fn(async () => undefined);

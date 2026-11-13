@@ -28,7 +28,7 @@ export function snapshotStartServerEnv(): EnvValues {
 }
 
 export function installStartServerCommonWiringMocks(): void {
-  vi.mock('@/app/api/api', () => ({ startApi: vi.fn(async () => {}) }))
+  vi.mock('@/app/api/api', () => ({ startApi: vi.fn(async () => ({ apiStartupIdentity: null })) }))
   vi.mock('@/app/monitoring/metrics', () => ({ startMetricsServer: vi.fn(async () => true) }))
   vi.mock('@/app/monitoring/metrics2', () => ({ startDatabaseMetricsUpdater: vi.fn(() => {}) }))
   vi.mock('@/app/auth/auth', () => ({ auth: { init: vi.fn(async () => {}), verifyToken: vi.fn() } }))

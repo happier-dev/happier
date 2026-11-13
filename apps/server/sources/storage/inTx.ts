@@ -3,11 +3,93 @@ import { delay } from "@/utils/runtime/delay";
 import { db } from "@/storage/db";
 import { getDbProviderFromEnv, isPrismaErrorCode, type TransactionClient } from "@/storage/prisma";
 import { isRetryableSqliteWriteError } from "@/storage/sqliteRetryClassifier";
+import { debug, warn } from "@/utils/logging/log";
 
 export type Tx = TransactionClient;
 
+export const IN_TX_OPERATION_LABELS = {
+    machinePresenceBatch: "machine.presence.batch",
+    providerAccountUsageWrite: "provider-account.usage.write",
+    sessionMessageWrite: "session.message.write",
+    sessionOrganizationPin: "session.organization.pin",
+    sessionPublisherPresence: "session.publisher-presence",
+    sessionSystemRecordWrite: "session.system-record.write",
+    usageReportWrite: "usage-report.write",
+} as const;
+
+export type InTxOperationLabel = typeof IN_TX_OPERATION_LABELS[keyof typeof IN_TX_OPERATION_LABELS];
+
+type ActiveTransactionPhase = "acquisition-or-transaction" | "body" | "settlement";
+
+type ActiveTransactionAttribution = Readonly<{
+    operation: InTxOperationLabel;
+    phase: ActiveTransactionPhase;
+    startedAtMs: number;
+}>;
+
+const activeTransactionAttributions = new Map<symbol, ActiveTransactionAttribution>();
+
+function beginTransactionAttribution(
+    operation: InTxOperationLabel,
+    phase: ActiveTransactionPhase,
+): symbol {
+    const token = Symbol(operation);
+    activeTransactionAttributions.set(token, { operation, phase, startedAtMs: Date.now() });
+    return token;
+}
+
+function updateTransactionAttributionPhase(token: symbol, phase: ActiveTransactionPhase): void {
+    const current = activeTransactionAttributions.get(token);
+    if (!current) return;
+    activeTransactionAttributions.set(token, { ...current, phase });
+}
+
+function endTransactionAttribution(token: symbol | null): void {
+    if (token) activeTransactionAttributions.delete(token);
+}
+
+function snapshotActiveTransactionAttributions(): readonly Readonly<{
+    operation: InTxOperationLabel;
+    phase: ActiveTransactionPhase;
+    activeMs: number;
+}>[] {
+    const observedAtMs = Date.now();
+    return [...activeTransactionAttributions.values()]
+        .map((entry) => ({
+            operation: entry.operation,
+            phase: entry.phase,
+            activeMs: Math.max(0, observedAtMs - entry.startedAtMs),
+        }))
+        .sort((left, right) => (
+            left.operation.localeCompare(right.operation)
+            || left.phase.localeCompare(right.phase)
+            || left.activeMs - right.activeMs
+        ));
+}
+
+/**
+ * Shares transaction attribution with a transaction whose API does not expose an interactive
+ * callback boundary. The phase intentionally remains `acquisition-or-transaction`: those phases
+ * cannot be separated without changing that transaction's semantics.
+ */
+export async function runWithTransactionAttribution<T>(
+    operation: InTxOperationLabel,
+    action: () => Promise<T>,
+): Promise<T> {
+    const token = beginTransactionAttribution(operation, "acquisition-or-transaction");
+    try {
+        return await action();
+    } finally {
+        endTransactionAttribution(token);
+    }
+}
+
 export type InTxOptions = Readonly<{
     deadlineAtMs?: number;
+    /** Closed, non-sensitive owner labels only; no request, entity, SQL, or error data. */
+    diagnostics?: Readonly<{
+        operation: InTxOperationLabel;
+    }>;
 }>;
 
 export class TransactionAcquisitionUnavailableError extends Error {
@@ -197,15 +279,82 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options: InTxOptions =
     const startedAtMs = Date.now();
     let counter = 0;
     let transactionCallbackEntered = false;
+    let attemptStartedAtMs = startedAtMs;
+    let callbackEnteredAtMs: number | null = null;
+    let callbackExitedAtMs: number | null = null;
+    let activeAttributionToken: symbol | null = null;
+    let retryFailurePhase: "acquisition" | "body" | "settlement" | null = null;
+    let lastAcquisitionAttributions: ReturnType<typeof snapshotActiveTransactionAttributions> = [];
+    const diagnostics = options.diagnostics;
+    const writeDebug = (fields: Readonly<Record<string, unknown>>, message: string): void => {
+        if (!diagnostics) return;
+        debug({
+            module: "storage",
+            event: "database-transaction-attribution",
+            operation: diagnostics.operation,
+            ...fields,
+        }, message);
+    };
+    const writeWarning = (fields: Readonly<Record<string, unknown>>): void => {
+        if (!diagnostics) return;
+        warn({
+            module: "storage",
+            event: "database-transaction-attribution",
+            operation: diagnostics.operation,
+            ...fields,
+        }, "Database transaction attribution warning");
+    };
+    const withAcquisitionAttribution = <T extends Readonly<Record<string, unknown>>>(fields: T): T & Readonly<{
+        holderAttribution: "labeled-active-operations" | "unattributed";
+        activeTransactions: ReturnType<typeof snapshotActiveTransactionAttributions>;
+    }> => ({
+        ...fields,
+        holderAttribution: lastAcquisitionAttributions.length > 0
+            ? "labeled-active-operations"
+            : "unattributed",
+        activeTransactions: lastAcquisitionAttributions,
+    });
+    const currentFailurePhase = (): "acquisition" | "body" | "settlement" => {
+        if (callbackEnteredAtMs === null) return "acquisition";
+        return callbackExitedAtMs === null ? "body" : "settlement";
+    };
+    const writeFailureWarning = (
+        phase: "acquisition" | "body" | "settlement",
+        failure: "acquisition_unavailable" | "deadline_exceeded" | "retry_budget_exhausted" | "transaction_failed",
+    ): void => {
+        const fields = {
+            phase,
+            outcome: "failed",
+            failure,
+            attemptCount: counter + 1,
+            totalMs: Date.now() - startedAtMs,
+        } as const;
+        writeWarning(phase === "acquisition" ? withAcquisitionAttribution(fields) : fields);
+    };
     let wrapped = async (tx: Tx) => {
         transactionCallbackEntered = true;
+        callbackEnteredAtMs = Date.now();
+        if (diagnostics) {
+            activeAttributionToken = beginTransactionAttribution(diagnostics.operation, "body");
+        }
+        writeDebug({ phase: "body", state: "started", attemptCount: counter + 1 }, "Database transaction phase");
         (tx as any)[symbol] = [];
         let result = await fn(tx);
+        callbackExitedAtMs = Date.now();
+        if (activeAttributionToken) {
+            updateTransactionAttributionPhase(activeAttributionToken, "settlement");
+        }
+        writeDebug({ phase: "settlement", state: "started", attemptCount: counter + 1 }, "Database transaction phase");
         let callbacks = (tx as any)[symbol] as (() => void)[];
         return { result, callbacks };
     }
     while (true) {
         transactionCallbackEntered = false;
+        attemptStartedAtMs = Date.now();
+        callbackEnteredAtMs = null;
+        callbackExitedAtMs = null;
+        activeAttributionToken = null;
+        writeDebug({ phase: "acquisition", state: "started", attemptCount: counter + 1 }, "Database transaction phase");
         try {
             const bounded = options.deadlineAtMs === undefined
                 ? null
@@ -225,6 +374,32 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options: InTxOptions =
                     ...(bounded ? { maxWait: bounded.maxWait } : {}),
                 };
             let result = await db.$transaction(wrapped, txOpts);
+            const settledAtMs = Date.now();
+            endTransactionAttribution(activeAttributionToken);
+            activeAttributionToken = null;
+            const acquisitionMs = callbackEnteredAtMs === null
+                ? settledAtMs - attemptStartedAtMs
+                : callbackEnteredAtMs - attemptStartedAtMs;
+            const bodyMs = callbackEnteredAtMs === null
+                ? 0
+                : (callbackExitedAtMs ?? settledAtMs) - callbackEnteredAtMs;
+            const settlementMs = callbackExitedAtMs === null ? 0 : settledAtMs - callbackExitedAtMs;
+            const settlementFields = {
+                phase: retryFailurePhase ?? "settled",
+                outcome: counter > 0 ? "succeeded_after_retry" : "succeeded",
+                attemptCount: counter + 1,
+                totalMs: settledAtMs - startedAtMs,
+                acquisitionMs,
+                bodyMs,
+                settlementMs,
+            } as const;
+            if (counter > 0) {
+                writeWarning(retryFailurePhase === "acquisition"
+                    ? withAcquisitionAttribution(settlementFields)
+                    : settlementFields);
+            } else {
+                writeDebug(settlementFields, "Database transaction settled");
+            }
             for (let callback of result.callbacks) {
                 try {
                     callback();
@@ -234,8 +409,14 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options: InTxOptions =
             }
             return result.result;
         } catch (e) {
+            endTransactionAttribution(activeAttributionToken);
+            activeAttributionToken = null;
             const acquisitionTimeout = isTransactionAcquisitionTimeout(e) && !transactionCallbackEntered;
             const retryable = acquisitionTimeout || isRetryableTransactionError({ provider, err: e });
+            const failurePhase = currentFailurePhase();
+            if (failurePhase === "acquisition") {
+                lastAcquisitionAttributions = snapshotActiveTransactionAttributions();
+            }
             if (
                 options.deadlineAtMs !== undefined
                 && transactionCallbackEntered
@@ -244,6 +425,7 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options: InTxOptions =
                     || isPrismaErrorCode(e, "P2028")
                 )
             ) {
+                writeFailureWarning(failurePhase, "deadline_exceeded");
                 throw new TransactionDeadlineExceededError(e);
             }
             if (retryable && counter < maxRetries) {
@@ -262,26 +444,33 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options: InTxOptions =
                     })
                 ) {
                     if (acquisitionTimeout) {
+                        writeFailureWarning(failurePhase, "acquisition_unavailable");
                         throw new TransactionAcquisitionUnavailableError(e);
                     }
+                    writeFailureWarning(failurePhase, "retry_budget_exhausted");
                     throw e;
                 }
                 if (
                     options.deadlineAtMs !== undefined
                     && Date.now() + retryDelayMs >= options.deadlineAtMs
                 ) {
+                    writeFailureWarning(failurePhase, "deadline_exceeded");
                     throw new TransactionDeadlineExceededError(e);
                 }
+                retryFailurePhase = failurePhase;
                 counter = nextAttempt;
                 await delay(retryDelayMs);
                 continue;
             }
             if (acquisitionTimeout) {
                 if (options.deadlineAtMs !== undefined) {
+                    writeFailureWarning(failurePhase, "deadline_exceeded");
                     throw new TransactionDeadlineExceededError(e);
                 }
+                writeFailureWarning(failurePhase, "acquisition_unavailable");
                 throw new TransactionAcquisitionUnavailableError(e);
             }
+            writeFailureWarning(failurePhase, "transaction_failed");
             throw e;
         }
     }

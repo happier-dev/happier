@@ -17,6 +17,24 @@ function session(id: string, groupKey: string, folderId: string | null, folderDe
 }
 
 describe('filterCollapsedSessionListItems', () => {
+    it('keeps nested session rows with their parent instead of their original group or folder', () => {
+        const nested = (id: string, groupKey: string, parentSessionId: string) => ({
+            ...session(id, groupKey, null, 0), parentSessionId, nestingDepth: 1,
+        });
+        const items: SessionListViewItem[] = [
+            { type: 'header', headerKind: 'active', title: 'Active', serverId: 'server-a' },
+            { type: 'header', headerKind: 'project', title: '~/visible', groupKey: 'visible-project', serverId: 'server-a' },
+            { ...session('visible-parent', 'visible-project', null, 0), hasChildren: true },
+            nested('child-from-collapsed-group', 'collapsed-project', 'visible-parent'),
+            { type: 'header', headerKind: 'project', title: '~/collapsed', groupKey: 'collapsed-project', serverId: 'server-a' },
+            { ...session('hidden-parent', 'collapsed-project', null, 0), hasChildren: true },
+            nested('child-from-visible-group', 'visible-project', 'hidden-parent'),
+        ];
+        const ids = filterCollapsedSessionListItems(items, { 'collapsed-project': true })
+            .flatMap(item => item.type === 'session' ? [item.session.id] : []);
+        expect(ids).toEqual(['visible-parent', 'child-from-collapsed-group']);
+    });
+
     it('hides descendant folder headers and sessions when a folder is collapsed', () => {
         const parentGroupKey = 'folder:server-a:workspace-a:parent';
         const childGroupKey = 'folder:server-a:workspace-a:child';

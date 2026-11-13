@@ -96,6 +96,11 @@ function canReuseSession(
         && areNullableValuesEqual(sourceSession.groupKind, item.groupKind)
         && areNullableValuesEqual(sourceSession.folderId, item.folderId)
         && areNullableValuesEqual(sourceSession.folderDepth, item.folderDepth)
+        && sourceSession.parentSessionId === item.parentSessionId
+        && sourceSession.nestingDepth === item.nestingDepth
+        && sourceSession.hasChildren === item.hasChildren
+        && sourceSession.childrenCollapsed === item.childrenCollapsed
+        && sourceSession.identityOverride === item.identityOverride
         && (sourceSession.pinned === true) === (item.pinned === true)
         && areNullableValuesEqual(sourceSession.attentionPromotionReason, item.attentionPromotionReason)
         && areNullableValuesEqual(sourceSession.workingPlacementReason, item.workingPlacementReason)
@@ -142,6 +147,11 @@ function rehydrateSession(
         groupKind: item.groupKind,
         folderId: item.folderId,
         folderDepth: item.folderDepth,
+        parentSessionId: item.parentSessionId,
+        nestingDepth: item.nestingDepth,
+        hasChildren: item.hasChildren,
+        childrenCollapsed: item.childrenCollapsed,
+        identityOverride: item.identityOverride,
         pinned: item.pinned,
         attentionPromotionReason: item.attentionPromotionReason,
         workingPlacementReason: item.workingPlacementReason,

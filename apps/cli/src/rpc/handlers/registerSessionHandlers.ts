@@ -14,6 +14,9 @@ import {
     type SessionInitialGoalRequestV1,
     type SessionAttachMetadataIdentityPolicy,
     SessionMcpSelectionV1,
+    type SessionRoleV1,
+    type SessionOriginV1,
+    type ExecutionRunLinkV1,
     SpawnSessionErrorCode,
     type SpawnSessionErrorDetail,
 } from '@happier-dev/protocol';
@@ -205,6 +208,18 @@ export interface SpawnSessionOptions {
      * This is stored in session metadata and applied at runner startup.
      */
     mcpSelection?: SessionMcpSelectionV1;
+
+    /**
+     * Explicit mutable job label seeded into a new session's initial metadata. Presentation only;
+     * an existing session's persisted role always wins at attach/resume.
+     */
+    sessionRoleV1?: SessionRoleV1;
+
+    /** Creation provenance seeded into a new session's initial metadata; never replaces a persisted one. */
+    sessionOriginV1?: SessionOriginV1;
+
+    /** Visible-run link seeded into a new child's initial metadata before its first turn. */
+    executionRunLinkV1?: ExecutionRunLinkV1;
 
     /**
      * Controls whether the session transcript is committed to Happier server storage ("persisted")

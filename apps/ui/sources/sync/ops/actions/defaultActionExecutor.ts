@@ -28,6 +28,7 @@ import {
 import { delegateSessionHandoffToSourceDaemon } from '@/sync/ops/delegatedSessionHandoff';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { sendSessionMessageWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
+import { resolveAssignableSessionRoleProfilesForServer, setSessionRoleForAction } from '@/sync/ops/sessionRoleAssignment';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { voiceActivityController } from '@/voice/activity/voiceActivityController';
 import { voiceSessionManager } from '@/voice/session/voiceSession';
@@ -308,9 +309,27 @@ export function createDefaultActionExecutor(opts?: Readonly<{
       const { agentId, machineId, limit, backendTargetKey } = args as AgentsModelsListArgs;
       return await listAgentModelsForVoiceTool({ agentId, machineId, limit, backendTargetKey });
     },
+    sessionRolesList: async ({ sessionId, serverId }) => {
+      const resolvedServerId = typeof serverId === 'string'
+        ? serverId
+        : sessionId
+          ? opts?.resolveServerIdForSessionId?.(sessionId) ?? null
+          : null;
+      const profiles = await resolveAssignableSessionRoleProfilesForServer(resolvedServerId);
+      return profiles === null ? [] : profiles.map((profile) => ({ value: profile.id, label: profile.name }));
+    },
 
     sessionSendMessage: async ({ sessionId, message, requestedAction, serverId }) =>
       await sendSessionMessageWithServerScope({ sessionId, message, requestedAction, serverId }),
+
+    sessionRoleSet: async ({ sessionId, role, serverId, actionRequestId, resumeActionRequest }) =>
+      await setSessionRoleForAction({
+        sessionId,
+        role,
+        serverId: typeof serverId === 'string' && serverId.trim() ? serverId.trim() : null,
+        ...(actionRequestId ? { actionRequestId } : {}),
+        ...(actionRequestId && resumeActionRequest === true ? { resume: true } : {}),
+      }),
 
     sessionTitleSet: async ({ sessionId, title, serverId }) => {
       const sid = String(sessionId ?? '').trim();

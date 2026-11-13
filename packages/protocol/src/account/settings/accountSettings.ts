@@ -1,5 +1,11 @@
 import { z } from 'zod';
 
+import { DEFAULT_SESSION_ROLE_PROFILES_V1, SessionRoleProfilesV1Schema } from '../../sessionMetadata/sessionRole.js';
+import { DEFAULT_VISIBLE_AGENTS_V1, VisibleAgentsV1Schema } from './visibleAgentsSettingsV1.js';
+import {
+  DEFAULT_STANDALONE_SESSION_PROMPT_V1,
+  StandaloneSessionPromptV1Schema,
+} from '../../prompts/standaloneSessionPromptV1.js';
 import { ActionsSettingsV1Schema, type ActionsSettingsV1 } from '../../actions/actionSettings.js';
 import { AcpCatalogSettingsV1Schema } from '../../acpCatalog/settingsV1.js';
 import {
@@ -399,6 +405,9 @@ export const AccountSettingsSchema = lazySchema(() => z.preprocess(
         deriveExpoPushNotificationChannelFromLegacySettings(DEFAULT_NOTIFICATIONS_SETTINGS_V1),
       ]),
       codingPromptBehaviorV1: CodingPromptBehaviorV1Schema.default(DEFAULT_CODING_PROMPT_BEHAVIOR_V1),
+      sessionRoleProfilesV1: SessionRoleProfilesV1Schema.catch(DEFAULT_SESSION_ROLE_PROFILES_V1).default(DEFAULT_SESSION_ROLE_PROFILES_V1),
+      visibleAgentsV1: VisibleAgentsV1Schema.catch(DEFAULT_VISIBLE_AGENTS_V1).default(DEFAULT_VISIBLE_AGENTS_V1),
+      standaloneSessionPromptV1: StandaloneSessionPromptV1Schema.catch(DEFAULT_STANDALONE_SESSION_PROMPT_V1).default(DEFAULT_STANDALONE_SESSION_PROMPT_V1),
       acpCatalogSettingsV1: AcpCatalogSettingsV1Schema.catch({ v: 2, backends: [] }).default({ v: 2, backends: [] }),
     })
     .passthrough(),

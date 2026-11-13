@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 const serverRoot = join(import.meta.dirname, "..", "..");
 const migrationId = "20261026150000_add_session_appearance";
+const presentationMigrationId = "20261106123000_protect_session_appearance_presentation";
 
 describe("session appearance migration", () => {
     it.each(["prisma/schema.prisma", "prisma/sqlite/schema.prisma", "prisma/mysql/schema.prisma"])(
@@ -33,4 +34,24 @@ describe("session appearance migration", () => {
         expect(normalized).toContain('"SessionAppearance_accountId_fkey" FOREIGN KEY ("accountId") REFERENCES "Account"("id") ON DELETE CASCADE');
         expect(normalized).toContain('"SessionAppearance_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES "Session"("id") ON DELETE CASCADE');
     });
+
+    it.each(["prisma/schema.prisma", "prisma/sqlite/schema.prisma", "prisma/mysql/schema.prisma"])(
+        "keeps the protected presentation envelope aligned with its migration in %s", async (path) => {
+            const schema = await readFile(join(serverRoot, path), "utf8");
+            const model = schema.match(/model SessionAppearance \{[\s\S]*?\n\}/)?.[0];
+            expect(model).toMatch(/displayCleared\s+Boolean\s+@default\(false\)/);
+            expect(model).toMatch(path.includes("mysql")
+                ? /presentationDbValue\s+String\?\s+@db.LongText/
+                : /presentationDbValue\s+String\?/);
+
+            const providerDir = path.startsWith("prisma/mysql")
+                ? "prisma/mysql"
+                : path.startsWith("prisma/sqlite")
+                    ? "prisma/sqlite"
+                    : "prisma";
+            const sql = await readFile(join(serverRoot, providerDir, "migrations", presentationMigrationId, "migration.sql"), "utf8");
+            expect(sql).toContain("displayCleared");
+            expect(sql).toContain(path.includes("mysql") ? "presentationDbValue` LONGTEXT" : 'presentationDbValue" TEXT');
+        },
+    );
 });

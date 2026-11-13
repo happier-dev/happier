@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { SessionDraftSnapshot } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 import {
+    buildNewSessionDraftLocalState,
     buildNewSessionDraftPatch,
     readNewSessionDraftFromSnapshot,
 } from './newSessionDraftRepositoryAdapter';
@@ -14,6 +15,27 @@ function field<T>(mutationId: string, value: T) {
 }
 
 describe('newSessionDraftRepositoryAdapter', () => {
+    it('keeps the selected role in device-local draft state across reload, defaulting to No role', () => {
+        const snapshot = (newSessionLocalState?: Record<string, unknown>) => ({
+            address: { kind: 'newSession', draftId: DRAFT_ID },
+            document: {
+                v: 1,
+                composer: { text: field('text-1', 'Plan it'), mentions: field('mentions-1', []), attachments: field('attachments-1', []) },
+                target: { kind: 'newSession', authoring: { targetType: field('target-1', 'new_session'), directory: field('directory-1', '/repo') } },
+                extensions: {},
+            },
+            status: 'clean', conflict: null, createdAt: 10, updatedAt: 20, materialized: true,
+            localSupplement: newSessionLocalState ? { newSessionLocalState } : {},
+        }) as unknown as SessionDraftSnapshot;
+        const reloaded = readNewSessionDraftFromSnapshot(snapshot({ sessionRole: 'reviewer' }));
+        expect(reloaded?.sessionRole).toBe('reviewer');
+        expect(buildNewSessionDraftLocalState(reloaded!).sessionRole).toBe('reviewer');
+        expect(readNewSessionDraftFromSnapshot(snapshot())?.sessionRole ?? null).toBeNull();
+        expect(readNewSessionDraftFromSnapshot(snapshot({ sessionRole: 'architect' }))?.sessionRole ?? null).toBeNull();
+        const customRole = 'custom:123e4567-e89b-12d3-a456-426614174000' as const;
+        expect(readNewSessionDraftFromSnapshot(snapshot({ sessionRole: customRole }))?.sessionRole).toBe(customRole);
+    });
+
     it('hydrates the existing new-session authoring owner from one exact draft document', () => {
         const snapshot = {
             address: { kind: 'newSession', draftId: DRAFT_ID },

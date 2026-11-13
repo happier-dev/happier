@@ -32,6 +32,14 @@ export const SessionListDensitySchema = z.preprocess((raw) => {
     return raw;
 }, z.enum(['detailed', 'cozy', 'narrow']));
 export const SessionListIdentityDisplaySchema = z.enum(['avatar', 'agentLogo', 'none']);
+export const SessionLineageAppearancePresetSchema = z.object({
+    density: SessionListDensitySchema.optional(),
+    avatarStyle: AvatarStyleIdSchema.optional(),
+}).passthrough();
+export const SessionLineageAppearancePresetsV1Schema = z.object({
+    parent: SessionLineageAppearancePresetSchema.optional(),
+    child: SessionLineageAppearancePresetSchema.optional(),
+}).passthrough();
 
 export const SessionMessageSendModeSchema = z.enum(['agent_queue', 'interrupt', 'server_pending']);
 export const SessionBusySteerSendPolicySchema = z.enum(['steer_immediately', 'server_pending']);
@@ -212,6 +220,12 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Session list identity marker: generated avatar, agent logo, or none',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    sessionLineageAppearancePresetsV1: {
+        schema: SessionLineageAppearancePresetsV1Schema,
+        default: {},
+        description: 'Optional session-list appearance presets for top-level parents and nested children',
+        storageScope: 'account',
     },
     sessionHeaderIdentityDisplay: {
         // Same three choices, same schema as the session list's marker: the in-session header asks

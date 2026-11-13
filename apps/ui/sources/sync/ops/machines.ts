@@ -388,10 +388,10 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
             // semantic launch below with the same nonce; never mint a second attempt identity.
         }
 
-        const params = buildCompatibleSpawnHappySessionRpcParams({
-            options: { ...preparedOptions, spawnNonce: activeAttempt.record.nonce },
-            daemonCliVersion,
-        });
+        const spawnOptions = { ...preparedOptions, spawnNonce: activeAttempt.record.nonce };
+        const params = preparedOptions.sessionRoleAssignment != null
+            ? buildSpawnHappySessionRpcParams(spawnOptions)
+            : buildCompatibleSpawnHappySessionRpcParams({ options: spawnOptions, daemonCliVersion });
         spawnSubmitted = true;
         const callSpawnRpc = async (method: string) => (
             await machineRpcWithConnectedServiceAuthAdmission<CompatibleSpawnHappySessionRpcParams>({
@@ -407,6 +407,9 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
             })
         );
         const result = await (async () => {
+            if (preparedOptions.sessionRoleAssignment != null) {
+                return await callSpawnRpc(RPC_METHODS.SPAWN_HAPPY_SESSION_ROLE_V1);
+            }
             try {
                 return await callSpawnRpc(RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE);
             } catch (error) {
@@ -514,6 +517,20 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
             };
         }
         const rpcErrorCode = readRpcErrorCode(error);
+        if (
+            options.sessionRoleAssignment != null
+            && (rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
+                || rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND)
+        ) {
+            await clearCustody();
+            return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage:
+                    'Update or reconnect the CLI before creating a session with a role. '
+                    + 'The selected daemon did not accept the role-aware spawn method, so no session was started.',
+            };
+        }
         if (rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
             await clearCustody();
             return {

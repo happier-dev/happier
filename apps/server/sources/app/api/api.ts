@@ -33,6 +33,7 @@ import { automationRoutes } from "./routes/automations/automationRoutes";
 import { V2_SESSION_LIST_SERVER_TIMING_REQUEST_HEADER } from "./routes/session/v2SessionListServerTiming";
 import { resolveApiRateLimitPluginOptions, resolveApiTrustProxy } from "./utils/apiRateLimitPolicy";
 import { enableApiCompression } from "./utils/enableApiCompression";
+import { createApiStartupIdentityHolder } from "@/app/runtime/startupReceipt";
 
 export function resolveApiListenHost(env: Record<string, string | undefined>): string {
     const host = (env.HAPPIER_SERVER_HOST ?? env.HAPPY_SERVER_HOST ?? '').toString().trim();
@@ -120,7 +121,8 @@ export async function startApi() {
     const typed = app.withTypeProvider<ZodTypeProvider>() as unknown as Fastify;
 
     // Enable features
-    enableMonitoring(typed);
+    const apiStartupIdentity = createApiStartupIdentityHolder(process.env);
+    enableMonitoring(typed, { apiStartupIdentity });
     enableErrorHandlers(typed);
     enableAuthentication(typed);
 
@@ -150,6 +152,7 @@ export async function startApi() {
     // Start HTTP 
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3005;
     await app.listen({ port, host: resolveApiListenHost(process.env) });
+    apiStartupIdentity.record(app.server.address());
     onShutdown('api:http', async () => {
         await app.close();
     });
@@ -159,4 +162,5 @@ export async function startApi() {
 
     // End
     log('API ready on port http://localhost:' + port);
+    return { apiStartupIdentity: apiStartupIdentity.read() };
 }

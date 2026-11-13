@@ -1,5 +1,7 @@
 import {
+    SessionOrganizationSessionAppearancePresentationSchema,
     SessionOrganizationSessionAppearanceSchema,
+    type SessionOrganizationSessionAppearancePresentation,
     type SessionOrganizationSessionAppearance,
     type SessionAttentionStanding,
     type SessionFolderAssignment,
@@ -44,6 +46,14 @@ export function mapSessionAppearance(row: SessionAppearanceRecord): SessionOrgan
     return SessionOrganizationSessionAppearanceSchema.parse({
         sessionId: row.sessionId,
         display: parseSessionOrganizationDisplayEnvelope(row.displayDbValue),
+        updatedAt: row.updatedAt.getTime(),
+    });
+}
+
+export function mapSessionAppearancePresentation(row: SessionAppearanceRecord & { presentationDbValue: string }): SessionOrganizationSessionAppearancePresentation {
+    return SessionOrganizationSessionAppearancePresentationSchema.parse({
+        sessionId: row.sessionId,
+        presentation: parseSessionOrganizationDisplayEnvelope(row.presentationDbValue),
         updatedAt: row.updatedAt.getTime(),
     });
 }

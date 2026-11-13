@@ -71,6 +71,7 @@ import {
   mergeSpawnSessionOptions,
   normalizeSpawnSessionDirectory,
   SpawnDaemonSessionRequestSchema,
+  isFreshSpawnSessionRoleKnownToAccount,
 } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { continueSessionWithReplay } from '@/session/replay/continueWithReplay';
 import { readAuthenticationStatus } from '@/api/client/httpStatusError';
@@ -775,9 +776,11 @@ export function createDaemonControlApp({
   getChildren,
   machineId,
   runtimeId = '',
+  getServerConnected,
   stopSession,
   prepareStopSession,
   spawnSession,
+  readAccountSettings,
   resolveSpawnSessionByNonce,
   requestShutdown,
   beforeShutdown,
@@ -808,9 +811,12 @@ export function createDaemonControlApp({
   getChildren: () => TrackedSession[];
   machineId: string;
   runtimeId?: string;
+  /** Undefined when this daemon has no server connection to report. */
+  getServerConnected?: () => boolean | undefined;
   stopSession: (sessionId: string, options?: StopSessionOptions) => Promise<StopSessionResult>;
   prepareStopSession?: (child: TrackedSession) => Promise<void> | void;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
+  readAccountSettings?: () => unknown;
   resolveSpawnSessionByNonce?: (spawnNonce: string) => Promise<SpawnSessionNonceResolution> | SpawnSessionNonceResolution;
   requestShutdown: () => void;
   beforeShutdown?: () => Promise<void>;
@@ -1009,6 +1015,7 @@ export function createDaemonControlApp({
           status: z.literal('ok'),
           runtimeId: z.string().min(1).optional(),
           distClosureFingerprint: DaemonDistClosureFingerprintSchema.optional(),
+          serverConnected: z.boolean().optional(),
         }),
         401: authSchema401,
       }
@@ -1018,10 +1025,12 @@ export function createDaemonControlApp({
     const distClosureFingerprint = String(
       process.env.HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT ?? '',
     ).trim();
+    const serverConnected = getServerConnected?.();
     return {
       status: 'ok' as const,
       ...(normalizedRuntimeId ? { runtimeId: normalizedRuntimeId } : {}),
       ...(DAEMON_DIST_CLOSURE_FINGERPRINT_PATTERN.test(distClosureFingerprint) ? { distClosureFingerprint } : {}),
+      ...(serverConnected === undefined ? {} : { serverConnected }),
     };
   });
 
@@ -1831,6 +1840,18 @@ export function createDaemonControlApp({
           status: z.literal('pending'),
           errorCode: z.literal(SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT),
         }),
+        400: z.union([
+          z.object({
+            success: z.literal(false),
+            error: z.string(),
+            errorCode: z.literal(SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST),
+          }),
+          z.object({
+            statusCode: z.literal(400),
+            error: z.string(),
+            message: z.string(),
+          }),
+        ]),
         401: authSchema401,
         409: z.object({
           success: z.boolean(),
@@ -1851,6 +1872,18 @@ export function createDaemonControlApp({
     const { directory, sessionId, existingSessionId } = request.body;
     const spawnNonce = typeof request.body.spawnNonce === 'string' ? request.body.spawnNonce.trim() : '';
     const normalizedDirectory = normalizeSpawnSessionDirectory(directory, process.env);
+
+    if (
+      !existingSessionId
+      && !isFreshSpawnSessionRoleKnownToAccount(request.body.sessionRoleV1, readAccountSettings?.() ?? null)
+    ) {
+      reply.code(400);
+      return {
+        success: false as const,
+        error: 'Custom session role is not present in the target account catalog',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+      };
+    }
 
     logger.debug(`[CONTROL SERVER] Spawn session request: dir=${normalizedDirectory}, sessionId=${sessionId || 'new'}`);
     let result: SpawnSessionResult;
@@ -2265,9 +2298,11 @@ export function startDaemonControlServer({
   getChildren,
   machineId,
   runtimeId = '',
+  getServerConnected,
   stopSession,
   prepareStopSession,
   spawnSession,
+  readAccountSettings,
   resolveSpawnSessionByNonce,
   requestShutdown,
   beforeShutdown,
@@ -2296,9 +2331,12 @@ export function startDaemonControlServer({
   getChildren: () => TrackedSession[];
   machineId: string;
   runtimeId?: string;
+  /** Undefined when this daemon has no server connection to report. */
+  getServerConnected?: () => boolean | undefined;
   stopSession: (sessionId: string, options?: StopSessionOptions) => Promise<StopSessionResult>;
   prepareStopSession?: (child: TrackedSession) => Promise<void> | void;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
+  readAccountSettings?: () => unknown;
   resolveSpawnSessionByNonce?: (spawnNonce: string) => Promise<SpawnSessionNonceResolution> | SpawnSessionNonceResolution;
   requestShutdown: () => void;
   beforeShutdown?: () => Promise<void>;
@@ -2391,9 +2429,11 @@ export function startDaemonControlServer({
       getChildren,
       machineId,
       runtimeId,
+      getServerConnected,
       stopSession,
       prepareStopSession,
       spawnSession,
+      readAccountSettings,
       resolveSpawnSessionByNonce,
       requestShutdown,
       beforeShutdown,

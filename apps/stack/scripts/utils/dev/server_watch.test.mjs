@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { EventEmitter } from 'node:events';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -14,7 +15,16 @@ import {
 } from './server.mjs';
 import { getSpawnedProcessPlannedExitReason } from '../proc/proc.mjs';
 import { listListenPids } from '../net/ports.mjs';
+import { killProcessGroupOwnedByStack, resolvePidStackOwnership } from '../proc/ownership.mjs';
+import { terminateProcessGroup } from '../proc/terminate.mjs';
 import { createListenerOwnershipObservationScope } from '../server/listener_ownership.mjs';
+import {
+  createWindowsOwnershipBoundary,
+  expectedLegacyVerifiedInstances,
+  legacyServerOwnershipBoundary,
+  expectedWindowsVerifiedInstances,
+  writeArmedServerReceipt,
+} from '../../testkit/core/server_ownership_proof.mjs';
 
 function expectedDirectServerRuntimePatch({ listenerPid, wrapperPid, serverPort = 34567 }) {
   return {
@@ -73,6 +83,7 @@ test('startDevServer normalizes providers independently of the full preset', asy
         },
         {
           ensureDepsInstalledImpl: async () => sideEffects.push('deps'),
+          ownershipBoundary: legacyServerOwnershipBoundary,
           pmSpawnScriptImpl: async () => {
             sideEffects.push('spawn');
             return { pid: 201, exitCode: null };
@@ -589,6 +600,7 @@ test('startDevServer cleans up a spawned child when ownership proof fails', asyn
           },
           {
             ensureDepsInstalledImpl: async () => {},
+            ownershipBoundary: legacyServerOwnershipBoundary,
             pmSpawnScriptImpl: async () => ({ pid: 201, exitCode: null }),
             waitForServerReadyImpl: async () => {},
             listListenPidsImpl: async () => [],
@@ -615,6 +627,8 @@ test('startDevServer cleans up a spawned child when ownership proof fails', asyn
         label: 'server',
         json: false,
         graceMs: 1450,
+        processInstanceFingerprint: expectedLegacyVerifiedInstances({ listenerPid: 201, wrapperPid: 201 }).serverPid.fingerprint,
+        boundedIdentity: { timeoutMs: 1450, runCaptureImpl: legacyServerOwnershipBoundary.runCaptureImpl },
       },
     }]);
     assert.deepEqual(updates, []);
@@ -651,6 +665,7 @@ test('startDevServer surfaces typed cleanup-incomplete truth when provisional te
         },
         {
           ensureDepsInstalledImpl: async () => {},
+          ownershipBoundary: legacyServerOwnershipBoundary,
           pmSpawnScriptImpl: async () => child,
           waitForServerReadyImpl: async () => {},
           listListenPidsImpl: async () => [],
@@ -702,6 +717,7 @@ for (const observation of [
           },
           {
             ensureDepsInstalledImpl: async () => {},
+            ownershipBoundary: legacyServerOwnershipBoundary,
             pmSpawnScriptImpl: async () => ({ pid: 201, exitCode: null }),
             waitForServerReadyImpl: async () => {},
             // Exercise the production compatibility function identity. The canonical
@@ -712,7 +728,7 @@ for (const observation of [
               return observation;
             },
             getProcessGroupIdImpl: async () => null,
-            listenerOwnershipTimeoutMs: 20,
+            listenerOwnershipTimeoutMs: 200,
             listenerOwnershipRetryDelayMs: 0,
             killProcessGroupOwnedByStackImpl: async () => ({ killed: true }),
             recordStackRuntimeUpdateImpl: async () => {},
@@ -729,7 +745,7 @@ for (const observation of [
   });
 }
 
-test('startDevServer accepts process-group-scoped listener proof when broad discovery times out after readiness', async (t) => {
+test('startDevServer accepts process-group-scoped listener proof with conclusive broad discovery', async (t) => {
   await withTempServerDir(t, async (serverDir) => {
     const children = [];
     const observations = [];
@@ -760,6 +776,7 @@ test('startDevServer accepts process-group-scoped listener proof when broad disc
       },
       {
         ensureDepsInstalledImpl: async () => {},
+        ownershipBoundary: legacyServerOwnershipBoundary,
         pmSpawnScriptImpl: async ({ options }) => {
           spawnOnLine = options?.onLine;
           spawnOnLine?.({ line: '{"happierStackTransition":"migration_started"}' });
@@ -773,9 +790,7 @@ test('startDevServer accepts process-group-scoped listener proof when broad disc
         listListenPidsImpl: listListenPids,
         listListenPidsWithStatusImpl: async (_port, options) => {
           observations.push(options);
-          return options?.processGroupId === 201
-            ? { status: 'ok', supported: true, pids: [301] }
-            : { status: 'timeout', supported: true, pids: [], reason: 'listener-discovery-timeout' };
+          return { status: 'ok', supported: true, pids: [301] };
         },
         getProcessGroupIdImpl: async (pid) => [201, 301].includes(Number(pid)) ? 44 : null,
         listenerOwnershipTimeoutMs: 20,
@@ -790,7 +805,10 @@ test('startDevServer accepts process-group-scoped listener proof when broad disc
     assert.equal(typeof spawnOnLine, 'function');
     assert.ok(observations.some((options) => options?.processGroupId === 201));
     assert.deepEqual(children, [out.serverProc]);
-    assert.deepEqual(updates, [expectedDirectServerRuntimePatch({ listenerPid: 301, wrapperPid: 201 })]);
+    assert.deepEqual(updates, [{
+      ...expectedDirectServerRuntimePatch({ listenerPid: 301, wrapperPid: 201 }),
+      verifiedProcessInstances: expectedLegacyVerifiedInstances({ listenerPid: 301, wrapperPid: 201 }),
+    }]);
   });
 });
 
@@ -823,6 +841,7 @@ test('startDevServer retries transient process-group listener discovery before r
       },
       {
         ensureDepsInstalledImpl: async () => {},
+        ownershipBoundary: legacyServerOwnershipBoundary,
         pmSpawnScriptImpl: async () => ({ pid: 201, exitCode: null }),
         waitForServerReadyImpl: async () => {},
         listListenPidsImpl: listListenPids,
@@ -833,7 +852,7 @@ test('startDevServer retries transient process-group listener discovery before r
               ? { status: 'timeout', supported: true, pids: [], reason: 'listener-discovery-timeout' }
               : { status: 'ok', supported: true, pids: [301] };
           }
-          return { status: 'timeout', supported: true, pids: [], reason: 'listener-discovery-timeout' };
+          return { status: 'ok', supported: true, pids: [301] };
         },
         getProcessGroupIdImpl: async () => null,
         listenerOwnershipTimeoutMs: 750,
@@ -880,6 +899,7 @@ test('startDevServer directly terminates a spawned child when marker cleanup ref
           },
           {
             ensureDepsInstalledImpl: async () => {},
+            ownershipBoundary: legacyServerOwnershipBoundary,
             pmSpawnScriptImpl: async () => ({ pid: 201, exitCode: null }),
             waitForServerReadyImpl: async () => {},
             listListenPidsImpl: async () => [],
@@ -965,6 +985,7 @@ test('startDevServer skips stack restart cleanup when existing server health che
           order.push('stop');
           stopInput = input;
         },
+        ownershipBoundary: legacyServerOwnershipBoundary,
         pmSpawnScriptImpl: async () => {
           order.push('spawn');
           return { pid: 201, exitCode: null };
@@ -1024,6 +1045,7 @@ test('stack restart consumes the parent preflight marker from server and long-li
         ensureSourceServerWorkspacePackagesBuiltImpl: async () => { workspaceAdmissions += 1; },
         preflightDevServerRestartImpl: preflightDevServerRestart,
         stopStackOwnedServerForRestartImpl: async () => {},
+        ownershipBoundary: legacyServerOwnershipBoundary,
         pmSpawnScriptImpl: async ({ env }) => {
           spawnedEnv = env;
           return { pid: 201, exitCode: null };
@@ -1076,6 +1098,7 @@ test('disabled stack restart cannot preserve the parent preflight marker', async
         ensureSourceServerWorkspacePackagesBuiltImpl: async () => { workspaceAdmissions += 1; },
         preflightDevServerRestartImpl: preflightDevServerRestart,
         stopStackOwnedServerForRestartImpl: async () => {},
+        ownershipBoundary: legacyServerOwnershipBoundary,
         pmSpawnScriptImpl: async ({ env }) => {
           spawnedEnv = env;
           return { pid: 201, exitCode: null };
@@ -1122,6 +1145,7 @@ test('stack restart admits source declarations once when runtime preflight has n
           calls.push(result.reason);
           return result;
         },
+        ownershipBoundary: legacyServerOwnershipBoundary,
         pmSpawnScriptImpl: async () => {
           calls.push('spawn');
           return { pid: 201, exitCode: null };
@@ -1171,6 +1195,7 @@ test('startDevServer records the listener pid separately from the spawned wrappe
           calls.push('workspace');
           assert.equal(admittedDir, serverDir);
         },
+        ownershipBoundary: legacyServerOwnershipBoundary,
         pmSpawnScriptImpl: async () => {
           calls.push('spawn');
           return { pid: 201, exitCode: null };
@@ -1186,7 +1211,10 @@ test('startDevServer records the listener pid separately from the spawned wrappe
 
     assert.equal(out.serverProc.pid, 201);
     assert.deepEqual(calls, ['deps', 'workspace', 'spawn']);
-    assert.deepEqual(updates, [expectedDirectServerRuntimePatch({ listenerPid: 301, wrapperPid: 201 })]);
+    assert.deepEqual(updates, [{
+      ...expectedDirectServerRuntimePatch({ listenerPid: 301, wrapperPid: 201 }),
+      verifiedProcessInstances: expectedLegacyVerifiedInstances({ listenerPid: 301, wrapperPid: 201 }),
+    }]);
   });
 });
 
@@ -1228,6 +1256,7 @@ for (const mode of ['direct', 'proxy', 'directFallback']) {
           },
           {
             ensureDepsInstalledImpl: async () => {},
+            ownershipBoundary: legacyServerOwnershipBoundary,
             pmSpawnScriptImpl: async () => child,
             waitForServerReadyImpl: async () => {},
             listListenPidsImpl: async () => [301],
@@ -1252,3 +1281,360 @@ for (const mode of ['direct', 'proxy', 'directFallback']) {
     });
   });
 }
+
+function createOwnershipStartParams(serverDir, children) {
+  return {
+    serverComponentName: 'happier-server-light',
+    serverDir,
+    autostart: { stackName: 'watch-test', baseDir: serverDir },
+    baseEnv: {
+      HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
+      HAPPIER_STACK_PRISMA_PUSH: '0',
+      HAPPIER_STACK_MANAGED_INFRA: '0',
+      HAPPIER_STACK_PRISMA_MIGRATE: '0',
+    },
+    serverPort: 34567,
+    internalServerUrl: 'http://127.0.0.1:34567',
+    publicServerUrl: 'http://127.0.0.1:34567',
+    envPath: join(serverDir, 'env'),
+    stackMode: true,
+    runtimeStatePath: join(serverDir, 'stack.runtime.json'),
+    serverAlreadyRunning: false,
+    restart: false,
+    children,
+    quiet: true,
+  };
+}
+
+async function listStartupAttempts(serverDir) {
+  return await readdir(join(serverDir, 'runtime-receipts')).catch(() => []);
+}
+
+test('startDevServer records the API-proven listener on a host that hides it, then removes the attempt', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const activations = [];
+    const spawnEnvs = [];
+    const wrapperPid = 201;
+    const out = await startDevServer(createOwnershipStartParams(serverDir, []), {
+      ensureDepsInstalledImpl: async () => {},
+      ownershipBoundary: createWindowsOwnershipBoundary({ wrapperPid }),
+      pmSpawnScriptImpl: async ({ env }) => {
+        spawnEnvs.push(env);
+        await writeArmedServerReceipt(env, { port: 34567 });
+        return { pid: wrapperPid, exitCode: null };
+      },
+      waitForServerReadyImpl: async () => {},
+      listListenPidsImpl: async () => [],
+      recordStackRuntimeServerActivationImpl: async (_path, activation) => activations.push(activation),
+    });
+
+    assert.equal(activations.length, 1);
+    assert.equal(activations[0].listenerPid, process.pid);
+    assert.equal(activations[0].wrapperPid, wrapperPid);
+    assert.deepEqual(activations[0].verifiedProcessInstances, expectedWindowsVerifiedInstances({ wrapperPid }));
+    assert.equal(typeof spawnEnvs[0].HAPPIER_SERVER_STARTUP_RECEIPT_NONCE, 'string');
+    assert.equal(out.serverEnv.HAPPIER_SERVER_STARTUP_RECEIPT_NONCE, undefined);
+    assert.deepEqual(await listStartupAttempts(serverDir), []);
+  });
+});
+
+test('startDevServer terminates the spawn and removes the attempt when another server answers', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const children = [];
+    const kills = [];
+    const wrapperPid = 201;
+    await assert.rejects(
+      startDevServer(createOwnershipStartParams(serverDir, children), {
+        ensureDepsInstalledImpl: async () => {},
+        ownershipBoundary: createWindowsOwnershipBoundary({ wrapperPid, readyInstanceId: 'foreign' }),
+        pmSpawnScriptImpl: async ({ env }) => {
+          await writeArmedServerReceipt(env, { port: 34567 });
+          return { pid: wrapperPid, exitCode: null };
+        },
+        waitForServerReadyImpl: async () => {},
+        listListenPidsImpl: async () => [],
+        killProcessGroupOwnedByStackImpl: async (pid) => {
+          kills.push(pid);
+          return { killed: true };
+        },
+        recordStackRuntimeServerActivationImpl: async () => assert.fail('an unproven server must not be recorded'),
+      }),
+      (error) => error.reason === 'api-identity-mismatch',
+    );
+
+    assert.deepEqual(kills, [wrapperPid]);
+    assert.deepEqual(children, []);
+    assert.deepEqual(await listStartupAttempts(serverDir), []);
+  });
+});
+
+test('startDevServer keeps the attempt while termination of an unproven server is unconfirmed', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const wrapperPid = 201;
+    await assert.rejects(
+      startDevServer(createOwnershipStartParams(serverDir, []), {
+        ensureDepsInstalledImpl: async () => {},
+        ownershipBoundary: createWindowsOwnershipBoundary({ wrapperPid, readyInstanceId: 'foreign' }),
+        pmSpawnScriptImpl: async ({ env }) => {
+          await writeArmedServerReceipt(env, { port: 34567 });
+          return { pid: wrapperPid, exitCode: null };
+        },
+        waitForServerReadyImpl: async () => {},
+        listListenPidsImpl: async () => [],
+        killProcessGroupOwnedByStackImpl: async () => ({ killed: false }),
+        terminateSpawnedChildImpl: async () => false,
+      }),
+      (error) => error.code === 'ESERVERPROVISIONINGCLEANUPINCOMPLETE',
+    );
+    assert.equal((await listStartupAttempts(serverDir)).length, 1);
+  });
+});
+
+test('runtime status does not adopt a listener that only a startup proof could vouch for', async () => {
+  const pid = await resolveStackOwnedServerRuntimePid(
+    {
+      runtimeStatePath: '/tmp/stack.runtime.json',
+      serverPort: 34567,
+      stackName: 'watch-test',
+      envPath: '/tmp/watch-test.env',
+    },
+    {
+      readStackRuntimeStateFileImpl: async () => ({ processes: { serverPid: 301 } }),
+      isPidAliveImpl: () => true,
+      isPidOwnedByStackImpl: async () => true,
+      listListenPidsImpl: async () => [],
+      getProcessGroupIdImpl: async () => null,
+    },
+  );
+  assert.equal(pid, null);
+});
+
+test('startDevServer gives its ownership proof the owner budget, not the preflight limit', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const budgets = [];
+    await startDevServer(createOwnershipStartParams(serverDir, []), {
+      ensureDepsInstalledImpl: async () => {},
+      ownershipBoundary: legacyServerOwnershipBoundary,
+      pmSpawnScriptImpl: async () => ({ pid: 201, exitCode: null }),
+      waitForServerReadyImpl: async () => {},
+      proveSpawnedServerOwnershipImpl: async ({ spawned }) => {
+        budgets.push(spawned.observationScope.remainingMs());
+        return { listenerPid: 201, wrapperPid: 201, proof: 'os_listener', receiptSettled: true, verifiedProcessInstances: null };
+      },
+      recordStackRuntimeServerActivationImpl: async () => {},
+    });
+    assert.equal(budgets.length, 1);
+    assert.ok(budgets[0] > 30_000, `expected the owner budget, got ${budgets[0]}ms`);
+  });
+});
+
+function createSpawnIdentityBoundary({ afterCapture }) {
+  let reads = 0;
+  return {
+    fetchReadyIdentityImpl: async () => ({ status: 'legacy' }),
+    runCaptureImpl: async (_command, _args, budget) => {
+      reads += 1;
+      return reads === 1 ? 'spawn-created' : await afterCapture(budget);
+    },
+  };
+}
+
+async function runFailedStartWithRealCleanup(serverDir, { platform, boundary, boundaryHost }) {
+  const syncReader = () => assert.fail('cleanup must not reach the synchronous reader');
+  const killOptions = [];
+  const start = startDevServer(createOwnershipStartParams(serverDir, []), {
+    ensureDepsInstalledImpl: async () => {},
+    ownershipBoundary: { ...boundary, platform },
+    pmSpawnScriptImpl: async () => ({ pid: 201, exitCode: null }),
+    waitForServerReadyImpl: async () => {},
+    proveSpawnedServerOwnershipImpl: async () => {
+      throw new Error('unproven');
+    },
+    killProcessGroupOwnedByStackImpl: (pid, options) => {
+      killOptions.push(options);
+      return killProcessGroupOwnedByStack(pid, {
+        ...options,
+        platform,
+        readProcessInstanceFingerprintImpl: syncReader,
+        resolvePidStackOwnershipImpl: (candidate, context, budget) => resolvePidStackOwnership(candidate, context, {
+          ...budget,
+          platform: 'win32',
+          readProcessInstanceFingerprintImpl: syncReader,
+        }),
+        terminateProcessGroupImpl: (target, termination) => terminateProcessGroup(target, {
+          ...termination,
+          boundary: { ...termination.boundary, ...boundaryHost },
+        }),
+        getProcessGroupIdImpl: async () => null,
+        observePidLivenessImpl: () => ({ status: 'alive' }),
+      });
+    },
+    terminateSpawnedChildImpl: async () => assert.fail('an unproven PID must not fall back to a kill by PID'),
+  });
+  return { start, killOptions };
+}
+
+function createFakeWindowsHost() {
+  let alive = true;
+  return {
+    platform: 'win32',
+    isPidAlive: () => alive,
+    observePidLiveness: () => ({ status: alive ? 'alive' : 'dead' }),
+    spawn: () => {
+      const taskkill = new EventEmitter();
+      setImmediate(() => {
+        alive = false;
+        taskkill.emit('exit', 0);
+      });
+      return taskkill;
+    },
+  };
+}
+
+test('failed-start cleanup kills through the spawn identity within a budget', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const { start, killOptions } = await runFailedStartWithRealCleanup(serverDir, {
+      platform: 'win32',
+      boundary: createSpawnIdentityBoundary({ afterCapture: async () => 'spawn-created' }),
+      boundaryHost: createFakeWindowsHost(),
+    });
+    await assert.rejects(start, /unproven/);
+    assert.match(killOptions[0].processInstanceFingerprint, /spawn-created$/);
+    assert.ok(killOptions[0].boundedIdentity.timeoutMs > 0);
+    assert.deepEqual(await listStartupAttempts(serverDir), []);
+  });
+});
+
+test('failed-start cleanup settles unconfirmed and keeps the attempt when identity probes stall', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const startedAt = Date.now();
+    const stalled = createSpawnIdentityBoundary({
+      afterCapture: ({ timeoutMs }) => new Promise((_resolve, reject) => {
+        setTimeout(() => reject(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })), Math.min(timeoutMs, 50));
+      }),
+    });
+    const { start } = await runFailedStartWithRealCleanup(serverDir, {
+      platform: 'win32',
+      boundary: stalled,
+      boundaryHost: createFakeWindowsHost(),
+    });
+    await assert.rejects(start, (error) => error.code === 'ESERVERPROVISIONINGCLEANUPINCOMPLETE');
+    assert.ok(Date.now() - startedAt < 10_000);
+    assert.equal((await listStartupAttempts(serverDir)).length, 1);
+  });
+});
+
+test('failed-start cleanup never kills a PID whose identity no longer matches the spawn', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const { start } = await runFailedStartWithRealCleanup(serverDir, {
+      platform: 'win32',
+      boundary: createSpawnIdentityBoundary({ afterCapture: async () => 'another-process' }),
+      boundaryHost: createFakeWindowsHost(),
+    });
+    await assert.rejects(start, (error) => error.code === 'ESERVERPROVISIONINGCLEANUPINCOMPLETE');
+    assert.equal((await listStartupAttempts(serverDir)).length, 1);
+  });
+});
+
+test('failed-start cleanup without a captured identity is unconfirmed and kills nothing', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const { start, killOptions } = await runFailedStartWithRealCleanup(serverDir, {
+      platform: 'win32',
+      boundary: {
+        runCaptureImpl: async () => {
+          throw new Error('cim unavailable');
+        },
+      },
+      boundaryHost: createFakeWindowsHost(),
+    });
+    await assert.rejects(start, (error) => error.code === 'ESERVERPROVISIONINGCLEANUPINCOMPLETE');
+    assert.deepEqual(killOptions, []);
+    assert.equal((await listStartupAttempts(serverDir)).length, 1);
+  });
+});
+
+test('startDevServer keeps the proof budget through a readiness wait longer than the budget', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const out = await startDevServer(createOwnershipStartParams(serverDir, []), {
+      ensureDepsInstalledImpl: async () => {},
+      ownershipBoundary: legacyServerOwnershipBoundary,
+      pmSpawnScriptImpl: async () => ({ pid: 201, exitCode: null }),
+      waitForServerReadyImpl: () => new Promise((resolve) => setTimeout(resolve, 150)),
+      listListenPidsImpl: async () => [201],
+      getProcessGroupIdImpl: async () => 201,
+      listenerOwnershipTimeoutMs: 100,
+      recordStackRuntimeServerActivationImpl: async () => {},
+    });
+    assert.equal(out.serverProc.pid, 201);
+  });
+});
+
+test('a Windows leader that exited first leaves no tree proof, so the attempt is kept', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    await assert.rejects(
+      startDevServer(createOwnershipStartParams(serverDir, []), {
+        ensureDepsInstalledImpl: async () => {},
+        ownershipBoundary: { ...legacyServerOwnershipBoundary, platform: 'win32' },
+        pmSpawnScriptImpl: async () => ({ pid: 201, exitCode: 1 }),
+        waitForServerReadyImpl: async () => {},
+        proveSpawnedServerOwnershipImpl: async () => {
+          throw new Error('unproven');
+        },
+      }),
+      /unproven/,
+    );
+    assert.equal((await listStartupAttempts(serverDir)).length, 1);
+  });
+});
+
+test('startDevServer hands its attempt lifetime to every readiness wait', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const signals = [];
+    await startDevServer({
+      ...createOwnershipStartParams(serverDir, []),
+      serverBindPort: 34568,
+    }, {
+      ensureDepsInstalledImpl: async () => {},
+      ownershipBoundary: legacyServerOwnershipBoundary,
+      pmSpawnScriptImpl: async () => ({ pid: 201, exitCode: null }),
+      waitForServerReadyImpl: async (_url, options) => {
+        signals.push(options.signal);
+      },
+      listListenPidsImpl: async () => [201],
+      getProcessGroupIdImpl: async () => 201,
+      recordStackRuntimeServerActivationImpl: async () => {},
+    });
+    assert.equal(signals.length, 2);
+    assert.equal(signals.every((signal) => signal instanceof AbortSignal), true);
+  });
+});
+
+test('startDevServer fails closed and cleans up when broad discovery cannot corroborate a group proof', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const children = [];
+    const kills = [];
+    await assert.rejects(
+      startDevServer(createOwnershipStartParams(serverDir, children), {
+        ensureDepsInstalledImpl: async () => {},
+        ownershipBoundary: legacyServerOwnershipBoundary,
+        pmSpawnScriptImpl: async () => ({ pid: 201, exitCode: null }),
+        waitForServerReadyImpl: async () => {},
+        listListenPidsImpl: listListenPids,
+        listListenPidsWithStatusImpl: async (_port, options) => (options?.processGroupId === 201
+          ? { status: 'ok', supported: true, pids: [301] }
+          : { status: 'timeout', supported: true, pids: [], reason: 'listener-discovery-timeout' }),
+        getProcessGroupIdImpl: async () => 201,
+        listenerOwnershipTimeoutMs: 300,
+        killProcessGroupOwnedByStackImpl: async (pid) => {
+          kills.push(pid);
+          return { killed: true };
+        },
+        recordStackRuntimeServerActivationImpl: async () => assert.fail('an uncorroborated server must not be recorded'),
+      }),
+      (error) => error.code === 'ELISTENERDISCOVERYINCONCLUSIVE',
+    );
+    assert.deepEqual(kills, [201]);
+    assert.deepEqual(children, []);
+    assert.equal((await listStartupAttempts(serverDir)).length, 0);
+  });
+});

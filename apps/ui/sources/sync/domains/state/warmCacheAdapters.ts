@@ -1,6 +1,7 @@
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import {
     readRollbackEligibleTurnStarts,
+    type SessionListRenderableMetadata,
     type SessionListRenderableSession,
 } from '@/sync/domains/session/listing/sessionListRenderable';
 import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol';
@@ -117,6 +118,11 @@ export function isSessionListCacheEntryMetadataUsable(entry: SessionListCacheEnt
         || hasNonEmptyString(entry.machineId)
         || hasNonEmptyString(entry.flavor)
         || entry.directSessionV1 != null
+        || entry.sessionOriginV1 != null
+        || entry.executionRunLinkV1 != null
+        || entry.sessionRole != null
+        || entry.sessionRoleName != null
+        || entry.sessionRoleColor != null
         || entry.hiddenSystemSession === true;
 }
 
@@ -127,6 +133,20 @@ function areDirectSessionCacheEntriesEqual(
     if (next === previous) return true;
     if (!next || !previous) return (next ?? null) === (previous ?? null);
     return next.v === previous.v && next.providerId === previous.providerId;
+}
+
+function areExecutionRunLinkCacheEntriesEqual(
+    next: SessionListCacheEntryV1['executionRunLinkV1'],
+    previous: SessionListCacheEntryV1['executionRunLinkV1'],
+): boolean {
+    if (next === previous) return true;
+    if (!next || !previous) return (next ?? null) === (previous ?? null);
+    return (next.report?.ack ?? null) === (previous.report?.ack ?? null)
+        && (next.report?.turnEpoch ?? null) === (previous.report?.turnEpoch ?? null)
+        && (next.relay?.status ?? null) === (previous.relay?.status ?? null)
+        && (next.relay?.turnEpoch ?? null) === (previous.relay?.turnEpoch ?? null)
+        && (next.delivery?.status ?? null) === (previous.delivery?.status ?? null)
+        && (next.delivery?.turnEpoch ?? null) === (previous.delivery?.turnEpoch ?? null);
 }
 
 function areSessionListCacheEntriesEqual(
@@ -171,6 +191,11 @@ function areSessionListCacheEntriesEqual(
         && nextEntry.flavor === previousEntry.flavor
         && areDirectSessionCacheEntriesEqual(nextEntry.directSessionV1, previousEntry.directSessionV1)
         && nextEntry.hiddenSystemSession === previousEntry.hiddenSystemSession
+        && (nextEntry.sessionOriginV1?.creatorSessionId ?? null) === (previousEntry.sessionOriginV1?.creatorSessionId ?? null)
+        && areExecutionRunLinkCacheEntriesEqual(nextEntry.executionRunLinkV1, previousEntry.executionRunLinkV1)
+        && (nextEntry.sessionRole ?? null) === (previousEntry.sessionRole ?? null)
+        && (nextEntry.sessionRoleName ?? null) === (previousEntry.sessionRoleName ?? null)
+        && (nextEntry.sessionRoleColor ?? null) === (previousEntry.sessionRoleColor ?? null)
         && nextEntry.hasPendingPermissionRequests === previousEntry.hasPendingPermissionRequests
         && nextEntry.hasPendingUserActionRequests === previousEntry.hasPendingUserActionRequests
         && nextEntry.hasUnreadMessages === previousEntry.hasUnreadMessages
@@ -205,8 +230,30 @@ function countOwnEntries(record: Readonly<Record<string, unknown>> | null | unde
     return count;
 }
 
+export function buildSessionListRenderableMetadataFromCacheEntry(
+    entry: SessionListCacheEntryV1,
+): SessionListRenderableMetadata | null {
+    if (!isSessionListCacheEntryMetadataUsable(entry)) return null;
+    return {
+        name: entry.name,
+        summaryText: entry.summaryText ?? null,
+        path: entry.path,
+        homeDir: entry.homeDir ?? null,
+        host: entry.host ?? null,
+        machineId: entry.machineId ?? null,
+        flavor: entry.flavor ?? null,
+        directSessionV1: entry.directSessionV1 ?? null,
+        hiddenSystemSession: entry.hiddenSystemSession === true,
+        sessionOriginV1: entry.sessionOriginV1 ?? null,
+        executionRunLinkV1: entry.executionRunLinkV1 ?? null,
+        sessionRole: entry.sessionRole ?? null,
+        sessionRoleName: entry.sessionRoleName ?? null,
+        sessionRoleColor: entry.sessionRoleColor ?? null,
+    };
+}
+
 export function buildSessionListRenderableFromCacheEntry(entry: SessionListCacheEntryV1): SessionListRenderableSession {
-    const metadataUsable = isSessionListCacheEntryMetadataUsable(entry);
+    const metadata = buildSessionListRenderableMetadataFromCacheEntry(entry);
     return {
         id: entry.sessionId,
         seq: normalizeNonNegativeInteger(entry.seq) ?? 0,
@@ -223,17 +270,7 @@ export function buildSessionListRenderableFromCacheEntry(entry: SessionListCache
         lastViewedSessionSeq: normalizeNonNegativeInteger(entry.lastViewedSessionSeq),
         metadataVersion: entry.metadataVersion,
         agentStateVersion: entry.agentStateVersion,
-        metadata: metadataUsable ? {
-            name: entry.name,
-            summaryText: entry.summaryText ?? null,
-            path: entry.path,
-            homeDir: entry.homeDir ?? null,
-            host: entry.host ?? null,
-            machineId: entry.machineId ?? null,
-            flavor: entry.flavor ?? null,
-            directSessionV1: entry.directSessionV1 ?? null,
-            hiddenSystemSession: entry.hiddenSystemSession === true,
-        } : null,
+        metadata,
         thinking: false,
         thinkingAt: 0,
         presence: resolveSessionPresence(entry),
@@ -260,7 +297,7 @@ export function buildSessionListRenderableFromCacheEntry(entry: SessionListCache
         // Restoring the unread entry fact is what keeps the attention lane ordered
         // by a durable server fact instead of a per-boot, per-device one.
         unreadSince: entry.unreadSince ?? null,
-        metadataUnavailable: !metadataUsable,
+        metadataUnavailable: metadata == null,
     };
 }
 
@@ -340,6 +377,11 @@ export function buildSessionListCacheEntryFromRenderable(
         machineId: preserveMetadata ? previousEntry.machineId ?? null : session.metadata?.machineId ?? null,
         flavor: preserveMetadata ? previousEntry.flavor ?? null : session.metadata?.flavor ?? null,
         directSessionV1: preserveMetadata ? previousEntry.directSessionV1 ?? null : session.metadata?.directSessionV1 ?? null,
+        sessionOriginV1: preserveMetadata ? previousEntry.sessionOriginV1 ?? null : session.metadata?.sessionOriginV1 ?? null,
+        executionRunLinkV1: preserveMetadata ? previousEntry.executionRunLinkV1 ?? null : session.metadata?.executionRunLinkV1 ?? null,
+        sessionRole: preserveMetadata ? previousEntry.sessionRole ?? null : session.metadata?.sessionRole ?? null,
+        sessionRoleName: preserveMetadata ? previousEntry.sessionRoleName ?? null : session.metadata?.sessionRoleName ?? null,
+        sessionRoleColor: preserveMetadata ? previousEntry.sessionRoleColor ?? null : session.metadata?.sessionRoleColor ?? null,
         hiddenSystemSession: preserveMetadata
             ? previousEntry.hiddenSystemSession === true
             : session.metadata?.hiddenSystemSession === true,

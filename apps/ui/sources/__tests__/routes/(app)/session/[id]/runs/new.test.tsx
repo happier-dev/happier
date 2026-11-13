@@ -676,6 +676,7 @@ describe('Session New Run Screen', () => {
 
         const stackOptions = stackScreenSpy.mock.calls.at(-1)?.[0]?.options;
         expect(stackOptions?.headerTitle).toBe('Start run');
+        expect(screen.findByTestId('execution-run-visible-agent-controls')).toBeNull();
 
         const views = screen.findAllByType('View');
         const hasConstrainedContainer = views.some((node: any) => {

@@ -3,6 +3,7 @@ import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessio
 import type { RawSessionListRow, RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
 import {
+  readSessionLineageReadbackV1,
   readSystemSessionMetadataFromMetadata,
   type SessionSummary as ProtocolSessionSummary,
 } from '@happier-dev/protocol';
@@ -40,6 +41,7 @@ export function summarizeSessionRow(params: Readonly<{
   const permissionMode = resolvePermissionIntentFromSessionMetadata(metadata)?.intent;
   const systemMetadata = metadata === null ? null : readSystemSessionMetadataFromMetadata({ metadata });
   const isSystem = systemMetadata !== null;
+  const lineage = readSessionLineageReadbackV1(metadata);
   const archivedAt = (params.row as any)?.archivedAt;
   const archivedAtValue = typeof archivedAt === 'number' && Number.isFinite(archivedAt) && archivedAt >= 0 ? archivedAt : archivedAt === null ? null : undefined;
 
@@ -62,6 +64,11 @@ export function summarizeSessionRow(params: Readonly<{
     ...(readShare(params.row.share) !== undefined ? { share: readShare(params.row.share) } : {}),
     ...((params.row as any)?.encryptionMode ? { encryptionMode: (params.row as any).encryptionMode } : {}),
     encryption,
+    // Role and lineage readback, so a Lead can confirm a child's role, creator, and run link.
+    role: lineage.role,
+    origin: lineage.origin,
+    executionRunLink: lineage.executionRunLink,
+    ...(lineage.teamAssembly ? { teamAssembly: lineage.teamAssembly } : {}),
   };
 }
 

@@ -201,6 +201,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: ['sessions'],
     representation: 'server',
   },
+  'sessions.lineageAppearancePresets': {
+    description: 'Optional account-level parent and nested-child session list appearance presets.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['sessions'],
+    representation: 'client',
+  },
   'sessions.drafts': {
     description: 'Cross-device composer and new-session draft synchronization.',
     defaultFailMode: 'fail_closed',

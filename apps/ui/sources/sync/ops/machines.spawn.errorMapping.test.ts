@@ -1340,6 +1340,76 @@ describe('machineSpawnNewSession error mapping', () => {
     expect(machineRpcWithServerScopeMock.mock.calls[0]?.[0]?.payload).not.toHaveProperty('backendTarget');
   });
 
+  it('does not trust a stale persisted role capability after the target daemon was downgraded', async () => {
+    const machine = storage.getState().machines['machine-1'];
+    if (!machine?.metadata) throw new Error('machine fixture missing metadata');
+    storage.setState({ machines: { 'machine-1': {
+      ...machine,
+      metadata: { ...machine.metadata, happyCliVersion: '0.2.20', daemonSessionRoleV1SpawnSupported: true },
+    } } });
+    machineRpcWithServerScopeMock.mockImplementation(async ({ method }) => {
+      if (method === RPC_METHODS.SPAWN_HAPPY_SESSION_ROLE_V1) {
+        throw Object.assign(new Error('RPC method not available'), {
+          rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        });
+      }
+      return { type: 'success', sessionId: 'must-not-be-created' };
+    });
+    const { machineSpawnNewSession } = await import('./machines');
+    const result = await machineSpawnNewSession({
+      machineId: 'machine-1',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      serverId: 'server-b',
+      sessionRoleAssignment: {
+        v: 1,
+        role: 'worker',
+        instructions: 'Bounded worker instructions.',
+        assignmentId: 'role-assignment-1',
+        assignedAt: 1,
+      },
+    });
+
+    expect(result).toMatchObject({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+    });
+    expect(result.type === 'error' ? result.errorMessage : '').toContain('role');
+    expect(machineRpcWithServerScopeMock.mock.calls.map(([call]) => call.method)).toEqual([
+      RPC_METHODS.SPAWN_HAPPY_SESSION_ROLE_V1,
+    ]);
+  });
+
+  it('forwards the exact role snapshot through the current role-aware spawn method', async () => {
+    const machine = storage.getState().machines['machine-1'];
+    if (!machine?.metadata) throw new Error('machine fixture missing metadata');
+    storage.setState({ machines: { 'machine-1': {
+      ...machine,
+      // The live method, not a version guess or stale metadata, owns admission.
+      metadata: { ...machine.metadata, happyCliVersion: '0.0.9' },
+      daemonState: { startedWithCliVersion: '0.0.9' },
+    } } });
+    machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'session-with-role' });
+    const sessionRoleAssignment = {
+      v: 1 as const,
+      role: 'reviewer' as const,
+      instructions: 'Review this bounded request.',
+      assignmentId: 'role-assignment-2',
+      assignedAt: 2,
+    };
+    const { machineSpawnNewSession } = await import('./machines');
+    const result = await machineSpawnNewSession({
+      machineId: 'machine-1', directory: '/tmp', serverId: 'server-b',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, sessionRoleAssignment,
+    });
+
+    expect(result).toMatchObject({ type: 'success', sessionId: 'session-with-role' });
+    expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+      method: RPC_METHODS.SPAWN_HAPPY_SESSION_ROLE_V1,
+      payload: expect.objectContaining({ sessionRoleV1: sessionRoleAssignment }),
+    }));
+  });
+
   it('reports when transport compatibility strips pending first input', async () => {
     storage.getState().applyMachines([
       {

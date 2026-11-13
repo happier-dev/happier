@@ -6,6 +6,7 @@ describe('resolveRpcForwardTimeoutMs', () => {
     it('keeps execution-run admission, input, and waits under caller and lifecycle cancellation without widening ordinary RPC calls', () => {
         for (const method of [
             'execution.run.start',
+            'execution.run.start.v2',
             'execution.run.ensure',
             'execution.run.ensureOrStart',
             'execution.run.send',

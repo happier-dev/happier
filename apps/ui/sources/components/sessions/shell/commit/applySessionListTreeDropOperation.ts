@@ -1,4 +1,5 @@
 import type { TreeInstruction } from '@/components/ui/treeDragDrop';
+import { canReorderSessionListItem } from '@/sync/domains/session/listing/sessionListIndex';
 import type { SessionFoldersV1 } from '@/sync/domains/session/folders';
 import {
     normalizeSessionListOrderingModeV1,
@@ -314,6 +315,12 @@ export async function applySessionListTreeDropOperation(params: Readonly<{
     if (!resolveSessionListTreeDropDestination({ tree: params.tree, source: params.source, instruction: params.result.instruction })) {
         return { ok: false, operationKind: 'invalid', reason: params.result.instruction.kind };
     }
+    const canReorder = canReorderSessionListItem(params.source.metadata.item)
+        && canReorderSessionListItem(params.tree.rowMetadataById.get(params.source.id)?.item ?? params.source.metadata.item);
+    const isFolderAssignment = params.result.instruction.kind === 'nest-into' || params.result.instruction.kind === 'move-to-root';
+    if (!canReorder && !isFolderAssignment) {
+        return { ok: false, operationKind: 'invalid', reason: 'lineage-placement' };
+    }
     const result = resolveSessionListFolderSortModeDropResult({
         tree: params.tree,
         source: params.source,
@@ -360,7 +367,7 @@ export async function applySessionListTreeDropOperation(params: Readonly<{
                 source: params.source,
                 destination,
                 context: params.context,
-                writeGroupOrder: effectiveOrderingMode === 'custom',
+                writeGroupOrder: canReorder && effectiveOrderingMode === 'custom',
             }),
             operationKind,
         };

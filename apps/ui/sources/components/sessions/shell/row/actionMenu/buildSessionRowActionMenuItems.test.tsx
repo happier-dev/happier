@@ -27,6 +27,36 @@ describe('buildSessionRowMoreMenuItems', () => {
         expect(move).toMatchObject({ disabled: false });
     });
 
+    it('places placement and role commands at the bottom, immediately above Stop, and withholds role without edit access', () => {
+        const session: SessionListRenderableSession = {
+            id: 'session_1', active: true, archivedAt: null, owner: 'user_1', accessLevel: undefined,
+            seq: 4, lastViewedSessionSeq: 4, latestTurnStatus: 'completed', createdAt: 1, updatedAt: 1, activeAt: 1,
+            metadataVersion: 1, agentStateVersion: 1, metadata: null, thinking: false, thinkingAt: 0, presence: 1,
+        };
+        const placementItem = { id: 'sessionPlacement.nestUnder', title: 'Nest under…' };
+        const roleItem = { id: 'sessionRole', title: 'Set role…' };
+        const owner = createSessionActionTarget({ session, serverId: 'server_1', currentUserId: 'user_1', isConnected: true, isPinned: false });
+        const ids = buildSessionRowMoreMenuItems({ target: owner, iconColor: '#999', canMoveToFolder: true,
+            leadingItems: [{ id: 'session.fork', title: 'Fork' }], placementItem, roleItem }).map((item) => item.id);
+        expect(ids).toEqual([
+            SESSION_ACTION_RENAME_ID,
+            SESSION_ACTION_MARK_UNREAD_ID,
+            'session.fork',
+            'sessionPlacement.nestUnder',
+            'sessionRole',
+            SESSION_ACTION_STOP_ID,
+            SESSION_ACTION_ARCHIVE_ID,
+            SESSION_ACTION_DELETE_ID,
+            SESSION_ACTION_MOVE_TO_FOLDER_ID,
+        ]);
+
+        const viewer = createSessionActionTarget({ session: { ...session, owner: 'someone-else', accessLevel: 'view' },
+            serverId: 'server_1', currentUserId: 'user_1', isConnected: true, isPinned: false });
+        const viewerIds = buildSessionRowMoreMenuItems({ target: viewer, iconColor: '#999', placementItem, roleItem }).map((item) => item.id);
+        expect(viewerIds).toContain('sessionPlacement.nestUnder');
+        expect(viewerIds).not.toContain('sessionRole');
+    });
+
     it('composes shared session actions with the row move-to-folder action', () => {
         const session: SessionListRenderableSession = {
             id: 'session_1',

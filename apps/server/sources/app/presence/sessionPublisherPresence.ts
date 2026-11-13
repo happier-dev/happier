@@ -22,12 +22,22 @@ import {
     writeSessionRuntimeActivityProjectionInTx,
 } from "@/app/session/runtimeActivity/writeProjection";
 import { db } from "@/storage/db";
-import { inTx } from "@/storage/inTx";
+import { IN_TX_OPERATION_LABELS, inTx, type InTxOptions } from "@/storage/inTx";
 import { blockInheritedProviderDeliveryClaims } from "@/app/session/pending/providerDeliveryClaimStaleness";
 import { applyLatestSessionTurnEndInTx, selectSessionActivityBadgeInputs } from "@/app/session/sessionWriteService";
 import { didSessionActivityBadgeContributionChange } from "@/app/activity/accountActivityBadge";
 import { AsyncLock } from "@/utils/runtime/lock";
 import type { Tx } from "@/storage/inTx";
+
+async function inSessionPublisherPresenceTx<T>(
+    fn: (tx: Tx) => Promise<T>,
+    options: Omit<InTxOptions, "diagnostics"> = {},
+): Promise<T> {
+    return await inTx(fn, {
+        ...options,
+        diagnostics: { operation: IN_TX_OPERATION_LABELS.sessionPublisherPresence },
+    });
+}
 
 export interface PublisherBinding {
     readonly accountId: string;
@@ -128,7 +138,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
     };
 
     const registerOnce = async (binding: PublisherBinding, completeSnapshot: SessionRuntimeActivitySnapshot, observedAt?: Date): Promise<RegisterPublisherResult> => {
-        return await inTx(async (tx): Promise<RegisterPublisherResult> => {
+        return await inSessionPublisherPresenceTx(async (tx): Promise<RegisterPublisherResult> => {
             const session = await tx.session.findUnique({
                 where: { id: binding.sessionId },
                 select: { archivedAt: true, lastActiveAt: true, publisherGeneration: true },
@@ -244,7 +254,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         binding: PublisherBinding;
         authority: PublisherCloseAuthority;
         mutationId: string;
-    }>): Promise<ClosePublisherResult> => await inTx(async (tx): Promise<ClosePublisherResult> => {
+    }>): Promise<ClosePublisherResult> => await inSessionPublisherPresenceTx(async (tx): Promise<ClosePublisherResult> => {
         const session = await tx.session.findUnique({
             where: { id: params.binding.sessionId },
             select: {
@@ -357,7 +367,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
 
     const captureExplicitMachineStop = async (params: Readonly<{
         binding: PublisherBinding;
-    }>): Promise<CaptureExplicitMachineStopResult> => await inTx(async (tx): Promise<CaptureExplicitMachineStopResult> => {
+    }>): Promise<CaptureExplicitMachineStopResult> => await inSessionPublisherPresenceTx(async (tx): Promise<CaptureExplicitMachineStopResult> => {
         const session = await tx.session.findUnique({
             where: { id: params.binding.sessionId },
             select: {
@@ -492,7 +502,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                 };
             }
 
-            const result = await inTx(async (tx): Promise<TouchPublisherResult> => {
+            const result = await inSessionPublisherPresenceTx(async (tx): Promise<TouchPublisherResult> => {
                 const session = await tx.session.findUnique({
                     where: { id: registration.binding.sessionId },
                     select: {
@@ -609,7 +619,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         socket: object;
         binding: PublisherBinding;
     }>): Promise<CurrentPublisherResult> => {
-        return await inTx(async (tx) => await resolveCurrentPublisherInTx({ ...params, tx }));
+        return await inSessionPublisherPresenceTx(async (tx) => await resolveCurrentPublisherInTx({ ...params, tx }));
     };
 
     const resolveCurrentPublisher = async (params: Readonly<{
@@ -641,7 +651,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
             tx: Tx,
         ) => Promise<T>;
     }>): Promise<Exclude<CurrentPublisherResult, { status: "current" }> | { status: "current"; value: T }> => {
-        return await serialize(params.socket, async () => await inTx(async (tx) => {
+        return await serialize(params.socket, async () => await inSessionPublisherPresenceTx(async (tx) => {
             const publisher = await resolveCurrentPublisherInTx({
                 socket: params.socket,
                 binding: params.binding,
@@ -720,7 +730,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                 const registration = registrations.get(params.socket);
                 if (!registration) return { status: "unregistered" } as const;
                 if (closeResults.has(params.socket)) return { status: "closed" } as const;
-                return await inTx(async (tx) => {
+                return await inSessionPublisherPresenceTx(async (tx) => {
                     const session = await tx.session.findUnique({
                         where: { id: registration.binding.sessionId },
                         select: {

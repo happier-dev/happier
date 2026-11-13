@@ -46,6 +46,22 @@ function entry(over: Partial<AgentActivityOpenTargetEntry> = {}): AgentActivityO
 }
 
 describe('resolveAgentActivityOpenTarget', () => {
+    it('opens an origin-linked child session by its stored session id', () => {
+        const target = resolveAgentActivityOpenTarget({
+            sessionId: SESSION_ID,
+            entry: entry({ id: 'child_session:sess_child', kind: 'child_session', sessionId: 'sess_child', title: 'Worker child' }),
+            subagent: null,
+        });
+
+        expect(target).toEqual({
+            kind: 'child_session',
+            entryId: 'child_session:sess_child',
+            title: 'Worker child',
+            sessionId: 'sess_child',
+        });
+        expect(isNavigableAgentActivityOpenTarget(target)).toBe(true);
+    });
+
     it('sends a locally derived subagent to the EXISTING session-subagent route', () => {
         const local = subagent();
         const target = resolveAgentActivityOpenTarget({

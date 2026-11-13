@@ -13,7 +13,7 @@ import {
 } from "@happier-dev/protocol";
 import { isPrismaErrorCode, type TransactionClient } from "@/storage/prisma";
 
-import { inTx } from "@/storage/inTx";
+import { IN_TX_OPERATION_LABELS, inTx } from "@/storage/inTx";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 import {
     createProviderAccountUsageRecord,
@@ -205,5 +205,5 @@ export async function writeProviderAccountUsageRecordWithPolicy(
     return await inTx(async (tx) => await writeProviderAccountUsageRecordWithPolicyInClient({
         ...params,
         client: tx,
-    }));
+    }), { diagnostics: { operation: IN_TX_OPERATION_LABELS.providerAccountUsageWrite } });
 }

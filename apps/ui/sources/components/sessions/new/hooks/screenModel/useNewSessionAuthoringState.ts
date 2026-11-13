@@ -19,7 +19,7 @@ import type { NewSessionAutomationDraft } from '@/sync/domains/automations/autom
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { AssignableSessionRole, BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -68,6 +68,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     draftScope: ServerAccountScope | null;
     draftId: string;
     launchUserAttemptId?: string | null;
+    sessionRole: AssignableSessionRole | null;
 }>): Readonly<{
     authoringContext: ReturnType<typeof buildNewSessionAuthoringContext>;
     currentAuthoringDraft: SessionAuthoringDraft;
@@ -184,9 +185,11 @@ export function useNewSessionAuthoringState(params: Readonly<{
         const launchUserAttemptId = typeof params.launchUserAttemptId === 'string'
             ? params.launchUserAttemptId.trim()
             : '';
-        return launchUserAttemptId ? { ...draft, launchUserAttemptId } : draft;
+        const withRole = params.sessionRole ? { ...draft, sessionRole: params.sessionRole } : draft;
+        return launchUserAttemptId ? { ...withRole, launchUserAttemptId } : withRole;
     }, [
         buildCurrentAuthoringDraft,
+        params.sessionRole,
         effectiveAutomationDraft,
         params.agentNewSessionOptionStateByAgentId,
         params.automationRequestedByRoute,

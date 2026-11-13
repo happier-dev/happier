@@ -95,7 +95,7 @@ const GROUPS = [
 
 export function parseKeyboardCommands(source) {
   const commands = new Map();
-  for (const block of source.split(/\n {4}\{\n/)) {
+  for (const block of source.split(/\r?\n {4}\{\r?\n/)) {
     const id = /id: '([^']+)'/.exec(block);
     if (!id) continue;
     const bindings = [];

@@ -1,3 +1,4 @@
+import { readSessionRoleAssignmentV1, resolveSessionRolePromptNameV1 } from '@happier-dev/protocol';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 
@@ -11,7 +12,11 @@ import {
   SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
   SessionUsageLimitRecoveryV1Schema,
   buildStructuredQuestionAnswerPayload,
+  FreshAssignableSessionRoleV1Schema,
+  listAssignableSessionRoleProfilesV1,
+  readSessionOriginV1,
   type ActionExecutorDeps,
+  type ActionOperationSnapshotV1,
   type BackendTargetRefV1,
   type FeatureId,
   type SessionUsageLimitRecoveryV1,
@@ -34,6 +39,7 @@ import { buildAgentBackendItems } from './buildAgentBackendItems';
 import { readSettings } from '@/persistence';
 import { readNonBlankSessionControlIdentifier } from '@/agent/runtime/sessionControlIdentifiers';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { logger } from '@/ui/logger';
 import {
   createSpawnedSession,
   type CreateSpawnedSessionParams,
@@ -44,6 +50,7 @@ import { resolveReplaySourceContextAuthority } from '@/session/replay/resolveRep
 import {
   normalizeSessionAgentSpawnActionRequest,
   resolveSessionAgentSpawnPolicy,
+  resolveSessionRoleAssignmentForSpawn,
 } from '@/session/services/spawn/normalizeSessionAgentSpawnActionRequest';
 import { createCliActionOptionProviderRegistry } from '@/session/actions/options/actionOptionProviderRegistry';
 import {
@@ -65,6 +72,8 @@ import {
   requestInactiveSessionResume,
 } from '@/session/services/requestInactiveSessionResume';
 import { sendSessionMessage } from '@/session/services/sendSessionMessage';
+import { SESSION_MESSAGE_SEND_DEFAULT_TIMEOUT_MS } from '@/session/services/sessionMessageSendBudget';
+import { readSessionRoleAccountSettings, setSessionRole } from '@/session/services/setSessionRole';
 import { setSessionArchivedState } from '@/session/services/setSessionArchivedState';
 import { setSessionModel } from '@/session/services/setSessionModel';
 import { setSessionConfigOption } from '@/session/services/setSessionConfigOption';
@@ -88,6 +97,7 @@ import {
   listExecutionRuns,
   sendExecutionRunMessage,
   startExecutionRun,
+  startExecutionRunV2,
   stopExecutionRun,
   waitForExecutionRun,
 } from '@/session/services/executionRuns';
@@ -269,6 +279,25 @@ async function readLiveActionAccountSettings(credentials?: Credentials): Promise
     .catch(() => ({}));
 }
 
+/** Cache-first account settings for per-action defaults; never a blocking network read. */
+async function readCachedActionAccountSettings(credentials?: Credentials): Promise<Readonly<Record<string, unknown>> | null> {
+  if (!credentials) return null;
+  return await bootstrapAccountSettingsContext({
+    credentials,
+    mode: 'fast',
+    refresh: 'auto',
+    honorAccountSettingsModeEnv: false,
+  })
+    .then((ctx) => ctx.settings as Readonly<Record<string, unknown>>)
+    .catch((error) => {
+      // Unreadable settings mean the shipped run defaults (hidden, no role), as before this setting existed.
+      logger.debug('[actions] account settings unavailable for run defaults; using shipped defaults', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    });
+}
+
 type PendingAgentRequestKind = 'permission' | 'user_action';
 
 function readSessionAgentState(params: Readonly<{
@@ -437,7 +466,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
   resolveTransportForSession?: (
     idOrPrefix: string,
   ) => Promise<CliSessionTransportLookupResult>;
-}>): Pick<ActionExecutorDeps, 'reviewEnginesList' | 'agentsBackendsList' | 'agentsModelsList' | 'agentsConfigOptionsList' | 'agentsSessionModesList' | 'sessionModesList'> {
+}>): Pick<ActionExecutorDeps, 'reviewEnginesList' | 'agentsBackendsList' | 'agentsModelsList' | 'agentsConfigOptionsList' | 'agentsSessionModesList' | 'sessionRolesList' | 'sessionModesList'> {
   const metadataCache = new Map<string, Record<string, unknown> | null>();
   const seededMetadata = readSessionMetadata({
     rawSession: params.rawSession,
@@ -517,6 +546,10 @@ export function createCliActionInventoryDeps(params: Readonly<{
         limit: (args as { limit?: unknown }).limit,
       }),
     }),
+    sessionRolesList: async () => {
+      const settings = params.credentials ? await readSessionRoleAccountSettings(params.credentials) : null;
+      return listAssignableSessionRoleProfilesV1(settings).map((profile) => ({ value: profile.id, label: profile.name }));
+    },
     agentsModelsList: async (args) => {
       const agentId = args.agentId;
       const limit = (args as { limit?: unknown }).limit;
@@ -1173,44 +1206,54 @@ export function createCliActionDeps(params: Readonly<{
     });
   };
 
-  return {
-    executionRunStart: async (sessionId, request) => {
-      const permissionDenied = await denyPermissionEscalationForRequestedMode(request.permissionMode);
-      if (permissionDenied) return permissionDenied;
+  /** One run-start prelude for both exact start methods: escalation check, transport, inactive resume. */
+  const startExecutionRunThroughTransport = async (
+    sessionId: string,
+    request: any,
+    start: typeof startExecutionRun,
+  ): Promise<unknown> => {
+    const permissionDenied = await denyPermissionEscalationForRequestedMode(request.permissionMode);
+    if (permissionDenied) return permissionDenied;
 
-      const transport = await resolveTransportForSession(sessionId);
-      if (!transport.ok) {
-        return { ok: false, code: transport.code, ...(transport.candidates ? { candidates: transport.candidates } : {}) };
+    const transport = await resolveTransportForSession(sessionId);
+    if (!transport.ok) {
+      return { ok: false, code: transport.code, ...(transport.candidates ? { candidates: transport.candidates } : {}) };
+    }
+    if (transport.rawSession.active !== true) {
+      if (!params.credentials) {
+        return { ok: false, code: 'not_authenticated' };
       }
-      if (transport.rawSession.active !== true) {
-        if (!params.credentials) {
-          return { ok: false, code: 'not_authenticated' };
-        }
-        const metadata = readSessionMetadata({ ...transport, rawSession: transport.rawSession }) ?? {};
-        const resumed = await requestInactiveSessionResume({
-          credentials: params.credentials,
-          sessionId: transport.sessionId,
-          localId: `execution.run.start:${randomUUID()}`,
-          rawSession: transport.rawSession,
-          metadata,
-          waitForReady: true,
-        });
-        if (!resumed.ok) {
-          return {
-            ok: false,
-            code: 'execution_run_target_unavailable',
-            message: resumed.message,
-          };
-        }
-      }
-      return await startExecutionRun({
-        token: params.token,
+      const metadata = readSessionMetadata({ ...transport, rawSession: transport.rawSession }) ?? {};
+      const resumed = await requestInactiveSessionResume({
+        credentials: params.credentials,
         sessionId: transport.sessionId,
-        mode: transport.mode,
-        ctx: transport.ctx,
-        request,
+        localId: `execution.run.start:${randomUUID()}`,
+        rawSession: transport.rawSession,
+        metadata,
+        waitForReady: true,
       });
-    },
+      if (!resumed.ok) {
+        return {
+          ok: false,
+          code: 'execution_run_target_unavailable',
+          message: resumed.message,
+        };
+      }
+    }
+    return await start({
+      token: params.token,
+      sessionId: transport.sessionId,
+      mode: transport.mode,
+      ctx: transport.ctx,
+      request,
+    });
+  };
+
+  return {
+    executionRunStart: async (sessionId, request) => await startExecutionRunThroughTransport(sessionId, request, startExecutionRun),
+    executionRunStartV2: async (sessionId, request) => await startExecutionRunThroughTransport(sessionId, request, startExecutionRunV2),
+    // Owner run defaults: cached account settings, so a hidden start adds no server read.
+    readVisibleAgentsSettings: async () => await readCachedActionAccountSettings(params.credentials),
     executionRunList: async (sessionId, request) => {
       const transport = await resolveTransportForSession(sessionId);
       if (!transport.ok) {
@@ -1356,6 +1399,7 @@ export function createCliActionDeps(params: Readonly<{
     },
     sessionSpawnNew: async ({
       tag,
+      role,
       agentId,
       backend,
       target,
@@ -1549,10 +1593,19 @@ export function createCliActionDeps(params: Readonly<{
         }
       }
 
+      // Only an explicit role; never inferred from the creator, title, provider, or delegation.
+      const sessionRoleV1 = role ? await resolveSessionRoleAssignmentForSpawn({ credentials: params.credentials, role }) : null;
+      if (role && !sessionRoleV1) {
+        releaseUnsubmittedSpawnAttempt();
+        throw Object.assign(new Error('role_profiles_unavailable'), { code: 'role_profiles_unavailable' });
+      }
+
       let created: Awaited<ReturnType<typeof createSpawnedSession>>;
       try {
         created = await createSpawnedSession({
           ...normalized.createParams,
+          ...(toolSurface === 'session_agent' ? { sessionOriginV1: { v: 1 as const, kind: 'agent' as const, creatorSessionId: params.sessionId } } : {}),
+          ...(sessionRoleV1 ? { sessionRoleV1 } : {}),
           ...(typeof approvedNewDirectoryCreation === 'boolean' ? { approvedNewDirectoryCreation } : {}),
           ...(pendingFirstInput ? { pendingFirstInput } : {}),
           ...(resume ? { resume } : {}),
@@ -1589,6 +1642,134 @@ export function createCliActionDeps(params: Readonly<{
         sessionId: created.sessionId,
         created: created.created,
         session: created.session,
+      };
+    },
+    sessionSpawnRecover: async ({ spawnNonce }) => {
+      if (!params.credentials) {
+        return { ok: false, errorCode: 'not_authenticated', error: 'Authentication is required' };
+      }
+      const normalizedSpawnNonce = normalizeString(spawnNonce);
+      if (!normalizedSpawnNonce) {
+        return { ok: false, errorCode: 'invalid_parameters', error: 'A nonblank spawn nonce is required' };
+      }
+      const parentMachineId = await resolveCurrentSessionValue('machineId');
+      if (!parentMachineId) {
+        return {
+          ok: false,
+          errorCode: 'spawn_recovery_parent_machine_unavailable',
+          error: 'The current session machine is unavailable',
+        };
+      }
+
+      const operationMatches: ActionOperationSnapshotV1[] = [];
+      let cursor: string | undefined;
+      try {
+        do {
+          const page = ActionOperationListV1ResponseSchema.parse(await callMachineRpc({
+            credentials: params.credentials,
+            machineId: parentMachineId,
+            method: ACTION_OPERATION_RPC_METHODS_V1.list,
+            request: cursor ? { cursor } : {},
+          }));
+          operationMatches.push(...page.items.filter((operation) => (
+            operation.actionId === 'session.spawn_new'
+            && operation.requestId === normalizedSpawnNonce
+            && operation.scope.machineId === parentMachineId
+            && operation.domainRef?.kind === 'spawnAttempt'
+            && operation.domainRef.id === normalizedSpawnNonce
+          )));
+          cursor = page.nextCursor ?? undefined;
+        } while (cursor);
+      } catch (error) {
+        return {
+          ok: false,
+          errorCode: 'spawn_recovery_unavailable',
+          error: error instanceof Error ? error.message : 'Spawn recovery is unavailable',
+        };
+      }
+
+      if (operationMatches.length === 0) {
+        return { ok: false, errorCode: 'spawn_recovery_not_found', error: 'No matching session creation attempt was found' };
+      }
+      if (operationMatches.length !== 1) {
+        return { ok: false, errorCode: 'spawn_recovery_ambiguous', error: 'More than one matching session creation attempt was found' };
+      }
+
+      let observed;
+      try {
+        observed = ActionOperationGetV1ResponseSchema.parse(await callMachineRpc({
+          credentials: params.credentials,
+          machineId: parentMachineId,
+          method: ACTION_OPERATION_RPC_METHODS_V1.get,
+          request: { operationId: operationMatches[0].operationId },
+        }));
+      } catch (error) {
+        return {
+          ok: false,
+          errorCode: 'spawn_recovery_unavailable',
+          error: error instanceof Error ? error.message : 'Spawn recovery is unavailable',
+        };
+      }
+      if (observed.kind === 'not_found') {
+        return { ok: false, errorCode: 'spawn_recovery_not_found', error: 'The matching session creation attempt is no longer available' };
+      }
+      const operation = observed.operation;
+      if (
+        operation.operationId !== operationMatches[0].operationId
+        || operation.actionId !== 'session.spawn_new'
+        || operation.requestId !== normalizedSpawnNonce
+        || operation.scope.machineId !== parentMachineId
+        || operation.domainRef?.kind !== 'spawnAttempt'
+        || operation.domainRef.id !== normalizedSpawnNonce
+      ) {
+        return { ok: false, errorCode: 'spawn_recovery_identity_mismatch', error: 'The recovered operation identity does not match the requested spawn' };
+      }
+      if (operation.state === 'accepted' || operation.state === 'running') {
+        return { ok: false, errorCode: 'spawn_recovery_pending', error: 'The matching session creation attempt is still pending' };
+      }
+      if (operation.state === 'failed') {
+        return {
+          ok: false,
+          errorCode: 'spawn_recovery_failed',
+          error: operation.error?.error ?? 'The matching session creation attempt failed',
+          causeErrorCode: operation.error?.errorCode ?? null,
+        };
+      }
+      if (operation.state === 'cancelled') {
+        return { ok: false, errorCode: 'spawn_recovery_cancelled', error: 'The matching session creation attempt was cancelled' };
+      }
+      const childSessionId = operation.result && typeof operation.result === 'object'
+        ? normalizeString((operation.result as { sessionId?: unknown }).sessionId)
+        : null;
+      if (!childSessionId) {
+        return { ok: false, errorCode: 'spawn_recovery_result_invalid', error: 'The matching creation result has no session id' };
+      }
+
+      const childTransport = await resolveTransportForSession(childSessionId, { fresh: true });
+      if (!childTransport.ok || childTransport.sessionId !== childSessionId) {
+        return { ok: false, errorCode: 'spawn_recovery_child_unavailable', error: 'The created session is unavailable' };
+      }
+      const childMetadata = readSessionMetadata(childTransport);
+      const childMachineId = normalizeString(childTransport.rawSession.machineId)
+        ?? normalizeString(childMetadata?.machineId);
+      if (childMachineId !== parentMachineId) {
+        return { ok: false, errorCode: 'spawn_recovery_machine_mismatch', error: 'The created session belongs to a different machine' };
+      }
+      const origin = readSessionOriginV1(childMetadata);
+      if (origin?.creatorSessionId !== params.sessionId) {
+        return { ok: false, errorCode: 'spawn_recovery_origin_mismatch', error: 'The created session does not belong to the current parent session' };
+      }
+      const role = FreshAssignableSessionRoleV1Schema.safeParse(childMetadata?.sessionRoleV1);
+      if (!role.success) {
+        return { ok: false, errorCode: 'spawn_recovery_role_missing', error: 'The created session has no complete current assignable retained role instruction snapshot' };
+      }
+      return {
+        ok: true,
+        sessionId: childSessionId,
+        spawnNonce: normalizedSpawnNonce,
+        role: role.data.role,
+        ...(role.data.name ? { roleName: role.data.name } : {}),
+        roleAssignmentId: role.data.assignmentId,
       };
     },
     sessionSpawnPicker: async () => notSupported(),
@@ -1659,7 +1840,7 @@ export function createCliActionDeps(params: Readonly<{
       const normalizedTimeoutSeconds =
         typeof timeoutSeconds === 'number' && Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
           ? Math.min(3600, timeoutSeconds)
-          : 300;
+          : SESSION_MESSAGE_SEND_DEFAULT_TIMEOUT_MS / 1000;
       const normalizedPermissionModeOverride = normalizeString(permissionModeOverride);
       if (normalizedPermissionModeOverride) {
         const permissionDenied = await denyPermissionEscalationForRequestedMode(normalizedPermissionModeOverride);
@@ -1668,13 +1849,26 @@ export function createCliActionDeps(params: Readonly<{
         }
       }
 
+      // A session agent's notice names its own session and role; the label is composed here and an
+      // agent-supplied sender naming any other session is refused (no impersonation).
+      let noticeFrom = from;
+      if (callerSurface === 'session_agent' && kind === 'notice') {
+        const callerSessionId = params.sessionId;
+        const supplied = typeof from === 'string' ? from.trim() : '';
+        if (supplied && supplied !== callerSessionId && !supplied.startsWith(`${callerSessionId} `)) {
+          return { ok: false, errorCode: 'notice_sender_mismatch', error: 'A session-agent notice can only name its own session as the sender' };
+        }
+        const assignment = readSessionRoleAssignmentV1(params.rawSession?.metadata);
+        noticeFrom = assignment ? `${callerSessionId} ${resolveSessionRolePromptNameV1(assignment)}` : callerSessionId;
+      }
+
       const res = await sendSessionMessage({
         credentials: params.credentials,
         idOrPrefix: sessionId,
         message: String(message ?? ''),
         ...(provenance ? { provenance } : {}),
         ...(kind ? { kind } : {}),
-        ...(from !== undefined ? { from } : {}),
+        ...(noticeFrom !== undefined ? { from: noticeFrom } : {}),
         ...(localId ? { localId } : {}),
         requestedAction,
         wait: normalizedWait,
@@ -1720,6 +1914,19 @@ export function createCliActionDeps(params: Readonly<{
           ...(requestingSessionId ? { requestingSessionId } : {}),
           ...(context?.approvalOrigin?.toolCallId ? { toolCallId: context.approvalOrigin.toolCallId } : {}),
         },
+      });
+    },
+
+    sessionRoleSet: async ({ sessionId, role, actionRequestId, resumeActionRequest }) => {
+      if (!params.credentials) {
+        return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      }
+      return await setSessionRole({
+        credentials: params.credentials,
+        idOrPrefix: sessionId,
+        role,
+        ...(actionRequestId ? { actionRequestId } : {}),
+        ...(actionRequestId && resumeActionRequest === true ? { resume: true } : {}),
       });
     },
 
@@ -1824,6 +2031,9 @@ export function createCliActionDeps(params: Readonly<{
       return await setSessionArchivedState({ credentials: params.credentials, idOrPrefix: sessionId, archived: archived === true });
     },
 
+    sessionPromptPreviewGet: async ({ sessionId }) => (
+      await callResolvedSessionRpc(sessionId, SESSION_RPC_METHODS.SESSION_PROMPT_PREVIEW_GET_V1, {})
+    ),
     sessionStatusGet: async ({ sessionId, live }) => {
       if (!params.credentials) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };

@@ -177,6 +177,10 @@ describe('buildSessionListIndexFromViewData', () => {
 });
 
 describe('resolveSessionListIndexFolderDragEligibility', () => {
+    it.each([{ hasChildren: true }, { parentSessionId: 'planner' }])('rejects lineage reordering for every input surface: %j', lineage => {
+        expect(resolveSessionListIndexFolderDragEligibility({ type: 'session', sessionId: 'child', storageKind: 'persisted', ...lineage }, { foldersFeatureEnabled: true }))
+            .toMatchObject({ canUseSessionFolders: false, reason: 'lineage-placement' });
+    });
     it('allows both session storage kinds and folder headers only when the folders feature is enabled', () => {
         const persistedSession = {
             type: 'session' as const,

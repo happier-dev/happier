@@ -12,6 +12,7 @@ export const ACTION_IDS = [
   'session.rollback',
   'session.handoff',
   'session.spawn_new',
+  'session.spawn_recover',
   'session.spawn_picker',
   // Local inventory + discovery (voice)
   'paths.list_recent',
@@ -30,12 +31,14 @@ export const ACTION_IDS = [
   // Session control plane (CLI/MCP)
   'session.stop',
   'session.title.set',
+  'session.role.set',
   'session.model.set',
   'session.config_option.set',
   'session.permission_mode.set',
   'session.archive',
   'session.unarchive',
   'session.status.get',
+  'session.prompt_preview.get',
   'session.work_state.get',
   'session.goal.get',
   'session.goal.set',

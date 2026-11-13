@@ -160,6 +160,9 @@ export function buildSessionRowMoreMenuItems(params: SessionRowMoreMenuBuildPara
             params.reminderNowMs ?? Date.now(),
         )] : []),
         ...(params.leadingItems ?? []),
+        // Organization commands sit at the bottom, immediately above the destructive lifecycle actions.
+        ...(params.placementItem ? [params.placementItem] : []),
+        ...(params.roleItem && params.target.canRename ? [params.roleItem] : []),
         ...remainingItems,
         ...(moveToFolderItem ? [moveToFolderItem] : []),
         ...(params.trailingItems ?? []),

@@ -306,6 +306,18 @@ describe('SettingsView (runs entry)', () => {
         expect(routerPushSpy).toHaveBeenCalledWith('/settings/sub-agent');
     });
 
+    it('lists Visible subagents next to Subagents and routes to its settings page', async () => {
+        const screen = await renderSettingsViewUnderTest();
+        const subagents = screen.findRowByTitle('subAgentGuidance.settings.groupTitle');
+        const visibleSubagents = screen.findRowByTitle('visibleAgents.pageTitle');
+        expect(subagents).toBeTruthy();
+        expect(visibleSubagents).toBeTruthy();
+
+        await screen.pressRowByTitle('visibleAgents.pageTitle');
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/visible-subagents');
+    });
+
     it('includes a Connected services entry that routes through the settings stack', async () => {
         mockFeatureEnabled = (featureId) => featureId === 'connectedServices';
         const screen = await renderSettingsViewUnderTest();

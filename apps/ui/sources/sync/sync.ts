@@ -912,7 +912,9 @@ type SessionOrganizationSyncState = Pick<
     | 'sessionOrganizationTagAssignmentsBySessionKey'
     | 'sessionOrganizationAttentionStandingsBySessionKey'
     | 'sessionOrganizationAppearancesBySessionKey'
+    | 'sessionOrganizationAppearancePresentationsBySessionKey'
     | 'sessionOrganizationSessionAppearancesSupportedByServerId'
+    | 'sessionOrganizationAppearancePresentationsSupportedByServerId'
     | 'sessionOrganizationOrderEntriesByScopeKey'
     | 'sessionOrganizationLabelsByLabelKey'
 >;
@@ -933,7 +935,9 @@ function buildOrganizationProjectionForServer(
         tagAssignmentsBySessionKey: state.sessionOrganizationTagAssignmentsBySessionKey,
         attentionStandingsBySessionKey: state.sessionOrganizationAttentionStandingsBySessionKey,
         appearancesBySessionKey: state.sessionOrganizationAppearancesBySessionKey,
+        appearancePresentationsBySessionKey: state.sessionOrganizationAppearancePresentationsBySessionKey,
         sessionAppearancesSupportedByServerId: state.sessionOrganizationSessionAppearancesSupportedByServerId,
+        sessionAppearancePresentationsSupportedByServerId: state.sessionOrganizationAppearancePresentationsSupportedByServerId,
         orderEntriesByScopeKey: state.sessionOrganizationOrderEntriesByScopeKey,
         labelsByLabelKey: state.sessionOrganizationLabelsByLabelKey,
     }, normalizedServerId);

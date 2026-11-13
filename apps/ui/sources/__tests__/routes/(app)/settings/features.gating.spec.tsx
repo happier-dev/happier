@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRootLayoutFeaturesResponse, renderSettingsView } from '@/dev/testkit';
 import {
     installSessionSettingsEntryModuleMocks,
+    sessionSettingsEntryState,
 } from './sessionSettingsEntryTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -275,5 +276,31 @@ describe('FeaturesSettingsScreen gating', () => {
         const screen = await renderSettingsView(React.createElement(FeaturesSettingsScreen));
         const menu = screen.findAll((node) => node.props?.itemTrigger?.title === 'terminalEmbedded.settings.locationTitle')[0] ?? null;
         expect(menu).toBeTruthy();
+    });
+
+    it('links from an enabled lineage appearance feature to the focused editor', async () => {
+        useSettingMutableMock.mockImplementation((key: string) => {
+            if (key === 'experiments') return createNoopMutable(true);
+            if (key === 'featureToggles') return createNoopMutable({ 'sessions.lineageAppearancePresets': true });
+            if (key === 'useProfiles') return createNoopMutable(false);
+            if (key === 'agentInputEnterToSend') return createNoopMutable(false);
+            if (key === 'agentInputHistoryScope') return createNoopMutable('perSession');
+            if (key === 'hideInactiveSessions') return createNoopMutable(false);
+            if (key === 'groupInactiveSessionsByProject') return createNoopMutable(false);
+            if (key === 'showEnvironmentBadge') return createNoopMutable(false);
+            if (key === 'useEnhancedSessionWizard') return createNoopMutable(false);
+            if (key === 'useMachinePickerSearch') return createNoopMutable(false);
+            if (key === 'usePathPickerSearch') return createNoopMutable(false);
+            return createNoopMutable(null);
+        });
+
+        const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
+        const screen = await renderSettingsView(React.createElement(FeaturesSettingsScreen));
+        const entry = screen.findAllByType('Item' as never)
+            .find((node) => node.props?.testID === 'settings-features-lineage-appearance-entry');
+
+        expect(entry).toBeDefined();
+        await act(async () => entry?.props.onPress());
+        expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenCalledWith('/settings/session/lineage-appearance');
     });
 });

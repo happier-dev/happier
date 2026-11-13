@@ -1,0 +1,15 @@
+diff --git a/node_modules/@more-tech/react-native-libsodium/android/build.gradle b/node_modules/@more-tech/react-native-libsodium/android/build.gradle
+--- a/node_modules/@more-tech/react-native-libsodium/android/build.gradle
++++ b/node_modules/@more-tech/react-native-libsodium/android/build.gradle
+@@ -65,8 +65,10 @@ android {
+         // exceptions (and other STL types) across shared object boundaries work
+         // correctly.
+         // see https://developer.android.com/ndk/guides/cpp-support#selecting_a_c_runtime
++        // Windows hosts: CMake reads backslashes in the quoted jsi.cpp source path as
++        // escape sequences (C:\Users -> \U), so pass NODE_MODULES_DIR with forward slashes.
+         arguments "-DANDROID_STL=c++_shared",
+-                  "-DNODE_MODULES_DIR=${nodeModules}"
++                  "-DNODE_MODULES_DIR=${nodeModules.replace('\\', '/')}"
+       }
+     }
+   }

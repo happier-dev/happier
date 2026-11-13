@@ -19,6 +19,7 @@ export const SESSION_AGENT_SAFE_OBSERVATION_ACTION_IDS = [
   'execution.run.list',
   'execution.run.get',
   'execution.run.wait',
+  'session.spawn_recover',
 ] as const satisfies readonly ActionId[];
 
 export const SESSION_AGENT_DIRECT_ACTION_TOOL_ALLOW_LIST = [

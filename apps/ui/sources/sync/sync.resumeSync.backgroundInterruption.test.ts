@@ -109,6 +109,9 @@ function stubAccountHttp(override?: (url: string) => Response | Promise<Response
         const response = override?.(url);
         if (response) return await response;
 
+        if (url.includes('/v2/session-organization/appearance-presentations')) {
+            return Response.json({ error: 'Not found' }, { status: 404 });
+        }
         if (url.includes('/v2/session-organization')) {
             return emptySessionOrganizationSnapshotResponse();
         }

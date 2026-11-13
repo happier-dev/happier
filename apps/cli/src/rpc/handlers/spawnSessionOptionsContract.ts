@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { SpawnSessionTerminalSchema } from '@happier-dev/protocol/spawnSession';
 import {
   AcpConfigOptionOverridesV1Schema,
+  FreshAssignableSessionRoleV1Schema,
   AgentRuntimeDescriptorV1Schema,
   ConnectedServiceMaterializationIdentityV1Schema,
   PendingFirstInputV1Schema,
@@ -9,6 +10,10 @@ import {
   SessionAttachMetadataIdentityPolicySchema,
   SessionMcpSelectionV1Schema,
   SessionSpawnSourceContextV1Schema,
+  SessionRoleV1Schema,
+  SessionOriginV1Schema,
+  ExecutionRunLinkV1Schema,
+  resolveAssignableSessionRoleProfileV1,
   SpawnSessionExecutionAuthorizationSchema,
 } from '@happier-dev/protocol';
 
@@ -79,6 +84,14 @@ const SpawnDaemonSessionRequestCompatSchema = lazySchema(() => z.object({
   connectedServicesUpdatedAt: z.number().int().optional(),
   connectedServiceMaterializationIdentityV1: ConnectedServiceMaterializationIdentityV1Schema.optional(),
   mcpSelection: SessionMcpSelectionV1Schema.optional(),
+  sessionRoleV1: SessionRoleV1Schema.optional(),
+  /**
+   * Creation provenance seeded into the child's initial metadata by the spawn core. Declared so the
+   * ingress never strips it; an existing session's persisted origin is never replaced.
+   */
+  sessionOriginV1: SessionOriginV1Schema.optional(),
+  /** Visible-run link seeded before the child's first turn, so its first completed turn can report. */
+  executionRunLinkV1: ExecutionRunLinkV1Schema.optional(),
   transcriptStorage: z.enum(['persisted', 'direct']).optional(),
   /**
    * Typed source recipe for a Replay-seeded child.
@@ -90,6 +103,20 @@ const SpawnDaemonSessionRequestCompatSchema = lazySchema(() => z.object({
    * before creating the child and creates no child on failure.
    */
   sourceContext: SessionSpawnSourceContextV1Schema.optional(),
+}).superRefine((request, context) => {
+  // Existing-session attach/resume must retain legacy snapshots. A fresh creation may carry only
+  // a current assignable role, even though both paths share this transport object.
+  if (
+    request.sessionRoleV1 !== undefined
+    && request.existingSessionId === undefined
+    && !FreshAssignableSessionRoleV1Schema.safeParse(request.sessionRoleV1).success
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['sessionRoleV1', 'role'],
+      message: 'Fresh session role snapshots must be complete and use a current assignable role',
+    });
+  }
 }));
 
 type SpawnDaemonSessionRequestCompat = z.output<typeof SpawnDaemonSessionRequestCompatSchema>;
@@ -112,6 +139,20 @@ export const SpawnDaemonSessionRequestSchema = lazySchema(() => SpawnDaemonSessi
 }));
 
 export type SpawnDaemonSessionRequest = z.infer<typeof SpawnDaemonSessionRequestSchema>;
+
+/**
+ * Catalog admission for fresh role snapshots. Existing-session attach/resume deliberately does not
+ * call this owner: a deleted custom identity remains readable from its self-contained snapshot.
+ */
+export function isFreshSpawnSessionRoleKnownToAccount(
+  sessionRoleV1: unknown,
+  accountSettings: unknown,
+): boolean {
+  if (sessionRoleV1 === undefined || sessionRoleV1 === null) return true;
+  const parsed = FreshAssignableSessionRoleV1Schema.safeParse(sessionRoleV1);
+  if (!parsed.success) return false;
+  return resolveAssignableSessionRoleProfileV1(accountSettings, parsed.data.role) !== null;
+}
 
 export function normalizeSpawnSessionDirectory(
   directory: string,
@@ -159,6 +200,7 @@ const SPAWN_SESSION_OPTION_KEYS = [
   'connectedServiceMaterializationIdentityV1',
   'materializationDiagnostics',
   'mcpSelection',
+  'sessionRoleV1',
   'transcriptStorage',
 ] as const satisfies readonly (keyof SpawnSessionOptions)[];
 

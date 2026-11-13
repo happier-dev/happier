@@ -58,6 +58,12 @@ function store(): Map<string, string> {
     return storeFor(WARM_CACHE_STORAGE_ID);
 }
 
+const SESSION_LIST_WARM_CACHE_KEY = 'session-list-warm-cache-v3:server-a:account-a';
+const LEGACY_SESSION_LIST_WARM_CACHE_KEYS = [
+    'session-list-warm-cache-v1:server-a:account-a',
+    'session-list-warm-cache-v2:server-a:account-a',
+] as const;
+
 describe('warmCachePersistence', () => {
     beforeEach(async () => {
         // Nothing reads or writes the cache until its at-rest key resolves, exactly as on a device.
@@ -109,7 +115,7 @@ describe('warmCachePersistence', () => {
 
     it('drops invalid payloads safely', () => {
         store().set(
-            'session-list-warm-cache-v1:server-a:account-a',
+            SESSION_LIST_WARM_CACHE_KEY,
             JSON.stringify({ s1: { sessionId: 's1', metadataVersion: 'bad' } }),
         );
         store().set(
@@ -123,7 +129,7 @@ describe('warmCachePersistence', () => {
 
     it('rejects an unsafe activity revision instead of corrupting ordering', () => {
         store().set(
-            'session-list-warm-cache-v1:server-a:account-a',
+            SESSION_LIST_WARM_CACHE_KEY,
             JSON.stringify({
                 s1: {
                     sessionId: 's1',
@@ -160,7 +166,7 @@ describe('warmCachePersistence', () => {
         };
 
         store().set(
-            'session-list-warm-cache-v1:server-a:account-a',
+            SESSION_LIST_WARM_CACHE_KEY,
             JSON.stringify({
                 s1: {
                     ...baseEntry,
@@ -179,7 +185,7 @@ describe('warmCachePersistence', () => {
         }));
 
         store().set(
-            'session-list-warm-cache-v1:server-a:account-a',
+            SESSION_LIST_WARM_CACHE_KEY,
             JSON.stringify({
                 s1: {
                     ...baseEntry,
@@ -189,6 +195,33 @@ describe('warmCachePersistence', () => {
             }),
         );
         expect(loadSessionListWarmCacheEntries('server-a', 'account-a')).toEqual({});
+    });
+
+    it('retires incomplete v1 and v2 session-list caches instead of treating them as current metadata', () => {
+        for (const legacyKey of LEGACY_SESSION_LIST_WARM_CACHE_KEYS) {
+            store().set(legacyKey, JSON.stringify({
+                s1: {
+                    sessionId: 's1',
+                    seq: 1,
+                    metadataVersion: 14,
+                    agentStateVersion: 1,
+                    updatedAt: 2,
+                    createdAt: 1,
+                    active: false,
+                    activeAt: 2,
+                    archivedAt: null,
+                    path: '/repo',
+                    machineId: 'machine-1',
+                    sessionOriginV1: null,
+                    sessionRole: null,
+                },
+            }));
+        }
+
+        expect(loadSessionListWarmCacheEntries('server-a', 'account-a')).toEqual({});
+        for (const legacyKey of LEGACY_SESSION_LIST_WARM_CACHE_KEYS) {
+            expect(store().has(legacyKey)).toBe(false);
+        }
     });
 
     it('roundtrips machine display entries by server and account scope', () => {

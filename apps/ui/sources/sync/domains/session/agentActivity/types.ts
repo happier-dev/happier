@@ -57,7 +57,8 @@ export type AgentActivityEntryKind =
     | 'subagent'
     | 'execution_run'
     | 'agent_team_member'
-    | 'background_task';
+    | 'background_task'
+    | 'child_session';
 
 const WIRE_KIND_COVERAGE: Record<AgentActivityKindV1, AgentActivityEntryKind> = {
     workflow_run: 'workflow_run',
@@ -118,6 +119,8 @@ export type AgentActivityEntry = Readonly<{
     sidechainId?: string | null;
     /** The local `SessionSubagent.id` behind this entry, when a local source contributed one. */
     subagentId?: string | null;
+    /** Separate Happier child session reached through immutable creator provenance. */
+    sessionId?: string | null;
 }>;
 
 /**
@@ -145,6 +148,7 @@ export type AgentActivityLocalEntry = Readonly<{
     runId?: string | null;
     sidechainId?: string | null;
     subagentId?: string | null;
+    sessionId?: string | null;
 }>;
 
 /**

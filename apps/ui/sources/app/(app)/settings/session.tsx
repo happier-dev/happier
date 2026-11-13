@@ -4,6 +4,8 @@ import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 import {
     DEFAULT_CODING_PROMPT_BEHAVIOR_V1,
+    StandaloneSessionPromptV1Schema,
+    resolveStandaloneSessionPromptV1,
     type CodingPromptBehaviorV1,
     type CodingPromptSessionTitleUpdatesModeV1,
 } from '@happier-dev/protocol';
@@ -14,7 +16,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
-import { useLocalSettingMutable, useSettingMutable } from '@/sync/domains/state/storage';
+import { storage, useLocalSettingMutable, useSettingMutable } from '@/sync/domains/state/storage';
 import { useDeviceType } from '@/utils/platform/responsive';
 import {
     normalizeSessionListAttentionPromotionMode,
@@ -30,12 +32,15 @@ import {
     type SessionListOrderingModeV1,
 } from '@/sync/domains/session/listing/sessionListOrderingRules';
 import { getCodingPromptTitleUpdatesModeItems } from '@/components/settings/session/codingPromptBehaviorOptions';
+import { showStandaloneSessionPromptEditorModal } from '@/components/settings/session/showStandaloneSessionPromptEditorModal';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 export default React.memo(function SessionSettingsScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
     const popoverBoundaryRef = React.useRef<any>(null);
     const [codingPromptBehavior, setCodingPromptBehavior] = useSettingMutable('codingPromptBehaviorV1');
+    const [standaloneSessionPrompt, setStandaloneSessionPrompt] = useSettingMutable('standaloneSessionPromptV1');
     const [sessionHeaderIdentityDisplay, setSessionHeaderIdentityDisplay] = useSettingMutable('sessionHeaderIdentityDisplay');
     const [rememberLastProjectSessionSelections, setRememberLastProjectSessionSelections] = useSettingMutable('rememberLastProjectSessionSelections');
     const [rememberLastEngineSelections, setRememberLastEngineSelections] = useSettingMutable('rememberLastEngineSelectionsV1');
@@ -51,6 +56,7 @@ export default React.memo(function SessionSettingsScreen() {
     const deviceType = useDeviceType();
     const panelsSupported = Platform.OS === 'web' || deviceType === 'tablet';
     const [sessionListDensity, setSessionListDensity] = useSettingMutable('sessionListDensity');
+    const sessionLineageAppearancePresetsEnabled = useFeatureEnabled('sessions.lineageAppearancePresets');
     const [sessionListIdentityDisplay, setSessionListIdentityDisplay] = useSettingMutable('sessionListIdentityDisplay');
     const [sessionListActiveColorMode, setSessionListActiveColorMode] = useSettingMutable('sessionListActiveColorModeV1');
     const [sessionListAttentionPromotionMode, setSessionListAttentionPromotionMode] = useSettingMutable('sessionListAttentionPromotionModeV1');
@@ -124,6 +130,19 @@ export default React.memo(function SessionSettingsScreen() {
         },
         [normalizedCodingPromptBehavior, setCodingPromptBehavior],
     );
+    const editStandaloneSessionPrompt = React.useCallback(async () => {
+        const current = resolveStandaloneSessionPromptV1({ standaloneSessionPromptV1: standaloneSessionPrompt });
+        const text = await showStandaloneSessionPromptEditorModal(current.text);
+        if (text === null) return;
+        const latest = resolveStandaloneSessionPromptV1({
+            standaloneSessionPromptV1: storage.getState().settings.standaloneSessionPromptV1,
+        });
+        setStandaloneSessionPrompt(StandaloneSessionPromptV1Schema.parse({
+            ...latest,
+            text,
+            updatedAt: Date.now(),
+        }));
+    }, [setStandaloneSessionPrompt, standaloneSessionPrompt]);
 
     const groupingMenuItems = React.useMemo(() => [
         {
@@ -164,7 +183,6 @@ export default React.memo(function SessionSettingsScreen() {
             subtitle: t('settingsAppearance.sessionListDensity.narrowDescription'),
         },
     ], []);
-
     const handleSessionListDensitySelect = React.useCallback((itemId: string) => {
         if (itemId !== 'detailed' && itemId !== 'cozy' && itemId !== 'narrow') return;
         setSessionListDensity(itemId);
@@ -562,6 +580,15 @@ export default React.memo(function SessionSettingsScreen() {
                     items={sessionListDensityItems}
                     onSelect={handleSessionListDensitySelect}
                 />
+                {sessionLineageAppearancePresetsEnabled ? (
+                    <Item
+                        testID="settings-session-lineage-appearance-entry"
+                        title={t('settingsSession.lineageAppearance.title')}
+                        subtitle={t('settingsSession.lineageAppearance.subtitle')}
+                        icon={<Icon name="git-branch" size={29} color={theme.colors.accent.indigo} />}
+                        onPress={() => router.push('/settings/session/lineage-appearance')}
+                    />
+                ) : null}
                 <DropdownMenu
                     open={openSessionListOrderingModeMenu}
                     onOpenChange={setOpenSessionListOrderingModeMenu}
@@ -1082,6 +1109,13 @@ export default React.memo(function SessionSettingsScreen() {
                     }
                     showChevron={false}
                     onPress={() => setCodingPromptResponseOptionsEnabled(normalizedCodingPromptBehavior.responseOptions !== 'agent')}
+                />
+                <Item
+                    testID="settings-session-standalone-prompt"
+                    title={t('settingsSession.promptPersonalization.standalonePromptTitle')}
+                    subtitle={t('settingsSession.promptPersonalization.standalonePromptSubtitle')}
+                    icon={<Icon name="note-pencil" size={29} color={theme.colors.accent.indigo} />}
+                    onPress={() => { void editStandaloneSessionPrompt(); }}
                 />
             </ItemGroup>
 

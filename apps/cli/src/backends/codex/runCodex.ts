@@ -753,6 +753,8 @@ export async function runCodex(opts: {
         machineId,
         directory: requestedDirectory,
         startedBy: opts.startedBy,
+        // Terminal starts snapshot the standalone default from loaded settings; daemon starts use the child env.
+        ...(opts.startedBy !== 'daemon' && !resumeRequested && !opts.existingSessionId?.trim() ? { accountSettings: loadedAccountSettings } : {}),
         terminalRuntime: opts.terminalRuntime ?? null,
         permissionMode: initialPermissionMode,
         permissionModeUpdatedAt: initialPermissionModeUpdatedAt,

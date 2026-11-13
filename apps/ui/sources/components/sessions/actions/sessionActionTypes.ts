@@ -116,5 +116,7 @@ export type SessionActionExecutionOperations = Readonly<{
 
 export type SessionActionExecutionContext = Readonly<{
     hideInactiveSessions?: boolean;
+    /** A surrounding choice already covered this archive/unarchive lifecycle action. */
+    archiveConfirmation?: 'already-confirmed';
     operations?: SessionActionExecutionOperations;
 }>;

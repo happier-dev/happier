@@ -92,7 +92,7 @@ import { resolveEffectiveCodingPromptText } from '@/agent/prompting/coding/resol
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { CLAUDE_UNIFIED_TUI_RUNTIME_CONTROL_FEATURE_ID } from './unifiedTerminal/tuiControls';
 import { createClaudeUnifiedUserMessageHandler } from './startup/createClaudeUnifiedUserMessageHandler';
-import { resolveInitialClaudeSystemPromptText } from './utils/resolveInitialClaudeSystemPromptText';
+import { resolveClaudeRetainedAppendSystemPromptText, resolveInitialClaudeSystemPromptText } from './utils/resolveInitialClaudeSystemPromptText';
 import { shouldStartClaudeSessionCaffeinate } from './sessionCaffeinatePolicy';
 import { ensureManagedJavaScriptRuntimeCommand } from '@/runtime/js/managedJavaScriptRuntime';
 import { createClaudeRawMessageTurnDiffBridge } from './utils/createClaudeRawMessageTurnDiffBridge';
@@ -380,6 +380,8 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         agentModeUpdatedAt: options.agentModeUpdatedAt,
         modelId: initialModelId,
         modelUpdatedAt: initialModelUpdatedAt,
+        // Terminal starts snapshot the standalone default from loaded settings; daemon starts use the child env.
+        ...(startedBy !== 'daemon' && !existingSessionId ? { accountSettings: options.accountSettings ?? null } : {}),
     });
 
     // Let the daemon track externally started terminal sessions immediately, even if
@@ -871,6 +873,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         let currentAppendSystemPrompt: string | undefined = resolveInitialClaudeSystemPromptText({
             existingSessionId,
             defaultSystemPromptText,
+            sessionMetadata: session.getMetadataSnapshot(),
         }); // Track current append system prompt
         session.onUserMessage(async (message, deliveryInfo) => {
         const adoptedModel = adoptModelOverrideFromMetadata({
@@ -993,7 +996,11 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         // Resolve append system prompt - use message.meta.appendSystemPrompt if provided, otherwise use current
         let messageAppendSystemPrompt = currentAppendSystemPrompt;
         if (message.meta?.hasOwnProperty('appendSystemPrompt')) {
-            messageAppendSystemPrompt = message.meta.appendSystemPrompt || undefined; // null becomes undefined
+            // A reset (null) or custom text still carries the retained session role.
+            messageAppendSystemPrompt = resolveClaudeRetainedAppendSystemPromptText({
+                base: message.meta.appendSystemPrompt,
+                sessionMetadata: session.getMetadataSnapshot(),
+            });
             currentAppendSystemPrompt = messageAppendSystemPrompt;
             logger.debug(`[loop] Append system prompt updated from user message: ${messageAppendSystemPrompt ? 'set' : 'reset to none'}`);
         } else {
@@ -1551,12 +1558,33 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
     let currentCustomSystemPrompt: string | undefined = undefined;
     let currentAppendSystemPrompt: string | undefined = undefined;
     let currentAppendSystemPromptSeeded = false;
-    const seedInitialAppendSystemPrompt = (defaultSystemPromptText?: string | null): void => {
+    // On resume the seed runs before the attached session's persisted metadata is available, so the
+    // retained role is resolved from the live session at each launch until a message overrides it.
+    let appendSystemPromptFollowsRetainedRole = false;
+    // A resumed session's retained metadata (its role) exists only after the authoritative attach.
+    // Fresh sessions launch immediately; a resume waits for the background attach outcome before its
+    // first local launch, as the regular branch does before it launches.
+    type ResumeAttachOutcome =
+        | Readonly<{ status: 'attached' }>
+        | Readonly<{ status: 'failed'; error: unknown }>;
+    let resumeAttachOutcomeSettled = false;
+    let resolveResumeAttachOutcome: (outcome: ResumeAttachOutcome) => void = () => {};
+    const resumeAttachOutcome = new Promise<ResumeAttachOutcome>((resolve) => {
+        resolveResumeAttachOutcome = resolve;
+    });
+    const settleResumeAttachOutcome = (outcome: ResumeAttachOutcome): void => {
+        if (resumeAttachOutcomeSettled) return;
+        resumeAttachOutcomeSettled = true;
+        resolveResumeAttachOutcome(outcome);
+    };
+    const seedInitialAppendSystemPrompt = (defaultSystemPromptText: string | null | undefined, sessionMetadata: unknown): void => {
         if (currentAppendSystemPromptSeeded) return;
         currentAppendSystemPrompt = resolveInitialClaudeSystemPromptText({
             existingSessionId,
             defaultSystemPromptText,
+            sessionMetadata,
         });
+        appendSystemPromptFollowsRetainedRole = Boolean(existingSessionId);
         currentAppendSystemPromptSeeded = true;
     };
     const resolveClaudeHelpProbeTimeoutMs = (): number => {
@@ -1684,400 +1712,414 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
             cleanupHookSettingsFile,
             cleanupHookPluginDir,
             initializeSessionInBackground: async ({ artifacts, signal }) => {
-                if (signal.aborted) return;
+                let resumeAttachFailure: unknown = new Error('Existing session initialization completed before attachment');
+                try {
+                    if (signal.aborted) return;
 
-                const stopSpan = timing.startSpan('initialize_backend_api_context');
-                const { api, machineId } = await initializeBackendApiContext({
-                    credentials,
-                    machineMetadata: initialMachineMetadata,
-                    missingMachineIdMessage:
-                        '[START] No machine ID found in settings, which is unexpected since authAndSetupMachineIfNeeded should have created it. Please report this issue on https://github.com/happier-dev/happier/issues',
-                    skipMachineRegistration: startedBy === 'daemon',
-                });
-                stopSpan();
-                pushSender = api.push();
+                    const stopSpan = timing.startSpan('initialize_backend_api_context');
+                    const { api, machineId } = await initializeBackendApiContext({
+                        credentials,
+                        machineMetadata: initialMachineMetadata,
+                        missingMachineIdMessage:
+                            '[START] No machine ID found in settings, which is unexpected since authAndSetupMachineIfNeeded should have created it. Please report this issue on https://github.com/happier-dev/happier/issues',
+                        skipMachineRegistration: startedBy === 'daemon',
+                    });
+                    stopSpan();
+                    pushSender = api.push();
 
-                if (signal.aborted) return;
+                    if (signal.aborted) return;
 
-                const { state, metadata } = createSessionMetadata({
-                    flavor: 'claude',
-                    nativeAgentEnvironment: resolveClaudeConfigDirEnvOverlay(process.env),
-                    machineId,
-                    directory: workingDirectory,
-                    startedBy: options.startedBy,
-                    terminalRuntime: options.terminalRuntime ?? null,
-                    permissionMode: initialPermissionMode,
-                    permissionModeUpdatedAt: typeof explicitPermissionModeUpdatedAt === 'number' ? explicitPermissionModeUpdatedAt : Date.now(),
-                    agentModeId: options.agentModeId,
-                    agentModeUpdatedAt: options.agentModeUpdatedAt,
-                    modelId: initialModelId,
-                    modelUpdatedAt: initialModelUpdatedAt,
-                });
+                    const { state, metadata } = createSessionMetadata({
+                        flavor: 'claude',
+                        nativeAgentEnvironment: resolveClaudeConfigDirEnvOverlay(process.env),
+                        machineId,
+                        directory: workingDirectory,
+                        startedBy: options.startedBy,
+                        terminalRuntime: options.terminalRuntime ?? null,
+                        permissionMode: initialPermissionMode,
+                        permissionModeUpdatedAt: typeof explicitPermissionModeUpdatedAt === 'number' ? explicitPermissionModeUpdatedAt : Date.now(),
+                        agentModeId: options.agentModeId,
+                        agentModeUpdatedAt: options.agentModeUpdatedAt,
+                        modelId: initialModelId,
+                        modelUpdatedAt: initialModelUpdatedAt,
+                    });
 
-                // Let the daemon track externally started terminal sessions immediately, even if
-                // upstream session creation is delayed. A later report with the real session id
-                // will reconcile the tracked session record.
-                if (startedBy === 'terminal') {
-                    await reportSessionToDaemonIfRunning({ sessionId: `PID-${process.pid}`, metadata });
-                }
-
-                if (signal.aborted) return;
-
-                let wiredServerSession = false;
-                const wireServerSession = async (session: ApiSessionClient): Promise<void> => {
-                    if (wiredServerSession) return;
-                    wiredServerSession = true;
-                    if (unifiedTerminalRuntimeActive) {
-                        herdrReportSession = session;
-                        await bindUnifiedHerdrReport();
+                    // Let the daemon track externally started terminal sessions immediately, even if
+                    // upstream session creation is delayed. A later report with the real session id
+                    // will reconcile the tracked session record.
+                    if (startedBy === 'terminal') {
+                        await reportSessionToDaemonIfRunning({ sessionId: `PID-${process.pid}`, metadata });
                     }
 
-                    await artifacts.deferredSession.attach(session as unknown as DeferredApiSessionTarget);
+                    if (signal.aborted) return;
 
-                    if (currentSession && pushSender) {
-                        currentSession.setPushSender(pushSender);
-                    }
+                    let wiredServerSession = false;
+                    const wireServerSession = async (session: ApiSessionClient): Promise<void> => {
+                        if (wiredServerSession) return;
+                        wiredServerSession = true;
+                        if (unifiedTerminalRuntimeActive) {
+                            herdrReportSession = session;
+                            await bindUnifiedHerdrReport();
+                        }
 
-                        {
-                            const permissionModeRef = {
-                                current: options.permissionMode ?? 'default',
-                                updatedAt: typeof options.permissionModeUpdatedAt === 'number' ? options.permissionModeUpdatedAt : 0,
-                            };
-                            const modelOverrideRef = { current: initialModelId ?? null, updatedAt: initialModelUpdatedAt };
+                        await artifacts.deferredSession.attach(session as unknown as DeferredApiSessionTarget);
+                        settleResumeAttachOutcome({ status: 'attached' });
 
-                            const overridesSync = await initializeRuntimeOverridesSynchronizer({
-                                explicitPermissionMode:
-                                    typeof explicitPermissionMode === 'string' ? (explicitPermissionMode as PermissionMode) : undefined,
-                                    sessionKind: existingSessionId ? 'attach' : 'fresh',
-                                    take: configuration.startupPermissionSeedTranscriptTake,
-                                    session: {
-                                        getMetadataSnapshot: () => session.getMetadataSnapshot(),
-                                        fetchLatestUserPermissionIntentFromTranscript: (args) =>
-                                        session.fetchLatestUserPermissionIntentFromTranscript(args),
-                                },
-                                permissionMode: permissionModeRef,
-                                modelOverride: modelOverrideRef,
-                                onPermissionModeApplied: () => {
-                                    options.permissionMode = permissionModeRef.current;
-                                    options.permissionModeUpdatedAt = permissionModeRef.updatedAt;
-                                },
-                                onModelOverrideApplied: () => {
-                                    if (initialModelId) return;
-                                    options.modelId = modelOverrideRef.current ?? undefined;
-                                    options.model = modelOverrideRef.current ?? undefined;
-                                    options.modelUpdatedAt = modelOverrideRef.updatedAt;
-                                    currentModel = modelOverrideRef.current ?? undefined;
-                                    currentModelUpdatedAt = modelOverrideRef.updatedAt;
-                                },
-                            });
+                        if (currentSession && pushSender) {
+                            currentSession.setPushSender(pushSender);
+                        }
 
-                                const stopSeedSpan = timing.startSpan('resolve_startup_permission_mode');
-                                await overridesSync.seedFromSession();
-                                stopSeedSpan();
-                                overridesSync.syncFromMetadata();
-                                try {
-                                    const snapshot = overridesSync.getSnapshot();
-                                    writeStartupOverridesCacheForBackend({
-                                        backendId: 'claude',
-                                        permissionMode: snapshot.permissionMode.current,
-                                        permissionModeUpdatedAt: snapshot.permissionMode.updatedAt,
-                                        modelId: snapshot.modelOverride.current,
-                                        modelUpdatedAt: snapshot.modelOverride.updatedAt,
-                                        updatedAt: Date.now(),
-                                    });
-                                } catch {
-                                    // ignore
+                            {
+                                const permissionModeRef = {
+                                    current: options.permissionMode ?? 'default',
+                                    updatedAt: typeof options.permissionModeUpdatedAt === 'number' ? options.permissionModeUpdatedAt : 0,
+                                };
+                                const modelOverrideRef = { current: initialModelId ?? null, updatedAt: initialModelUpdatedAt };
+
+                                const overridesSync = await initializeRuntimeOverridesSynchronizer({
+                                    explicitPermissionMode:
+                                        typeof explicitPermissionMode === 'string' ? (explicitPermissionMode as PermissionMode) : undefined,
+                                        sessionKind: existingSessionId ? 'attach' : 'fresh',
+                                        take: configuration.startupPermissionSeedTranscriptTake,
+                                        session: {
+                                            getMetadataSnapshot: () => session.getMetadataSnapshot(),
+                                            fetchLatestUserPermissionIntentFromTranscript: (args) =>
+                                            session.fetchLatestUserPermissionIntentFromTranscript(args),
+                                    },
+                                    permissionMode: permissionModeRef,
+                                    modelOverride: modelOverrideRef,
+                                    onPermissionModeApplied: () => {
+                                        options.permissionMode = permissionModeRef.current;
+                                        options.permissionModeUpdatedAt = permissionModeRef.updatedAt;
+                                    },
+                                    onModelOverrideApplied: () => {
+                                        if (initialModelId) return;
+                                        options.modelId = modelOverrideRef.current ?? undefined;
+                                        options.model = modelOverrideRef.current ?? undefined;
+                                        options.modelUpdatedAt = modelOverrideRef.updatedAt;
+                                        currentModel = modelOverrideRef.current ?? undefined;
+                                        currentModelUpdatedAt = modelOverrideRef.updatedAt;
+                                    },
+                                });
+
+                                    const stopSeedSpan = timing.startSpan('resolve_startup_permission_mode');
+                                    await overridesSync.seedFromSession();
+                                    stopSeedSpan();
+                                    overridesSync.syncFromMetadata();
+                                    try {
+                                        const snapshot = overridesSync.getSnapshot();
+                                        writeStartupOverridesCacheForBackend({
+                                            backendId: 'claude',
+                                            permissionMode: snapshot.permissionMode.current,
+                                            permissionModeUpdatedAt: snapshot.permissionMode.updatedAt,
+                                            modelId: snapshot.modelOverride.current,
+                                            modelUpdatedAt: snapshot.modelOverride.updatedAt,
+                                            updatedAt: Date.now(),
+                                        });
+                                    } catch {
+                                        // ignore
+                                    }
                                 }
-                            }
 
-                // Extract SDK metadata in background and update session when ready
-                extractSDKMetadataAsync(async (sdkMetadata) => {
-                    updateMetadataBestEffort(
-                        session,
-                        (currentMetadata) => ({
-                            ...currentMetadata,
-                            tools: sdkMetadata.tools,
-                            slashCommands: sdkMetadata.slashCommands,
-                        }),
-                        '[claude]',
-                        'sdk_metadata',
-                    );
-                }, { claudeCodeIncludeInNativeHistory: currentClaudeRemoteMetaState.claudeCodeIncludeInNativeHistory });
-
-                // Set initial agent state (best-effort; failure is non-fatal).
-                updateAgentStateBestEffort(
-                    session,
-                    (currentState) => buildClaudeAgentState({
-                        currentState,
-                        mode: startingMode === 'remote' ? 'remote' : 'local',
-                        claudeUnifiedTerminalEnabled: unifiedTerminalRuntimeActive,
-                        tuiRuntimeControlEnabled: claudeTuiRuntimeControlEnabled,
-                        localPermissionBridgeEnabled,
-                        userMessageHandlerReady,
-                    }),
-                    '[claude]',
-                    'initial_agent_state',
-                );
-
-                const defaultSystemPromptText = await resolveEffectiveCodingPromptText({
-                    credentials,
-                    settings: options.accountSettings ?? null,
-                    profileId: session.getMetadataSnapshot()?.profileId ?? null,
-                    sessionMetadata: session.getMetadataSnapshot(),
-                    executionRunsFeatureEnabled: resolveCliFeatureDecision({
-                        featureId: 'execution.runs',
-                        env: process.env,
-                    }).state === 'enabled',
-	                    providerId: 'claude',
-	                });
-	                seedInitialAppendSystemPrompt(defaultSystemPromptText);
-
-	                // Forward messages from server to the local queue.
-	                session.onUserMessage(async (message, deliveryInfo) => {
-                    const adoptedModel = adoptModelOverrideFromMetadata({
-                        currentModelId: currentModel,
-                        currentUpdatedAt: currentModelUpdatedAt,
-                        metadata: session.getMetadataSnapshot(),
-                    });
-                    if (adoptedModel.didChange) {
-                        currentModel = adoptedModel.modelId;
-                        currentModelUpdatedAt = adoptedModel.updatedAt;
-                    }
-
-                    const resolvedAgentModeOverride = resolveSessionModeOverrideFromMetadataSnapshot({
-                        metadata: session.getMetadataSnapshot(),
-                    });
-                    if (resolvedAgentModeOverride && resolvedAgentModeOverride.updatedAt > currentAgentModeUpdatedAt) {
-                        currentAgentModeUpdatedAt = resolvedAgentModeOverride.updatedAt;
-                        const normalizedModeId = resolvedAgentModeOverride.modeId.trim();
-                        currentAgentModeId = normalizedModeId.length > 0 ? normalizedModeId : null;
-                    }
-
-                    const adoptedReasoningEffort = adoptReasoningEffortOverrideFromMetadata({
-                        currentValueId: currentReasoningEffort ?? null,
-                        currentUpdatedAt: currentReasoningEffortUpdatedAt,
-                        metadata: session.getMetadataSnapshot(),
-                    });
-                    if (adoptedReasoningEffort.didChange) {
-                        currentReasoningEffort = adoptedReasoningEffort.valueId ?? undefined;
-                        currentReasoningEffortUpdatedAt = adoptedReasoningEffort.updatedAt;
-                    }
-
-                    const adoptedReasoningEffortFromMessage = adoptReasoningEffortOverrideFromMessageMeta({
-                        currentValueId: currentReasoningEffort ?? null,
-                        currentUpdatedAt: currentReasoningEffortUpdatedAt,
-                        messageMeta: message.meta as Record<string, unknown> | null | undefined,
-                        updatedAt:
-                            typeof message.createdAt === 'number' && Number.isFinite(message.createdAt) && message.createdAt > 0
-                                ? message.createdAt
-                                : Date.now(),
-                    });
-                    if (adoptedReasoningEffortFromMessage.didChange) {
-                        currentReasoningEffort = adoptedReasoningEffortFromMessage.valueId ?? undefined;
-                        currentReasoningEffortUpdatedAt = adoptedReasoningEffortFromMessage.updatedAt;
-                    }
-
-                    const adoptedUltracode = adoptUltracodeOverrideFromMetadata({
-                        currentValue: currentUltracode ?? null,
-                        currentUpdatedAt: currentUltracodeUpdatedAt,
-                        metadata: session.getMetadataSnapshot(),
-                    });
-                    if (adoptedUltracode.didChange) {
-                        currentUltracode = adoptedUltracode.value ?? undefined;
-                        currentUltracodeUpdatedAt = adoptedUltracode.updatedAt;
-                    }
-
-                    const adoptedUltracodeFromMessage = adoptUltracodeOverrideFromMessageMeta({
-                        currentValue: currentUltracode ?? null,
-                        currentUpdatedAt: currentUltracodeUpdatedAt,
-                        messageMeta: message.meta as Record<string, unknown> | null | undefined,
-                        updatedAt:
-                            typeof message.createdAt === 'number' && Number.isFinite(message.createdAt) && message.createdAt > 0
-                                ? message.createdAt
-                                : Date.now(),
-                    });
-                    if (adoptedUltracodeFromMessage.didChange) {
-                        currentUltracode = adoptedUltracodeFromMessage.value ?? undefined;
-                        currentUltracodeUpdatedAt = adoptedUltracodeFromMessage.updatedAt;
-                    }
-
-                    let messagePermissionMode: PermissionMode = currentPermissionMode;
-                    const metaPermissionMode = message.meta?.permissionMode;
-                    if (metaPermissionMode) {
-                        messagePermissionMode = metaPermissionMode;
-                        currentPermissionMode = metaPermissionMode;
-                    }
-
-                    let messageModel = currentModel;
-                    if (message.meta?.hasOwnProperty('model')) {
-                        messageModel = message.meta.model || undefined;
-                        currentModel = messageModel;
-                        currentModelUpdatedAt =
-                            typeof message.createdAt === 'number' && Number.isFinite(message.createdAt) && message.createdAt > 0
-                                ? message.createdAt
-                                : Date.now();
-                    }
-
-                    let messageCustomSystemPrompt = currentCustomSystemPrompt;
-                    if (message.meta?.hasOwnProperty('customSystemPrompt')) {
-                        messageCustomSystemPrompt = message.meta.customSystemPrompt || undefined;
-                        currentCustomSystemPrompt = messageCustomSystemPrompt;
-                    }
-
-                    let messageFallbackModel = currentFallbackModel;
-                    if (message.meta?.hasOwnProperty('fallbackModel')) {
-                        messageFallbackModel = message.meta.fallbackModel || undefined;
-                        currentFallbackModel = messageFallbackModel;
-                    }
-
-                    let messageAppendSystemPrompt = currentAppendSystemPrompt;
-                    if (message.meta?.hasOwnProperty('appendSystemPrompt')) {
-                        messageAppendSystemPrompt = message.meta.appendSystemPrompt || undefined;
-                        currentAppendSystemPrompt = messageAppendSystemPrompt;
-                        currentAppendSystemPromptSeeded = true;
-                    }
-
-                        currentClaudeRemoteMetaState = pinClaudeUnifiedTerminalSelection(applyClaudeRemoteMetaState(currentClaudeRemoteMetaState, message.meta), daemonUnifiedTerminalPin);
-                    const nextLocalPermissionBridgeEnabled = isClaudeLocalPermissionBridgeNeeded(currentClaudeRemoteMetaState, unifiedTerminalRuntimeActive);
-                    const nextLocalPermissionBridgeWaitIndefinitely = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeWaitIndefinitely === true;
-                    const nextLocalPermissionBridgeTimeoutMs = nextLocalPermissionBridgeWaitIndefinitely
-                        ? null
-                        : currentClaudeRemoteMetaState.claudeLocalPermissionBridgeTimeoutSeconds * 1000;
-
-                    if (
-                        nextLocalPermissionBridgeEnabled !== localPermissionBridgeEnabled
-                        || nextLocalPermissionBridgeWaitIndefinitely !== localPermissionBridgeWaitIndefinitely
-                        || nextLocalPermissionBridgeTimeoutMs !== localPermissionBridgeTimeoutMs
-                    ) {
-                        localPermissionBridgeEnabled = nextLocalPermissionBridgeEnabled;
-                        localPermissionBridgeWaitIndefinitely = nextLocalPermissionBridgeWaitIndefinitely;
-                        localPermissionBridgeTimeoutMs = nextLocalPermissionBridgeTimeoutMs;
-                        hookServerOptions.permissionRequestTimeoutMs = localPermissionBridgeWaitIndefinitely ? null : localPermissionBridgeTimeoutMs;
-                        rebuildLocalPermissionBridge();
-                        updateAgentStateBestEffort(
+                    // Extract SDK metadata in background and update session when ready
+                    extractSDKMetadataAsync(async (sdkMetadata) => {
+                        updateMetadataBestEffort(
                             session,
-                            (currentState) => buildClaudeAgentState({
-                                currentState,
-                                mode: currentState.controlledByUser === true ? 'local' : 'remote',
-                                claudeUnifiedTerminalEnabled: unifiedTerminalRuntimeActive,
-                                tuiRuntimeControlEnabled: claudeTuiRuntimeControlEnabled,
-                                localPermissionBridgeEnabled,
-                                userMessageHandlerReady,
+                            (currentMetadata) => ({
+                                ...currentMetadata,
+                                tools: sdkMetadata.tools,
+                                slashCommands: sdkMetadata.slashCommands,
                             }),
                             '[claude]',
-                            'local_permission_bridge_mode_change',
+                            'sdk_metadata',
+                        );
+                    }, { claudeCodeIncludeInNativeHistory: currentClaudeRemoteMetaState.claudeCodeIncludeInNativeHistory });
+
+                    // Set initial agent state (best-effort; failure is non-fatal).
+                    updateAgentStateBestEffort(
+                        session,
+                        (currentState) => buildClaudeAgentState({
+                            currentState,
+                            mode: startingMode === 'remote' ? 'remote' : 'local',
+                            claudeUnifiedTerminalEnabled: unifiedTerminalRuntimeActive,
+                            tuiRuntimeControlEnabled: claudeTuiRuntimeControlEnabled,
+                            localPermissionBridgeEnabled,
+                            userMessageHandlerReady,
+                        }),
+                        '[claude]',
+                        'initial_agent_state',
+                    );
+
+                    const defaultSystemPromptText = await resolveEffectiveCodingPromptText({
+                        credentials,
+                        settings: options.accountSettings ?? null,
+                        profileId: session.getMetadataSnapshot()?.profileId ?? null,
+                        sessionMetadata: session.getMetadataSnapshot(),
+                        executionRunsFeatureEnabled: resolveCliFeatureDecision({
+                            featureId: 'execution.runs',
+                            env: process.env,
+                        }).state === 'enabled',
+	                        providerId: 'claude',
+	                    });
+	                    seedInitialAppendSystemPrompt(defaultSystemPromptText, session.getMetadataSnapshot());
+
+	                    // Forward messages from server to the local queue.
+	                    session.onUserMessage(async (message, deliveryInfo) => {
+                        const adoptedModel = adoptModelOverrideFromMetadata({
+                            currentModelId: currentModel,
+                            currentUpdatedAt: currentModelUpdatedAt,
+                            metadata: session.getMetadataSnapshot(),
+                        });
+                        if (adoptedModel.didChange) {
+                            currentModel = adoptedModel.modelId;
+                            currentModelUpdatedAt = adoptedModel.updatedAt;
+                        }
+
+                        const resolvedAgentModeOverride = resolveSessionModeOverrideFromMetadataSnapshot({
+                            metadata: session.getMetadataSnapshot(),
+                        });
+                        if (resolvedAgentModeOverride && resolvedAgentModeOverride.updatedAt > currentAgentModeUpdatedAt) {
+                            currentAgentModeUpdatedAt = resolvedAgentModeOverride.updatedAt;
+                            const normalizedModeId = resolvedAgentModeOverride.modeId.trim();
+                            currentAgentModeId = normalizedModeId.length > 0 ? normalizedModeId : null;
+                        }
+
+                        const adoptedReasoningEffort = adoptReasoningEffortOverrideFromMetadata({
+                            currentValueId: currentReasoningEffort ?? null,
+                            currentUpdatedAt: currentReasoningEffortUpdatedAt,
+                            metadata: session.getMetadataSnapshot(),
+                        });
+                        if (adoptedReasoningEffort.didChange) {
+                            currentReasoningEffort = adoptedReasoningEffort.valueId ?? undefined;
+                            currentReasoningEffortUpdatedAt = adoptedReasoningEffort.updatedAt;
+                        }
+
+                        const adoptedReasoningEffortFromMessage = adoptReasoningEffortOverrideFromMessageMeta({
+                            currentValueId: currentReasoningEffort ?? null,
+                            currentUpdatedAt: currentReasoningEffortUpdatedAt,
+                            messageMeta: message.meta as Record<string, unknown> | null | undefined,
+                            updatedAt:
+                                typeof message.createdAt === 'number' && Number.isFinite(message.createdAt) && message.createdAt > 0
+                                    ? message.createdAt
+                                    : Date.now(),
+                        });
+                        if (adoptedReasoningEffortFromMessage.didChange) {
+                            currentReasoningEffort = adoptedReasoningEffortFromMessage.valueId ?? undefined;
+                            currentReasoningEffortUpdatedAt = adoptedReasoningEffortFromMessage.updatedAt;
+                        }
+
+                        const adoptedUltracode = adoptUltracodeOverrideFromMetadata({
+                            currentValue: currentUltracode ?? null,
+                            currentUpdatedAt: currentUltracodeUpdatedAt,
+                            metadata: session.getMetadataSnapshot(),
+                        });
+                        if (adoptedUltracode.didChange) {
+                            currentUltracode = adoptedUltracode.value ?? undefined;
+                            currentUltracodeUpdatedAt = adoptedUltracode.updatedAt;
+                        }
+
+                        const adoptedUltracodeFromMessage = adoptUltracodeOverrideFromMessageMeta({
+                            currentValue: currentUltracode ?? null,
+                            currentUpdatedAt: currentUltracodeUpdatedAt,
+                            messageMeta: message.meta as Record<string, unknown> | null | undefined,
+                            updatedAt:
+                                typeof message.createdAt === 'number' && Number.isFinite(message.createdAt) && message.createdAt > 0
+                                    ? message.createdAt
+                                    : Date.now(),
+                        });
+                        if (adoptedUltracodeFromMessage.didChange) {
+                            currentUltracode = adoptedUltracodeFromMessage.value ?? undefined;
+                            currentUltracodeUpdatedAt = adoptedUltracodeFromMessage.updatedAt;
+                        }
+
+                        let messagePermissionMode: PermissionMode = currentPermissionMode;
+                        const metaPermissionMode = message.meta?.permissionMode;
+                        if (metaPermissionMode) {
+                            messagePermissionMode = metaPermissionMode;
+                            currentPermissionMode = metaPermissionMode;
+                        }
+
+                        let messageModel = currentModel;
+                        if (message.meta?.hasOwnProperty('model')) {
+                            messageModel = message.meta.model || undefined;
+                            currentModel = messageModel;
+                            currentModelUpdatedAt =
+                                typeof message.createdAt === 'number' && Number.isFinite(message.createdAt) && message.createdAt > 0
+                                    ? message.createdAt
+                                    : Date.now();
+                        }
+
+                        let messageCustomSystemPrompt = currentCustomSystemPrompt;
+                        if (message.meta?.hasOwnProperty('customSystemPrompt')) {
+                            messageCustomSystemPrompt = message.meta.customSystemPrompt || undefined;
+                            currentCustomSystemPrompt = messageCustomSystemPrompt;
+                        }
+
+                        let messageFallbackModel = currentFallbackModel;
+                        if (message.meta?.hasOwnProperty('fallbackModel')) {
+                            messageFallbackModel = message.meta.fallbackModel || undefined;
+                            currentFallbackModel = messageFallbackModel;
+                        }
+
+                        let messageAppendSystemPrompt = appendSystemPromptFollowsRetainedRole
+                            ? resolveClaudeRetainedAppendSystemPromptText({ base: null, sessionMetadata: session.getMetadataSnapshot() })
+                            : currentAppendSystemPrompt;
+                        if (message.meta?.hasOwnProperty('appendSystemPrompt')) {
+                            messageAppendSystemPrompt = resolveClaudeRetainedAppendSystemPromptText({
+                                base: message.meta.appendSystemPrompt,
+                                sessionMetadata: session.getMetadataSnapshot(),
+                            });
+                            currentAppendSystemPrompt = messageAppendSystemPrompt;
+                            currentAppendSystemPromptSeeded = true;
+                            appendSystemPromptFollowsRetainedRole = false;
+                        }
+
+                            currentClaudeRemoteMetaState = pinClaudeUnifiedTerminalSelection(applyClaudeRemoteMetaState(currentClaudeRemoteMetaState, message.meta), daemonUnifiedTerminalPin);
+                        const nextLocalPermissionBridgeEnabled = isClaudeLocalPermissionBridgeNeeded(currentClaudeRemoteMetaState, unifiedTerminalRuntimeActive);
+                        const nextLocalPermissionBridgeWaitIndefinitely = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeWaitIndefinitely === true;
+                        const nextLocalPermissionBridgeTimeoutMs = nextLocalPermissionBridgeWaitIndefinitely
+                            ? null
+                            : currentClaudeRemoteMetaState.claudeLocalPermissionBridgeTimeoutSeconds * 1000;
+
+                        if (
+                            nextLocalPermissionBridgeEnabled !== localPermissionBridgeEnabled
+                            || nextLocalPermissionBridgeWaitIndefinitely !== localPermissionBridgeWaitIndefinitely
+                            || nextLocalPermissionBridgeTimeoutMs !== localPermissionBridgeTimeoutMs
+                        ) {
+                            localPermissionBridgeEnabled = nextLocalPermissionBridgeEnabled;
+                            localPermissionBridgeWaitIndefinitely = nextLocalPermissionBridgeWaitIndefinitely;
+                            localPermissionBridgeTimeoutMs = nextLocalPermissionBridgeTimeoutMs;
+                            hookServerOptions.permissionRequestTimeoutMs = localPermissionBridgeWaitIndefinitely ? null : localPermissionBridgeTimeoutMs;
+                            rebuildLocalPermissionBridge();
+                            updateAgentStateBestEffort(
+                                session,
+                                (currentState) => buildClaudeAgentState({
+                                    currentState,
+                                    mode: currentState.controlledByUser === true ? 'local' : 'remote',
+                                    claudeUnifiedTerminalEnabled: unifiedTerminalRuntimeActive,
+                                    tuiRuntimeControlEnabled: claudeTuiRuntimeControlEnabled,
+                                    localPermissionBridgeEnabled,
+                                    userMessageHandlerReady,
+                                }),
+                                '[claude]',
+                                'local_permission_bridge_mode_change',
+                            );
+                        }
+
+                        const structuredRouting = resolveClaudeStructuredUserMessageRouting({
+                            text: message.content.text,
+                            meta: message.meta,
+                        });
+                        // See the sibling path: bounded resolve before the mode is built, not after.
+                        await modelEffortTracker.refreshWithin(currentModel);
+                        const enhancedMode: EnhancedMode = resolveClaudeInstalledRuntimeSessionMode({
+                            permissionMode: messagePermissionMode || 'default',
+                            agentModeId: currentAgentModeId,
+                            replaySeedAllowed: structuredRouting ? true : parseSpecialCommand(message.content.text).type === null,
+                            localId: message.localId ?? null,
+                            model: messageModel,
+                            fallbackModel: messageFallbackModel,
+                            customSystemPrompt: messageCustomSystemPrompt,
+                            appendSystemPrompt: messageAppendSystemPrompt,
+                            modelEffortLevels: modelEffortTracker.getLevels(),
+                            modelEffortLevelsModelId: modelEffortTracker.getModelId(),
+                            reasoningEffort: currentReasoningEffort,
+                            ultracode: currentUltracode,
+                            ...currentClaudeRemoteMetaState,
+                        }, installedRuntimeCapabilities);
+                        const baseQueuedText = structuredRouting?.queuedText ?? message.content.text;
+                        const deliveryAttribution = {
+                            userMessageSeq: deliveryInfo?.seq ?? null,
+                            userMessageLocalId: message.localId ?? null,
+                            providerAcceptancePending: deliveryInfo?.providerAcceptancePending === true,
+                            ...(deliveryInfo?.pendingProviderAction ? { pendingProviderAction: deliveryInfo.pendingProviderAction } : {}),
+                            ...(deliveryInfo?.pendingRequestedAction ? { pendingRequestedAction: deliveryInfo.pendingRequestedAction } : {}),
+                        };
+
+                        if (!structuredRouting) {
+                            const specialCommand = parseSpecialCommand(message.content.text);
+                            if (specialCommand.type === 'compact' || specialCommand.type === 'clear') {
+                                messageQueue.pushIsolateAndClear(specialCommand.originalMessage || message.content.text, enhancedMode, deliveryAttribution);
+                                return;
+                            }
+                        }
+
+                        if (deliveryInfo?.pendingProviderAction) {
+                            messageQueue.unshift(baseQueuedText, enhancedMode, deliveryAttribution);
+                        } else {
+                            messageQueue.push(baseQueuedText, enhancedMode, deliveryAttribution);
+                        }
+                    });
+
+                    if (timing.enabled) {
+                        logger.debug(
+                            timing.formatSummaryLine({
+                                prefix: '[claude-startup]',
+                                includeIds: [
+                                    'vendor_spawn_invoked',
+                                    'initialize_backend_api_context',
+                                    'initialize_backend_run_session',
+                                ],
+                            }),
                         );
                     }
-
-                    const structuredRouting = resolveClaudeStructuredUserMessageRouting({
-                        text: message.content.text,
-                        meta: message.meta,
-                    });
-                    // See the sibling path: bounded resolve before the mode is built, not after.
-                    await modelEffortTracker.refreshWithin(currentModel);
-                    const enhancedMode: EnhancedMode = resolveClaudeInstalledRuntimeSessionMode({
-                        permissionMode: messagePermissionMode || 'default',
-                        agentModeId: currentAgentModeId,
-                        replaySeedAllowed: structuredRouting ? true : parseSpecialCommand(message.content.text).type === null,
-                        localId: message.localId ?? null,
-                        model: messageModel,
-                        fallbackModel: messageFallbackModel,
-                        customSystemPrompt: messageCustomSystemPrompt,
-                        appendSystemPrompt: messageAppendSystemPrompt,
-                        modelEffortLevels: modelEffortTracker.getLevels(),
-                        modelEffortLevelsModelId: modelEffortTracker.getModelId(),
-                        reasoningEffort: currentReasoningEffort,
-                        ultracode: currentUltracode,
-                        ...currentClaudeRemoteMetaState,
-                    }, installedRuntimeCapabilities);
-                    const baseQueuedText = structuredRouting?.queuedText ?? message.content.text;
-                    const deliveryAttribution = {
-                        providerPromptMeta: message.meta,
-                        userMessageSeq: deliveryInfo?.seq ?? null,
-                        userMessageLocalId: message.localId ?? null,
-                        providerAcceptancePending: deliveryInfo?.providerAcceptancePending === true,
-                        ...(deliveryInfo?.pendingProviderAction ? { pendingProviderAction: deliveryInfo.pendingProviderAction } : {}),
-                        ...(deliveryInfo?.pendingRequestedAction ? { pendingRequestedAction: deliveryInfo.pendingRequestedAction } : {}),
-                    };
-
-                    if (!structuredRouting) {
-                        const specialCommand = parseSpecialCommand(message.content.text);
-                        if (specialCommand.type === 'compact' || specialCommand.type === 'clear') {
-                            messageQueue.pushIsolateAndClear(specialCommand.originalMessage || message.content.text, enhancedMode, deliveryAttribution);
-                            return;
-                        }
-                    }
-
-                    if (deliveryInfo?.pendingProviderAction) {
-                        messageQueue.unshift(baseQueuedText, enhancedMode, deliveryAttribution);
-                    } else {
-                        messageQueue.push(baseQueuedText, enhancedMode, deliveryAttribution);
-                    }
-                });
-
-                if (timing.enabled) {
-                    logger.debug(
-                        timing.formatSummaryLine({
-                            prefix: '[claude-startup]',
-                            includeIds: [
-                                'vendor_spawn_invoked',
-                                'initialize_backend_api_context',
-                                'initialize_backend_run_session',
-                            ],
-                        }),
-                    );
-                }
                 };
 
-                const stopCreateSpan = timing.startSpan('initialize_backend_run_session');
-                    const initialized = await initializeBackendRunSession({
-                        api,
-                        sessionTag,
-                        metadata,
-                        state,
-                        existingSessionId,
-                        attachMetadataIdentityPolicy,
-                            uiLogPrefix: '[claude]',
-                            terminalAgentLabel: unifiedTerminalRuntimeActive ? undefined : 'claude',
-                            offlineNotify: (message: string) => {
-                                artifacts.deferredSession.sendSessionEvent({ type: 'message', message });
-                            },
-                        startupMetadataOverrides: createStartupMetadataOverrides({
-                            permissionMode: explicitPermissionMode,
-                            permissionModeUpdatedAt: explicitPermissionModeUpdatedAt,
-                            modelId: initialModelId ?? undefined,
-                        modelUpdatedAt: initialModelUpdatedAt,
-                    }),
-                    allowOfflineStub: true,
-                    startupSideEffectsOrder: 'persist-first',
-                    terminalHostOwner: unifiedTerminalRuntimeActive ? 'runtime' : 'startup',
-                    runtimeActivityLifecycle: runtimeActivity.lifecycle,
-                    deferPendingFirstInputCommitUntilRuntimeReady: true,
-                    onSessionSwap: (newSession) => {
-                        void wireServerSession(newSession);
-                    },
-                });
-                stopCreateSpan();
-                runtimeActivityDisposal.current = initialized.disposeRuntimeActivity ?? null;
-
-                if (signal.aborted) {
-                    initialized.reconnectionHandle?.cancel();
-                    return;
-                }
-
-                if (!initialized.reportedSessionId) {
-                    artifacts.deferredSession.sendSessionEvent({
-                        type: 'message',
-                        message: 'Server unreachable — continuing in local-only mode.',
+                    const stopCreateSpan = timing.startSpan('initialize_backend_run_session');
+                        const initialized = await initializeBackendRunSession({
+                            api,
+                            sessionTag,
+                            metadata,
+                            state,
+                            existingSessionId,
+                            attachMetadataIdentityPolicy,
+                                uiLogPrefix: '[claude]',
+                                terminalAgentLabel: unifiedTerminalRuntimeActive ? undefined : 'claude',
+                                offlineNotify: (message: string) => {
+                                    artifacts.deferredSession.sendSessionEvent({ type: 'message', message });
+                                },
+                            startupMetadataOverrides: createStartupMetadataOverrides({
+                                permissionMode: explicitPermissionMode,
+                                permissionModeUpdatedAt: explicitPermissionModeUpdatedAt,
+                                modelId: initialModelId ?? undefined,
+                            modelUpdatedAt: initialModelUpdatedAt,
+                        }),
+                        allowOfflineStub: true,
+                        startupSideEffectsOrder: 'persist-first',
+                        terminalHostOwner: unifiedTerminalRuntimeActive ? 'runtime' : 'startup',
+                        runtimeActivityLifecycle: runtimeActivity.lifecycle,
+                        deferPendingFirstInputCommitUntilRuntimeReady: true,
+                        onSessionSwap: (newSession) => {
+                            void wireServerSession(newSession);
+                        },
                     });
-                    if (initialized.reconnectionHandle) {
-                        signal.addEventListener('abort', () => initialized.reconnectionHandle?.cancel(), { once: true });
-                    }
-                    return;
-                }
+                    stopCreateSpan();
+                    runtimeActivityDisposal.current = initialized.disposeRuntimeActivity ?? null;
 
-                await wireServerSession(initialized.session);
-                await initialized.commitPendingFirstInputAfterRuntimeReady?.();
+                    if (signal.aborted) {
+                        initialized.reconnectionHandle?.cancel();
+                        return;
+                    }
+
+                    if (!initialized.reportedSessionId) {
+                        artifacts.deferredSession.sendSessionEvent({
+                            type: 'message',
+                            message: 'Server unreachable — continuing in local-only mode.',
+                        });
+                        if (initialized.reconnectionHandle) {
+                            signal.addEventListener('abort', () => initialized.reconnectionHandle?.cancel(), { once: true });
+                        }
+                        return;
+                    }
+
+                    await wireServerSession(initialized.session);
+                    await initialized.commitPendingFirstInputAfterRuntimeReady?.();
+                } catch (error) {
+                    resumeAttachFailure = error;
+                    throw error;
+                } finally {
+                    settleResumeAttachOutcome({ status: 'failed', error: resumeAttachFailure });
+                }
             },
             spawnLoop: async ({ artifacts, signal }) => {
                 if (signal.aborted) return 0;
@@ -2087,6 +2129,27 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     throw new Error('Claude startup prerequisites missing');
                 }
                 const hookPluginDir = artifacts.hookPluginDir;
+
+                if (existingSessionId) {
+                    let onAbort: (() => void) | null = null;
+                    const aborted = new Promise<null>((resolve) => {
+                        if (signal.aborted) {
+                            resolve(null);
+                            return;
+                        }
+                        onAbort = () => resolve(null);
+                        signal.addEventListener('abort', onAbort, { once: true });
+                        if (signal.aborted) {
+                            signal.removeEventListener('abort', onAbort);
+                            onAbort = null;
+                            resolve(null);
+                        }
+                    });
+                    const outcome = await Promise.race([resumeAttachOutcome, aborted]);
+                    if (onAbort) signal.removeEventListener('abort', onAbort);
+                    if (signal.aborted) return 0;
+                    if (outcome?.status === 'failed') throw outcome.error;
+                }
 
                     const localSettings = await readSettings();
                     const mcpSession = applyRunnerMcpSessionContext(artifacts.deferredSession as object, {
@@ -2118,7 +2181,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         }).state === 'enabled',
                         providerId: 'claude',
                     });
-                    seedInitialAppendSystemPrompt(defaultSystemPromptText);
+                    seedInitialAppendSystemPrompt(defaultSystemPromptText, artifacts.deferredSession.getMetadataSnapshot?.());
 
                     const initialClaudeUnifiedTerminalMode = pinClaudeRemoteModeToActiveRuntime(resolveClaudeInstalledRuntimeSessionMode({
                         permissionMode: options.permissionMode ?? 'default',

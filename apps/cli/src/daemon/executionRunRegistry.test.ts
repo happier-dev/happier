@@ -349,4 +349,46 @@ describe('executionRunRegistry', () => {
     const ids = markers.map((m) => m.runId).sort();
     expect(ids).toEqual(['run_keep_running']);
   });
+
+  it('gcExecutionRunMarkers keeps a running visible run whose parent runner exited until its deadline plus the terminal TTL', async () => {
+    const { listExecutionRunMarkers, writeExecutionRunMarker, gcExecutionRunMarkers } = await import('./executionRunRegistry');
+    const nowMs = Date.now();
+    const visibleRun = (runId: string, deadlineAtMs: number | null) => writeExecutionRunMarker({
+      pid: 444,
+      happySessionId: 'lead_1',
+      runId,
+      callId: `call_${runId}`,
+      sidechainId: `side_${runId}`,
+      intent: 'review',
+      backendId: 'claude',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'ephemeral',
+      status: 'running',
+      startedAtMs: nowMs - 60_000,
+      updatedAtMs: nowMs - 50_000,
+      visibleRunV1: {
+        v: 1,
+        linkedSessionId: 'reviewer_1',
+        binding: 'reused',
+        permissionMode: 'read_only',
+        notifyParentOnCompletion: true,
+        controls: { backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, sessionPermissionMode: 'read-only', modelId: null, sessionConfigOptionOverrides: null },
+        linked: true,
+        lastReportedTurnEpoch: 0,
+        deadlineAtMs,
+      },
+    } as any);
+    await visibleRun('run_visible_within', nowMs - 5_000);
+    await visibleRun('run_visible_expired', nowMs - 20_000);
+
+    await gcExecutionRunMarkers({
+      nowMs,
+      terminalTtlMs: 10_000,
+      isPidAlive: () => false,
+      isPidSafeHappyProcess: () => false,
+    });
+
+    expect((await listExecutionRunMarkers()).map((m) => m.runId)).toEqual(['run_visible_within']);
+  });
 });

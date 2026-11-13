@@ -11,8 +11,102 @@ import { SessionListCacheEntryV1Schema } from './warmCachePersistence';
 import { buildSessionListRenderableFromSession, resolveSessionListRenderableAttentionPromotionPlacement } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { createSessionFixture } from '@/dev/testkit';
+import { resolveExecutionRunDeliveryState } from '@/sync/domains/session/executionRunLinkPresentation';
+
+const VERIFIED_EXECUTION_RUN_LINK = {
+    v: 1 as const,
+    parentSessionId: 'lead-session',
+    runId: 'run-1',
+    turnEpoch: 0,
+    report: { turnEpoch: 1, ack: 'accepted' as const, reportedAt: 100, attempts: 1 },
+    relay: { turnEpoch: 1, status: 'queued' as const, localId: 'completion-1', at: 110 },
+    delivery: { turnEpoch: 1, status: 'verified' as const, localId: 'completion-1', transcriptSeq: 12, verifiedAt: 120 },
+};
 
 describe('warmCacheAdapters', () => {
+    it.each([
+        { expected: 'sent' as const, link: VERIFIED_EXECUTION_RUN_LINK },
+        { expected: 'queued' as const, link: { ...VERIFIED_EXECUTION_RUN_LINK, delivery: undefined } },
+    ])('round-trips execution-run delivery state $expected through persisted cache hydration', ({ expected, link }) => {
+        const renderable = buildSessionListRenderableFromSession(createSessionFixture({
+            metadata: {
+                path: '/repo',
+                host: 'host',
+                executionRunLinkV1: link,
+            },
+        }));
+        const entry = buildSessionListCacheEntryFromRenderable(renderable);
+        const persisted = SessionListCacheEntryV1Schema.parse(JSON.parse(JSON.stringify(entry)));
+        const hydrated = buildSessionListRenderableFromCacheEntry(persisted);
+
+        expect(resolveExecutionRunDeliveryState(hydrated.metadata?.executionRunLinkV1 ?? null)).toBe(expected);
+        expect(hydrated.metadata?.executionRunLinkV1).toEqual(link);
+        expect(buildSessionListCacheEntryFromRenderable(hydrated, persisted)).toBe(persisted);
+    });
+
+    it.each([
+        {
+            expectedReuse: true,
+            name: 'non-display receipt fields change',
+            update: {
+                ...VERIFIED_EXECUTION_RUN_LINK,
+                runId: 'run-2',
+                report: { ...VERIFIED_EXECUTION_RUN_LINK.report, reportedAt: 101 },
+                relay: { ...VERIFIED_EXECUTION_RUN_LINK.relay, localId: 'completion-2', at: 111 },
+                delivery: {
+                    ...VERIFIED_EXECUTION_RUN_LINK.delivery,
+                    localId: 'completion-2',
+                    transcriptSeq: 13,
+                    verifiedAt: 121,
+                },
+            },
+        },
+        {
+            expectedReuse: false,
+            name: 'relay presentation status changes',
+            update: {
+                ...VERIFIED_EXECUTION_RUN_LINK,
+                relay: { ...VERIFIED_EXECUTION_RUN_LINK.relay, status: 'failed' as const },
+            },
+        },
+    ])('$name produces identity reuse: $expectedReuse', ({ expectedReuse, update }) => {
+        const renderable = buildSessionListRenderableFromSession(createSessionFixture({
+            metadata: { path: '/repo', host: 'host', executionRunLinkV1: VERIFIED_EXECUTION_RUN_LINK },
+        }));
+        const previousEntry = buildSessionListCacheEntryFromRenderable(renderable);
+        const rebuiltEntry = buildSessionListCacheEntryFromRenderable({
+            ...renderable,
+            metadata: { ...renderable.metadata!, executionRunLinkV1: update },
+        }, previousEntry);
+
+        expect(rebuiltEntry === previousEntry).toBe(expectedReuse);
+    });
+
+    it('retains trusted creator provenance and role through persisted cache hydration', () => {
+        const origin = { v: 1, kind: 'agent', creatorSessionId: 'planner' };
+        const renderable = buildSessionListRenderableFromSession(createSessionFixture({
+            metadata: { path: '/repo', host: 'host', sessionOriginV1: origin, sessionRoleV1: { v: 1, role: 'delegate' } },
+        }));
+        const entry = buildSessionListCacheEntryFromRenderable(renderable);
+        const persisted = SessionListCacheEntryV1Schema.parse(JSON.parse(JSON.stringify(entry)));
+        expect(buildSessionListRenderableFromCacheEntry(persisted).metadata?.sessionOriginV1).toEqual(origin);
+        expect(buildSessionListRenderableFromCacheEntry(persisted).metadata?.sessionRole).toBe('delegate');
+        expect(buildSessionListCacheEntryFromRenderable(buildSessionListRenderableFromCacheEntry(persisted), persisted)).toBe(persisted);
+    });
+    it('retains a deleted custom role display snapshot through persisted cache hydration', () => {
+        const customRole = 'custom:123e4567-e89b-12d3-a456-426614174000' as const;
+        const renderable = buildSessionListRenderableFromSession(createSessionFixture({
+            metadata: {
+                path: '/repo',
+                host: 'host',
+                sessionRoleV1: { v: 1, role: customRole, name: 'Architect', color: '#123456', instructions: 'Design.' },
+            },
+        }));
+        const persisted = SessionListCacheEntryV1Schema.parse(JSON.parse(JSON.stringify(buildSessionListCacheEntryFromRenderable(renderable))));
+        const hydrated = buildSessionListRenderableFromCacheEntry(persisted);
+        expect(hydrated.metadata).toMatchObject({ sessionRole: customRole, sessionRoleName: 'Architect', sessionRoleColor: '#123456' });
+        expect(buildSessionListCacheEntryFromRenderable(hydrated, persisted)).toBe(persisted);
+    });
     it('persists resolved runtime identity through compact projection and JSON cache hydration', () => {
         const renderable = buildSessionListRenderableFromSession(createSessionFixture({
             metadata: {

@@ -153,6 +153,8 @@ function buildSpawnSemanticFingerprint(options: SpawnSessionOptions): Json {
       ? null
       : toStableJson(options.connectedServiceMaterializationIdentityV1, new WeakSet()),
     mcpSelection: normalizeMcpSelectionForFingerprint(options.mcpSelection),
+    sessionRole: options.sessionRoleV1?.role ?? null,
+    executionRunLink: options.executionRunLinkV1 ? `${options.executionRunLinkV1.parentSessionId}:${options.executionRunLinkV1.runId}` : null,
     sessionConfigOptionOverrides: normalizeSessionConfigOptionOverridesForFingerprint(
       options.sessionConfigOptionOverrides,
     ),

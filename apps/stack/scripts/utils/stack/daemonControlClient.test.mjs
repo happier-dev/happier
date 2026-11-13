@@ -566,3 +566,31 @@ test('resolveDaemonRestartConfirmTimeoutMs shares the daemon restart verificatio
     250,
   );
 });
+
+test('pingDaemon reports the server connection only when the daemon states it', async (t) => {
+  const home = await mkdtemp(join(tmpdir(), 'hstack-daemon-ping-connection-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const serverUrl = 'http://127.0.0.1:3009';
+  const replies = [
+    [{ status: 'ok', serverConnected: true }, true],
+    [{ status: 'ok', serverConnected: false }, false],
+    [{ status: 'ok' }, null],
+    [{ status: 'ok', serverConnected: 'yes' }, null],
+  ];
+
+  for (const [reply, expected] of replies) {
+    await withServer((_req, res) => {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify(reply));
+    }, async ({ port }) => {
+      await writeDaemonState({
+        cliHomeDir: home,
+        serverUrl,
+        state: { pid: process.pid, httpPort: port, controlToken: 'state-token' },
+      });
+
+      const result = await pingDaemon({ cliHomeDir: home, serverUrl });
+      assert.equal(result.serverConnected, expected);
+    });
+  }
+});

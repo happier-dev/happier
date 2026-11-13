@@ -119,10 +119,18 @@ export {
 } from './standings.js';
 
 export {
+  SessionAppearancePresentationListResponseSchema,
   SessionOrganizationSessionAppearanceSchema,
+  SessionOrganizationSessionAppearancePresentationSchema,
+  SetSessionAppearancePresentationRequestSchema,
+  SetSessionAppearancePresentationResponseSchema,
   SetSessionAppearanceRequestSchema,
   SetSessionAppearanceResponseSchema,
+  type SessionAppearancePresentationListResponse,
   type SessionOrganizationSessionAppearance,
+  type SessionOrganizationSessionAppearancePresentation,
+  type SetSessionAppearancePresentationRequest,
+  type SetSessionAppearancePresentationResponse,
   type SetSessionAppearanceRequest,
   type SetSessionAppearanceResponse,
 } from './appearances.js';

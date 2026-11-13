@@ -179,6 +179,38 @@ describe('resolveEffectiveCodingPromptText', () => {
     expect(fetchCount).toBe(2);
   });
 
+  it('includes the retained role assignment in the provider coding prompt', async () => {
+    const out = await resolveEffectiveCodingPromptText({
+      credentials: createCredentials(),
+      settings: {},
+      profileId: null,
+      baseOverride: 'BASE',
+      executionRunsFeatureEnabled: false,
+      memoryRecallGuidanceEnabled: false,
+      sessionMetadata: { sessionRoleV1: { v: 1, role: 'delegate', instructions: 'Delegate snapshot.', assignmentId: 'a-1', assignedAt: 1 } },
+      fetchPromptArtifactRecord: async () => null,
+    });
+    expect(out).toContain('Current role assignment: Delegate');
+    expect(out).toContain('Delegate snapshot.');
+  });
+
+  it('keeps the retained role assignment when a message resets the shared base to null', async () => {
+    const out = await resolveEffectiveCodingPromptText({
+      credentials: createCredentials(),
+      settings: {},
+      profileId: null,
+      baseOverride: null,
+      executionRunsFeatureEnabled: false,
+      memoryRecallGuidanceEnabled: false,
+      providerId: 'codex',
+      sessionMetadata: { sessionRoleV1: { v: 1, role: 'planner', instructions: 'Planner snapshot.', assignmentId: 'a-2', assignedAt: 2 } },
+      fetchPromptArtifactRecord: async () => null,
+    });
+    expect(out).not.toContain('You are an AI assistant');
+    expect(out).toContain('Current role assignment: Planner');
+    expect(out).toContain('Planner snapshot.');
+  });
+
   it('appends memory recall guidance when explicitly enabled', async () => {
     const credentials = createCredentials();
 
@@ -507,5 +539,36 @@ describe('resolveEffectiveCodingPromptText', () => {
     expect(out).not.toContain('# Session title');
     expect(out).toContain('# Options');
     expect(out).toContain('<options>');
+  });
+});
+
+describe('runtime prompt preview record', () => {
+  it('records the resolved plan the runner launches with, matching the plan block ids, as the fresh form', async () => {
+    const { resolveEffectiveCodingPromptPlan } = await import('./resolveEffectiveCodingPrompt');
+    const { buildSessionPromptPreviewV1 } = await import('./resolvedCodingPromptRecord');
+    const resolved = await resolveEffectiveCodingPromptPlan({
+      credentials: createCredentials(),
+      settings: {},
+      profileId: null,
+      providerId: 'claude',
+      sessionMetadata: { sessionRoleV1: { v: 1, role: 'reviewer', instructions: 'Review.', assignmentId: 'a1', assignedAt: 1 } },
+      executionRunsFeatureEnabled: false,
+    });
+    const preview = buildSessionPromptPreviewV1('sess_1');
+    expect(preview).toEqual(expect.objectContaining({ ok: true, sessionId: 'sess_1', text: resolved.text, launchForm: 'fresh' }));
+    expect(preview.ok && preview.blocks.map((block) => block.id)).toEqual(resolved.diagnostics.blockIds);
+    expect(preview.ok && preview.providerNotes.join(' ')).toContain('second');
+  });
+
+  it('records the Claude retained launch form after a resume', async () => {
+    const { resolveInitialClaudeSystemPromptText } = await import('@/backends/claude/utils/resolveInitialClaudeSystemPromptText');
+    const { buildSessionPromptPreviewV1 } = await import('./resolvedCodingPromptRecord');
+    const text = resolveInitialClaudeSystemPromptText({
+      existingSessionId: 'claude-session',
+      sessionMetadata: { sessionRoleV1: { v: 1, role: 'reviewer', instructions: 'Review.', assignmentId: 'a1', assignedAt: 1 } },
+    });
+    const preview = buildSessionPromptPreviewV1('sess_1');
+    expect(preview).toEqual(expect.objectContaining({ ok: true, launchForm: 'retained', text }));
+    expect(preview.ok && preview.blocks.map((block) => block.id)).toEqual(['coding.session_role']);
   });
 });

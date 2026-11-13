@@ -129,6 +129,18 @@ describe('spawnSessionForVoiceTool', () => {
     });
   });
 
+  it('forwards only an explicit role to the creating daemon', async () => {
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    await spawnSessionForVoiceTool({ path: '/Users/leeroy/projects/happier', role: 'reviewer' });
+    await spawnSessionForVoiceTool({ path: '/Users/leeroy/projects/happier' });
+
+    const { DEFAULT_SESSION_ROLE_INSTRUCTIONS_V1 } = await import('@happier-dev/protocol');
+    const requests = machineSpawnNewSession.mock.calls.map((call) => call[0] as { sessionRoleAssignment?: unknown });
+    expect(requests[0]?.sessionRoleAssignment).toMatchObject({ v: 1, role: 'reviewer', instructions: DEFAULT_SESSION_ROLE_INSTRUCTIONS_V1.reviewer });
+    expect(requests[1]?.sessionRoleAssignment).toBeUndefined();
+  });
+
   it('does not apply tag or first input to a session rejoined from a different spawn attempt', async () => {
     machineSpawnNewSession.mockResolvedValueOnce({
       type: 'success',

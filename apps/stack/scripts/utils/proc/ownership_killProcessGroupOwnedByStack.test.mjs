@@ -637,3 +637,102 @@ test('killProcessGroupOwnedByStack does not signal the caller process group when
     }
   }
 });
+
+const RECORDED_INSTANCE = 'win32-cim:2026-11-07T04:27:00.0000000Z';
+const UNAVAILABLE_IDENTITY = { status: 'inconclusive', owned: null, reason: 'process_instance_unavailable' };
+
+function killAfterProof(ownership, liveness, terminated) {
+  const calls = [];
+  return {
+    calls,
+    result: killProcessGroupOwnedByStack(4242, {
+      stackName: 't',
+      envPath: '/tmp/t/env',
+      json: true,
+      platform: 'win32',
+      processInstanceFingerprint: RECORDED_INSTANCE,
+      resolvePidStackOwnershipImpl: async () => ownership,
+      observePidLivenessImpl: () => ({ status: liveness }),
+      terminateProcessGroupImpl: async (pid, options) => {
+        calls.push({ pid, identityPid: options.identityPid, fingerprint: options.processInstanceFingerprint });
+        return terminated;
+      },
+    }),
+  };
+}
+
+test('a recorded process that exits during its proof goes to the tree owner, not straight to success', async () => {
+  const kill = killAfterProof(UNAVAILABLE_IDENTITY, 'dead', { ok: true, alreadyExited: true });
+
+  assert.deepEqual(await kill.result, { killed: true, reason: 'already_exited' });
+  assert.deepEqual(kill.calls, [{ pid: 4242, identityPid: 4242, fingerprint: RECORDED_INSTANCE }]);
+});
+
+test('a recorded process that exits during its proof stays failed while its tree is unproven', async () => {
+  const kill = killAfterProof(UNAVAILABLE_IDENTITY, 'dead', { ok: false, reason: 'descendants_remain' });
+
+  assert.deepEqual(await kill.result, { killed: false, reason: 'descendants_remain' });
+});
+
+const refusedProofs = [
+  ['the process is still alive', UNAVAILABLE_IDENTITY, 'alive', 'process_instance_unavailable'],
+  ['liveness is inconclusive', UNAVAILABLE_IDENTITY, 'inconclusive', 'process_instance_unavailable'],
+  [
+    'the PID was reused and has gone',
+    { status: 'not_owned', owned: false, reason: 'process_instance_mismatch' },
+    'dead',
+    'process_instance_mismatch',
+  ],
+];
+
+for (const [name, ownership, liveness, reason] of refusedProofs) {
+  test(`a refused proof never reaches termination when ${name}`, async () => {
+    const kill = killAfterProof(ownership, liveness, { ok: true });
+
+    assert.deepEqual(await kill.result, { killed: false, reason });
+    assert.deepEqual(kill.calls, []);
+  });
+}
+
+test('killPidOwnedByStack accepts a recorded process that exits during its proof', async () => {
+  const result = await killPidOwnedByStack(4242, {
+    stackName: 't',
+    envPath: '/tmp/t/env',
+    json: true,
+    platform: 'win32',
+    processInstanceFingerprint: RECORDED_INSTANCE,
+    resolvePidStackOwnershipImpl: async () => UNAVAILABLE_IDENTITY,
+    observePidLivenessImpl: () => ({ status: 'dead' }),
+    terminateProcessPidImpl: async () => assert.fail('a process that has gone must not be signalled'),
+  });
+
+  assert.deepEqual(result, { killed: true, reason: 'already_exited' });
+});
+
+test('a budgeted caller keeps its budget for the exited tree read', async () => {
+  const signal = new AbortController().signal;
+  const captures = [];
+  await killProcessGroupOwnedByStack(4242, {
+    stackName: 't',
+    envPath: '/tmp/t/env',
+    json: true,
+    platform: 'win32',
+    processInstanceFingerprint: RECORDED_INSTANCE,
+    boundedIdentity: {
+      timeoutMs: 321,
+      signal,
+      runCaptureImpl: async (_command, _args, options) => {
+        captures.push(options);
+        return '[]';
+      },
+    },
+    resolvePidStackOwnershipImpl: async () => UNAVAILABLE_IDENTITY,
+    observePidLivenessImpl: () => ({ status: 'dead' }),
+    terminateProcessGroupImpl: async (pid, options) => {
+      await options.boundary.observeProcessDescendants(pid, options.processInstanceFingerprint);
+      return { ok: true };
+    },
+  });
+
+  assert.deepEqual(captures, [{ timeoutMs: 321, signal }]);
+});

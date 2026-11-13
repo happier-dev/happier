@@ -1,4 +1,4 @@
-import { cp, mkdir, rm, stat } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -55,6 +55,39 @@ async function validateServerPrismaEnginesForTarget({
       `[component-artifacts] missing ${provider} Prisma query engine for ${targetKey}: generated/${provider}-client/${engineFileName}`,
     );
   }
+}
+
+async function normalizeMigrationSqlTree(root: string): Promise<void> {
+  const entries = await readdir(root, { withFileTypes: true }).catch((error: unknown) => {
+    const code = error && typeof error === 'object' && 'code' in error ? String(error.code ?? '') : '';
+    if (code === 'ENOENT') return [];
+    throw error;
+  });
+
+  await Promise.all(entries.map(async (entry) => {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) {
+      await normalizeMigrationSqlTree(path);
+      return;
+    }
+    if (!entry.isFile() || entry.name !== 'migration.sql') return;
+
+    const source = await readFile(path, 'utf8');
+    const canonical = source.replace(/\r\n/g, '\n');
+    if (canonical !== source) {
+      await writeFile(path, canonical, 'utf8');
+    }
+  }));
+}
+
+async function normalizeServerMigrationSqlPayload(payloadDir: string): Promise<void> {
+  // Git's Windows checkout conversion must not change the immutable migration
+  // bytes packaged into server artifacts and checked at runtime.
+  await Promise.all([
+    join(payloadDir, 'prisma', 'migrations'),
+    join(payloadDir, 'prisma', 'mysql', 'migrations'),
+    join(payloadDir, 'prisma', 'sqlite', 'migrations'),
+  ].map(normalizeMigrationSqlTree));
 }
 
 export async function buildServerBinaryArtifactPayload({
@@ -156,6 +189,8 @@ export async function buildServerBinaryArtifactPayload({
       copyPath,
     });
   }
+
+  await normalizeServerMigrationSqlPayload(payloadDir);
 
   await validateServerPrismaEnginesForTarget({
     payloadDir,

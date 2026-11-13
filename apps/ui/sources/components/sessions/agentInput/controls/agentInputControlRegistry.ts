@@ -21,6 +21,7 @@ export const AGENT_INPUT_CONTROL_REGISTRY = [
     { id: 'files', line: 'primary' },
     { id: 'reviewComments', line: 'primary' },
     { id: 'storage', line: 'primary' },
+    { id: 'sessionRole', line: 'primary' },
     { id: 'windowsRemoteSessionMode', line: 'primary' },
     { id: 'providerOption', line: 'primary' },
     { id: 'shortcuts', line: 'primary' },

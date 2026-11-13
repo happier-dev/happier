@@ -4,7 +4,11 @@ import { createDbMocks, createDbTransactionMock, installDbModuleMock } from "../
 
 const logError = vi.hoisted(() => vi.fn());
 // Capture the log-output boundary without replacing service/access/transaction logic.
-vi.mock("@/utils/logging/log", () => ({ error: logError }));
+vi.mock("@/utils/logging/log", () => ({
+    debug: vi.fn(),
+    error: logError,
+    warn: vi.fn(),
+}));
 
 const dbMocks = createDbMocks({
     session: ["findUnique"],

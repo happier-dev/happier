@@ -152,6 +152,16 @@ const SettingsAiAndAgentsSection = React.memo(function SettingsAiAndAgentsSectio
                 )}
                 onPress={() => router.push('/settings/sub-agent')}
             />
+            <Item
+                title={t('visibleAgents.pageTitle')}
+                subtitle={t('visibleAgents.settingsEntrySubtitle')}
+                icon={(
+                    <View style={{ width: 29, height: 29, alignItems: 'center', justifyContent: 'center' }}>
+                        <Icon name="users" size={ICON_SIZE.lg} color={theme.colors.accent.purple} />
+                    </View>
+                )}
+                onPress={() => router.push('/settings/visible-subagents')}
+            />
             {useProfiles && (
                 <Item
                     title={t('settings.profiles')}

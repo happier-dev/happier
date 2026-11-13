@@ -3,6 +3,34 @@ import { describe, expect, it } from 'vitest';
 import { buildAppendSystemPromptBaseV1 } from './buildAppendSystemPromptBaseV1.js';
 
 describe('buildAppendSystemPromptBaseV1', () => {
+  it('includes the retained role assignment even with execution runs disabled, and omits no role or malformed data', () => {
+    const roleMetadata = (sessionRoleV1: unknown) => ({ sessionRoleV1 });
+    const assigned = buildAppendSystemPromptBaseV1({
+      // A later account-default edit must not replace the snapshot used by this assignment.
+      settings: { executionRunsGuidanceEnabled: false, sessionRoleProfilesV1: { v: 1, instructionsByRole: { reviewer: 'NEWER DEFAULT' } } },
+      base: 'BASE',
+      executionRunsFeatureEnabled: false,
+      sessionMetadata: roleMetadata({ v: 1, role: 'reviewer', instructions: 'SNAPSHOT RULES', assignmentId: 'a-1', assignedAt: 1 }),
+    });
+    expect(assigned.startsWith('BASE')).toBe(true);
+    expect(assigned).toContain('Reviewer');
+    expect(assigned).toContain('SNAPSHOT RULES');
+    expect(assigned).not.toContain('NEWER DEFAULT');
+    for (const sessionMetadata of [{}, roleMetadata({ v: 1, role: 'reviewer' }), roleMetadata({ v: 9, role: 'reviewer', instructions: 'X' }), roleMetadata('reviewer')]) {
+      expect(buildAppendSystemPromptBaseV1({ settings: {}, base: 'BASE', executionRunsFeatureEnabled: false, sessionMetadata })).toBe('BASE');
+    }
+  });
+
+  it('keeps the role block when the shared base is empty and omits it only on explicit opt-out', () => {
+    const sessionMetadata = { sessionRoleV1: { v: 1, role: 'planner', instructions: 'PLAN RULES', assignmentId: 'a-1', assignedAt: 1 } };
+    const emptyBase = buildAppendSystemPromptBaseV1({ settings: {}, base: '', executionRunsFeatureEnabled: false, sessionMetadata });
+    expect(emptyBase).toContain('Current role assignment: Planner');
+    expect(emptyBase).toContain('PLAN RULES');
+    expect(buildAppendSystemPromptBaseV1({
+      settings: {}, base: 'BASE', executionRunsFeatureEnabled: false, sessionMetadata, includeSessionRole: false,
+    })).toBe('BASE');
+  });
+
   it('returns the base prompt when execution runs guidance is disabled', () => {
     expect(buildAppendSystemPromptBaseV1({
       settings: {},

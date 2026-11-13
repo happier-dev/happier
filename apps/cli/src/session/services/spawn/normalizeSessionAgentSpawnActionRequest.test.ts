@@ -544,6 +544,7 @@ describe('normalizeSessionAgentSpawnActionRequest', () => {
         path: '/repo/current',
         host: 'leeroy-mbp',
         machineId: 'machine-1',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
       },
       spawnPolicy: policy(),
       resolveConnectedServicesDefaults: noConnectedServiceDefaults,
@@ -554,6 +555,102 @@ describe('normalizeSessionAgentSpawnActionRequest', () => {
 
     expect(result.createParams).not.toHaveProperty('modelId');
     expect(result.createParams).not.toHaveProperty('modelUpdatedAt');
+  });
+
+  it('does not inherit model selection across backend targets when model is omitted', async () => {
+    const result = await normalizeSessionAgentSpawnActionRequest({
+      credentials,
+      surface: 'session_agent',
+      input: {
+        agentId: 'claude',
+      },
+      parentMetadata: {
+        flavor: 'codex',
+        permissionMode: 'safe-yolo',
+        modelOverrideV1: { v: 1, updatedAt: 102, modelId: 'gpt-5.4' },
+        sessionModelsV1: {
+          v: 1,
+          provider: 'codex',
+          updatedAt: 103,
+          currentModelId: 'gpt-5.4',
+          availableModels: [{ id: 'gpt-5.4', name: 'GPT-5.4' }],
+        },
+        sessionModeOverrideV1: { v: 1, updatedAt: 104, modeId: 'plan' },
+        sessionConfigOptionOverridesV1: {
+          v: 1,
+          updatedAt: 105,
+          overrides: { reasoning_effort: { updatedAt: 105, value: 'high' } },
+        },
+      },
+      currentSession: {
+        path: '/repo/current',
+        host: 'leeroy-mbp',
+        machineId: 'machine-1',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      },
+      spawnPolicy: policy(),
+      resolveConnectedServicesDefaults: noConnectedServiceDefaults,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected normalized spawn request');
+
+    expect(result.createParams.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'claude' });
+    expect(result.createParams).not.toHaveProperty('modelId');
+    expect(result.createParams).not.toHaveProperty('modelUpdatedAt');
+    expect(result.sources).not.toHaveProperty('modelId');
+    expect(result.createParams).toMatchObject({
+      agentModeId: 'plan',
+      agentModeUpdatedAt: 104,
+      sessionConfigOptionOverrides: {
+        v: 1,
+        updatedAt: 105,
+        overrides: { reasoning_effort: { updatedAt: 105, value: 'high' } },
+      },
+    });
+  });
+
+  it('keeps same-backend model inheritance and explicit cross-backend model selection', async () => {
+    const parentMetadata = {
+      flavor: 'codex',
+      permissionMode: 'safe-yolo',
+      modelOverrideV1: { v: 1 as const, updatedAt: 102, modelId: 'gpt-5.4' },
+    };
+    const currentSession = {
+      path: '/repo/current',
+      host: 'leeroy-mbp',
+      machineId: 'machine-1',
+      backendTarget: { kind: 'builtInAgent' as const, agentId: 'codex' as const },
+    };
+
+    const inherited = await normalizeSessionAgentSpawnActionRequest({
+      credentials,
+      surface: 'session_agent',
+      input: { agentId: 'codex' },
+      parentMetadata,
+      currentSession,
+      spawnPolicy: policy(),
+      resolveConnectedServicesDefaults: noConnectedServiceDefaults,
+    });
+    expect(inherited.ok).toBe(true);
+    if (!inherited.ok) throw new Error('expected normalized same-backend spawn request');
+    expect(inherited.createParams).toMatchObject({ modelId: 'gpt-5.4', modelUpdatedAt: 102 });
+    expect(inherited.sources.modelId).toEqual({ kind: 'metadata', key: 'modelOverrideV1' });
+
+    const explicit = await normalizeSessionAgentSpawnActionRequest({
+      credentials,
+      surface: 'session_agent',
+      input: { agentId: 'claude', modelId: 'claude-sonnet-4-5' },
+      parentMetadata,
+      currentSession,
+      spawnPolicy: policy(),
+      resolveConnectedServicesDefaults: noConnectedServiceDefaults,
+    });
+    expect(explicit.ok).toBe(true);
+    if (!explicit.ok) throw new Error('expected normalized explicit cross-backend spawn request');
+    expect(explicit.createParams.modelId).toBe('claude-sonnet-4-5');
+    expect(explicit.createParams.modelUpdatedAt).toEqual(expect.any(Number));
+    expect(explicit.sources.modelId).toEqual({ kind: 'explicit', key: 'modelId' });
   });
 
   it('returns a structured policy denial for disallowed explicit session-agent overrides', async () => {
@@ -568,6 +665,7 @@ describe('normalizeSessionAgentSpawnActionRequest', () => {
         path: '/repo/current',
         host: 'leeroy-mbp',
         machineId: 'machine-1',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
       },
       spawnPolicy: policy({ allowEnvironmentVariables: false }),
       resolveConnectedServicesDefaults: noConnectedServiceDefaults,

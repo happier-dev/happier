@@ -224,6 +224,73 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     vi.restoreAllMocks();
   });
 
+  it.each([['worker', 'worker'], [null, undefined]] as const)('passes only an explicit role (%s) through spawn options', async (sessionRole, expected) => {
+    const { useCreateNewSession, machineSpawnNewSessionSpy } = await setupHarness();
+
+    let handleCreateSession: null | (() => Promise<void>) = null;
+    const settings = { experiments: false } as unknown as Settings;
+    const machineEnvPresence: UseMachineEnvPresenceResult = {
+      isPreviewEnvSupported: false,
+      isLoading: false,
+      meta: {},
+      refreshedAt: null,
+      refresh: () => {},
+    };
+
+    function Test() {
+      const hook = useCreateNewSession({
+        draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
+        launchIntentSignature: 'test-launch-intent',
+        router: { push: vi.fn(), replace: vi.fn() },
+        selectedMachineId: 'm1',
+        selectedPath: '/tmp',
+        selectedMachine: { metadata: {} },
+        setIsCreating: vi.fn(),
+        setIsResumeSupportChecking: vi.fn(),
+        settings,
+        useProfiles: false,
+        selectedProfileId: null,
+        profileMap: new Map(),
+        recentMachinePaths: [],
+        agentType: 'opencode' as any,
+        permissionMode: 'default' as PermissionMode,
+        modelMode: 'default' as ModelMode,
+        acpSessionModeId: null,
+        sessionRole,
+        promptStore: createNewSessionPromptStore('hello'),
+        resumeSessionId: '',
+        agentNewSessionOptions: null,
+        machineEnvPresence,
+        secrets: [],
+        secretBindingsByProfileId: {},
+        selectedSecretIdByProfileIdByEnvVarName: {},
+        sessionOnlySecretValueByProfileIdByEnvVarName: {},
+        selectedMachineCapabilities: null,
+        targetServerId: null,
+        allowedTargetServerIds: ['server-a'],
+      } as any);
+
+      handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+      return React.createElement('View');
+    }
+
+    await renderScreen(React.createElement(Test));
+
+    await act(async () => {
+      await handleCreateSession?.();
+    });
+
+    expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
+    const { DEFAULT_SESSION_ROLE_INSTRUCTIONS_V1 } = await import('@happier-dev/protocol');
+    const forwarded = (machineSpawnNewSessionSpy.mock.calls[0]?.[0] as { sessionRoleAssignment?: unknown }).sessionRoleAssignment;
+    if (expected) {
+      // The resolved snapshot reaches the initial metadata, so the first provider prompt includes it.
+      expect(forwarded).toMatchObject({ v: 1, role: expected, instructions: DEFAULT_SESSION_ROLE_INSTRUCTIONS_V1[expected] });
+    } else {
+      expect(forwarded).toBeUndefined();
+    }
+  });
+
   it('passes agent mode through spawn options before sending the initial message', async () => {
     const { useCreateNewSession, machineSpawnNewSessionSpy, publishModeSpy, sendMessageSpy } = await setupHarness();
 

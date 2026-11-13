@@ -73,6 +73,25 @@ describe('resolveExistingSessionAttachContext', () => {
     expect(vi.mocked(fetchSessionByIdCompat)).toHaveBeenCalledTimes(1);
   });
 
+  it('hands the validated retained session role to the runner through the attach payload', async () => {
+    const role = { v: 1, role: 'planner', instructions: 'PLAN SNAPSHOT', assignmentId: 'a-1', assignedAt: 1 };
+    vi.mocked(fetchSessionByIdCompat)
+      .mockResolvedValueOnce(createSessionRecordFixture({
+        id: 'sess_role', seq: 1, encryptionMode: 'plain', dataEncryptionKey: null,
+        metadata: JSON.stringify({ flavor: 'claude', path: '/tmp', sessionRoleV1: role }),
+      }))
+      .mockResolvedValueOnce(createSessionRecordFixture({
+        id: 'sess_bad_role', seq: 1, encryptionMode: 'plain', dataEncryptionKey: null,
+        metadata: JSON.stringify({ flavor: 'claude', path: '/tmp', sessionRoleV1: { v: 1, role: 'architect' } }),
+      }));
+    const target = { kind: 'builtInAgent', agentId: 'claude' } as const;
+
+    const withRole = await resolveExistingSessionAttachContext({ token: 't', sessionId: 'sess_role', backendTarget: target, credentials: null });
+    expect(withRole).toMatchObject({ ok: true, attachPayload: { v: 2, encryptionMode: 'plain', sessionRoleV1: role } });
+    const malformed = await resolveExistingSessionAttachContext({ token: 't', sessionId: 'sess_bad_role', backendTarget: target, credentials: null });
+    expect(malformed.ok && malformed.attachPayload).not.toHaveProperty('sessionRoleV1');
+  });
+
   it('rejects a plaintext session before attaching when this client requires E2EE', async () => {
     vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
       createSessionRecordFixture({

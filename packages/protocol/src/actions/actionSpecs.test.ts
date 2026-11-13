@@ -15,6 +15,26 @@ it('accepts the existing empty mode id to clear a native override', () => {
   expect(getActionSpec('session.mode.set').inputSchema.safeParse({ modeId: '' }).success).toBe(true);
 });
 
+it('admits stable custom role ids at fresh action boundaries while legacy Delegate stays read-only', () => {
+  const customRole = 'custom:123e4567-e89b-12d3-a456-426614174000';
+  const setRole = getActionSpec('session.role.set').inputSchema;
+  const spawn = getActionSpec('session.spawn_new').inputSchema;
+  expect(setRole.safeParse({ sessionId: 'session-1', role: customRole }).success).toBe(true);
+  expect(spawn.safeParse({ role: customRole }).success).toBe(true);
+  expect(setRole.safeParse({ sessionId: 'session-1', role: 'delegate' }).success).toBe(false);
+  expect(spawn.safeParse({ role: 'delegate' }).success).toBe(false);
+});
+
+it('exposes exact-nonce spawn recovery as a read-only session-agent action', () => {
+  const spec = getActionSpec('session.spawn_recover');
+  expect(spec.safety).toBe('safe');
+  expect(spec.surfaces).toMatchObject({ session_agent: true, mcp: true, cli: true });
+  expect(spec.bindings?.mcpToolName).toBe('session_spawn_recover');
+  expect(spec.inputSchema.safeParse({ spawnNonce: 'session.spawn_new:parent:13' }).success).toBe(true);
+  expect(spec.inputSchema.safeParse({ spawnNonce: '   ' }).success).toBe(false);
+  expect(spec.inputSchema.safeParse({ spawnNonce: 'nonce', sessionId: 'guessed-child' }).success).toBe(false);
+});
+
 const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'action.spec.search',
   'action.spec.get',
@@ -23,6 +43,7 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'execution.run.get',
   'execution.run.wait',
   'session.status.get',
+  'session.prompt_preview.get',
   'session.work_state.get',
   'session.goal.get',
   'session.goal.clear',
@@ -35,6 +56,7 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'session.history.get',
   'session.transcript.get',
   'session.events.get',
+  'session.spawn_recover',
   'session.wait.idle',
   'session.list',
   'session.activity.get',
@@ -61,6 +83,7 @@ const RESULT_NONE_DEFERRED_ACTION_IDS = [
   'prompt_asset.export',
   'prompt_registry.install',
   'session.title.set',
+  'session.role.set',
   'session.permission_mode.set',
   'session.model.set',
   'session.goal.set',
@@ -936,6 +959,8 @@ describe('Action Spec Registry', () => {
     expect(fields.profileId?.optionsSourceId).toBe('sessions.spawn.profiles.available');
     expect(fields.connectedServices?.optionsSourceId).toBe('sessions.spawn.connected_services.available');
     expect(fields.mcpSelection?.optionsSourceId).toBe('sessions.spawn.mcp_servers.preview');
+    expect(fields.role?.optionsSourceId).toBe('session.roles.assignable');
+    expect(fields.role?.options).toBeUndefined();
   });
 
   it('does not expose legacy voice_mediator intent in ExecutionRunIntentSchema', () => {

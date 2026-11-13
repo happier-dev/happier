@@ -1,5 +1,10 @@
 import type { ExecutionRunProfileStartParams } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
-import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
+import type { ExecutionRunLaunchRoleV1, ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
+
+/** The prompt-facing part of a run's launch role. */
+export function toExecutionRunProfileRole(role: ExecutionRunLaunchRoleV1): NonNullable<ExecutionRunProfileStartParams['role']> {
+  return { id: role.id, name: role.name, instructions: role.instructions };
+}
 
 export function buildExecutionRunProfileStartParams(run: ExecutionRunState): ExecutionRunProfileStartParams {
   return {
@@ -17,5 +22,6 @@ export function buildExecutionRunProfileStartParams(run: ExecutionRunState): Exe
     runClass: run.runClass,
     ioMode: run.ioMode,
     startedAtMs: run.startedAtMs,
+    ...(run.launch?.role ? { role: toExecutionRunProfileRole(run.launch.role) } : {}),
   };
 }

@@ -4,6 +4,8 @@ import { buildExecutionRunsGuidanceBlockV1, type ExecutionRunsGuidanceEntryV1 } 
 import { buildMemoryRecallGuidanceBlockV1 } from './memoryRecallGuidanceV1.js';
 import { buildPromptPlanV1, renderPromptPlanV1, type PromptPlanV1 } from './promptPlanV1.js';
 import { buildHappierBaseSystemPromptV1 } from './systemPromptBaseV1.js';
+import { buildSessionRolePromptBlockTextV1 } from '../sessionMetadata/sessionRole.js';
+import { buildStandaloneSessionPromptBlockTextV1 } from './standaloneSessionPromptV1.js';
 
 function coerceExecutionRunsGuidanceEntriesV1(raw: unknown): ExecutionRunsGuidanceEntryV1[] {
   if (!Array.isArray(raw)) return [];
@@ -69,6 +71,13 @@ export function buildCodingSessionPromptPlanBaseV1(args: Readonly<{
   memoryRecallGuidanceEnabled?: boolean;
   sessionTitleToolAvailable?: boolean;
   sessionMetadata?: unknown;
+  /**
+   * The retained role block (or, for a roleless session, its retained standalone default) is part
+   * of every coding prompt by default, including one whose shared base was reset. Only a pass whose
+   * prompt is appended after one that already carries it (Pi's supplement after its bridge prompt)
+   * sets this to false.
+   */
+  includeSessionRole?: boolean;
 }>): PromptPlanV1 {
   const settings = args.settings && typeof args.settings === 'object' && !Array.isArray(args.settings)
     ? args.settings
@@ -86,6 +95,18 @@ export function buildCodingSessionPromptPlanBaseV1(args: Readonly<{
     scope: 'session' as const,
     text: base.trim(),
   }];
+
+  // The retained role assignment is independent of the shared base and of execution-run guidance.
+  // A roleless session instead carries its retained standalone default; both render from metadata.
+  if (args.includeSessionRole !== false) {
+    const roleBlock = buildSessionRolePromptBlockTextV1(args.sessionMetadata);
+    const standaloneBlock = roleBlock ? null : buildStandaloneSessionPromptBlockTextV1(args.sessionMetadata);
+    if (roleBlock) {
+      blocks.push({ id: 'coding.session_role', scope: 'session' as const, text: roleBlock });
+    } else if (standaloneBlock) {
+      blocks.push({ id: 'coding.standalone_default', scope: 'session' as const, text: standaloneBlock });
+    }
+  }
 
   const happierToolsEnabled = isSessionHappierToolsEnabled(args.sessionMetadata);
   if (happierToolsEnabled && args.memoryRecallGuidanceEnabled === true) {
@@ -127,6 +148,7 @@ export function buildAppendSystemPromptBaseV1(args: Readonly<{
   memoryRecallGuidanceEnabled?: boolean;
   sessionTitleToolAvailable?: boolean;
   sessionMetadata?: unknown;
+  includeSessionRole?: boolean;
 }>): string {
   return renderPromptPlanV1(buildCodingSessionPromptPlanBaseV1(args));
 }

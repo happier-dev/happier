@@ -2,6 +2,7 @@ import type { TerminalSpawnOptions } from '@/sync/domains/settings/terminalSetti
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { buildCodexAgentRuntimeDescriptor, type CodexBackendMode } from '@happier-dev/agents';
 import {
+    getVersionSupportState,
     isVersionSupported,
     MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION,
     MINIMUM_CLI_SPAWN_PENDING_FIRST_INPUT_VERSION,
@@ -14,6 +15,7 @@ import type {
     SessionMcpSelectionV1,
     SessionSpawnSourceContextV1,
     PendingFirstInputV1,
+    FreshAssignableSessionRoleV1,
     WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
 
@@ -84,6 +86,8 @@ export interface SpawnSessionOptions {
     connectedServices?: unknown;
     connectedServicesUpdatedAt?: number;
     mcpSelection?: SessionMcpSelectionV1;
+    /** Explicit role assignment snapshot for the new session; omitted/null means No role. */
+    sessionRoleAssignment?: FreshAssignableSessionRoleV1 | null;
     /**
      * "Create this Session as a continuation of that one", with bounded Replay
      * through the recorded cutoff.
@@ -133,6 +137,11 @@ export type SpawnHappySessionRpcParams = CodexBackendTransportFields & {
     connectedServicesUpdatedAt?: number
     mcpSelection?: SessionMcpSelectionV1
     /**
+     * Seeds the new session's `sessionRoleV1` metadata. `machineSpawnNewSession` sends a role-bearing
+     * payload only through the exact role-aware daemon RPC and never through either predecessor method.
+     */
+    sessionRoleV1?: FreshAssignableSessionRoleV1
+    /**
      * Typed source recipe for a Replay-seeded child. Required semantics on the
      * daemon: it resolves the seed before creating the child and creates no
      * child on failure. Deliberately absent from the legacy params shape.
@@ -167,10 +176,11 @@ export type CompatibleSpawnHappySessionRpcParams =
     | SpawnHappySessionRpcParams
     | LegacySpawnHappySessionRpcParams;
 
+/** Only a version proven older than backend-target spawns gets the legacy shape; an unorderable identity is not proof of age. */
 export function shouldUseLegacySpawnHappySessionRpcParams(daemonCliVersion?: string | null): boolean {
     const normalizedVersion = typeof daemonCliVersion === 'string' ? daemonCliVersion.trim() : '';
     return normalizedVersion.length > 0
-        && !isVersionSupported(normalizedVersion, MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION);
+        && getVersionSupportState(normalizedVersion, MINIMUM_CLI_BACKEND_TARGET_SPAWN_VERSION) === 'unsupported';
 }
 
 export function supportsSpawnPendingFirstInput(daemonCliVersion?: string | null): boolean {
@@ -260,6 +270,7 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
         connectedServices,
         connectedServicesUpdatedAt,
         mcpSelection,
+        sessionRoleAssignment,
         sourceContext,
         accountSettingsVersionHint,
     } = options;
@@ -320,6 +331,7 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
             ? { connectedServicesUpdatedAt }
             : {}),
         ...(mcpSelection ? { mcpSelection } : {}),
+        ...(sessionRoleAssignment ? { sessionRoleV1: sessionRoleAssignment } : {}),
         ...(sourceContext ? { sourceContext } : {}),
         ...(typeof accountSettingsVersionHint === 'number' && Number.isInteger(accountSettingsVersionHint) && accountSettingsVersionHint >= 0
             ? { accountSettingsVersionHint }

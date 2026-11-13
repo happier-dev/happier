@@ -21,6 +21,7 @@ export type AgentInputControlId =
     | 'files'
     | 'reviewComments'
     | 'storage'
+    | 'sessionRole'
     | 'windowsRemoteSessionMode'
     | 'providerOption'
     | 'shortcuts'

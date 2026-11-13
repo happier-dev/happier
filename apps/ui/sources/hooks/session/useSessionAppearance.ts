@@ -6,6 +6,7 @@ import {
     createCustomSessionAppearanceColorsSelector,
     selectEffectiveSessionAppearanceColor,
     selectSessionAppearanceColor,
+    selectSessionAppearancePresentationsSupported,
     selectSessionAppearancesSupported,
     type SessionAppearanceSelectorState,
 } from '@/sync/store/selectors/sessionAppearance';
@@ -38,6 +39,14 @@ function useEnabledStorageSelection<T>(
 /** False until this server returns the requested sessionAppearances snapshot field. Workspace colours remain available. */
 export function useSessionAppearancesSupported(serverId: string | null | undefined, options?: SessionAppearanceHookOptions): boolean {
     const select = React.useCallback((state: SessionAppearanceSelectorState) => selectSessionAppearancesSupported(state, serverId), [serverId]);
+    return useEnabledStorageSelection(options?.enabled !== false, select, false);
+}
+
+export function useSessionAppearancePresentationsSupported(serverId: string | null | undefined, options?: SessionAppearanceHookOptions): boolean {
+    const select = React.useCallback(
+        (state: SessionAppearanceSelectorState) => selectSessionAppearancePresentationsSupported(state, serverId),
+        [serverId],
+    );
     return useEnabledStorageSelection(options?.enabled !== false, select, false);
 }
 

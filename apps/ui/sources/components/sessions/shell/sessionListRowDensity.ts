@@ -2,13 +2,15 @@ import {
     SESSION_LIST_ROW_HEIGHT_COMPACT,
     SESSION_LIST_ROW_HEIGHT_DEFAULT,
     SESSION_LIST_ROW_HEIGHT_MINIMAL,
-    SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE_PHONE,
+    SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE,
 } from './sessionListRowHeights';
 
 export type SessionListRowPlatform = 'ios' | 'android' | 'web' | 'windows' | 'macos';
 export type SessionListRowDensity = 'default' | 'compact' | 'minimal';
 
 export const SESSION_LIST_ROW_CORNER_RADIUS = 12;
+export const SESSION_LIST_ROW_INTERACTIVE_TARGET_WEB = 44;
+export const SESSION_LIST_ROW_INTERACTIVE_TARGET_NATIVE = 48;
 
 export const SESSION_LIST_ROW_TITLE_TEXT_METRICS = {
     default: { fontSize: 14, lineHeight: 18 },
@@ -68,8 +70,11 @@ export function resolveSessionListRowHeight(params: Readonly<{
     isTablet: boolean;
     platform: SessionListRowPlatform | string;
 }>): number {
-    if (shouldUseReadableNativePhoneMinimalSessionRow(params)) {
-        return SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE_PHONE;
+    if (
+        params.compactMinimal
+        && (params.platform === 'ios' || params.platform === 'android')
+    ) {
+        return SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE;
     }
     if (params.compactMinimal) {
         return SESSION_LIST_ROW_HEIGHT_MINIMAL;
@@ -78,4 +83,12 @@ export function resolveSessionListRowHeight(params: Readonly<{
         return SESSION_LIST_ROW_HEIGHT_COMPACT;
     }
     return SESSION_LIST_ROW_HEIGHT_DEFAULT;
+}
+
+export function resolveSessionListRowInteractiveTargetSize(
+    platform: SessionListRowPlatform | string,
+): number {
+    return platform === 'ios' || platform === 'android'
+        ? SESSION_LIST_ROW_INTERACTIVE_TARGET_NATIVE
+        : SESSION_LIST_ROW_INTERACTIVE_TARGET_WEB;
 }

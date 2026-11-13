@@ -94,7 +94,7 @@ type TestSessionMessageRow = Readonly<{
     updatedAt: Date;
 }>;
 
-vi.mock("@/storage/inTx", () => {
+vi.mock("@/storage/inTx", async (importOriginal) => {
     const afterTx = (tx: any, callback: () => void) => {
         tx.__afterTxCallbacks.push(callback);
     };
@@ -113,7 +113,11 @@ vi.mock("@/storage/inTx", () => {
         return result;
     };
 
-    return { afterTx, inTx };
+    return {
+        ...await importOriginal<typeof import("@/storage/inTx")>(),
+        afterTx,
+        inTx,
+    };
 });
 
 describe("sessionUpdateHandler (AccountChange integration)", () => {

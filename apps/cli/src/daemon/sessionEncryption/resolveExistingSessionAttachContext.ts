@@ -1,5 +1,5 @@
 import { requireEncryptedSessionContext } from '@/session/transport/encryption/sessionEncryptionContext';
-import type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
+import { readSessionRoleForAttachPayload, type SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
 import type { Credentials } from '@/persistence';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { encodeBase64 } from '@/api/encryption';
@@ -99,6 +99,7 @@ function buildExistingSessionAttachContext(params: Readonly<{
         v: 2,
         encryptionMode: 'plain',
         ...(lastObservedMessageSeq !== undefined ? { lastObservedMessageSeq } : {}),
+        ...readSessionRoleForAttachPayload(metadata),
       },
       vendorResumeId: resolveVendorResumeIdForExistingSession({
         backendTarget: params.backendTarget,
@@ -124,6 +125,7 @@ function buildExistingSessionAttachContext(params: Readonly<{
       encryptionKeyBase64: encodeBase64(ctx.encryptionKey, 'base64'),
       encryptionVariant: ctx.encryptionVariant,
       ...(lastObservedMessageSeq !== undefined ? { lastObservedMessageSeq } : {}),
+      ...readSessionRoleForAttachPayload(metadata),
     },
     vendorResumeId: resolveVendorResumeIdForExistingSession({
       backendTarget: params.backendTarget,

@@ -347,6 +347,11 @@ if [ "$HAPPIER_TEST_LISTENER_DISCOVERY_MODE" = "delayed-group-proof" ] && [ -n "
   sed -n '1p' "$HAPPIER_TEST_SERVER_PID_CAPTURE_PATH"
   exit 0
 fi
+if [ "$HAPPIER_TEST_LISTENER_DISCOVERY_MODE" = "delayed-group-proof" ]; then
+  printf '%s\\n' 'broad' >> "$HAPPIER_TEST_LISTENER_DISCOVERY_LOG_PATH"
+  sed -n '1p' "$HAPPIER_TEST_SERVER_PID_CAPTURE_PATH"
+  exit 0
+fi
 printf '%s\\n' 'inconclusive' >> "$HAPPIER_TEST_LISTENER_DISCOVERY_LOG_PATH"
 sleep 5
 `, 'utf8');

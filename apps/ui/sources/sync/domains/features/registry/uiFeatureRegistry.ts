@@ -175,6 +175,16 @@ export const UI_FEATURE_REGISTRY = {
             icon: { ioniconName: 'folder-outline', color: '#5856D6' },
         },
     },
+    'sessions.lineageAppearancePresets': {
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: true,
+            defaultEnabled: false,
+            titleKey: 'settingsFeatures.expSessionLineageAppearancePresets',
+            subtitleKey: 'settingsFeatures.expSessionLineageAppearancePresetsSubtitle',
+            icon: { ioniconName: 'git-branch-outline', color: '#5856D6' },
+        },
+    },
     'sessions.handoff': {
         settingsToggle: undefined,
     },

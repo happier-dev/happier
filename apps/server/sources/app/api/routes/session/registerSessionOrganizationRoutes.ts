@@ -16,12 +16,15 @@ import {
     MoveSessionFolderAssignmentsResponseSchema,
     ReorderSessionOrganizationRequestSchema,
     ReorderSessionOrganizationResponseSchema,
+    SessionAppearancePresentationListResponseSchema,
     SessionOrganizationSnapshotRequestSchema,
     SessionOrganizationSnapshotResponseSchema,
     SetSessionAttentionStandingRequestSchema,
     SetSessionAttentionStandingResponseSchema,
     SetSessionAppearanceRequestSchema,
     SetSessionAppearanceResponseSchema,
+    SetSessionAppearancePresentationRequestSchema,
+    SetSessionAppearancePresentationResponseSchema,
     SetSessionFolderAssignmentRequestSchema,
     SetSessionFolderAssignmentResponseSchema,
     SetSessionPinRequestSchema,
@@ -46,6 +49,7 @@ import {
     moveSessionFolderAssignments,
     setSessionAttentionStanding,
     setSessionAppearance,
+    setSessionAppearancePresentation,
     setSessionFolderAssignment,
     setSessionPin,
     setSessionTagAssignments,
@@ -53,7 +57,7 @@ import {
     upsertSessionOrganizationTag,
     upsertSessionOrganizationFolder,
 } from "@/app/session/organization/organizationMutations";
-import { fetchSessionOrganizationSnapshot } from "@/app/session/organization/organizationQueries";
+import { fetchSessionAppearancePresentations, fetchSessionOrganizationSnapshot } from "@/app/session/organization/organizationQueries";
 import { reorderSessionOrganization, reorderSessionPins } from "@/app/session/organization/organizationOrdering";
 import { type Fastify } from "../../types";
 
@@ -284,6 +288,46 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
         if ("error" in result) {
             if (result.error === "session-not-found") return reply.code(404).send({ error: "Session not found" });
             if (result.error === "invalid-display-envelope") return reply.code(400).send({ error: "invalid-session-appearance" });
+            return reply.code(409).send({ error: result.error });
+        }
+        return reply.send(result);
+    });
+
+    app.get("/v2/session-organization/appearance-presentations", {
+        preHandler: app.authenticate,
+        schema: { response: { 200: SessionAppearancePresentationListResponseSchema } },
+    }, async (request, reply) => reply.send({
+        presentations: await fetchSessionAppearancePresentations(request.userId),
+    }));
+
+    app.put("/v2/session-organization/appearance-presentations/:sessionId", {
+        preHandler: app.authenticate,
+        schema: {
+            params: sessionIdParamsSchema,
+            body: SetSessionAppearancePresentationRequestSchema,
+            response: {
+                200: SetSessionAppearancePresentationResponseSchema,
+                400: z.object({ error: z.literal("invalid-session-appearance-presentation") }),
+                404: z.object({ error: z.literal("Session not found") }),
+                409: z.object({ error: z.literal("session-appearance-limit-exceeded") }),
+            },
+        },
+    }, async (request, reply) => {
+        const parsedParams = sessionIdParamsSchema.safeParse(request.params);
+        const parsedBody = SetSessionAppearancePresentationRequestSchema.safeParse(request.body);
+        if (!parsedParams.success || !parsedBody.success) {
+            return reply.code(400).send({ error: "invalid-session-appearance-presentation" });
+        }
+        const visible = parsedBody.data.presentation === null
+            ? await canAccessSyncedSessionForOrganization({ accountId: request.userId, sessionId: parsedParams.data.sessionId })
+            : await canAccessVisibleUnarchivedSessionForOrganization({ accountId: request.userId, sessionId: parsedParams.data.sessionId });
+        if (!visible) return reply.code(404).send({ error: "Session not found" });
+        const result = await setSessionAppearancePresentation({
+            accountId: request.userId, sessionId: parsedParams.data.sessionId, request: parsedBody.data,
+        });
+        if ("error" in result) {
+            if (result.error === "session-not-found") return reply.code(404).send({ error: "Session not found" });
+            if (result.error === "invalid-display-envelope") return reply.code(400).send({ error: "invalid-session-appearance-presentation" });
             return reply.code(409).send({ error: result.error });
         }
         return reply.send(result);

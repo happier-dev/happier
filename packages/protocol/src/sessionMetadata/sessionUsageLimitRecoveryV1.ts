@@ -84,6 +84,13 @@ export function isSessionUsageLimitRecoveryStoppedByPolicy(
     : recovery.status === 'cancelled' && recovery.lastProbeError === SESSION_USAGE_LIMIT_RECOVERY_STOPPED_PROBE_ERROR;
 }
 
+/** The one reading of whether a Session's usage-limit recovery is still in progress (armed, waiting, or checking). */
+export function isSessionUsageLimitRecoveryInProgressV1(metadata: unknown): boolean {
+  if (!metadata || typeof metadata !== 'object') return false;
+  const parsed = SessionUsageLimitRecoveryV1Schema.safeParse((metadata as Record<string, unknown>)[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]);
+  return parsed.success && (parsed.data.status === 'armed' || parsed.data.status === 'waiting' || parsed.data.status === 'checking');
+}
+
 /** Stable issue identity shared by recovery producers, controls, and presentation. */
 export function buildUsageLimitIssueFingerprint(issue: SessionRuntimeIssueV1, fallbackProviderId = 'unknown-provider'): string {
   return ['usage-limit', issue.provider ?? fallbackProviderId, issue.providerTurnId ?? 'unknown-turn',

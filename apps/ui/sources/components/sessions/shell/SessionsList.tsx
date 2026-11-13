@@ -57,6 +57,12 @@ import { DraggableSessionFolderHeaderFrame } from './DraggableSessionFolderHeade
 import { ProjectGroupHeader } from './ProjectGroupHeader';
 import { SessionListHeaderFrame } from './SessionListHeaderFrame';
 import { resolveSessionListRowModelAdjacency } from './row/buildSessionListRowModels';
+import {
+    resolveSessionLineageBaseDensity,
+    resolveSessionLineageRowAppearance,
+    type SessionLineageAppearancePresets,
+    type SessionLineageRowDensity,
+} from './row/resolveSessionLineageRowAppearance';
 import { SessionListRowModelBoundary } from './row/SessionListRowModelBoundary';
 import { useSessionListIdentityDisplay } from './SessionListIdentity';
 import type {
@@ -415,7 +421,11 @@ function resolveSessionListVirtualizedItemType(params: Readonly<{
     item: SessionListViewItem;
     index: number;
     items: ReadonlyArray<SessionListViewItem>;
-    density: SessionListRowPresentationSettings['density'];
+    lineageAppearance: Readonly<{
+        enabled: boolean;
+        baseDensity: SessionLineageRowDensity;
+        presets: SessionLineageAppearancePresets;
+    }>;
 }>): string {
     if (params.item.type !== 'session') {
         const headerKind = typeof params.item.headerKind === 'string' && params.item.headerKind.length > 0
@@ -425,7 +435,14 @@ function resolveSessionListVirtualizedItemType(params: Readonly<{
     }
     const adjacency = resolveSessionListRowModelAdjacency(params.items, params.index);
     const heightClass = adjacency.isLast || adjacency.isSingle ? 'tail' : 'body';
-    return `session:${params.density}:${heightClass}`;
+    const appearance = resolveSessionLineageRowAppearance({
+        enabled: params.lineageAppearance.enabled,
+        nestingDepth: params.item.nestingDepth ?? 0,
+        hasChildren: params.item.hasChildren === true,
+        baseDensity: params.lineageAppearance.baseDensity,
+        presets: params.lineageAppearance.presets,
+    });
+    return `session:${appearance.rowDensity}:${heightClass}`;
 }
 
 function stringArraysEqual(left: readonly string[], right: readonly string[]): boolean {
@@ -586,6 +603,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         folderBreadcrumbRootTitle,
         sessionFolderAssignmentsBySessionKey,
         listItems,
+        nestedDescendantsBySessionKey,
         selectionScopeListItems,
         sessionListIndexRef,
         pinnedKeyList,
@@ -618,12 +636,16 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         setWorkspaceLabelsV1,
         setWorkspaceColor,
         setSessionAppearance,
+        sessionAppearancePresentationsSupported,
         workspaceFaviconsEnabled,
         workspaceMachineSubtitlesEnabled,
         collapsedGroupKeysV1,
         setCollapsedGroupKeysV1,
         compactSessionView,
         compactSessionViewMinimal,
+        sessionListDensity,
+        sessionLineageAppearancePresetsV1,
+        sessionLineageAppearancePresetsEnabled,
         currentUserId,
         selection,
         showServerBadge,
@@ -646,6 +668,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
     const sessionListActiveColorMode = useSetting('sessionListActiveColorModeV1');
     const sessionListSectionModeRaw = useSetting('sessionListSectionModeV1');
     const sessionReplayEnabled = useSetting('sessionReplayEnabled');
+    const sessionRoleProfilesV1 = useSetting('sessionRoleProfilesV1');
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const forkActionContext = React.useMemo(() => ({
         replayEnabled: sessionReplayEnabled === true,
@@ -931,10 +954,15 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         const compactMinimal = Boolean(compactSessionView && compactSessionViewMinimal);
         return {
             currentUserId,
+            sessionRoleProfilesV1,
             density: normalizeRowDensity(compact, compactMinimal),
+            baseDensity: sessionListDensity,
+            lineageAppearanceEnabled: sessionLineageAppearancePresetsEnabled,
+            lineageAppearancePresets: sessionLineageAppearancePresetsV1,
             compact,
             compactMinimal,
             identityDisplay: sessionListIdentityDisplay,
+            appearancePresentationSupported: sessionAppearancePresentationsSupported,
             activeColorMode: normalizeActiveColorMode(sessionListActiveColorMode),
             workingIndicatorMode: normalizeWorkingIndicatorMode(sessionListWorkingIndicatorStyle),
             workingTextMode: 'static',
@@ -965,6 +993,10 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         attentionStandingPolicy,
         compactSessionView,
         compactSessionViewMinimal,
+        sessionListDensity,
+        sessionRoleProfilesV1,
+        sessionLineageAppearancePresetsEnabled,
+        sessionLineageAppearancePresetsV1,
         currentUserId,
         folderViewEnabled,
         hasMultipleMachines,
@@ -974,6 +1006,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         sessionListAgentActivityCountEnabled,
         sessionListActiveColorMode,
         sessionListIdentityDisplay,
+        sessionAppearancePresentationsSupported,
         sessionListWorkingIndicatorStyle,
         backgroundWorkAttentionMode,
         sessionTagsEnabled,
@@ -2086,6 +2119,9 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         sessionListAgentActivityCountEnabled: rowPresentationSettings.agentActivityCountEnabled,
         sessionListHideInactiveSessions: rowPresentationSettings.hideInactiveSessions,
         sessionListIdentityDisplay: rowPresentationSettings.identityDisplay,
+        sessionLineageAppearanceEnabled: rowPresentationSettings.lineageAppearanceEnabled,
+        sessionLineageAppearancePresets: rowPresentationSettings.lineageAppearancePresets,
+        sessionRoleProfilesV1: rowPresentationSettings.sessionRoleProfilesV1,
         sessionListOrderingMode,
         sessionListSectionMode,
         sessionListStatusColors: rowPresentationSettings.statusColors,
@@ -2128,6 +2164,9 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         rowPresentationSettings.agentActivityCountEnabled,
         rowPresentationSettings.hideInactiveSessions,
         rowPresentationSettings.identityDisplay,
+        rowPresentationSettings.lineageAppearanceEnabled,
+        rowPresentationSettings.lineageAppearancePresets,
+        rowPresentationSettings.sessionRoleProfilesV1,
         rowPresentationSettings.statusColors,
         rowPresentationSettings.workingIndicatorMode,
         rowPresentationSettings.backgroundWorkAttentionMode,
@@ -2173,8 +2212,12 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
                 getRowSetTagsHandler={getRowSetTagsHandler}
                 getRowTogglePinnedHandler={getRowTogglePinnedHandler}
                 onSetSessionAppearance={setSessionAppearance}
+                onToggleSessionChildren={handleToggleCollapse}
                 groupKey={groupKey}
                 item={item}
+                nestedDescendantItems={rowStoreScopeKey
+                    ? nestedDescendantsBySessionKey.get(rowStoreScopeKey) ?? []
+                    : []}
                 nativeContextMenuSessionKey={nativeContextMenuSessionKey}
                 onDragStart={handleA11yDragStart}
                 onDropResult={handleA11yTreeDropResult}
@@ -2196,6 +2239,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         selection.activeServerId,
         surfaceOwnership.dataActive,
         nativeContextMenuSessionKey,
+        nestedDescendantsBySessionKey,
         prioritySessionRowKeys,
         renderedListItems,
         rowPresentationSettings,
@@ -2214,6 +2258,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         getRowTogglePinnedHandler,
         setSessionAppearance,
         resolveStableDropResult,
+        handleToggleCollapse,
         registerTreeRowBounds,
         sessionListOrderingMode,
         sessionListSectionMode,
@@ -2233,11 +2278,22 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
 
     const virtualizedItemTypeContextRef = React.useRef<Readonly<{
         items: ReadonlyArray<SessionListViewItem>;
-        density: SessionListRowPresentationSettings['density'];
-    }>>({ items: EMPTY_SESSION_LIST_VIEW_ITEMS, density: 'default' });
+        lineageAppearance: Readonly<{
+            enabled: boolean;
+            baseDensity: SessionLineageRowDensity;
+            presets: SessionLineageAppearancePresets;
+        }>;
+    }>>({
+        items: EMPTY_SESSION_LIST_VIEW_ITEMS,
+        lineageAppearance: { enabled: false, baseDensity: 'detailed', presets: {} },
+    });
     virtualizedItemTypeContextRef.current = {
         items: renderedListItems,
-        density: rowPresentationSettings.density,
+        lineageAppearance: {
+            enabled: rowPresentationSettings.lineageAppearanceEnabled === true,
+            baseDensity: resolveSessionLineageBaseDensity(rowPresentationSettings),
+            presets: rowPresentationSettings.lineageAppearancePresets ?? {},
+        },
     };
     const getVirtualizedItemType = React.useCallback((item: SessionListViewItem, index: number) => {
         const context = virtualizedItemTypeContextRef.current;
@@ -2245,7 +2301,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
             item,
             index,
             items: context.items,
-            density: context.density,
+            lineageAppearance: context.lineageAppearance,
         });
     }, []);
 

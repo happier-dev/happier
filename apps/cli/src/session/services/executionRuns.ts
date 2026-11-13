@@ -1,3 +1,4 @@
+import { isSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
 import {
     ExecutionRunListRequestSchema,
     ExecutionRunGetRequestSchema,
@@ -5,6 +6,8 @@ import {
     ExecutionRunListResponseSchema,
     ExecutionRunPublicStateSchema,
     ExecutionRunStartRequestSchema,
+    readExecutionRunStartV2OnlyFieldsV1,
+    resolveExecutionRunStartV2UnsupportedErrorCodeV1,
     type ExecutionRunListRequest,
     type ExecutionRunPublicState,
 } from '@happier-dev/protocol';
@@ -109,6 +112,8 @@ function classifyExecutionRunRpcFallback(error: unknown): ExecutionRunFallbackEx
 
 function isExecutionRunStartObservationUnknown(error: unknown): boolean {
     const message = error instanceof Error ? error.message : String(error ?? '');
+    // The server acknowledges its own forward cutoff with the socket.io ACK timeout after the request was sent.
+    if (isSocketIoAckTimeoutError(error) && readRpcRequestDisposition(error) === 'outcomeUnknown') return true;
     return message.toLowerCase().includes('rpc call timeout') || (
         isSocketRpcDisconnectBeforeAcknowledgementError(error)
         && readRpcRequestDisposition(error) === 'outcomeUnknown'
@@ -441,6 +446,15 @@ export function isExecutionRunTerminalStatus(status: unknown): status is Executi
 export async function startExecutionRun(
     params: ExecutionRunRpcContext & Readonly<{ request: unknown }>,
 ): Promise<ExecutionRunServiceResult<unknown>> {
+    // The released start method never carries a visible or role-bearing request (no fallback).
+    const v2Fields = readExecutionRunStartV2OnlyFieldsV1(params.request);
+    if (v2Fields.length > 0) {
+        return {
+            ok: false,
+            code: resolveExecutionRunStartV2UnsupportedErrorCodeV1(params.request),
+            message: `execution.run.start does not accept ${v2Fields.join(', ')}; use execution.run.start.v2`,
+        };
+    }
     try {
         const result = await callExecutionRunRpc({
             ...params,
@@ -480,6 +494,50 @@ export async function startExecutionRun(
             };
         }
         const fallbackCode = classifyExecutionRunRpcFallback(error);
+        if (!fallbackCode) throw error;
+        return toExecutionRunFallbackExhaustedError(error, fallbackCode);
+    }
+}
+
+/**
+ * The exact visible or role-bearing start. A runner without the method yields the typed unsupported
+ * error and nothing is retried on the released start method. An unknown outcome is reported as
+ * ambiguous; retrying with the same `startRequestId` replays the admitted run with its echo.
+ */
+export async function startExecutionRunV2(
+    params: ExecutionRunRpcContext & Readonly<{ request: unknown }>,
+): Promise<ExecutionRunServiceResult<unknown>> {
+    const unsupported = (): ExecutionRunServiceResult<unknown> => ({
+        ok: false,
+        code: resolveExecutionRunStartV2UnsupportedErrorCodeV1(params.request),
+        message: 'The target runner does not support execution.run.start.v2',
+    });
+    try {
+        const result = await callExecutionRunRpc({
+            ...params,
+            methodSuffix: SESSION_RPC_METHODS.EXECUTION_RUN_START_V2,
+            timeoutMs: null,
+        });
+        if (!result.ok && classifyExecutionRunServiceFallback(result) === 'execution_run_protocol_unsupported') {
+            return unsupported();
+        }
+        return result;
+    } catch (error) {
+        if (isExecutionRunStartObservationUnknown(error)) {
+            const startRequestId = isRecord(params.request) && typeof params.request.startRequestId === 'string'
+                ? params.request.startRequestId.trim()
+                : '';
+            return {
+                ok: false,
+                code: 'execution_run_start_ambiguous',
+                message: error instanceof Error ? error.message : String(error ?? ''),
+                ...(startRequestId
+                    ? { details: { startRequestId, retrySafe: true, reconcileVia: 'retry_execution_run_start' } }
+                    : {}),
+            };
+        }
+        const fallbackCode = classifyExecutionRunRpcFallback(error);
+        if (fallbackCode === 'execution_run_protocol_unsupported') return unsupported();
         if (!fallbackCode) throw error;
         return toExecutionRunFallbackExhaustedError(error, fallbackCode);
     }

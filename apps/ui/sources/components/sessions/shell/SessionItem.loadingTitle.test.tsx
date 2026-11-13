@@ -160,6 +160,7 @@ function createMetadataPendingRowModel(id: string): SessionListRowModel {
     const session = createMetadataPendingSession(id);
     return {
         appearanceColor: null,
+        agentStarted: false, role: null, nestingDepth: 0, hasChildren: false, childrenCollapsed: false,
         rowKey: `server_a:${id}`,
         sessionId: id,
         serverId: 'server_a',
@@ -212,6 +213,7 @@ function createMetadataPendingRowModel(id: string): SessionListRowModel {
         isActive: false,
         hasUnreadMessages: false,
         pendingCount: 0,
+        executionRunStatus: null,
         draft: null,
         agentActivityLabel: null,
         pendingBlockedCount: 0,

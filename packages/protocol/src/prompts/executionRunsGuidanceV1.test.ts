@@ -173,3 +173,14 @@ describe('executionRunsGuidanceV1', () => {
     expect(result.text).not.toContain('execution_run_start');
   });
 });
+
+describe('executionRunsGuidanceV1 visible agents', () => {
+  it('names both delegation vehicles with role precedence and explains visible runs', () => {
+    const { text } = buildExecutionRunsGuidanceBlockV1({ entries: [], maxChars: 0 });
+    expect(text).toContain('assigned role');
+    expect(text).toContain('`session.spawn_new`');
+    expect(text).toContain('`visibility: "session"`');
+    expect(text).toContain('`targetSessionId`');
+    expect(text).toContain('hidden by default');
+  });
+});

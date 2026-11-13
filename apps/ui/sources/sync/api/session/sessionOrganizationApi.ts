@@ -12,6 +12,7 @@ import {
     ImportLegacySessionOrganizationResponseSchema,
     MoveSessionFolderAssignmentsResponseSchema,
     ReorderSessionOrganizationResponseSchema,
+    SessionAppearancePresentationListResponseSchema,
     SESSION_ORGANIZATION_MAX_SCOPED_SNAPSHOT_IDS,
     SESSION_ORGANIZATION_SNAPSHOT_VERSION,
     SessionFolderAssignmentListResponseSchema,
@@ -19,8 +20,12 @@ import {
     SessionOrganizationSnapshotResponseSchema,
     SetSessionAttentionStandingResponseSchema,
     SetSessionAppearanceResponseSchema,
+    SetSessionAppearancePresentationResponseSchema,
     type SetSessionAppearanceRequest,
     type SetSessionAppearanceResponse,
+    type SetSessionAppearancePresentationRequest,
+    type SetSessionAppearancePresentationResponse,
+    type SessionOrganizationSessionAppearancePresentation,
     SetSessionFolderAssignmentResponseSchema,
     SetSessionPinResponseSchema,
     SetSessionTagAssignmentsResponseSchema,
@@ -279,6 +284,40 @@ export async function setSessionAppearance(params: Readonly<{
         init: { method: 'PUT', headers: authHeaders(params.credentials), body: JSON.stringify(params.request) },
     });
     return parseJsonResponse(response, SetSessionAppearanceResponseSchema, 'Failed to set session appearance');
+}
+
+export async function fetchSessionAppearancePresentations(params: Readonly<{
+    credentials: AuthCredentials;
+    serverUrl?: string;
+}>): Promise<Readonly<{ supported: boolean; presentations: readonly SessionOrganizationSessionAppearancePresentation[] }>> {
+    const response = await fetchSessionOrganizationRoute({
+        credentials: params.credentials,
+        serverUrl: params.serverUrl,
+        path: `${SESSION_ORGANIZATION_ROUTE}/appearance-presentations`,
+        init: { headers: authHeaders(params.credentials) },
+    });
+    const raw = await readJsonBody(response);
+    if (!response.ok) {
+        if (looksLikeMissingSessionOrganizationRoute(response.status, raw)) {
+            return { supported: false, presentations: [] };
+        }
+        throw new HappyError(readErrorMessage(raw, 'Failed to fetch session appearance presentations'), false);
+    }
+    const parsed = parseJsonBody(raw, SessionAppearancePresentationListResponseSchema, 'Failed to fetch session appearance presentations');
+    return { supported: true, presentations: parsed.presentations };
+}
+
+export async function setSessionAppearancePresentation(params: Readonly<{
+    credentials: AuthCredentials;
+    serverUrl?: string;
+    sessionId: string;
+    request: SetSessionAppearancePresentationRequest;
+}>): Promise<SetSessionAppearancePresentationResponse> {
+    const response = await fetchSessionOrganizationRoute({ ...params,
+        path: `${SESSION_ORGANIZATION_ROUTE}/appearance-presentations/${encodeURIComponent(params.sessionId)}`,
+        init: { method: 'PUT', headers: authHeaders(params.credentials), body: JSON.stringify(params.request) },
+    });
+    return parseJsonResponse(response, SetSessionAppearancePresentationResponseSchema, 'Failed to set session appearance presentation');
 }
 
 export async function reorderSessionOrganization(params: Readonly<{

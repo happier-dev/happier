@@ -1,4 +1,4 @@
-import { inTx } from "@/storage/inTx";
+import { IN_TX_OPERATION_LABELS, inTx } from "@/storage/inTx";
 import type { ConnectedServiceUsageSourceV1 } from "@happier-dev/protocol";
 
 import { readProviderAccountUsageRecord } from "./recordStorage";
@@ -84,5 +84,5 @@ export async function writeProviderAccountUsageRecordAndLinkConnectedServiceUsag
             source,
             sourceOutcome,
         };
-    });
+    }, { diagnostics: { operation: IN_TX_OPERATION_LABELS.providerAccountUsageWrite } });
 }

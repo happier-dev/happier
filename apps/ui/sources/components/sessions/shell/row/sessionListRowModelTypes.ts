@@ -1,3 +1,4 @@
+import type { SessionRole, SessionRoleProfilesV1 } from '@happier-dev/protocol';
 import type { SessionListBackgroundWorkAttentionMode } from '@/sync/domains/session/listing/sessionListBackgroundWorkAttention';
 import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
@@ -8,7 +9,10 @@ import type { SessionStatus } from '@/utils/sessions/sessionUtils';
 import type { SessionListSecondaryLineMode } from '@/sync/domains/session/listing/deriveSessionListActivity';
 import type { SessionAttentionStandingPolicy, SessionReminderPresentation } from '@/sync/domains/session/organization/attentionStanding';
 import type { SessionRowAttentionState, SessionRowDensity, SessionRowPresentation } from './resolveSessionRowPresentation';
+import type { AvatarStyleId } from '@/sync/domains/settings/registry/account/avatarStyleSetting';
+import type { SessionLineageAppearancePresets, SessionLineageRowDensity } from './resolveSessionLineageRowAppearance';
 import type { SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
+import type { ExecutionRunDeliveryState, ExecutionRunTurnState } from '@/sync/domains/session/executionRunLinkPresentation';
 
 export type SessionListRowSessionItem = Extract<SessionListViewItem, { type: 'session' }>;
 export type SessionListSessionItem = SessionListRowSessionItem & { selected?: boolean };
@@ -34,10 +38,15 @@ export type SessionListRowStoreState = Readonly<{
 
 export type SessionListRowPresentationSettings = Readonly<{
     currentUserId: string | null;
+    sessionRoleProfilesV1?: SessionRoleProfilesV1 | null;
     density: SessionRowDensity;
+    baseDensity?: SessionLineageRowDensity;
+    lineageAppearanceEnabled?: boolean;
+    lineageAppearancePresets?: SessionLineageAppearancePresets;
     compact: boolean;
     compactMinimal: boolean;
     identityDisplay: 'avatar' | 'agentLogo' | 'none';
+    appearancePresentationSupported?: boolean;
     activeColorMode: 'activityAndAttention' | 'attentionOnly' | 'allActive';
     workingIndicatorMode: 'spinner' | 'pulse';
     workingTextMode: 'animated' | 'static';
@@ -85,6 +94,15 @@ export type SessionListRowPresentationSettings = Readonly<{
 }>;
 
 export type SessionListRowModel = Readonly<{
+    agentStarted: boolean;
+    /** Mutable job label from `sessionRoleV1`; presentation only. */
+    role: SessionRole | null;
+    roleName?: string | null;
+    roleColor?: `#${string}` | null;
+    parentSessionId?: string;
+    nestingDepth: number;
+    hasChildren: boolean;
+    childrenCollapsed: boolean;
     appearanceColor: SessionAppearanceColor | null;
     rowKey: string;
     sessionId: string;
@@ -134,6 +152,10 @@ export type SessionListRowModel = Readonly<{
     hasUnreadMessages: boolean;
     pendingCount: number;
     pendingBlockedCount: number;
+    executionRunStatus: Readonly<{
+        turnState: ExecutionRunTurnState;
+        deliveryState: ExecutionRunDeliveryState;
+    }> | null;
     /** Stable, safe one-line projection from the canonical session-draft owner. */
     draft: Readonly<{ preview: string }> | null;
     /**
@@ -154,6 +176,8 @@ export type SessionListRowModel = Readonly<{
     compact: boolean;
     compactMinimal: boolean;
     identityDisplay: 'avatar' | 'agentLogo' | 'none';
+    avatarStyle?: AvatarStyleId | null;
+    appearancePresentationSupported?: boolean;
     activeColorMode: 'activityAndAttention' | 'attentionOnly' | 'allActive';
     workingIndicatorMode: 'spinner' | 'pulse';
     /** Retained working placement: show the working indicator without animation. */

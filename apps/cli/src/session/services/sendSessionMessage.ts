@@ -1,3 +1,4 @@
+import { EXECUTION_RUN_LINK_V1_META_KEY, type ExecutionRunLinkV1 } from '@happier-dev/protocol';
 import type { SessionEncryptionContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import { randomUUID } from 'node:crypto';
 import { buildSessionEventContent } from '@/api/session/sessionEventContent';
@@ -417,6 +418,11 @@ export async function sendSessionMessage(params: Readonly<{
   modelOverride?: string | null;
   requestedAction?: PendingRequestedActionV1;
   pendingAdmissionMode?: 'continuation_if_no_queued_user_input';
+  /**
+   * Internal only (visible runs): the run link carried in the task message meta. Never an action
+   * field, so a user-facing send cannot supply or forge it; the run state stays authoritative.
+   */
+  executionRunLinkV1?: ExecutionRunLinkV1;
   /** Recheck a synthetic input's authority after transport lookup, before Pending custody. */
   canAdmit?: (context: Readonly<{ rawSession: RawSessionRecord; metadata: Record<string, unknown> | null }>) => boolean | Promise<boolean>;
 }>): Promise<SendSessionMessageResult> {
@@ -503,6 +509,7 @@ export async function sendSessionMessage(params: Readonly<{
     } } : {}),
     permissionIntent,
     modelId,
+    ...(params.executionRunLinkV1 ? { meta: { [EXECUTION_RUN_LINK_V1_META_KEY]: params.executionRunLinkV1 } } : {}),
     requestedAction: resolveSessionUserMessageRequestedAction({
       deliveryIntent: shouldResumeInactiveSession ? 'runtime_bootstrap' : 'ordinary',
       ...(params.requestedAction ? { requestedAction: params.requestedAction } : {}),

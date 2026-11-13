@@ -389,3 +389,86 @@ test('runStackScriptWithStackEnv limits the restart control guard to start-like 
   }
 
 });
+
+async function createReadinessRuntimeState(t, daemonPid) {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-background-readiness-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const runtimeStatePath = join(dir, 'stack.runtime.json');
+  await writeFile(runtimeStatePath, JSON.stringify({ version: 1, processes: { daemonPid } }));
+  return runtimeStatePath;
+}
+
+const READY_CLOSURE = 'abcdef1234567890';
+
+function runningDaemon(daemonPid, serverConnected) {
+  return { status: 'running', pid: daemonPid, distClosureFingerprint: READY_CLOSURE, serverConnected };
+}
+
+test('background readiness waits for the daemon to reach the server, not just its control port', async (t) => {
+  const mod = await import('./run_script_with_stack_env.mjs');
+  const runtimeStatePath = await createReadinessRuntimeState(t, 4242);
+  const observations = [false, false, true];
+  let reads = 0;
+
+  await withHealthyStackServer(async (internalServerUrl) => {
+    await mod.waitForBackgroundStackReadiness({
+      stackName: 'connecting', scriptPath: 'run.mjs', env: {}, runtimeStatePath, internalServerUrl,
+      expectedDaemonDistClosureFingerprint: READY_CLOSURE, timeoutMs: 5_000,
+      checkDaemonStateImpl: async () => {
+        reads += 1;
+        return runningDaemon(4242, observations.shift() ?? true);
+      },
+    });
+  });
+
+  assert.equal(reads, 3);
+});
+
+test('background readiness fails visibly when the daemon never reaches the server', async (t) => {
+  const mod = await import('./run_script_with_stack_env.mjs');
+  const runtimeStatePath = await createReadinessRuntimeState(t, 4242);
+
+  await withHealthyStackServer(async (internalServerUrl) => {
+    await assert.rejects(mod.waitForBackgroundStackReadiness({
+      stackName: 'never-connects', scriptPath: 'run.mjs', env: {}, runtimeStatePath, internalServerUrl,
+      expectedDaemonDistClosureFingerprint: READY_CLOSURE, timeoutMs: 400,
+      checkDaemonStateImpl: async () => runningDaemon(4242, false),
+    }), /"serverConnected":false/);
+  });
+});
+
+test('background readiness still rejects a connected daemon from another closure or PID', async (t) => {
+  const mod = await import('./run_script_with_stack_env.mjs');
+  const runtimeStatePath = await createReadinessRuntimeState(t, 4242);
+  const wrongDaemons = [
+    { ...runningDaemon(4242, true), distClosureFingerprint: '1111111111111111' },
+    runningDaemon(5252, true),
+  ];
+
+  for (const daemonState of wrongDaemons) {
+    await withHealthyStackServer(async (internalServerUrl) => {
+      await assert.rejects(mod.waitForBackgroundStackReadiness({
+        stackName: 'wrong-daemon', scriptPath: 'run.mjs', env: {}, runtimeStatePath, internalServerUrl,
+        expectedDaemonDistClosureFingerprint: READY_CLOSURE, timeoutMs: 300,
+        checkDaemonStateImpl: async () => daemonState,
+      }), /requested daemon readiness/);
+    });
+  }
+});
+
+test('a daemon too old to report its connection is accepted on control proof and says so', async (t) => {
+  const mod = await import('./run_script_with_stack_env.mjs');
+  const runtimeStatePath = await createReadinessRuntimeState(t, 4242);
+  const warnings = [];
+  t.mock.method(console, 'warn', (message) => warnings.push(String(message)));
+
+  await withHealthyStackServer(async (internalServerUrl) => {
+    await mod.waitForBackgroundStackReadiness({
+      stackName: 'older-daemon', scriptPath: 'run.mjs', env: {}, runtimeStatePath, internalServerUrl,
+      expectedDaemonDistClosureFingerprint: READY_CLOSURE, timeoutMs: 1_000,
+      checkDaemonStateImpl: async () => runningDaemon(4242, null),
+    });
+  });
+
+  assert.equal(warnings.filter((message) => message.includes('does not report its server connection')).length, 1);
+});

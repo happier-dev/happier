@@ -1,3 +1,4 @@
+import { readVisibleRunMarkerV1 } from '@/agent/executionRuns/runtime/visibleRuns/visibleRunMarker';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { randomUUID } from 'node:crypto';
@@ -224,6 +225,12 @@ export async function gcExecutionRunMarkers(params: Readonly<{
         continue;
       }
     }
+
+    // A visible run's work lives in its child Session, so it outlives the parent runner process:
+    // keep the marker for a restarted runner to rehydrate until the run's deadline plus the
+    // terminal retention (the run resolves at its deadline re-read once rehydrated).
+    const visibleRun = isTerminal ? null : readVisibleRunMarkerV1(marker);
+    if (visibleRun && params.nowMs <= (visibleRun.deadlineAtMs ?? marker.startedAtMs) + params.terminalTtlMs) continue;
 
     const alive = await params.isPidAlive(marker.pid);
     if (!alive) {

@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDaemonControlApp } from './controlServer';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionErrorDetail } from '@/rpc/handlers/registerSessionHandlers';
@@ -48,6 +49,56 @@ describe('daemon control server: /spawn-session', () => {
       });
 
       expect(res.statusCode).toBe(401);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('admits only current-catalog custom roles for fresh daemon creation while preserving existing-session snapshots', async () => {
+    const currentId = 'custom:123e4567-e89b-12d3-a456-426614174000';
+    const deletedId = 'custom:223e4567-e89b-12d3-a456-426614174000';
+    const spawnSession = vi.fn(async () => ({ type: 'success' as const, sessionId: 'happy-test-123' }));
+    const app = createDaemonControlApp({
+      getChildren: () => [],
+      machineId: 'machine_local',
+      stopSession: async () => ({ status: 'not_found' as const }),
+      spawnSession,
+      requestShutdown: () => {},
+      onHappySessionWebhook: () => {},
+      controlToken: 'test-token',
+      readAccountSettings: () => ({
+        sessionRoleProfilesV1: {
+          v: 1,
+          instructionsByRole: {},
+          customRoles: [{ id: currentId, name: 'Architect', instructions: 'Design.', color: '#123456' }],
+        },
+      }),
+    });
+    const request = (role: string, existingSessionId?: string) => app.inject({
+      method: 'POST',
+      url: '/spawn-session',
+      headers: { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'test-token' },
+      payload: JSON.stringify({
+        directory: '/tmp',
+        ...(existingSessionId ? { existingSessionId } : {}),
+        sessionRoleV1: {
+          v: 1,
+          role,
+          name: 'Retained',
+          color: '#123456',
+          instructions: 'Retained.',
+          assignmentId: 'assignment-control',
+          assignedAt: 1,
+        },
+      }),
+    });
+
+    try {
+      await app.ready();
+      expect((await request(currentId)).statusCode).toBe(200);
+      expect((await request(deletedId)).statusCode).toBe(400);
+      expect((await request(deletedId, 'session-existing')).statusCode).toBe(200);
+      expect(spawnSession).toHaveBeenCalledTimes(2);
     } finally {
       await app.close();
     }
@@ -187,7 +238,10 @@ describe('daemon control server: /spawn-session', () => {
 
   it('expands ~/ in session directories before forwarding control-server spawn requests', async () => {
     const previousHome = process.env.HOME;
-    process.env.HOME = '/Users/tester';
+    const previousUserProfile = process.env.USERPROFILE;
+    const testHome = join(process.cwd(), 'test-home');
+    process.env.HOME = testHome;
+    process.env.USERPROFILE = testHome;
     let observed: any = null;
 
     const app = createDaemonControlApp({
@@ -217,7 +271,7 @@ describe('daemon control server: /spawn-session', () => {
 
       expect(res.statusCode).toBe(200);
       expect(observed).toEqual({
-        directory: '/Users/tester/Documents',
+        directory: join(testHome, 'Documents'),
         backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       });
     } finally {
@@ -225,6 +279,11 @@ describe('daemon control server: /spawn-session', () => {
         delete process.env.HOME;
       } else {
         process.env.HOME = previousHome;
+      }
+      if (previousUserProfile === undefined) {
+        delete process.env.USERPROFILE;
+      } else {
+        process.env.USERPROFILE = previousUserProfile;
       }
       await app.close();
     }

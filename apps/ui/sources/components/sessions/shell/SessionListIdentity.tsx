@@ -9,6 +9,7 @@ import { useSetting } from '@/sync/domains/state/storage';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { getSessionAvatarId } from '@/utils/sessions/sessionUtils';
+import type { AvatarStyleId } from '@/sync/domains/settings/registry/account/avatarStyleSetting';
 
 export type SessionListIdentityDisplay = 'avatar' | 'agentLogo' | 'none';
 
@@ -30,6 +31,8 @@ export const SessionListIdentity = React.memo(function SessionListIdentity(props
     monochrome?: boolean;
     color?: string;
     testID?: string;
+    agentStarted?: boolean;
+    avatarStyle?: AvatarStyleId;
 }>) {
     const { theme } = useUnistyles();
     if (props.display === 'none') return null;
@@ -51,10 +54,12 @@ export const SessionListIdentity = React.memo(function SessionListIdentity(props
     return (
         <Avatar
             id={getSessionAvatarId(props.session)}
+            square={props.agentStarted === true}
             size={props.avatarSize}
             monochrome={props.monochrome}
             flavor={agentId}
             hasUnreadMessages={false}
+            styleId={props.avatarStyle}
         />
     );
 });

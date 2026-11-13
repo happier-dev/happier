@@ -9,6 +9,10 @@ export type SessionRowMoreMenuBuildParams = Readonly<{
     iconColor: string;
     leadingItems?: readonly DropdownMenuItem[];
     trailingItems?: readonly DropdownMenuItem[];
+    /** Sidebar placement command (Nest under… / Make standalone), shown just above lifecycle actions. */
+    placementItem?: DropdownMenuItem | null;
+    /** Set role… submenu; shown only when the person can edit the session's metadata. */
+    roleItem?: DropdownMenuItem | null;
     canMoveToFolder?: boolean;
     reminderPresets?: readonly SessionReminderPresetV1[];
     reminder?: SessionReminderPresentation | null;

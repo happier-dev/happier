@@ -47,9 +47,13 @@ export const ThemeColorPicker = React.memo(function ThemeColorPicker(props: Read
     }, [allowAlpha, props]);
 
     const commitPickerColor = React.useCallback((colors: ColorFormatsObject) => {
-        const nextValue = /,\s*1\)$/.test(colors.rgba) ? colors.hex : colors.rgba;
+        const nextValue = !allowAlpha
+            ? colors.hex.length === 9 && colors.hex.slice(-2).toLowerCase() === 'ff'
+                ? colors.hex.slice(0, 7)
+                : colors.hex
+            : /,\s*1\)$/.test(colors.rgba) ? colors.hex : colors.rgba;
         commit(nextValue);
-    }, [commit]);
+    }, [allowAlpha, commit]);
 
     const pickerValue = props.value === 'transparent' ? 'rgba(0,0,0,0)' : props.value;
     const swatchColors = props.recentColors?.filter((color) => color !== 'transparent');

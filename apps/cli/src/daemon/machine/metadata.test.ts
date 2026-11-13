@@ -6,6 +6,7 @@ describe('initialMachineMetadata', () => {
   it('advertises daemon-owned runtime control capabilities', () => {
     expect(initialMachineMetadata.daemonTerminalSessionAttachSupported).toBe(true);
     expect(initialMachineMetadata.daemonSessionGoalControlsSupported).toBe(true);
+    expect(initialMachineMetadata.daemonSessionRoleV1SpawnSupported).toBe(true);
   });
 
   it('refreshes older persisted metadata without dropping user-owned fields', () => {
@@ -14,12 +15,14 @@ describe('initialMachineMetadata', () => {
       displayName: 'Build box',
       daemonTerminalSessionAttachSupported: undefined,
       daemonSessionGoalControlsSupported: undefined,
+      daemonSessionRoleV1SpawnSupported: undefined,
     };
 
     expect(refreshMachineMetadataForCurrentDaemon(current, current.host)).toMatchObject({
       displayName: 'Build box',
       daemonTerminalSessionAttachSupported: true,
       daemonSessionGoalControlsSupported: true,
+      daemonSessionRoleV1SpawnSupported: true,
     });
   });
 

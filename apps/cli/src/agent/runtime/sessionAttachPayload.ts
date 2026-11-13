@@ -1,5 +1,20 @@
 import * as z from 'zod';
-import { lazySchema } from '@happier-dev/protocol';
+import { lazySchema, SessionRoleV1Schema, type SessionRoleV1 } from '@happier-dev/protocol';
+
+/**
+ * The retained session role travels from the canonical metadata owner to a resuming runner through
+ * this short-lived handoff, so the first provider launch carries it even before (or without) a server
+ * metadata snapshot. Loosely typed here and validated on both ends: a malformed role never fails a
+ * resume, and older readers strip the optional field.
+ */
+const AttachSessionRoleField = lazySchema(() => z.unknown().optional());
+
+/** The `sessionRoleV1` attach field for a decrypted session metadata record, when it holds a valid role. */
+export function readSessionRoleForAttachPayload(metadata: unknown): { sessionRoleV1?: SessionRoleV1 } {
+  if (!metadata || typeof metadata !== 'object') return {};
+  const parsed = SessionRoleV1Schema.safeParse((metadata as { sessionRoleV1?: unknown }).sessionRoleV1);
+  return parsed.success ? { sessionRoleV1: parsed.data } : {};
+}
 
 const LegacyAttachPayloadSchema = lazySchema(() => z.object({
   encryptionKeyBase64: z.string().min(1),
@@ -13,6 +28,7 @@ const AttachPayloadV2PlainSchema = lazySchema(() => z.object({
   encryptionMode: z.literal('plain'),
   lastObservedMessageSeq: z.number().int().nonnegative().optional(),
   initialTranscriptAfterSeq: z.number().int().nonnegative().optional(),
+  sessionRoleV1: AttachSessionRoleField,
 }));
 
 const AttachPayloadV2E2eeSchema = lazySchema(() => z.object({
@@ -22,6 +38,7 @@ const AttachPayloadV2E2eeSchema = lazySchema(() => z.object({
   encryptionVariant: z.union([z.literal('legacy'), z.literal('dataKey')]),
   lastObservedMessageSeq: z.number().int().nonnegative().optional(),
   initialTranscriptAfterSeq: z.number().int().nonnegative().optional(),
+  sessionRoleV1: AttachSessionRoleField,
 }));
 
 export const SessionAttachPayloadV2Schema = lazySchema(() => z.union([AttachPayloadV2PlainSchema, AttachPayloadV2E2eeSchema]));

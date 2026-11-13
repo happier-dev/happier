@@ -52,6 +52,10 @@ function parseListenPidOutput(raw) {
   );
 }
 
+// A true listener has an unspecified foreign endpoint. Some Windows hosts label connection rows
+// LISTENING (foreign `127.0.0.1:0`, or a real peer), and those PIDs do not own the port.
+const WINDOWS_LISTENER_FOREIGN_ENDPOINTS = new Set(['0.0.0.0:0', '[::]:0']);
+
 function parseWindowsNetstatListenPids(raw, port) {
   const suffix = `:${Number(port)}`;
   const pids = [];
@@ -59,6 +63,7 @@ function parseWindowsNetstatListenPids(raw, port) {
     const columns = line.trim().split(/\s+/g);
     if (columns.length < 5 || String(columns[0]).toUpperCase() !== 'TCP') continue;
     if (String(columns[3]).toUpperCase() !== 'LISTENING') continue;
+    if (!WINDOWS_LISTENER_FOREIGN_ENDPOINTS.has(String(columns[2]))) continue;
     if (!String(columns[1]).endsWith(suffix)) continue;
     const pid = Number(columns[4]);
     if (Number.isInteger(pid) && pid > 1) pids.push(pid);

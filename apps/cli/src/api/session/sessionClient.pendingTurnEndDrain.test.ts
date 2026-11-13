@@ -4283,6 +4283,19 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
     expect(client.getCommittedUserMessageSeq('replay-proof-local')).toBeNull();
   });
 
+  it('notifies visible-run delivery verification when a committed user transcript row arrives', async () => {
+    const client = await createClient({
+      latestTurnStatus: 'completed',
+      pendingCount: 0,
+      pendingVersion: 1,
+      metadata: { deliveredUserMessageSeqV1: 0 },
+    });
+    const notify = vi.fn();
+    (client as any).notifyExecutionRunParentInputBound = notify;
+    triggerCommittedUserMessage({ seq: 50, localId: 'execution-run-completion:run_1' });
+    expect(notify).toHaveBeenCalledWith(['execution-run-completion:run_1']);
+  });
+
   it('retires accepted canonical custody when the exact committed transcript arrives after settlement response loss', async () => {
     const localId = 'accepted-response-loss-transcript-proof';
     const client = await createClient({

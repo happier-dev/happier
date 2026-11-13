@@ -47,6 +47,7 @@ describe("metrics server", () => {
             const res = await app.inject({ method: "GET", url: "/ready" });
 
             expect(res.statusCode).toBe(200);
+            expect(res.json()).not.toHaveProperty("apiStartupIdentity");
             expect(mockQueryRaw).toHaveBeenCalled();
             expect(mockDbReadinessChecksInc).toHaveBeenCalledWith({ result: "ok", reason: "none" });
         } finally {

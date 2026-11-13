@@ -5,7 +5,7 @@ import { z } from "zod";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveEncryptionWriteRejectionCode, type EncryptionPolicyRejectionCode } from "@/app/session/encryptionRejectionCodes";
 import { checkSessionAccess, requireAccessLevel } from "@/app/share/accessControl";
-import { inTx } from "@/storage/inTx";
+import { IN_TX_OPERATION_LABELS, inTx } from "@/storage/inTx";
 import { isPrismaErrorCode } from "@/storage/prisma";
 import { error as logError } from "@/utils/logging/log";
 import {
@@ -377,7 +377,7 @@ async function upsertSessionSystemRecordWithRetry(
             const createdRecord = toSessionSystemRecordRow(created);
             if (!createdRecord) return { ok: false, error: "internal" };
             return { ok: true, didCreate: true, didUpdate: false, record: createdRecord };
-        });
+        }, { diagnostics: { operation: IN_TX_OPERATION_LABELS.sessionSystemRecordWrite } });
         if (!result.ok && result.error === "internal") {
             reportSystemRecordFailure("upsert", undefined, "invalid-stored-record");
         }

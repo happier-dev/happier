@@ -1,3 +1,4 @@
+import { SessionLineageReadbackV1RowFieldsSchema } from '../sessionMetadata/sessionLineageReadbackV1.js';
 import { z } from 'zod';
 import { PendingLocalIdSchema } from '../sessionMessages/pendingLocalId.js';
 import { PendingActivationAuthorizationV1Schema } from './pendingActivationAuthorizationV1.js';
@@ -115,6 +116,7 @@ export {
   buildUsageLimitIssueFingerprint,
   isSessionUsageLimitRecoveryForIssue,
   isSessionUsageLimitRecoveryStoppedByPolicy,
+  isSessionUsageLimitRecoveryInProgressV1,
   readSessionUsageLimitRecoveryForIssue,
   type SessionUsageLimitRecoveryAuthSelectionV1,
   type SessionUsageLimitRecoveryResumePromptModeV1,
@@ -233,6 +235,8 @@ export const SessionSummarySchema = lazySchema(() => z.object({
   runtimeActivityRevision: z.number().int().nonnegative().safe().optional(),
   pendingActivationAuthorization: PendingActivationAuthorizationV1Schema.optional(),
   rollbackEligibleTurnStarts: z.array(z.number().int().nonnegative()).optional(),
+  // Role and lineage readback (visible agents): role, creator origin, and visible-run link.
+  ...SessionLineageReadbackV1RowFieldsSchema.shape,
 }).passthrough().superRefine(refineRuntimeActivityProjectionFields));
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 

@@ -51,4 +51,14 @@ describe('MachineMetadataSchema', () => {
 
         expect(parsed.daemonSessionGoalControlsSupported).toBe(true);
     });
+
+    it('preserves explicit role-at-creation support while older metadata remains unsupported', () => {
+        const base = {
+            host: 'host', platform: 'darwin', happyCliVersion: '0.2.20',
+            happyHomeDir: '/tmp/happier', homeDir: '/tmp',
+        };
+        expect(MachineMetadataSchema.parse(base).daemonSessionRoleV1SpawnSupported).toBeUndefined();
+        expect(MachineMetadataSchema.parse({ ...base, daemonSessionRoleV1SpawnSupported: true })
+            .daemonSessionRoleV1SpawnSupported).toBe(true);
+    });
 });

@@ -1,4 +1,4 @@
-import type { SyncedSessionAuthoringValueV1 } from '@happier-dev/protocol';
+import { AssignableSessionRoleSchema, type SyncedSessionAuthoringValueV1 } from '@happier-dev/protocol';
 
 import {
     buildNewSessionAuthoringDraft,
@@ -71,6 +71,8 @@ export function readNewSessionDraftFromSnapshot(snapshot: SessionDraftSnapshot |
     const draft = {
         ...persisted,
         entryIntent: snapshot.localSupplement.newSessionLocalState?.entryIntent ?? null,
+        // Local state is untyped JSON on disk; an unknown value reads as No role.
+        sessionRole: AssignableSessionRoleSchema.safeParse(snapshot.localSupplement.newSessionLocalState?.sessionRole).data ?? null,
         ...(launchUserAttemptId ? { launchUserAttemptId } : {}),
     };
     if (authoring.permissionMode != null) return draft;

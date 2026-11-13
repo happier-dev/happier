@@ -202,7 +202,9 @@ export const AgentActivitySurface = React.memo((props: AgentActivitySurfaceProps
      * destination exists, the host knows whether it has anywhere to put it.
      */
     const canOpenTarget = React.useCallback((target: AgentActivityOpenTarget): boolean => (
-        target.kind === 'subagent' ? onOpenSubagent != null : onOpenSidechainTranscript != null
+        target.kind === 'child_session'
+            ? true
+            : target.kind === 'subagent' ? onOpenSubagent != null : onOpenSidechainTranscript != null
     ), [onOpenSidechainTranscript, onOpenSubagent]);
 
     const openTarget = React.useCallback((target: AgentActivityOpenTarget) => {
@@ -210,9 +212,14 @@ export const AgentActivitySurface = React.memo((props: AgentActivitySurfaceProps
             onOpenSidechainTranscript?.(target);
             return;
         }
+        if (target.kind === 'child_session') {
+            onNavigateAway?.();
+            void navigateToSession(target.sessionId);
+            return;
+        }
         if (!isNavigableAgentActivityOpenTarget(target)) return;
         onOpenSubagent?.(target.subagent);
-    }, [onOpenSidechainTranscript, onOpenSubagent]);
+    }, [navigateToSession, onNavigateAway, onOpenSidechainTranscript, onOpenSubagent]);
 
     /**
      * One preview element per entry, for as long as its target is the same one.
@@ -253,7 +260,7 @@ export const AgentActivitySurface = React.memo((props: AgentActivitySurfaceProps
      */
     const renderEntryBody = React.useCallback((entryId: string): React.ReactNode => {
         const target = readTarget(entryId);
-        const sidechainId = target?.sidechainId ?? null;
+        const sidechainId = target && 'sidechainId' in target ? target.sidechainId ?? null : null;
         if (target && sidechainId) {
             // Kept per entry for as long as the roster's targets are unchanged. `renderEntryBody`
             // runs on every list render — a clock tick, a neighbour finishing — and a fresh element

@@ -13,6 +13,7 @@ import type {
     SessionOrganizationPin,
     SessionOrganizationTag,
     SessionOrganizationSessionAppearance,
+    SessionOrganizationSessionAppearancePresentation,
 } from '@happier-dev/protocol';
 
 function compareNullableSortKey(a: string | null, b: string | null): number {
@@ -34,6 +35,7 @@ export function buildSessionOrganizationProjection(
     const attentionStandingsBySessionId: Record<string, SessionAttentionStanding> = {};
     const appearancesBySessionId: Record<string, SessionAppearanceColor> = {};
     const sessionAppearancesBySessionId: Record<string, SessionOrganizationSessionAppearance> = {};
+    const sessionAppearancePresentationsBySessionId: Record<string, SessionOrganizationSessionAppearancePresentation> = {};
     const orderEntriesByScopeKey: Record<string, readonly SessionOrganizationOrderEntry[]> = {};
     const labelsByLabelKey: Record<string, SessionOrganizationLabel> = {};
 
@@ -75,6 +77,11 @@ export function buildSessionOrganizationProjection(
         const color = readSessionAppearanceColorFromDisplay(appearance.display);
         if (color) appearancesBySessionId[appearance.sessionId] = color;
     }
+    for (const [key, presentation] of Object.entries(state.appearancePresentationsBySessionKey ?? {})) {
+        if (readSessionOrganizationServerScopedId(key, serverId) === presentation.sessionId) {
+            sessionAppearancePresentationsBySessionId[presentation.sessionId] = presentation;
+        }
+    }
     const serverPrefix = `${String(serverId).trim()}:`;
     for (const [key, entries] of Object.entries(state.orderEntriesByScopeKey)) {
         if (key.startsWith(serverPrefix)) {
@@ -106,7 +113,9 @@ export function buildSessionOrganizationProjection(
         attentionStandingsBySessionId,
         appearancesBySessionId,
         sessionAppearancesBySessionId,
+        sessionAppearancePresentationsBySessionId,
         sessionAppearancesSupported: state.sessionAppearancesSupportedByServerId[serverId] === true,
+        sessionAppearancePresentationsSupported: state.sessionAppearancePresentationsSupportedByServerId?.[serverId] === true,
         orderEntriesByScopeKey,
         labelsByLabelKey,
     };

@@ -316,6 +316,7 @@ export async function checkDaemonStatePingAware(cliHomeDir, options = {}) {
       pid: Number(ping.pid) || state.pid,
       processInstanceFingerprint: ping.processInstanceFingerprint ?? null,
       distClosureFingerprint: ping.distClosureFingerprint ?? null,
+      ...(typeof ping.serverConnected === 'boolean' ? { serverConnected: ping.serverConnected } : {}),
     };
   }
   return {

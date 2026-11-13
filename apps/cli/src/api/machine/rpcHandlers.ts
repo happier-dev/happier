@@ -18,6 +18,7 @@ import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import {
   AcpConfigOptionOverridesV1Schema,
   AgentRuntimeDescriptorV1Schema,
+  FreshAssignableSessionRoleV1Schema,
   BackendTargetRefSchema,
   BugReportLogSelectionSchema,
   ConnectedServiceBindingsV1Schema,
@@ -35,6 +36,7 @@ import {
   SessionForkRpcParamsSchema,
   SessionInitialGoalRequestV1Schema,
   SessionMcpSelectionV1Schema,
+  SessionRoleV1Schema,
   SessionRunnerStatusGetRequestV1Schema,
   StopSessionRequestSchema,
   SessionSpawnSourceContextV1Schema,
@@ -44,6 +46,8 @@ import {
   type SessionForkRpcResult,
   type SessionHandoffStartRequest,
   type SessionSpawnSourceContextV1,
+  ExecutionRunLinkV1Schema,
+  SessionOriginV1Schema,
 } from '@happier-dev/protocol';
 import { isPermissionMode } from '@/api/types';
 import { CATALOG_AGENT_IDS } from '@/backends/types';
@@ -81,6 +85,7 @@ import type { DaemonExecutionRunEntry, DaemonExecutionRunProcessInfo } from '@ha
 import type { StopSessionOptions } from '@/daemon/sessions/stopSession';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
+import { isFreshSpawnSessionRoleKnownToAccount } from '@/rpc/handlers/spawnSessionOptionsContract';
 import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
 import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
 import { registerMachineTerminalRpcHandlers } from './rpcHandlers.terminal';
@@ -288,6 +293,8 @@ export type MachineRpcHandlerDeps = Readonly<{
   readTemporaryThrottleRecovery?: ReadTemporaryThrottleRecovery;
   cancelTemporaryThrottleRecovery?: CancelTemporaryThrottleRecovery;
   getActionOperationScope?: () => Promise<Readonly<{ accountId: string; machineId: string }>>;
+  /** Current target-account settings used only to admit fresh custom-role snapshots. */
+  readAccountSettings?: () => unknown;
 }>;
 
 export type MachineRpcLifecycleRegistration = Readonly<{
@@ -413,6 +420,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
   deps?: MachineRpcHandlerDeps;
 }>): MachineRpcLifecycleRegistration {
   const { rpcHandlerManager, handlers } = params;
+  const readAccountSettings = params.deps?.readAccountSettings;
   if (params.deps?.pushNotifications) {
     registerMachineNotificationRpcHandlers({ rpcHandlerManager, pushNotifications: params.deps.pushNotifications });
   }
@@ -743,6 +751,9 @@ export function registerMachineRpcHandlers(params: Readonly<{
       codexBackendMode,
       agentRuntimeDescriptorV1,
       mcpSelection,
+      sessionRoleV1,
+      sessionOriginV1,
+      executionRunLinkV1,
       sourceContext,
       requestOrigin,
     } = params || {};
@@ -833,6 +844,51 @@ export function registerMachineRpcHandlers(params: Readonly<{
         type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
         errorMessage: 'Unknown backend target',
+      };
+    }
+    // An explicitly requested role is required semantics: a malformed one is refused rather than
+    // dropped, which would create an unlabelled Session and report success.
+    const normalizedSessionRoleV1 = (() => {
+      if (sessionRoleV1 === undefined || sessionRoleV1 === null) return undefined;
+      const schema = params?.type === 'resume-session' ? SessionRoleV1Schema : FreshAssignableSessionRoleV1Schema;
+      const parsed = schema.safeParse(sessionRoleV1);
+      return parsed.success ? parsed.data : null;
+    })();
+    if (normalizedSessionRoleV1 === null) {
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Invalid sessionRoleV1',
+      };
+    }
+    // Creation provenance and a visible-run link are required semantics when supplied: a malformed
+    // one is refused, never dropped. Both seed only a fresh creation; resume keeps persisted state.
+    const normalizedSessionOriginV1 = (() => {
+      if (sessionOriginV1 === undefined || sessionOriginV1 === null || params?.type === 'resume-session') return undefined;
+      const parsed = SessionOriginV1Schema.safeParse(sessionOriginV1);
+      return parsed.success ? parsed.data : null;
+    })();
+    const normalizedExecutionRunLinkV1 = (() => {
+      if (executionRunLinkV1 === undefined || executionRunLinkV1 === null || params?.type === 'resume-session') return undefined;
+      const parsed = ExecutionRunLinkV1Schema.safeParse(executionRunLinkV1);
+      return parsed.success ? parsed.data : null;
+    })();
+    if (normalizedSessionOriginV1 === null || normalizedExecutionRunLinkV1 === null) {
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: normalizedSessionOriginV1 === null ? 'Invalid sessionOriginV1' : 'Invalid executionRunLinkV1',
+      };
+    }
+    if (
+      params?.type !== 'resume-session'
+      && normalizedSessionRoleV1 !== undefined
+      && !isFreshSpawnSessionRoleKnownToAccount(normalizedSessionRoleV1, readAccountSettings?.() ?? null)
+    ) {
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Custom session role is not present in the target account catalog',
       };
     }
     const normalizedMcpSelection = (() => {
@@ -934,6 +990,9 @@ export function registerMachineRpcHandlers(params: Readonly<{
       windowsRemoteSessionLaunchMode,
       windowsRemoteSessionConsole,
       mcpSelection: normalizedMcpSelection,
+      ...(normalizedSessionRoleV1 ? { sessionRoleV1: normalizedSessionRoleV1 } : {}),
+      ...(normalizedSessionOriginV1 ? { sessionOriginV1: normalizedSessionOriginV1 } : {}),
+      ...(normalizedExecutionRunLinkV1 ? { executionRunLinkV1: normalizedExecutionRunLinkV1 } : {}),
       ...(normalizedAgentRuntimeDescriptorV1 ? { agentRuntimeDescriptorV1: normalizedAgentRuntimeDescriptorV1 } : {}),
       ...(normalizedCodexBackendMode ? { codexBackendMode: normalizedCodexBackendMode } : {}),
     });
@@ -1091,6 +1150,25 @@ export function registerMachineRpcHandlers(params: Readonly<{
   rpcHandlerManager.registerHandler(
     RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
     handleTrackedSpawnHappySession,
+  );
+  // This exact method is the daemon-owned proof that a fresh role snapshot is
+  // consumed before provider startup. Callers with a role never fall back to
+  // either predecessor spawn method.
+  rpcHandlerManager.registerHandler(
+    RPC_METHODS.SPAWN_HAPPY_SESSION_ROLE_V1,
+    async (raw: unknown) => {
+      const sessionRoleV1 = raw && typeof raw === 'object' && !Array.isArray(raw)
+        ? (raw as { sessionRoleV1?: unknown }).sessionRoleV1
+        : undefined;
+      if (!FreshAssignableSessionRoleV1Schema.safeParse(sessionRoleV1).success) {
+        return {
+          type: 'error' as const,
+          errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+          errorMessage: 'The role-aware spawn method requires a complete sessionRoleV1 snapshot',
+        };
+      }
+      return await handleTrackedSpawnHappySession(raw);
+    },
   );
   rpcHandlerManager.registerHandler(RPC_METHODS.SPAWN_HAPPY_SESSION, async (params: any) => {
     const result = await handleTrackedSpawnHappySession(params);

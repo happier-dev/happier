@@ -1,5 +1,6 @@
 import type { AgentBackend, SessionId } from '@/agent/core/AgentBackend';
 import type { StreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
+import type { VisibleRunControls } from '@/agent/executionRuns/runtime/visibleRuns/visibleRunRules';
 
 export type ExecutionRunSendDelivery = 'prompt' | 'steer_if_supported' | 'interrupt';
 
@@ -60,7 +61,42 @@ export type ExecutionRunVoiceAgentController = {
   persistedDoneByExternalStreamId: Set<string>;
 };
 
-export type ExecutionRunController = ExecutionRunBackendController | ExecutionRunVoiceAgentController;
+/**
+ * Controller of a visible run (plan 2A/2B): the work happens in the linked child Session; this
+ * runner holds the authoritative run state and evaluates the child's transcript on wake-ups.
+ */
+export type ExecutionRunSessionController = {
+  kind: 'session';
+  linkedSessionId: string;
+  binding: 'created' | 'reused';
+  controls: VisibleRunControls;
+  linked: boolean;
+  /** Highest accepted child turn epoch; reports at or below it are stale. */
+  lastReportedTurnEpoch: number;
+  /** Absolute task deadline fixed at start (kept across a parent restart); null when unbounded. */
+  deadlineAtMs: number | null;
+  /** Highest report epoch seen on the child's own link record, so a relay found by a re-read matches it. */
+  observedChildReportEpoch: number;
+  /** The latest accepted child turn report said the turn failed. */
+  lastTurnFailed: boolean;
+  /** The current scheduled transcript re-read after the latest accepted wake-up. */
+  recoveryTimer: ReturnType<typeof setTimeout> | null;
+  evaluatedTurnCount: number;
+  completion: Promise<void> | null;
+  pendingRepair: ((finalText: string) => void) | null;
+  evaluationTail: Promise<void>;
+  cancelled: boolean;
+  handshakeTimer: ReturnType<typeof setTimeout> | null;
+  deadlineTimer: ReturnType<typeof setTimeout> | null;
+  lastMarkerWriteAtMs: number;
+  terminalMarkerWritePromise?: Promise<void>;
+  disposalPromise?: Promise<void>;
+  cancellationPromise?: Promise<void>;
+  terminalPromise: Promise<void>;
+  resolveTerminal: () => void;
+};
+
+export type ExecutionRunController = ExecutionRunBackendController | ExecutionRunVoiceAgentController | ExecutionRunSessionController;
 
 export function resetExecutionRunBackendOutput(ctrl: ExecutionRunBackendController): void {
   ctrl.turnHadMeaningfulActivity = false;

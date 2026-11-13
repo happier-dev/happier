@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { renderScreen } from '@/dev/testkit';
@@ -11,13 +11,21 @@ import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScre
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+let activeRoleProfilesState: unknown = null;
+const roleProfilesResolver = vi.hoisted(() => vi.fn<(serverId: string | null) => Promise<any>>(async () => null));
+
 installNewSessionScreenModelCommonModuleMocks({
     storage: async () => createStorageModuleStub({
         storage: {
             getState: () => ({}),
         },
+        useSetting: (key: string) => key === 'sessionRoleProfilesV1' ? activeRoleProfilesState : null,
     }),
 });
+
+vi.mock('@/sync/ops/sessionRoleAssignment', () => ({
+    resolveAssignableSessionRoleProfilesForServer: roleProfilesResolver,
+}));
 
 vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
@@ -32,6 +40,12 @@ vi.mock('@/components/sessions/agentInput/sessionActions/buildNewSessionActionSh
 }));
 
 describe('useNewSessionAgentInputExtraActionChips', () => {
+    beforeEach(() => {
+        activeRoleProfilesState = null;
+        roleProfilesResolver.mockReset();
+        roleProfilesResolver.mockResolvedValue(null);
+    });
+
     it('creates the automation chip as a shared content popover instead of a collapsed toggle action', async () => {
         const { useNewSessionAgentInputExtraActionChips } = await import('./useNewSessionAgentInputExtraActionChips');
 
@@ -61,6 +75,8 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
                 supportsDirectTranscriptStorage: false,
                 transcriptStorage: 'persisted',
                 onTranscriptStorageChange: vi.fn(),
+                sessionRole: null,
+                onSessionRoleChange: vi.fn(),
                 selectedMachineIsWindows: false,
                 windowsRemoteSessionLaunchMode: null,
                 windowsTerminalAvailable: false,
@@ -112,6 +128,8 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
                 supportsDirectTranscriptStorage: true,
                 transcriptStorage: 'persisted',
                 onTranscriptStorageChange,
+                sessionRole: null,
+                onSessionRoleChange: vi.fn(),
                 selectedMachineIsWindows: false,
                 windowsRemoteSessionLaunchMode: null,
                 windowsTerminalAvailable: false,
@@ -189,6 +207,8 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
                 supportsDirectTranscriptStorage: false,
                 transcriptStorage: 'persisted',
                 onTranscriptStorageChange: vi.fn(),
+                sessionRole: null,
+                onSessionRoleChange: vi.fn(),
                 selectedMachineIsWindows: false,
                 windowsRemoteSessionLaunchMode: null,
                 windowsTerminalAvailable: false,
@@ -246,6 +266,8 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
                 supportsDirectTranscriptStorage: false,
                 transcriptStorage: 'persisted',
                 onTranscriptStorageChange: vi.fn(),
+                sessionRole: null,
+                onSessionRoleChange: vi.fn(),
                 selectedMachineIsWindows: false,
                 windowsRemoteSessionLaunchMode: null,
                 windowsTerminalAvailable: false,
@@ -291,6 +313,8 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
                 supportsDirectTranscriptStorage: false,
                 transcriptStorage: 'persisted',
                 onTranscriptStorageChange: vi.fn(),
+                sessionRole: null,
+                onSessionRoleChange: vi.fn(),
                 selectedMachineIsWindows: false,
                 windowsRemoteSessionLaunchMode: null,
                 windowsTerminalAvailable: false,
@@ -303,5 +327,60 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
         await renderScreen(<Probe />);
 
         expect(chips.some((chip) => chip.key === 'session-source-context')).toBe(false);
+    });
+
+    it('withholds active-account custom roles while a different target catalog is unresolved and removes stale choices on target switch', async () => {
+        const { listAssignableSessionRoleProfilesV1 } = await import('@happier-dev/protocol');
+        const { useNewSessionAgentInputExtraActionChips } = await import('./useNewSessionAgentInputExtraActionChips');
+        const activeId = 'custom:123e4567-e89b-12d3-a456-426614174000';
+        const targetId = 'custom:223e4567-e89b-12d3-a456-426614174000';
+        activeRoleProfilesState = {
+            v: 1,
+            instructionsByRole: {},
+            customRoles: [{ id: activeId, name: 'Wrong account', instructions: 'Wrong.', color: '#123456' }],
+        };
+        let resolveTarget!: (value: unknown) => void;
+        roleProfilesResolver.mockImplementation((serverId: string | null) => serverId === 'server-a'
+            ? Promise.resolve(listAssignableSessionRoleProfilesV1({ sessionRoleProfilesV1: {
+                v: 1,
+                instructionsByRole: {},
+                customRoles: [{ id: targetId, name: 'Target role', instructions: 'Target.', color: '#654321' }],
+            } }))
+            : new Promise((resolve) => { resolveTarget = resolve; }));
+
+        let chips: ReadonlyArray<AgentInputExtraActionChip> = [];
+        let setTarget!: React.Dispatch<React.SetStateAction<string | null>>;
+        function Probe() {
+            const [targetServerId, updateTarget] = React.useState<string | null>('server-a');
+            setTarget = updateTarget;
+            chips = useNewSessionAgentInputExtraActionChips({
+                agentId: 'claude', agentOptionState: null, setAgentOptionState: vi.fn(),
+                showAutomationActionChips: false,
+                automationDraft: { enabled: false, name: '', description: '', scheduleKind: 'interval', everyMinutes: 60, cronExpr: '0 * * * *', timezone: null },
+                automationLabel: 'Automate', onAutomationChange: vi.fn(), showServerPickerChip: false,
+                targetServerId, targetServerName: 'Target', directSessionsFeatureEnabled: false,
+                supportsDirectTranscriptStorage: false, transcriptStorage: 'persisted', onTranscriptStorageChange: vi.fn(),
+                sessionRole: null, onSessionRoleChange: vi.fn(), selectedMachineIsWindows: false,
+                windowsRemoteSessionLaunchMode: null, windowsTerminalAvailable: false,
+                onWindowsRemoteSessionLaunchModeChange: vi.fn(), onActionShortcutPress: vi.fn(),
+            });
+            return null;
+        }
+        await renderScreen(<Probe />);
+        const roleOptionIds = () => {
+            const chip = chips.find((candidate) => candidate.key === 'new-session-role');
+            const root = chip?.collapsedOptionsPopover?.presentation === 'list' ? chip.collapsedOptionsPopover.rootStep : null;
+            const section = root?.sections[0];
+            return section?.kind === 'static' ? section.options.map((option) => option.id) : [];
+        };
+        await React.act(async () => { await Promise.resolve(); });
+        expect(roleOptionIds()).toContain(targetId);
+        expect(roleOptionIds()).not.toContain(activeId);
+
+        React.act(() => setTarget('server-b'));
+        expect(roleOptionIds()).not.toContain(targetId);
+        expect(roleOptionIds()).not.toContain(activeId);
+        await React.act(async () => { resolveTarget(null); await Promise.resolve(); });
+        expect(roleOptionIds()).toEqual(['project_lead', 'planner', 'worker', 'reviewer', 'none']);
     });
 });

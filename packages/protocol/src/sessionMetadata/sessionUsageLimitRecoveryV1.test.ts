@@ -5,6 +5,7 @@ import {
   resolveSessionUsageLimitRecoveryResumePromptModeV1,
   buildUsageLimitIssueFingerprint,
   isSessionUsageLimitRecoveryForIssue,
+  isSessionUsageLimitRecoveryInProgressV1,
   readSessionUsageLimitRecoveryForIssue,
 } from './sessionUsageLimitRecoveryV1.js';
 import type { SessionRuntimeIssueV1 } from '../sessions/control/runtimeIssueV1.js';
@@ -23,6 +24,17 @@ const baseIntent = {
 } as const;
 
 describe('SessionUsageLimitRecoveryV1', () => {
+  it('reads a recovery as in progress only while it is armed, waiting, or checking', () => {
+    for (const status of ['armed', 'waiting', 'checking'] as const) {
+      expect(isSessionUsageLimitRecoveryInProgressV1({ sessionUsageLimitRecoveryV1: { ...baseIntent, status } })).toBe(true);
+    }
+    for (const status of ['paused', 'exhausted', 'cancelled'] as const) {
+      expect(isSessionUsageLimitRecoveryInProgressV1({ sessionUsageLimitRecoveryV1: { ...baseIntent, status } })).toBe(false);
+    }
+    expect(isSessionUsageLimitRecoveryInProgressV1(null)).toBe(false);
+    expect(isSessionUsageLimitRecoveryInProgressV1({ sessionUsageLimitRecoveryV1: { ...baseIntent, status: 'unknown' } })).toBe(false);
+  });
+
   it('uses the same exact issue identity for recovery producers and readers', () => {
     const issue: SessionRuntimeIssueV1 = {
       v: 1, scope: 'primary_session', status: 'failed', source: 'usage_limit', code: 'usage_limit',

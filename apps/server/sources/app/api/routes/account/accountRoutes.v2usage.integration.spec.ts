@@ -16,7 +16,7 @@ vi.mock("@/app/events/eventRouter", () => ({
     buildUsageEphemeral,
 }));
 
-vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
+vi.mock("@/utils/logging/log", () => ({ debug: vi.fn(), log: vi.fn(), warn: vi.fn() }));
 
 describe("accountRoutes v2 usage", () => {
     let harness: LightSqliteHarness;

@@ -46,5 +46,8 @@ export function buildSessionOrganizationSnapshotFromProjection(
         labels: Object.values(projection.labelsByLabelKey),
         attentionStandings: Object.values(projection.attentionStandingsBySessionId),
         ...(projection.sessionAppearancesSupported ? { sessionAppearances: Object.values(projection.sessionAppearancesBySessionId) } : {}),
+        ...(projection.sessionAppearancePresentationsSupported
+            ? { sessionAppearancePresentations: Object.values(projection.sessionAppearancePresentationsBySessionId ?? {}) }
+            : {}),
     };
 }
