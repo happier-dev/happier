@@ -31,7 +31,8 @@ const observation: MachineAdminAccessObservationV1 = { version: 1, observedAt: 1
 const roots: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 
-async function fixture(previousPolicy: MachineAdminAccessV1, policy: MachineAdminAccessV1, daemonUsername: string | null = 'happier') {
+async function fixture(previousPolicy: MachineAdminAccessV1, policy: MachineAdminAccessV1, daemonUsername: string | null = 'happier',
+    sudoImplementation: 'classic' | 'sudo-rs' = 'classic') {
     const root = await mkdtemp(join(tmpdir(), 'happier-admin-host-')); roots.push(root); redirected.directory = root;
     vi.spyOn(process, 'getuid').mockReturnValue(0);
     if (previousPolicy.mode !== 'none' && !daemonUsername) throw new Error('Previous grant fixture needs a known daemon');
@@ -71,9 +72,27 @@ async function fixture(previousPolicy: MachineAdminAccessV1, policy: MachineAdmi
             const lines = createInterface({ input: stdin, crlfDelay: Infinity });
             const iterator = lines[Symbol.asyncIterator]();
             if (invocation.args.includes('-S')) {
-                stderr.write(`[happier-sudo-password:${previousPolicy.mode === 'ask' ? previousPolicy.administratorUsername : ask.administratorUsername}]\n`);
-                const answer = await iterator.next(); passwords.push(answer.value ?? '');
-                if (answer.done || answer.value !== 'one-use-password') throw new Error('Authentication denied');
+                if (previousPolicy.mode !== 'ask') throw new Error('Only Ask requests native authentication');
+                const administrator = previousPolicy.administratorUsername;
+                if (invocation.args[invocation.args.indexOf('-u') + 1] !== administrator) {
+                    throw new Error('The native password principal must be the selected administrator');
+                }
+                const separator = invocation.args.indexOf('--');
+                const inner = invocation.args.slice(separator + 1);
+                if (inner[0] !== 'sudo' || !inner.includes('-S') || inner[inner.indexOf('-u') + 1] !== 'root') {
+                    throw new Error('Ask needs both native sudo hops');
+                }
+                for (const args of [invocation.args, inner]) {
+                    const prompt = args[args.indexOf('-p') + 1]?.replace('%p', administrator);
+                    if (!prompt) throw new Error('Expected a named sudo password prompt');
+                    // sudo-rs 0.2.13 converse.rs wraps the custom prompt in
+                    // PAM's label; rpassword.rs emits a newline after input.
+                    // Preserve those actual bytes through the host readline.
+                    stderr.write(sudoImplementation === 'sudo-rs' ? `[sudo: ${prompt}] Password: ` : prompt);
+                    const answer = await iterator.next(); passwords.push(answer.value ?? '');
+                    stderr.write('\n');
+                    if (answer.done || answer.value !== 'one-use-password') throw new Error('Authentication denied');
+                }
             }
             const running = runMachineSetupEffectInternal(invocation.args.slice(invocation.args.indexOf('effect-internal') + 1), {
                 stdin: rootInput, stdout: rootOutput, signal: controller.signal,
@@ -160,8 +179,9 @@ describe.runIf(process.platform !== 'win32')('administrator policy host reconcil
         await expect(readFile(MANAGED_SUDOERS_PATH, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
-    it('authenticates Ask once and sends one admitted APPLY in the same installed child', async () => {
-        const f = await fixture(ask, preauthorized), runner = createSystemTasksRunner({ kinds: {} });
+    it.each(['classic', 'sudo-rs'] as const)('authenticates both %s hops for the selected administrator before one admitted APPLY', async implementation => {
+        const policy = { version: 1, mode: 'ask', administratorUsername: 'happier-bootstrap' } as const;
+        const f = await fixture(policy, preauthorized, 'happier', implementation), runner = createSystemTasksRunner({ kinds: {} });
         await runner.startAdmitted({ taskId: 'admin-operation', kind: 'machine.setup.apply.v1', params: {} }, { run: async ctx =>
             createMachineAdminAccessHost({ ...f.dependencies, prompt: ctx.prompt, emit: ctx.emit }).reconcile({ ...f.input, signal: ctx.signal }) });
         await new Promise(resolve => setImmediate(resolve));
@@ -169,7 +189,7 @@ describe.runIf(process.platform !== 'win32')('administrator policy host reconcil
         await runner.respond({ taskId: 'admin-operation', expectedPromptKind: 'sudo.password', answer: { password: 'one-use-password' } });
         expect(await runner.wait({ taskId: 'admin-operation' })).toMatchObject({ ok: true, data: { outcome: 'applied' } });
         expect(f.nativeFailures).toEqual([]);
-        expect(f.launches).toHaveLength(1); expect(f.passwords).toEqual(['one-use-password']);
+        expect(f.launches).toHaveLength(1); expect(f.passwords).toEqual(['one-use-password', 'one-use-password']);
         expect(f.requests).toHaveLength(1);
         expect(f.requests[0]).toMatchObject({ mode: 'apply', machineId: f.input.machineId,
             installationId: 'installation-a', operationId: f.input.operationId });

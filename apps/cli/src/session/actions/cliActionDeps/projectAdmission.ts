@@ -2,12 +2,11 @@ import type { CliActionDepsParams } from './types';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { readProjectAccountRows, ProjectAccountRowsInput, ProjectAccountRowsSelection } from '@/workspaces/projectAccountRows';
-import type { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
+import { createCliMachineActionServerScopeCurrent } from './machineTransport';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 export type CliProjectAdmissionFailure = Readonly<{ ok: false; errorCode: string; error: string; details?: unknown }>;
 export type CliProjectAdmission = Readonly<{
   resolveProjectHomeIdentity: () => Promise<string>;
@@ -20,25 +19,26 @@ export type CliProjectAdmission = Readonly<{
   readProjectRequesterArtifact: (ref: Parameters<NonNullable<ExternalActionExecutionAuthorizationV1['requesterAccountProjection']>['readArtifact']>[0], options: Readonly<{ signal?: AbortSignal }> | undefined, context: ActionExecutorContext) => ReturnType<NonNullable<ExternalActionExecutionAuthorizationV1['requesterAccountProjection']>['readArtifact']>;
 }>;
 export function createCliProjectAdmission(
-  params: Pick<CliActionDepsParams, 'serverId' | 'serverIdentityId' | 'credentials' | 'serverHttpBaseUrl'>,
+  params: Pick<CliActionDepsParams, 'serverId' | 'serverIdentityId' | 'credentials' | 'serverHttpBaseUrl' | 'machineActionDirectTargetTransport'>,
   { projectHomeId, actionHomeId, executionRunActionFailure }: Readonly<{
     projectHomeId: string;
     actionHomeId: string;
     executionRunActionFailure: (code: string, message?: string, details?: unknown) => CliProjectAdmissionFailure;
   }>,
 ): CliProjectAdmission {
+  const isMachineActionServerScopeCurrent = createCliMachineActionServerScopeCurrent(params);
   const resolveProjectHomeIdentity = async () => {
     const { resolveServerProfileHomeIdentityId } = await import("@/server/serverProfiles");
     return params.serverIdentityId ?? await resolveServerProfileHomeIdentityId(projectHomeId) ?? actionHomeId;
   };
   const projectHomeAdmission = async (serverId?: string, context?: ActionExecutorContext) => {
-    const { isServerProfileHomeIdentity } = await import("@/server/serverProfiles");
-    const isActionHome = (candidate: string) => params.serverIdentityId
-      ? areServerProfileIdentifiersEquivalent(projectHomeId, candidate, identifier =>
-        identifier === projectHomeId || identifier === params.serverIdentityId ? params.serverIdentityId : undefined)
-      : isServerProfileHomeIdentity(projectHomeId, candidate);
+    // Consume the transport's Home decision, including the creator's profile
+    // label retained by an approved replay on this exact local Machine.
+    const isActionHome = (candidate: string) => candidate.length > 0 && isMachineActionServerScopeCurrent({
+      serverId: candidate, machineId: context?.executionRunTargetMachineId, context, signal: context?.signal,
+    });
     if ((serverId !== undefined && !await isActionHome(serverId.trim()))
-      || (context?.serverId && !await isActionHome(context.serverId))
+      || (context?.serverId && context.serverId !== serverId?.trim() && !await isActionHome(context.serverId))
       || (params.serverId === undefined && configuration.activeServerId !== projectHomeId)) {
       return executionRunActionFailure('server_scope_mismatch');
     }

@@ -64,15 +64,10 @@ export type CliMachineActionServerScopeCurrent = (input: Readonly<{
     signal?: AbortSignal;
   }>) => Promise<boolean>;
 
-export function createCliMachineActionTransport(
-  params: Pick<CliActionDepsParams, 'credentials' | 'serverId' | 'serverIdentityId' | 'serverHttpBaseUrl' | 'machineActionDirectTargetTransport' | 'externalActionMachineRequestPrivateKey' | 'externalActionMachineInstallationId'>,
-): Readonly<{ callMachineAction: CliMachineActionCall; isMachineActionServerScopeCurrent: CliMachineActionServerScopeCurrent }> {
-  const isMachineActionServerScopeCurrent = async (input: Readonly<{
-    serverId?: string | null;
-    machineId?: ActionExecutorContext['executionRunTargetMachineId'];
-    context?: ActionExecutorContext;
-    signal?: AbortSignal;
-  }>): Promise<boolean> => {
+export function createCliMachineActionServerScopeCurrent(
+  params: Pick<CliActionDepsParams, 'serverId' | 'serverIdentityId' | 'serverHttpBaseUrl' | 'machineActionDirectTargetTransport'>,
+): CliMachineActionServerScopeCurrent {
+  return async input => {
     if (!input.serverId) return true;
     const context = input.context;
     const replayHomeIdentityId = input.machineId && context?.bypassApprovals
@@ -98,6 +93,12 @@ export function createCliMachineActionTransport(
     })(input.signal);
     return current?.machineId === input.machineId && current?.serverIdentityId === replayHomeIdentityId;
   };
+}
+
+export function createCliMachineActionTransport(
+  params: Pick<CliActionDepsParams, 'credentials' | 'serverId' | 'serverIdentityId' | 'serverHttpBaseUrl' | 'machineActionDirectTargetTransport' | 'externalActionMachineRequestPrivateKey' | 'externalActionMachineInstallationId'>,
+): Readonly<{ callMachineAction: CliMachineActionCall; isMachineActionServerScopeCurrent: CliMachineActionServerScopeCurrent }> {
+  const isMachineActionServerScopeCurrent = createCliMachineActionServerScopeCurrent(params);
   // Resource handlers require current Machine admission even on this daemon.
   // Derive every Action method from the canonical families; watches share that ingress.
   const authenticatedMachineIngressMethods = new Set<string>([
