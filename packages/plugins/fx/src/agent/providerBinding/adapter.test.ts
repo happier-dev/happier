@@ -8,6 +8,8 @@ import { AgentProviderBindingMaterializationV1Schema } from '@happier-dev/protoc
 import { describe, expect, it, vi } from 'vitest';
 import { authorizeResolvedAgentNativeExecLaunchForHost, createStablePluginExecService, issueAgentNativeLaunchQualifierForHost } from '@/plugins/runtime/invocation/services/exec';
 
+import { sanitizeNativeAgentSessionBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
+import { readSessionPreparationFailureDiagnostic } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { composeProviderBindingMaterialization } from '@/providers/spawn/compose';
 import { FX_PLUGIN } from '../../manifest.js';
 import { VERCEL_AI_GATEWAY_PROVIDER_CONTRIBUTION } from '../../../../vercel-ai-gateway/src/provider/contribution.js';
@@ -209,6 +211,39 @@ describe('registered FX Provider binding', () => {
       expect(probes).toBe(2);
       await runtime.sessions!.open({ kind: 'create', sessionId: 'native', cwd: '/workspace' }, { ...context, protocols: { acp: { open: async () => { opened += 1; return {} as never; } } } } as AgentSessionRuntimeContext);
       expect(probes).toBe(2);
+    } finally { await activation.dispose(); }
+  });
+
+  it.each([
+    ['native_status_failed', { exitCode: 1 }],
+    ['native_status_failed', { stdoutTruncated: true }],
+    ['native_status_failed', { malformed: true }],
+    ['auth_not_confirmed', { auth: 'missing' }],
+    ['auth_not_confirmed', { auth_expired: true }],
+    ['credential_source_mismatch', { auth: 'fx login' }],
+    ['model_mismatch', { model: 'other-model' }],
+  ] as const)('preserves the closed FX verification predicate %s through startup diagnostics (%j)', async (reason, change) => {
+    const activation = await createPluginTestkit({ manifest: FX_PLUGIN.manifest, module: { activate: FX_PLUGIN.activate } });
+    try {
+      const agent = activation.registration('agents', 'fx');
+      if (!agent?.factory) throw new Error('FX runtime factory missing');
+      const runtime = await agent.factory({ plugin: { id: FX_PLUGIN.manifest.id, version: FX_PLUGIN.manifest.version }, agent: { id: 'fx' }, signal: new AbortController().signal });
+      const request: AgentSessionOpenRequest = { kind: 'create', sessionId: 'fx-test', cwd: '/workspace',
+        providerBinding: { connectionId: 'pc_fx', upstream: { protocol: 'openai-chat', normalizedUrl: 'https://provider.example/v1', credential: 'apiKey' },
+          model: { id: 'selected-model', name: 'Selected' }, materialization: { v: 1, kind: 'configFile', rootPath: '/private/provider', relativePaths: ['.fx/settings.json'] } } };
+      // Native process status is the external boundary; its unselected data must
+      // never escape with the closed predicate identifying this refusal.
+      const context = { signal: new AbortController().signal, session: { services: { nativeLaunch: Object.freeze({}) } },
+        services: { exec: { run: async () => ({ termination: { observed: { kind: 'exit', exitCode: 'exitCode' in change ? change.exitCode : 0 }, requestedBy: { kind: 'none' } },
+          stdout: new TextEncoder().encode('malformed' in change ? 'PRIVATE_NATIVE_OUTPUT' : JSON.stringify({ kind: 'status', auth: 'configured provider', auth_refreshable: false, model: 'selected-model', private: 'PRIVATE_NATIVE_OUTPUT', ...change })),
+          stderr: new TextEncoder().encode('PRIVATE_NATIVE_STDERR'), stdoutTruncated: 'stdoutTruncated' in change, stderrTruncated: false }) } },
+        protocols: { acp: { open: async () => { throw new Error('Refused status must not open ACP'); } } } } as unknown as AgentSessionRuntimeContext;
+      let caught: unknown;
+      try { await runtime.sessions!.open(request, context); } catch (error) { caught = error; }
+      expect(caught).toMatchObject({ code: 'fx_provider_credential_source_mismatch' });
+      const diagnostic = readSessionPreparationFailureDiagnostic(sanitizeNativeAgentSessionBoundaryError(caught, true));
+      expect(diagnostic.failureCause).toMatchObject({ phase: 'authentication', failureReason: 'unknown', providerErrorCode: `fx_provider_${reason}` });
+      expect(JSON.stringify(diagnostic)).not.toContain('PRIVATE_NATIVE');
     } finally { await activation.dispose(); }
   });
 

@@ -34,16 +34,22 @@ async function verifyProviderBinding(
 ): Promise<void> {
   const binding = request.providerBinding;
   if (!binding) return;
-  const refuse = () => new PluginError({ code: 'fx_provider_credential_source_mismatch',
-    message: 'FX could not confirm the selected Provider and model in its private native settings. Retry the connection or inspect FX status.' });
-  if (binding.materialization.kind !== 'configFile' || binding.upstream.protocol !== 'openai-chat') throw refuse();
+  const refuse = (reason: 'unsupported_binding' | 'native_launch_unavailable' | 'native_status_failed'
+    | 'auth_not_confirmed' | 'credential_source_mismatch' | 'model_mismatch') => new PluginError({
+    code: 'fx_provider_credential_source_mismatch',
+    message: 'FX could not confirm the selected Provider and model in its private native settings. Retry the connection or inspect FX status.',
+    // Preserve only the predicate we decided here, never native status values,
+    // model IDs, output or credentials. The host already carries this envelope.
+    details: { failureCause: { phase: 'authentication', failureReason: 'unknown', providerErrorCode: `fx_provider_${reason}` } },
+  });
+  if (binding.materialization.kind !== 'configFile' || binding.upstream.protocol !== 'openai-chat') throw refuse('unsupported_binding');
   const nativeLaunch = context.session
     ? context.session.services.nativeLaunch
     : context.executionRun.services.nativeLaunch;
-  if (!nativeLaunch) throw refuse();
-  // Both commands use the host's finalized launch environment. FX's saved
-  // credential_source overrides environment precedence; never silently bill a
-  // different account. This explicit check runs once per bound spawn, not at
+  if (!nativeLaunch) throw refuse('native_launch_unavailable');
+  // Both commands use the host's finalized launch environment. Confirm the
+  // native source and model before ACP so a different account is never silently
+  // billed. This explicit check runs once per bound spawn, not at
   // idle or after native provider changes (configOptions owns the live route).
   let result: PluginProcessResult;
   try {
@@ -51,14 +57,15 @@ async function verifyProviderBinding(
       args: FX_AUTH_STATUS_COMMAND.args, cwd: request.cwd }, { signal: context.signal, nativeLaunch });
   } catch {
     context.signal.throwIfAborted();
-    throw refuse();
+    throw refuse('native_status_failed');
   }
   const observed = result.termination.observed;
   const facts = parseFxStatusCommand({ ok: observed.kind === 'exit' && observed.exitCode === 0 && !result.stdoutTruncated,
     exitCode: observed.kind === 'exit' ? observed.exitCode : null, stdout: new TextDecoder().decode(result.stdout), stderr: '' });
-  if (facts.status.state !== 'logged_in'
-    || (facts.credentialSource !== 'AI_GATEWAY_API_KEY' && facts.credentialSource !== 'configured provider')
-    || facts.model !== binding.model.id) throw refuse();
+  if (facts.status.state === 'unknown' && facts.status.reason === 'probe_failed') throw refuse('native_status_failed');
+  if (facts.status.state !== 'logged_in') throw refuse('auth_not_confirmed');
+  if (facts.credentialSource !== 'AI_GATEWAY_API_KEY' && facts.credentialSource !== 'configured provider') throw refuse('credential_source_mismatch');
+  if (facts.model !== binding.model.id) throw refuse('model_mismatch');
 }
 
 export const createFxAgentRuntime: AgentRuntimeFactory = () => ({ surfaces: { terminal: FX_TERMINAL_CONTRIBUTION }, sessions: {

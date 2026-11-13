@@ -2,6 +2,7 @@ import type {
   AgentAcpRuntimeDefinition,
   AgentAcpRuntimeExtensions,
   AgentSessionRuntimeContext,
+  AgentSessionOpenRequest,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createAcpToolNameInferencePreset } from '@happier-dev/plugin-sdk/agents/runtime';
 
@@ -30,10 +31,11 @@ import {
 
 export function buildGrokAcpRuntimeDefinition(
   launchEnvironment: Readonly<Record<string, string>>,
+  providerBinding?: AgentSessionOpenRequest['providerBinding'],
 ): AgentAcpRuntimeDefinition {
   return Object.freeze({
     auth: {
-      selectMethod: (context) => selectGrokAuthentication(context, launchEnvironment),
+      selectMethod: (context) => selectGrokAuthentication(context, launchEnvironment, providerBinding),
     },
     permissions: { scope: 'session' as const },
     parameterizedModelPicker: true,

@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inspect } from 'node:util';
@@ -68,6 +68,35 @@ describe('applyConnectedServiceStateSharingDescriptor', () => {
       expect(parse(await readFile(join(targetRoot, 'config.toml'), 'utf8'))).toEqual({ theme: 'dark',
         auth: { preferred_method: 'oidc', keep: 'native' }, models: { first: { max_tokens: 123 }, second: { name: 'other' } } });
       expect(await readFile(join(sourceRoot, 'config.toml'), 'utf8')).toBe(source);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('keeps transformed native config parents private without changing source directory permissions', async () => {
+    if (process.platform === 'win32') return; // POSIX privacy bits have no Windows ACL meaning.
+    const root = await mkdtemp(join(tmpdir(), 'happier-private-transformed-config-'));
+    const sourceRoot = join(root, 'native');
+    const targetRoot = join(root, 'selected');
+    try {
+      await mkdir(join(sourceRoot, '.fx'), { recursive: true, mode: 0o755 });
+      const sourceMode = (await lstat(join(sourceRoot, '.fx'))).mode & 0o777;
+      await writeFile(join(sourceRoot, '.fx/settings.json'), '{"theme":"retained"}');
+      const input = {
+        descriptor: createDescriptor({ configEntries: [{ path: '.fx/settings.json', mode: 'force_copied' }] }),
+        nativeSourceContext: { sourceRoot, sourceEnv: {} },
+        target: { targetMaterializedRoot: targetRoot, targetMaterializedEnv: {} },
+        configMode: 'copied' as const, requestedStateMode: 'isolated' as const, effectiveStateMode: 'isolated' as const, cwd: root,
+        copyTransformByEntry: { '.fx/settings.json': (content: string) => JSON.stringify({ ...JSON.parse(content), provider: 'selected' }) },
+      };
+      const first = await applyConnectedServiceStateSharingDescriptor(input);
+      expect(JSON.parse(await readFile(join(targetRoot, '.fx/settings.json'), 'utf8'))).toEqual({ theme: 'retained', provider: 'selected' });
+      expect((await lstat(join(targetRoot, '.fx'))).mode & 0o777).toBe(0o700);
+      expect((await lstat(join(targetRoot, '.fx/settings.json'))).mode & 0o777).toBe(0o600);
+      // An unchanged replay must repair a parent retained from an older copy.
+      await chmod(join(targetRoot, '.fx'), 0o755);
+      await applyConnectedServiceStateSharingDescriptor({ ...input, existingManifest: first.manifest });
+      expect((await lstat(join(targetRoot, '.fx'))).mode & 0o777).toBe(0o700);
+      expect((await lstat(join(sourceRoot, '.fx'))).mode & 0o777).toBe(sourceMode);
+      expect(await readFile(join(sourceRoot, '.fx/settings.json'), 'utf8')).toBe('{"theme":"retained"}');
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 

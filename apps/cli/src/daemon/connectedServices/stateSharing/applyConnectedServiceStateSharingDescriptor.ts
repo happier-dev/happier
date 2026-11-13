@@ -1,4 +1,4 @@
-import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
 
 import { parse, stringify, TomlError, type TomlTable, type TomlValue } from 'smol-toml';
@@ -240,12 +240,16 @@ async function copyEntryWithOptionalTransform(params: Readonly<{
 }
 
 async function writeConfigContentIfChanged(destinationPath: string, content: string): Promise<void> {
+  const parentPath = dirname(destinationPath);
+  await mkdir(parentPath, { recursive: true, mode: 0o700 });
+  // A retained materialized directory can predate private config projection.
+  // Repair only this destination parent; Windows permissions are owned by ACLs.
+  if (process.platform !== 'win32') await chmod(parentPath, 0o700);
   try {
     if (await readFile(destinationPath, 'utf8') === content) return;
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
   }
-  await mkdir(dirname(destinationPath), { recursive: true });
   await writeFile(destinationPath, content, { encoding: 'utf8', mode: 0o600 });
 }
 

@@ -42,11 +42,17 @@ describe('registered Grok Provider binding', () => {
     try {
       const adapter = activation.registration('agents', 'grok')?.providerBinding;
       if (!adapter) throw new Error('Grok must register its Provider binding adapter');
-      const result = await adapter.materialize(input(adapter));
+      const selected = input(adapter);
+      const result = await adapter.materialize(selected);
+      const binding = { connectionId: selected.binding.selection.connectionId, model: selected.binding.selection.model,
+        upstream: { protocol: 'openai-chat', normalizedUrl: selected.binding.endpoint.normalizedUrl, credential: 'apiKey' },
+        materialization: { v: 1, kind: 'spawnEnv' } } as const;
       const environment = Object.fromEntries(result.env.flatMap(row => typeof row.value === 'string' ? [[row.name, row.value]] : []));
       const initializeMetadata = { defaultAuthMethodId: 'cached_token' };
       const expected = { methodId: 'xai.api_key', metadata: { headless: true } };
-      expect(buildGrokAcpRuntimeDefinition(environment).auth?.selectMethod?.({ advertisedMethodIds, initializeMetadata })).toEqual(expected);
+      expect(buildGrokAcpRuntimeDefinition({}, binding).auth?.selectMethod?.({ advertisedMethodIds, initializeMetadata })).toEqual(expected);
+      expect(buildGrokAcpRuntimeDefinition({ GROK_CONNECTED_ACCOUNT_MODE: 'subscription' }, binding).auth?.selectMethod?.({ advertisedMethodIds, initializeMetadata })).toEqual(expected);
+      expect(() => buildGrokAcpRuntimeDefinition({}, binding).auth?.selectMethod?.({ advertisedMethodIds: ['cached_token'], initializeMetadata })).toThrow();
       expect(GROK_PREFLIGHT_SESSION_CONTROLS.catalogs.selectAuthentication({
         initializeResult: { authMethods: advertisedMethodIds.map(id => ({ id })), _meta: initializeMetadata },
         probe: { accountSettings: null, environment: {},

@@ -24,7 +24,7 @@ export const createGrokAgentRuntime: AgentRuntimeFactory = () => ({
           executable: { kind: 'systemTool', id: GROK_ACP_COMMAND.toolId },
           args: buildGrokSkillArgs(request.skills),
         },
-        definition: buildGrokAcpRuntimeDefinition(request.launchEnvironment?.values ?? {}),
+        definition: buildGrokAcpRuntimeDefinition(request.launchEnvironment?.values ?? {}, request.providerBinding),
         extensions: createGrokAcpRuntimeExtensions(context),
       });
     },
@@ -36,7 +36,7 @@ export const createGrokAgentRuntime: AgentRuntimeFactory = () => ({
             executable: { kind: 'systemTool', id: GROK_ACP_COMMAND.toolId },
             args: buildGrokSkillArgs(request.skills),
           },
-          definition: buildGrokAcpRuntimeDefinition(request.launchEnvironment?.values ?? {}),
+          definition: buildGrokAcpRuntimeDefinition(request.launchEnvironment?.values ?? {}, request.providerBinding),
         });
       },
     },

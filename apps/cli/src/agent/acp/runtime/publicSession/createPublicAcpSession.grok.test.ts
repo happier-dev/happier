@@ -16,9 +16,10 @@ import { createPublicAcpSession, type PublicAcpComposerDependencies } from './cr
 it.each([
   { mode: 'subscription', configChoices: false, catalogPresent: true },
   { mode: 'api-key', configChoices: false, catalogPresent: true },
+  { mode: 'provider-binding', configChoices: false, catalogPresent: false },
   { mode: 'subscription', configChoices: true, catalogPresent: true },
   { mode: 'subscription', configChoices: false, catalogPresent: false },
-] as const)('withholds unverified $mode choices while preserving native prompts and model controls (config choices: $configChoices, catalog present: $catalogPresent)', async ({ mode, configChoices, catalogPresent }) => {
+] as const)('authenticates $mode while preserving native prompts and model controls (config choices: $configChoices, catalog present: $catalogPresent)', async ({ mode, configChoices, catalogPresent }) => {
   await withTempDir('grok-default-model-', async directory => {
     const capture = join(directory, 'requests.json');
     // Only the native process is fake. The Grok factory, shared ACP model
@@ -35,8 +36,9 @@ it.each([
         writeFileSync(${JSON.stringify(capture)}, JSON.stringify(requests));
         let result = {};
         if (r.method === 'initialize') result = { protocolVersion:1, agentCapabilities:{},
-          authMethods:[{id:'cached_token',name:'Subscription'},{id:'xai.api_key',name:'API key'}],
+          authMethods:${JSON.stringify(mode === 'provider-binding' ? [{id:'xai.api_key',name:'API key'}] : [{id:'cached_token',name:'Subscription'},{id:'xai.api_key',name:'API key'}])},
           _meta:{defaultAuthMethodId:'xai.api_key'} };
+        if (r.method === 'authenticate' && ${mode === 'provider-binding'} && process.env.XAI_API_KEY !== 'selected-fixture-key') throw new Error('Selected Provider key missing');
         if (r.method === 'session/new') result = { sessionId:'native-grok',
           ...(${catalogPresent} ? {models:{ currentModelId,
             availableModels:[{modelId:'native-default',name:'Native default'},{modelId:'native-next',name:'Native next'}] }} : {}),
@@ -57,6 +59,8 @@ it.each([
     const dependencies: PublicAcpComposerDependencies = {
       pluginId:PLUGIN_MANIFEST.id, agentId:'grok', signal, isCurrent:() => true,
       systemTools:{ resolve:async () => ({toolId:'grok-cli',launch:{kind:'binary',executablePath:process.execPath,args:[script]}}) },
+      ...(mode === 'provider-binding' ? { resolveHostLaunch: async () => ({ command:process.execPath, args:[script],
+        env:{XAI_API_KEY:'selected-fixture-key'}, unsetEnv:[], timeouts:{} }) } : {}),
       interactions:{async request() {throw new Error('Unexpected interaction');}},
       media:{async registerSourceRoot() {throw new Error('Unexpected media');}},
       models:publications.services.models, modes:publications.services.modes,
@@ -68,7 +72,7 @@ it.each([
         async openExecutionRunV1() {throw new Error('Unexpected finite request');}}} });
     let metadata = createTestMetadata({ sessionModelsV1: { v: 1, agentId: 'grok', updatedAt: 1,
       currentModelId: 'native-default', availableModels: [{id:'old-global',name:'Previous global catalog'}] } });
-    const publisher = catalogPresent ? null : createSessionRuntimeModelsPublisher({
+    const publisher = catalogPresent || mode === 'provider-binding' ? null : createSessionRuntimeModelsPublisher({
       agentId: 'grok', source: publications.modelsSource,
       session: { getMetadataSnapshot: () => metadata,
         updateMetadataAsCurrentPublisher: updater => { metadata = updater(metadata); },
@@ -78,12 +82,15 @@ it.each([
     try {
       if (!factory.sessions) throw new Error('Grok sessions unavailable');
       const session = await factory.sessions.open({kind:'create',sessionId:'grok-model-session',cwd:directory,
-        launchEnvironment:{values:{GROK_CONNECTED_ACCOUNT_MODE:mode},unset:[]}},context.context);
+        ...(mode === 'provider-binding' ? { providerBinding:{ connectionId:'selected-provider',
+          upstream:{protocol:'openai-chat',normalizedUrl:'https://provider.example/v1',credential:'apiKey'},
+          model:{id:'native-default',name:'Native default'},materialization:{v:1,kind:'spawnEnv'} } }
+          : { launchEnvironment:{values:{GROK_CONNECTED_ACCOUNT_MODE:mode},unset:[]} })},context.context);
       const events: AgentSessionRuntimeEvent[] = [];
       const watch = session.watch(event => events.push(event));
       try {
         if (catalogPresent) expect(publications.modelsSource.read().currentModelId).toBe('native-default');
-        expect.soft(publications.modelsSource.read().models).toEqual([]);
+        if (mode !== 'provider-binding') expect.soft(publications.modelsSource.read().models).toEqual([]);
         if (publisher) {
           await publisher.flush();
           expect(metadata.sessionModelsV1).toMatchObject({ currentModelId: 'native-default', availableModels: [] });
@@ -91,7 +98,9 @@ it.each([
         await session.send({inputIds:['first'],input:{text:'Use the native default'},delivery:{kind:'newTurn',turnId:'first'}});
         await expect.poll(() => events.some(event => event.kind === 'turn-complete' && event.turnId === 'first')).toBe(true);
         if (!catalogPresent) {
-          const requests = JSON.parse(await readFile(capture,'utf8')) as Array<{method:string;currentModelId:string}>;
+          const requests = JSON.parse(await readFile(capture,'utf8')) as Array<{method:string;params:{methodId?:string};currentModelId:string}>;
+          expect(requests.filter(request => request.method === 'authenticate').map(request => request.params.methodId))
+            .toEqual([mode === 'subscription' ? 'cached_token' : 'xai.api_key']);
           expect(requests.filter(request => request.method === 'session/prompt').map(request => request.currentModelId)).toEqual(['native-default']);
           return;
         }

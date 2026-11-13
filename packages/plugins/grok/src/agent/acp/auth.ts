@@ -1,6 +1,7 @@
 import type {
   AgentAcpAuthenticationContext,
   AgentAcpAuthenticationSelection,
+  AgentSessionOpenRequest,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { readGrokConnectedAccountMode, type GrokConnectedAccountMode } from '../connectedAccount.js';
@@ -19,9 +20,12 @@ function readExactNonemptyString(value: unknown): string | null {
 export function selectGrokAuthentication(
   context: AgentAcpAuthenticationContext,
   launchEnvironment: Readonly<Record<string, string>>,
+  providerBinding?: AgentSessionOpenRequest['providerBinding'],
 ): AgentAcpAuthenticationSelection | null {
   return selectGrokAuthenticationFromFacts(context, { hasApiKey: Boolean(launchEnvironment.XAI_API_KEY?.trim()),
-    selectedMode: readGrokConnectedAccountMode(launchEnvironment) });
+    // The host adds Provider secrets to native launch after this selector is built.
+    // Consume the admitted binding without reading or duplicating its credential.
+    selectedMode: providerBinding ? 'api-key' : readGrokConnectedAccountMode(launchEnvironment) });
 }
 
 export function selectGrokAuthenticationFromFacts(
