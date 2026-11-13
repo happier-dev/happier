@@ -1816,7 +1816,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         })) };
       }
       const managedMachineDaemonIngress = requiresManagedMachineDaemonIngress(spec.id, executionPlacement, controlControllerTarget,
-        pairedTerminal ? admittedInput : undefined);
+        ordinary || pairedTerminal ? admittedInput : undefined);
       const clientAction = spec.cli !== undefined && (!settingsAction || settingsInput?.success)
         && executionPlacement === 'client';
       const declaredDaemonIngress = spec.originalExecution?.daemonIngressSurfaces?.includes('cli') === true;
@@ -1935,11 +1935,13 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           signal: combineInvocationSignals(invocationSignal, context.signal) }) : null;
       const originalMachineTarget = workspaceMachineId !== undefined || sessionDispatch !== null || selectedOriginalMachine?.kind === 'ready' || (context.externalActionTarget
         ? context.externalActionTarget.kind === 'machine' : Boolean(params.machineId || liveResultMachineId));
-      const ownManagedNativeIngress = pairedTerminal && managedMachineDaemonIngress && executionPlacement === 'account'
+      const ownManagedNativeIngress = (ordinary || pairedTerminal) && managedMachineDaemonIngress && executionPlacement === 'account'
         && !controlControllerTarget && !originalMachineTarget;
       if (ownManagedNativeIngress && !ownDaemon) return { context: originalContext,
           invocation: createOneShotPatInvocation(async () => ({ ok: false, errorCode: 'daemon_unavailable',
-            error: 'daemon_unavailable', effectAttempted: false })) };
+            error: 'No daemon is running for this Account and Home.', effectAttempted: false,
+            details: { phase: 'managed_machine_daemon_ingress',
+              remedy: 'Start a daemon using this CLI identity and Home, then retry.' } })) };
       if (originalCliCaller && hasStoredSessionCredentialProvenance(credentials) && executionPlacement === 'machine'
         && deploymentPreparationOperationForActionV1(spec.id) === 'create' && !ownDaemon && !originalMachineTarget) {
         const configuredTarget = await resolveConfiguredMachineTarget();

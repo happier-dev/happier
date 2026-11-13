@@ -40,6 +40,15 @@ requires the resulting fresh reviewed plan; it is not a repair for missing facts
 
 ## Managed bootstrap settlement (0.3 development)
 
+Controllerless Account provisioning checks, options and acquisition from a
+stored-session CLI use the matching Account/Home daemon's native runtime through
+signed-root ingress. They retain Account placement without inventing a controller
+Machine. A named CLI identity does not itself start a daemon. If its matching
+daemon is unavailable, the CLI returns `daemon_unavailable`,
+`effectAttempted: false`, and `managed_machine_daemon_ingress` details with
+guidance to start that identity's daemon and retry. Account row and intent
+operations retain their Home HTTP transport.
+
 Session spawn starts the Happier controller in the custodian's accessible cwd.
 The admitted Session directory travels through the existing requested-directory
 carrier; native Exec passes that directory and the member's home through the
