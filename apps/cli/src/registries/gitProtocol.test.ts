@@ -1,3 +1,4 @@
+import {runAddedHostedSession} from '@/agent/runtime/lifecycle/hostedSessionScope';
 import {mkdir,mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {randomBytes} from 'node:crypto';
 import {createServer} from 'node:https';
@@ -13,6 +14,42 @@ import {createRegistryHostV1} from '@happier-dev/protocol/registries';
 import {createEphemeralTlsServerFixture} from '../../../../packages/tests/src/testkit/tls/ephemeralTlsServerFixture.mjs';
 
 describe('Node Git registry transport',()=>{
+  it('preserves each hosted Session TLS config while adding its managed registry header',async()=>{
+    const tls=await createEphemeralTlsServerFixture();
+    const received=new Map<string,unknown[]>();
+    const server=createServer({key:await readFile(tls.privateKeyPath),cert:await readFile(tls.leafCertificatePath)},(req,res)=>{
+      const path=req.url?.split('/')[1]??'';
+      received.set(path,[...(received.get(path)??[]),req.headers['x-api-key']]);
+      res.writeHead(404);res.end();
+    });
+    await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+    const homes=await Promise.all(['first','second'].map(name=>mkdtemp(join(tmpdir(),'happier-registry-'+name+'-'))));
+    try{
+      const address=server.address();if(!address||typeof address==='string')throw new Error('HTTPS fixture port unavailable');
+      vi.stubEnv('GIT_CONFIG_COUNT','0');
+      await Promise.all(homes.map((home,index)=>{
+        const id='session-'+index,url='https://127.0.0.1:'+address.port+'/'+id;
+        return runAddedHostedSession({environment:{...process.env,HOME:home,USERPROFILE:home,GIT_SSL_CAINFO:undefined,
+          GIT_CONFIG_COUNT:String(index+1),GIT_CONFIG_KEY_0:'http.https://127.0.0.1:'+address.port+'/.sslCAInfo',
+          GIT_CONFIG_VALUE_0:tls.caCertificatePath,
+          ...(index===1?{GIT_CONFIG_KEY_1:'http.'+url+'.extraHeader',GIT_CONFIG_VALUE_1:'X-Api-Key: inherited-header'}:{}),
+        },workingDirectory:home,end(){}},async()=>{
+          const git=createRegistryGitProtocolV1({resolveToken:async()=>id+'-token'});
+          const source:RegistrySourceV1={id,title:id,format:'git',url,kinds:['skill'],enabled:true,addedAt:0,
+            token:{secretRef:'happier:shared-secret:v1:'+id,header:{name:'X-Api-Key'}}};
+          const forbidden=async()=>{throw new Error('Git transport must not use registry HTTP');};
+          await expect(git.list({git,http:{getJson:forbidden,getText:forbidden,getBytes:forbidden}},{source,kind:'skill'}))
+            .rejects.toMatchObject({status:{state:'unreachable'}});
+          expect(received.get(id)).toEqual([id+'-token']);
+        });
+      }));
+    }finally{
+      vi.unstubAllEnvs();
+      await new Promise<void>(resolve=>server.close(()=>resolve()));
+      await Promise.all(homes.map(home=>rm(home,{recursive:true,force:true})));await tls.cleanup();
+    }
+  });
+
   it.each([true,false])('acquires one filtered repository for a selected-content operation and retires it afterwards (filter supported: %s)',async filterSupported=>{
     const cwd=await mkdtemp(join(tmpdir(),'happier-registry-selected-'));
     const command=async(args:string[])=>{const result=await runScmCommand({bin:'git',cwd,args});if(!result.success)throw new Error(result.stderr);return result.stdout.trim();};

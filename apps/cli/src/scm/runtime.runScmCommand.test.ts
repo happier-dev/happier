@@ -1,3 +1,4 @@
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -6,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-    createHostScmCommandRunner, probeScmExecutableAvailable as probeCanonicalScmExecutableAvailable,
+    resolveTildePath, createHostScmCommandRunner, probeScmExecutableAvailable as probeCanonicalScmExecutableAvailable,
     runScmCommand as runCanonicalScmCommand, runWithScmCommandRunner,
 } from './runtime';
 
@@ -28,6 +29,25 @@ const runScmCommand: typeof runCanonicalScmCommand = input => runWithScmCommandR
 const probeScmExecutableAvailable: typeof probeCanonicalScmExecutableAvailable = input => runWithScmCommandRunner(runner, () => probeCanonicalScmExecutableAvailable(input));
 
 describe('runScmCommand output limits', () => {
+    it('inherits each hosted Session environment and home path while preserving command overrides', async () => {
+        const homes = ['first', 'second'].map(name => mkdtempSync(join(tmpdir(), 'happier-scm-' + name + '-')));
+        try {
+            await Promise.all(homes.map((home, index) => runAddedHostedSession({
+                environment: { ...process.env, HOME: home, USERPROFILE: home, GIT_CONFIG_COUNT: '1',
+                    GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'session-' + index },
+                workingDirectory: home, end() {},
+            }, async () => {
+                const cwd = resolveTildePath('~');
+                const inherited = await runScmCommand({ bin: 'git', cwd, args: ['config', '--get', 'user.name'] });
+                expect(inherited).toMatchObject({ success: true, stdout: 'session-' + index + '\n' });
+                const overridden = await runScmCommand({ bin: 'git', cwd, args: ['config', '--get', 'user.name'],
+                    env: { GIT_CONFIG_VALUE_0: 'command-override' } });
+                expect(overridden).toMatchObject({ success: true, stdout: 'command-override\n' });
+                expect(cwd).toBe(home);
+            })));
+        } finally { for (const home of homes) rmSync(home, { recursive: true, force: true }); }
+    });
+
     it('preserves complete valid output beyond the former implicit 4 MiB ceiling', async () => {
         const workspace = mkdtempSync(join(tmpdir(), 'happier-scm-runtime-large-'));
         try {

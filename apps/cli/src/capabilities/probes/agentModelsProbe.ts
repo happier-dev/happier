@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { PreflightSessionControlsProbeParams } from './preflightSessionControlsProbeAdapterTypes';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
@@ -192,7 +193,7 @@ function tryResolveAgentCliLaunchSpec(agentId: CatalogAgentLookupId, processEnv?
 
 function shouldFailClosedForMissingCli(params: {
   agentId: CatalogAgentLookupId;
-  env?: NodeJS.ProcessEnv;
+  env: NodeJS.ProcessEnv;
   backendTarget?: BackendTargetRefV1;
   runtimeDescriptorV1?: RuntimeDescriptorV1;
 }): boolean {
@@ -455,13 +456,14 @@ async function probeAgentModels(params: {
   profileCacheKey?: string | null;
   configOptionOverrides?: Readonly<Record<string, ProbedCatalogOptionValue>>;
 }): Promise<ProbedAgentModelsResult> {
-  const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
+  const env = params.env ?? sessionProcessEnvironment();
+  const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : sessionWorkingDirectory();
   const modelConfig = resolveAgentModelConfigForLookupId(params.agentId);
   const configuredAcp = params.backendTarget?.kind === 'configuredAcpBackend';
   if (!configuredAcp && !isDynamicModelProbeEnabled({
     modelConfig,
     accountSettings: params.accountSettings ?? null,
-    environment: params.env ?? process.env,
+    environment: env,
   })) {
     return { ...resolveStaticFallback(params.agentId), refreshError: false };
   }
@@ -477,7 +479,7 @@ async function probeAgentModels(params: {
     accountSettings: params.accountSettings,
     acpCatalogSnapshot: params.acpCatalogSnapshot,
     pluginSettings: params.pluginSettings,
-    env: params.env,
+    env,
   });
   const cacheKey = buildAgentProbeCacheKey({
     agentId: params.agentId,
@@ -524,7 +526,7 @@ async function probeAgentModels(params: {
       agentModelsProbeCache.setSuccess(cacheKey, result, { nowMs: Date.now(), ttlMs });
       return result;
     };
-    if (shouldFailClosedForMissingCli(params)) {
+    if (shouldFailClosedForMissingCli({ ...params, env })) {
       const unavailable = buildUnavailable(params.agentId);
       return failedResult(unavailable);
     }
@@ -541,7 +543,7 @@ async function probeAgentModels(params: {
         savedSecretOperationContext: params.savedSecretOperationContext,
         machineAdmission: params.machineAdmission,
         secretSources: params.secretSources,
-        processEnv: params.env, acquireEnvironment: params.acquireEnvironment,
+        processEnv: env, acquireEnvironment: params.acquireEnvironment,
         signal: params.signal,
         cleanupScope: params.cleanupScope,
         onBackend: async (backend) => {
@@ -576,7 +578,7 @@ async function probeAgentModels(params: {
             registrySnapshot: params.registrySnapshot ?? readCurrentContributionRegistry(),
             catalogEntry: params.catalogEntry,
             agentId: params.agentId,
-            processEnv: params.env ?? process.env,
+            processEnv: env,
             materializedEnv: params.materializedEnv, acquireEnvironment: params.acquireEnvironment,
           }, async ({ env, acquireEnvironment }) => await probeModelsRaw({
             backendTarget: params.backendTarget,

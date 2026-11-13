@@ -1,15 +1,14 @@
-import { spawn } from 'child_process';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { isAbsolute, relative, sep } from 'path';
-import path, { delimiter as PATH_DELIMITER } from 'node:path';
-import { accessSync, closeSync, constants as fsConstants, openSync, realpathSync, writeSync } from 'node:fs';
+import path from 'node:path';
+import { closeSync, openSync, realpathSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 import { createScmCapabilities } from '@happier-dev/protocol/scm/capabilities';
 import type { ScmWorkingSnapshot } from '@happier-dev/protocol/scm';
 import type { BackendCommandRunInput, BackendCommandStreamInput } from '@happier-dev/plugin-sdk/scm/backend';
 import { resolveBackendCommandMaxOutputBytes } from '@happier-dev/plugin-sdk/scm/backend';
-import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
@@ -19,7 +18,8 @@ import {
     type FilesystemAccessPolicy,
 } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
-import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
+import { resolveLocalExecutableOnPath } from '@/workspaces/source/localWorkspaceSource';
+import { currentWorkspaceSource, type WorkspaceChildProcess } from '@/workspaces/source/workspaceSource';
 import { isSpawnWorkingDirectoryMissing } from '@/processes/spawnFailure/classifySpawnFailure';
 import { isHostGitPush, runHostGitPush } from './gitHostTransport';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
@@ -81,30 +81,8 @@ function resolveScmInstallableKey(command: string, installableKey?: string): str
     return installableKey ?? SCM_INSTALLABLE_KEYS[command as keyof typeof SCM_INSTALLABLE_KEYS] ?? `dep.${command}`;
 }
 
-function isSafeScmCommandName(command: string): boolean {
-    return /^[A-Za-z0-9._-]+$/.test(command);
-}
-
 function resolveSystemScmBinPath(command: string, env: NodeJS.ProcessEnv): string | null {
-    if (!isSafeScmCommandName(command)) return null;
-    if (process.platform === 'win32') {
-        return resolveWindowsCommandOnPath(command, env);
-    }
-
-    const pathRaw = typeof env.PATH === 'string' ? env.PATH.trim() : '';
-    if (!pathRaw) return null;
-
-    for (const dir of pathRaw.split(PATH_DELIMITER).map((entry) => entry.trim()).filter(Boolean)) {
-        const candidate = path.join(dir, command);
-        try {
-            accessSync(candidate, fsConstants.X_OK);
-            return candidate;
-        } catch {
-            // Keep searching PATH entries.
-        }
-    }
-
-    return null;
+    return resolveLocalExecutableOnPath(command, env);
 }
 
 export type ScmCommandInput = {
@@ -143,12 +121,13 @@ export function createHostScmCommandRunner(input: Readonly<{
     assertLaunchCurrent?(signal: AbortSignal): Promise<void>;
 }>): ScmCommandRunner {
     return async command => {
-        if (!resolveSystemScmBinPath(command.bin, process.env)) {
+        const sessionEnvironment = sessionProcessEnvironment();
+        if (!resolveSystemScmBinPath(command.bin, sessionEnvironment)) {
             return { success: false, stdout: '', exitCode: -1, executableMissing: true,
                 stderr: `SCM executable not found for ${resolveScmInstallableKey(command.bin, command.installableKey)} (${command.bin})` };
         }
         const { createStablePluginExecService } = await import('@/plugins/runtime/invocation/services/exec');
-        const environment = Object.fromEntries(Object.entries({ ...process.env, ...command.env })
+        const environment = Object.fromEntries(Object.entries({ ...sessionEnvironment, ...command.env })
             .filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
         const exec = createStablePluginExecService({
             environment, signal: command.signal ?? new AbortController().signal,
@@ -157,7 +136,7 @@ export function createHostScmCommandRunner(input: Readonly<{
             async resolvePath() { throw new Error('SCM requires an absolute working directory'); },
             async resolveExecutable() { throw new Error('SCM requires a resolved system tool'); },
             systemTools: { async resolve(request) {
-                const executablePath = resolveSystemScmBinPath(request.toolId, process.env);
+                const executablePath = resolveSystemScmBinPath(request.toolId, sessionEnvironment);
                 if (!executablePath) throw Object.assign(new Error('SCM executable is unavailable'), { code: 'scm_executable_missing' });
                 return { grantId: `scm:${request.toolId}`, toolId: request.toolId, displayName: request.toolId,
                     source: 'system', executablePath, launch: { kind: 'binary', executablePath } };
@@ -299,8 +278,19 @@ export function runScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {
 }
 
 function runHostScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {
-    const execEnv = input.env ? { ...process.env, ...input.env } : process.env;
-    const resolvedBinPath = resolveSystemScmBinPath(input.bin, execEnv);
+    const environment = sessionProcessEnvironment();
+    const execEnv = input.env ? { ...environment, ...input.env } : environment;
+    // The admitted request's workspace source resolves and runs the command where the workspace lives.
+    const source = currentWorkspaceSource();
+    const resolved = source.resolveExecutable(input.bin, execEnv);
+    return resolved instanceof Promise
+        ? resolved.then(resolvedBinPath => runResolvedScmCommand(input, source, execEnv, resolvedBinPath))
+        : runResolvedScmCommand(input, source, execEnv, resolved);
+}
+
+function runResolvedScmCommand(input: ScmCommandInput, source: ReturnType<typeof currentWorkspaceSource>,
+    execEnv: NodeJS.ProcessEnv, resolvedBinPath: string | null): Promise<ScmExecResult> {
+    const workingDirectoryMissing = () => source.kind === 'local' && isSpawnWorkingDirectoryMissing(input.cwd);
     if (!resolvedBinPath) {
         const installableKey = resolveScmInstallableKey(input.bin, input.installableKey);
         return Promise.resolve({
@@ -329,20 +319,16 @@ function runHostScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {
 
     return new Promise((resolvePromise) => {
         let stdoutDescriptor: number | undefined;
-        let child: ReturnType<typeof spawn>;
+        let child: WorkspaceChildProcess;
         try {
             if (input.stdoutFilePath) stdoutDescriptor = openSync(input.stdoutFilePath, 'wx', 0o600);
-            child = spawn(resolvedBinPath, input.args, {
-                cwd: input.cwd,
-                env: execEnv,
-                stdio: ['pipe', stdoutDescriptor ?? 'pipe', 'pipe'],
-                windowsHide: true,
-            });
+            child = source.spawn({ command: resolvedBinPath, args: input.args, cwd: input.cwd, env: execEnv,
+                ...(stdoutDescriptor !== undefined ? { stdoutFd: stdoutDescriptor } : {}) });
         } catch (error) {
             if (stdoutDescriptor !== undefined) closeSync(stdoutDescriptor);
             resolvePromise({ success: false, stdout: '',
                 stderr: error instanceof Error ? error.message : String(error), exitCode: -1,
-                ...(isSpawnWorkingDirectoryMissing(input.cwd) ? { workingDirectoryMissing: true as const } : {}) });
+                ...(workingDirectoryMissing() ? { workingDirectoryMissing: true as const } : {}) });
             return;
         }
 
@@ -390,7 +376,7 @@ function runHostScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {
         const terminate = () => {
             if (terminationRequested) return;
             terminationRequested = true;
-            void terminateProcessTree(child).then(
+            void child.terminateTree().then(
                 () => {
                     terminationSettled = true;
                     finishClosedResult();
@@ -527,7 +513,7 @@ function runHostScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {
                 exitCode: -1,
                 timedOut,
                 outputLimitExceeded,
-                ...(isSpawnWorkingDirectoryMissing(input.cwd) ? { workingDirectoryMissing: true as const } : {}),
+                ...(workingDirectoryMissing() ? { workingDirectoryMissing: true as const } : {}),
             });
         });
 
@@ -726,7 +712,7 @@ export function createNonRepositorySnapshot(input: {
 
 export function resolveTildePath(
     inputPath: string,
-    env: NodeJS.ProcessEnv = process.env,
+    env: NodeJS.ProcessEnv = sessionProcessEnvironment(),
     platform: NodeJS.Platform = process.platform,
 ): string {
     return expandHomeDirPath(inputPath.trim(), env, platform);

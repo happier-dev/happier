@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
@@ -35,7 +36,7 @@ export function createRegistryGitProtocolV1(input: Readonly<{ signal?: AbortSign
       try { header = registryTokenHeader(source, value); } catch { throw new RegistryFetchErrorV1({ state: 'auth_failed' }); }
       // Git matches scoped headers against the original URL, not redirect URLs.
       // A credentialed repository must therefore use its final HTTPS destination.
-      const rawCount = process.env.GIT_CONFIG_COUNT ?? '';
+      const rawCount = sessionProcessEnvironment().GIT_CONFIG_COUNT ?? '';
       const inheritedCount = rawCount === '' ? 0 : /^[ \t\n\r\f\v]*[+-]?\d+$/.test(rawCount) ? Number(rawCount) : NaN;
       // Preserve operator config (including scoped TLS trust) and its errors;
       // derive exact indices only, leaving Git's own config limits unchanged.

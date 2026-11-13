@@ -30,6 +30,7 @@ import type { TerminationEvent } from '@/subprocess/supervision/types';
 import { finalizeSessionChildEnvironment } from '@/session/runtime/control/finalizeSessionChildEnvironment';
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import { withHostProcessOwnerEnvironment } from '@/processes/ownerTag';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 type SpawnLike = (
     command: string,
@@ -114,7 +115,7 @@ function assertNotAborted(signal: AbortSignal | undefined): void {
 function buildAgentCliProcessEnv(
     request: HostTerminalAgentCliResolutionRequest,
 ): NodeJS.ProcessEnv {
-    const processEnv: NodeJS.ProcessEnv = { ...process.env };
+    const processEnv: NodeJS.ProcessEnv = { ...sessionProcessEnvironment() };
     for (const [key, value] of Object.entries(request.env ?? {})) {
         if (typeof value === 'string') {
             processEnv[key] = value;
@@ -216,7 +217,7 @@ export function createTerminalRuntimeProcessService(deps?: Readonly<{
 
             const childEnvironment = finalizeSessionChildEnvironment({
                 environment: buildScopedProcessEnv({
-                    baseEnv: process.env,
+                    baseEnv: sessionProcessEnvironment(),
                     explicitEnv: request.env,
                     unsetEnvKeys: request.unsetEnvKeys,
                 }),

@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
 import { execFileWithDeadline, type ExecFileWithDeadlineOptions } from '@happier-dev/cli-common/process';
@@ -167,10 +168,11 @@ export function registerBashHandler(
             // Legacy callers retain their default budget; Action callers explicitly select
             // zero and supply the containing operation's cancellation signal.
             const timeout = data.timeout ?? 30000;
+            const environment = mergeProcessEnv({ baseEnv: sessionProcessEnvironment(), explicitEnv: data.env });
             const options: ExecFileWithDeadlineOptions = {
                 cwd,
                 ...(timeout > 0 ? { timeout } : {}),
-                ...(data.env ? { env: mergeProcessEnv({ baseEnv: process.env, explicitEnv: data.env }) } : {}),
+                env: environment,
                 ...(context?.signal ? { signal: context.signal } : {}),
                 windowsHide: true,
                 // Both machine exec paths return output. The containing Action/Workflow
@@ -198,7 +200,7 @@ export function registerBashHandler(
                         launch: { command: '/bin/sh', args: argv ? ['-c', 'exec "$@"', 'happier-raw-exec', ...argv]
                             : ['-c', data.command!],
                             cwd: data.cwd && (data.cwd !== '/' || data.cwdMode === 'explicit') ? cwd : nativeOperation.workingDirectory,
-                            env: Object.fromEntries(Object.entries(options.env ?? process.env)
+                            env: Object.fromEntries(Object.entries(environment)
                                 .filter((entry): entry is [string, string] => typeof entry[1] === 'string')) },
                         agentIsolation: nativeOperation.agentIsolation, requesterIdentity, agentLaunchKind: 'exec', signal: context.signal,
                         assertCurrent: () => context.signal.throwIfAborted(),

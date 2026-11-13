@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { isRecord } from '@happier-dev/plugin-sdk';
 import { SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
@@ -246,7 +247,7 @@ export function resolveCliProbeInvokeParams(params?: Record<string, unknown>): R
     const timeoutMsRaw = rawParams.timeoutMs;
     const cwdRaw = rawParams.cwd;
     return {
-        cwd: typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? expandHomeDirPath(cwdRaw.trim()) : process.cwd(),
+        cwd: typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? expandHomeDirPath(cwdRaw.trim(), sessionProcessEnvironment()) : sessionWorkingDirectory(),
         timeoutMs: typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS,
     };
 }
@@ -258,6 +259,7 @@ export async function invokeCliPreflightMethod(
     dependencies: CliProbeDependencies,
     requestContext: CliProbeRequestContext,
 ): Promise<CapabilitiesInvokeResponse> {
+    const processEnv = sessionProcessEnvironment();
     const { cwd, timeoutMs } = resolveCliProbeInvokeParams(params);
     const registrySnapshot = dependencies.agentRegistrySnapshot ?? readCurrentContributionRegistry();
     const probeDeadlineAtMs = requestContext.deadlineAtMs ?? Date.now() + timeoutMs;
@@ -323,7 +325,7 @@ export async function invokeCliPreflightMethod(
     if (method === 'probeModels' && !isDynamicModelProbeEnabled({
         modelConfig,
         accountSettings: probeContext.accountSettings,
-        environment: process.env,
+        environment: processEnv,
     })) {
         return { ok: true, result: await probeAgentModelsBestEffort({
             agentId,
@@ -344,7 +346,7 @@ export async function invokeCliPreflightMethod(
             timeoutMs,
             accountSettings: probeContext.accountSettings,
             credentials: probeContext.credentials,
-            env: process.env,
+            env: processEnv,
         }) };
     }
     let preparedProfile: Awaited<ReturnType<typeof prepareProfileProbeEnvironment>> = null;
@@ -375,7 +377,7 @@ export async function invokeCliPreflightMethod(
             secretReferenceOverlay,
             accountSettings: probeContext.accountSettings,
             credentials: probeContext.credentials,
-            processEnv: { ...process.env, ...explicitEnvironment },
+            processEnv: { ...processEnv, ...explicitEnvironment },
             savedSecretOperationContext: dependencies.savedSecretOperationContext,
             machineAdmission: requestContext.machineAdmission,
             secretSources: dependencies.secretSources,
@@ -397,7 +399,7 @@ export async function invokeCliPreflightMethod(
             parsed: { agentArgs: [] },
             settings: probeContext.accountSettings ?? {},
             pluginSettings: probeContext.pluginSettings ?? {},
-            environment: { ...process.env, ...explicitEnvironment, ...(profileProbeEnvironment?.env ?? {}) },
+            environment: { ...processEnv, ...explicitEnvironment, ...(profileProbeEnvironment?.env ?? {}) },
             startOrigin: 'daemon',
         })
         : undefined;
@@ -415,7 +417,7 @@ export async function invokeCliPreflightMethod(
         ? { [nativeHome.environmentKey]: nativeHomeValue }
         : {};
     const profileProcessEnv: NodeJS.ProcessEnv = {
-        ...process.env,
+        ...processEnv,
         ...nativeLaunchEnvironment,
         ...explicitEnvironment,
         ...(profileProbeEnvironment?.env ?? {}),
@@ -469,7 +471,7 @@ export async function invokeCliPreflightMethod(
         ? AbortSignal.any([requestContext.signal, preparationLifetime.signal]) : preparationLifetime.signal;
     try {
     requestContext.signal?.throwIfAborted();
-    const ambientEnv = stripUnsetEnvironmentVariables(process.env, connectedServiceProbeEnvironment.unsetEnvKeys);
+    const ambientEnv = stripUnsetEnvironmentVariables(processEnv, connectedServiceProbeEnvironment.unsetEnvKeys);
     let materializedEnv = buildScopedProcessEnv({
         baseEnv: {
             ...nativeLaunchEnvironment,

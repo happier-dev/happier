@@ -1,8 +1,8 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 /**
  * Low-level difftastic wrapper - just arguments in, string out
  */
 
-import { spawn } from 'child_process';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'path';
 import { platform } from 'os';
@@ -10,6 +10,7 @@ import { projectPath } from '@/projectPath';
 import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/keys';
 import { ensureOptionalRuntime } from '@/packagedRuntime/installables/optionalRuntimes';
 import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 export interface DifftasticResult {
     exitCode: number
@@ -19,12 +20,18 @@ export interface DifftasticResult {
 
 export interface DifftasticOptions {
     cwd?: string
+    /** The admitted request's cancellation; aborting tears the child tree down. */
+    signal?: AbortSignal
+}
+
+function createDifftasticAbortError(): Error {
+    return Object.assign(new Error('Difftastic operation was aborted'), { name: 'AbortError', code: 'DIFFTASTIC_ABORTED' });
 }
 
 /**
  * Get the platform-specific binary path
  */
-async function getBinaryPath(): Promise<string> {
+export async function resolveDifftasticBinaryPath(): Promise<string> {
     const platformName = platform();
     const binaryName = platformName === 'win32' ? 'difft.exe' : 'difft';
     const bundled = resolveCliRuntimeAssetPath('tools', 'unpacked', binaryName);
@@ -41,19 +48,19 @@ async function getBinaryPath(): Promise<string> {
  * @returns Promise with exit code, stdout and stderr
  */
 export async function run(args: string[], options?: DifftasticOptions): Promise<DifftasticResult> {
-    const binaryPath = await getBinaryPath();
-    
+    // The admitted request's workspace source owns where difftastic runs.
+    const source = currentWorkspaceSource();
+    const signal = options?.signal;
+    if (signal?.aborted) throw createDifftasticAbortError();
+    const launch = await source.toolLaunch({ tool: 'difftastic', args });
+    if (signal?.aborted) throw createDifftasticAbortError();
+
     return new Promise((resolve, reject) => {
-        const child = spawn(binaryPath, args, {
-            stdio: ['pipe', 'pipe', 'pipe'],
-            cwd: options?.cwd,
-            env: {
-                ...process.env,
-                // Force color output when needed
-                FORCE_COLOR: '1'
-            },
-            windowsHide: true,
-        });
+        const child = source.spawn({ command: launch.command, args: launch.args,
+            ...(options?.cwd !== undefined ? { cwd: options.cwd } : {}),
+            // Force color output when needed
+            env: { ...sessionProcessEnvironment(), FORCE_COLOR: '1' } });
+        if (launch.stdin !== undefined) child.stdin.end(launch.stdin);
 
         let stdout = '';
         let stderr = '';
@@ -66,7 +73,15 @@ export async function run(args: string[], options?: DifftasticOptions): Promise<
             stderr += data.toString();
         });
 
+        const onAbort = () => {
+            // A cancelled request stops the diff it no longer consumes.
+            void child.terminateTree().catch(() => {});
+            reject(createDifftasticAbortError());
+        };
+        signal?.addEventListener('abort', onAbort, { once: true });
+
         child.on('close', (code) => {
+            signal?.removeEventListener('abort', onAbort);
             resolve({
                 exitCode: typeof code === 'number' ? code : -1,
                 stdout,
@@ -75,6 +90,7 @@ export async function run(args: string[], options?: DifftasticOptions): Promise<
         });
 
         child.on('error', (err) => {
+            signal?.removeEventListener('abort', onAbort);
             reject(err);
         });
     });

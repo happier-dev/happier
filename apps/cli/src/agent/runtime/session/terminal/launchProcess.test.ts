@@ -1,5 +1,15 @@
 import { EventEmitter } from 'node:events';
-import type { ChildProcess } from 'node:child_process';
+import type { ChildProcess, SpawnOptions } from 'node:child_process';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { resolveBackendExecutionSurfacesFromNativeAgentRuntime } from '@/agent/runtime/registry/backendEngineSurfaceBindings';
+import { createExternalContributionFixtures } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit';
+import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import { createTerminalRuntimeHostOrchestration } from './orchestration';
+import { createTerminalRuntimeProjectionHostService } from './projection';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -21,6 +31,69 @@ class FakeChildProcess extends EventEmitter {
 }
 
 describe('createTerminalRuntimeProcessService', () => {
+    it('keeps executable resolution and native child baselines scoped across interleaved Sessions with partial overlays', async () => {
+        const root = await createTempDir('native-terminal-scopes-');
+        const envScope = createEnvKeyScope(['HAPPIER_CODEX_PATH']);
+        const executables = new Map<string, string>();
+        try {
+            for (const id of ['ambient', 'a', 'b']) {
+                const directory = join(root, id);
+                await mkdir(directory);
+                const executable = join(directory, process.platform === 'win32' ? 'codex.exe' : 'codex');
+                await writeFile(executable, 'native executable boundary fixture');
+                if (process.platform !== 'win32') await chmod(executable, 0o755);
+                executables.set(id, executable);
+            }
+            envScope.patch({ HAPPIER_CODEX_PATH: executables.get('ambient') });
+            const observations = await Promise.all(['a', 'b'].map(id => runAddedHostedSession({
+                environment: { HAPPIER_CODEX_PATH: executables.get(id), HOME: join(root, id), PATH: join(root, id, 'bin'),
+                    NODE_EXTRA_CA_CERTS: join(root, id, 'trust.pem'), REMOVE_NATIVE_ENV: 'remove', OVERLAY_VALUE: 'baseline' },
+                workingDirectory: root, end() {},
+            }, async () => {
+                await Promise.resolve();
+                const grants = createPluginExecSystemToolGrantStore();
+                let observed: { command: string; options: SpawnOptions } | undefined;
+                // Only physical process creation is substituted. Catalog/native
+                // resolution, grants, host orchestration and supervision stay real.
+                const processService = createTerminalRuntimeProcessService({
+                    verifyExecutableGrant: grants.verifyGrant, registerExecutableGrant: grants.register,
+                    spawn(command, _args, options) {
+                        observed = { command, options };
+                        const child = new FakeChildProcess() as unknown as ChildProcess;
+                        queueMicrotask(() => child.emit('exit', 0, null));
+                        return child;
+                    },
+                });
+                const session = createMutableApiSessionClientFixture({ sessionId: 'native-terminal-' + id });
+                const host = createTerminalRuntimeHostOrchestration({ session, process: processService,
+                    messageQueue: new MessageQueue2<string, string>(mode => mode),
+                    projection: createTerminalRuntimeProjectionHostService({ session }),
+                });
+                if (!host) throw new Error('Native terminal host unavailable');
+                const { backend } = createExternalContributionFixtures('codex');
+                const surfaces = resolveBackendExecutionSurfacesFromNativeAgentRuntime({ backend, agentId: 'codex',
+                    runtime: { surfaces: { terminal: { resolveLaunch: async () => ({ argv: [], environment: {
+                        values: { NATIVE_PLAN_ENV: id, OVERLAY_VALUE: 'native-plan' }, unset: ['REMOVE_NATIVE_ENV'],
+                    } }) } } },
+                    isCurrent: () => true, declaredAgentSurfaceFamilies: new Set(['terminalRuntime']), diagnostics: [],
+                });
+                const result = await surfaces.terminalRuntime?.launch?.({ sessionId: session.sessionId,
+                    directory: root, metadata: {}, env: { PARTIAL_OVERLAY: id, OVERLAY_VALUE: 'request' }, host,
+                    runWithCurrentPublisherPermit: async effect => ({ status: 'completed', value: await effect() }),
+                });
+                expect(result).toEqual({ type: 'process_exited', exitCode: 0 });
+                return observed;
+            })));
+            for (const [index, id] of ['a', 'b'].entries()) {
+                expect(observations[index]?.command).toBe(executables.get(id));
+                expect(observations[index]?.options.env).toMatchObject({ HOME: join(root, id), PATH: join(root, id, 'bin'),
+                    NODE_EXTRA_CA_CERTS: join(root, id, 'trust.pem'), PARTIAL_OVERLAY: id,
+                    NATIVE_PLAN_ENV: id, OVERLAY_VALUE: 'native-plan' });
+                expect(observations[index]?.options.env?.REMOVE_NATIVE_ENV).toBeUndefined();
+            }
+        } finally { envScope.restore(); await removeTempDir(root); }
+    });
+
     it('shares pending stop failure and permits physical retry before retaining success', async () => {
         // ChildProcess and termination are OS boundaries; supervision and grant verification stay real.
         const child = new FakeChildProcess() as unknown as ChildProcess;

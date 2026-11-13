@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { PreflightSessionControlsProbeParams } from './preflightSessionControlsProbeAdapterTypes';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
@@ -71,9 +72,10 @@ function shouldFailClosedForMissingCli(params: {
   agentId: CatalogAgentLookupId;
   backendTarget?: BackendTargetRefV1;
   runtimeDescriptorV1?: RuntimeDescriptorV1;
+  env: NodeJS.ProcessEnv;
 }): boolean {
   if (params.backendTarget?.kind === 'configuredAcpBackend') return false;
-  return resolveAgentCliLaunchSpec(params.agentId) === null;
+  return resolveAgentCliLaunchSpec(params.agentId, { processEnv: params.env ?? sessionProcessEnvironment() }) === null;
 }
 
 function resolveAgentSessionModesKindForLookupId(agentId: CatalogAgentLookupId) {
@@ -196,7 +198,8 @@ export async function probeAgentModesBestEffort(params: {
   profileCacheKey?: string | null;
 }): Promise<ProbedAgentModesResult> {
   const nowMs = Date.now();
-  const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
+  const env = params.env ?? sessionProcessEnvironment();
+  const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : sessionWorkingDirectory();
   const probeVariant = await resolveAgentProbeVariant({
     agentId: params.agentId,
     catalogEntry: params.catalogEntry,
@@ -208,7 +211,7 @@ export async function probeAgentModesBestEffort(params: {
     accountSettings: params.accountSettings,
     acpCatalogSnapshot: params.acpCatalogSnapshot,
     pluginSettings: params.pluginSettings,
-    env: params.env,
+    env,
   });
   const cacheKey = buildAgentProbeCacheKey({
     agentId: params.agentId,
@@ -232,7 +235,7 @@ export async function probeAgentModesBestEffort(params: {
     const preflightAdapter = await resolvePreflightSessionControlsProbeAdapter(params.agentId, params.catalogEntry);
     // A declared preflight hook resolves and checks its own executable; its
     // transport may differ from the Agent's interactive CLI.
-    if (!preflightAdapter?.probeModesRaw && shouldFailClosedForMissingCli(params)) {
+    if (!preflightAdapter?.probeModesRaw && shouldFailClosedForMissingCli({ ...params, env })) {
       const unavailable = buildUnavailable(params.agentId);
       agentModesProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_MODES_FAILURE_TTL_MS });
       return unavailable;
@@ -246,7 +249,7 @@ export async function probeAgentModesBestEffort(params: {
           registrySnapshot: params.registrySnapshot ?? readCurrentContributionRegistry(),
           catalogEntry: params.catalogEntry,
           agentId: params.agentId,
-          processEnv: params.env ?? process.env,
+          processEnv: env,
           materializedEnv: params.materializedEnv, acquireEnvironment: params.acquireEnvironment,
         }, async ({ env, acquireEnvironment }) => await preflightAdapter.probeModesRaw!({
           backendTarget: params.backendTarget,
@@ -296,7 +299,7 @@ export async function probeAgentModesBestEffort(params: {
         savedSecretOperationContext: params.savedSecretOperationContext,
         machineAdmission: params.machineAdmission,
         secretSources: params.secretSources,
-        processEnv: params.env, acquireEnvironment: params.acquireEnvironment,
+        processEnv: env, acquireEnvironment: params.acquireEnvironment,
         signal: params.signal,
         cleanupScope: params.cleanupScope,
         onBackend: async (backend) => await probeModesFromAcpBackend({ backend, timeoutMs }).catch(() => null),

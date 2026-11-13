@@ -1,3 +1,4 @@
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { tmpdir } from 'node:os';
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -59,6 +60,27 @@ async function settleWithin<T>(
 }
 
 describe('registerBashHandler', () => {
+    it('runs concurrent hosted Session RPC commands with their environment and explicit overrides', async () => {
+        const directories = await Promise.all(['first', 'second'].map(name => mkdtemp(join(tmpdir(), 'happier-bash-' + name + '-'))));
+        try {
+            await Promise.all(directories.map((cwd, index) => runAddedHostedSession({
+                environment: { ...process.env, HAPPIER_SCOPE_FIXTURE: 'session-' + index },
+                workingDirectory: cwd, end() {},
+            }, async () => {
+                const { handlers, registrar } = createRegistrar();
+                registerBashHandler(registrar, cwd);
+                for (const explicit of [undefined, 'request-override']) {
+                    const result = await handlers.get(RPC_METHODS.BASH)!({ timeout: 0,
+                        argv: [process.execPath, '-e', "process.stdout.write(JSON.stringify({value:process.env.HAPPIER_SCOPE_FIXTURE,cwd:process.cwd()}))"],
+                        ...(explicit ? { env: { HAPPIER_SCOPE_FIXTURE: explicit } } : {}),
+                    });
+                    expect(result).toMatchObject({ success: true,
+                        stdout: JSON.stringify({ value: explicit ?? 'session-' + index, cwd: await realpath(cwd) }) });
+                }
+            })));
+        } finally { await Promise.all(directories.map(cwd => rm(cwd, { recursive: true, force: true }))); }
+    });
+
     it('admits ordinary owner automation while refusing Agent and unsupported member raw execution', async () => {
         // Only the current Home proof is substituted; ingress, identity selection,
         // production registration and the subprocess all remain real.

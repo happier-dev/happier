@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { PreflightSessionControlsProbeParams } from './preflightSessionControlsProbeAdapterTypes';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -54,9 +55,10 @@ function shouldFailClosedForMissingCli(params: {
   agentId: CatalogAgentLookupId;
   backendTarget?: BackendTargetRefV1;
   runtimeDescriptorV1?: RuntimeDescriptorV1;
+  env: NodeJS.ProcessEnv;
 }): boolean {
   if (params.backendTarget?.kind === 'configuredAcpBackend') return false;
-  return resolveAgentCliLaunchSpec(params.agentId) === null;
+  return resolveAgentCliLaunchSpec(params.agentId, { processEnv: params.env ?? sessionProcessEnvironment() }) === null;
 }
 
 function normalizeDynamicConfigOptions(raw: unknown): Pick<ProbedAgentConfigOptionsResult, 'configOptions' | 'modelConfigOptionId' | 'refreshError' | 'refreshErrorMessage' | 'source'> | null {
@@ -110,7 +112,8 @@ export async function probeAgentConfigOptionsBestEffort(params: {
   configOptionOverrides?: Readonly<Record<string, ProbedCatalogOptionValue>>;
 }): Promise<ProbedAgentConfigOptionsResult> {
   const nowMs = Date.now();
-  const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
+  const env = params.env ?? sessionProcessEnvironment();
+  const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : sessionWorkingDirectory();
   const probeVariant = await resolveAgentProbeVariant({
     agentId: params.agentId,
     catalogEntry: params.catalogEntry,
@@ -122,7 +125,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
     accountSettings: params.accountSettings,
     acpCatalogSnapshot: params.acpCatalogSnapshot,
     pluginSettings: params.pluginSettings,
-    env: params.env,
+    env,
   });
   const cacheKey = buildAgentProbeCacheKey({
     agentId: params.agentId,
@@ -149,7 +152,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
       accountSettings: params.accountSettings, credentials: params.credentials,
       acpCatalogSnapshot: params.acpCatalogSnapshot, savedSecretOperationContext: params.savedSecretOperationContext,
       machineAdmission: params.machineAdmission, secretSources: params.secretSources,
-      processEnv: params.env, acquireEnvironment: params.acquireEnvironment, signal: params.signal, cleanupScope: params.cleanupScope,
+      processEnv: env, acquireEnvironment: params.acquireEnvironment, signal: params.signal, cleanupScope: params.cleanupScope,
       onBackend: async (backend) => {
         return normalizeDynamicConfigOptions(await probeAcpSessionControlsFromBackend({ backend,
           timeoutMs: params.timeoutMs ?? 15_000, signal: params.signal, configOptionOverrides: params.configOptionOverrides }));
@@ -171,7 +174,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
     const preflightAdapter = await resolvePreflightSessionControlsProbeAdapter(params.agentId, params.catalogEntry);
     // A declared preflight hook resolves and checks its own executable; its
     // transport may differ from the Agent's interactive CLI.
-    if (!preflightAdapter?.probeConfigOptionsRaw && shouldFailClosedForMissingCli(params)) {
+    if (!preflightAdapter?.probeConfigOptionsRaw && shouldFailClosedForMissingCli({ ...params, env })) {
       const unavailable = buildUnavailable(params.agentId);
       agentConfigOptionsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_CONFIG_OPTIONS_FAILURE_TTL_MS });
       return unavailable;
@@ -184,7 +187,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
           registrySnapshot: params.registrySnapshot ?? readCurrentContributionRegistry(),
           catalogEntry: params.catalogEntry,
           agentId: params.agentId,
-          processEnv: params.env ?? process.env,
+          processEnv: env,
           materializedEnv: params.materializedEnv, acquireEnvironment: params.acquireEnvironment,
         }, async ({ env, acquireEnvironment }) => await preflightAdapter.probeConfigOptionsRaw!({
           backendTarget: params.backendTarget,
