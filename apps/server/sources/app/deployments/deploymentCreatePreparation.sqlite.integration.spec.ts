@@ -590,6 +590,17 @@ describe('reviewed create preparation authority', () => {
             };
             const own = await read(environment.id);
             expect.soft(own.statusCode, own.body).toBe(200);
+            // Replay #145: the approved native provider Create keeps the Link root
+            // as its HTTP effect when loading the admitted Environment before creation.
+            const rootRead = (id: string) => {
+                const url = `/v1/deployments/environments/${encodeURIComponent(id)}?serverId=${encodeURIComponent(serverId)}`;
+                return app.inject({ method: 'GET', url,
+                    headers: headers(proof(undefined, url, actionId, 'GET')) });
+            };
+            const rootEnvironment = await rootRead(environment.id);
+            expect.soft(rootEnvironment.statusCode, rootEnvironment.body).toBe(200);
+            expect.soft((await rootRead(otherEnvironment.id)).statusCode,
+                'the root effect cannot substitute another readable Environment').toBe(401);
             const other = await read(otherEnvironment.id);
             expect.soft(other.statusCode, 'another Environment in the same Team is outside this Link job').toBe(401);
             expect.soft(other.json()).toEqual({ error: 'invalid_token', authorizationRefusal: 'verification_purpose' });

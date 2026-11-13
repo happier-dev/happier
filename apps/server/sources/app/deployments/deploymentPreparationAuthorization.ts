@@ -760,14 +760,15 @@ function isOwnerTargetLinkListHttpPurpose(serverIdentityId: string, owner: Proje
 export async function readDeploymentLinkPreparationHttpPurpose(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string,
     proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>,
-    isHttpOperation: (actionId: typeof deploymentActionIds.DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 | typeof deploymentActionIds.DEPLOYMENT_TARGET_LINK_ACTION_ID_V1) => boolean,
+    isHttpOperation: (actionId: typeof DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1[number] | DeploymentDomainMetadataReadActionIdV1
+        | typeof deploymentActionIds.DEPLOYMENT_TARGET_LINK_ACTION_ID_V1) => boolean,
 ): Promise<boolean | null> {
     if (binding.actionId !== deploymentActionIds.DEPLOYMENT_TARGET_LINK_ACTION_ID_V1) return null;
     const admission = binding.deploymentLinkAdmission;
-    if (effectActionId === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1) {
-        return isHttpOperation(DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1)
-            && await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, proof.routeInput,
-                undefined, undefined, effectActionId) === true;
+    const read = await readDeploymentPreparationHttpReadPurpose(tx, binding, effectActionId, proof, isHttpOperation);
+    if (read) {
+        return await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, proof.routeInput,
+            undefined, undefined, read.actionId) === true;
     }
     if (proof.path === '/v1/deployments/targets/list') {
         return admission !== undefined && effectActionId === binding.actionId

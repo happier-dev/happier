@@ -57,6 +57,7 @@ export const declareDeploymentPreparationScopeV1 = (kind: DeploymentPreparationK
   const domainRead = effectActionId !== undefined && ids.isDeploymentDomainMetadataReadActionIdV1(effectActionId) ? effectActionId
     : effectActionId === ids.DEPLOYMENT_DEPLOY_ACTION_ID_V1 ? ids.DEPLOYMENT_DOMAIN_LIST_ACTION_ID_V1 : undefined;
   const httpReads = [
+    ...(kind === 'link' && effectActionId === actionId ? [ids.DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1] as const : []),
     ...(domainRead && (kind === 'membership' || deployIntent) ? [domainRead] : []),
     ...ids.DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1.filter(id => effectActionId === ids.DEPLOYMENT_DEPLOY_ACTION_ID_V1 || effectActionId === id),
   ];

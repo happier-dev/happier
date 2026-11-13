@@ -15,7 +15,7 @@ export async function readDeploymentLinkReviewedSetupHttpPurpose(
     effectActionId: string,
     proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown;
         reviewedChild?: ReviewedActionChildHttpProofV1 }>,
-    isHttpOperation: (actionId: 'deployments.environments.get' | 'deployments.targets.link') => boolean,
+    isHttpOperation: Parameters<typeof readDeploymentLinkPreparationHttpPurpose>[4],
 ): Promise<boolean> {
     const admission = binding.deploymentLinkAdmission;
     if (!isDeploymentTargetLinkActionIdV1(binding.actionId) || !admission
