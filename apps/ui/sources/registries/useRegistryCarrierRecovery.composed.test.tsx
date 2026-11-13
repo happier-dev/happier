@@ -4,7 +4,7 @@ import { act, createMachineFixture, renderHook, standardCleanup } from '@/dev/te
 import { installPromptRegistriesCommonModuleMocks } from '@/components/settings/prompts/registries/promptRegistriesScreenTestHelpers';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import type { ServerScopedMachineRpcParams } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
-import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import type { RegistryFetchRequestV1 } from '@happier-dev/protocol/registries';
 
 installPromptRegistriesCommonModuleMocks({ storage: original => original() });
@@ -75,23 +75,19 @@ it('recovers a supplier catalog when its Machine arrives after another carrier, 
         machineListStatusByServerId: previous.machineListStatusByServerId }));
     const general = createMachineFixture({ id: 'general-carrier', activeAt: Date.now() });
     const supplier = createMachineFixture({ id: 'late-supplier', activeAt: Date.now() });
-    const publish = (machines: typeof supplier[]) => { storage.setState({ machines: Object.fromEntries(machines.map(m => [m.id, m])),
-        machineListByServerId: { ...storage.getState().machineListByServerId, [fixture.home.id]: machines },
-        machineListStatusByServerId: { ...storage.getState().machineListStatusByServerId, [fixture.home.id]: 'idle' } });
-        observeMachinePresenceForTest(lifetime.scope, machines.map(machine => machine.id));
-    };
-    publish([]);
+    const publish = (machines: typeof supplier[]) => publishMachineInventoryForTest(lifetime.scope, machines);
+    await publish([]);
     transport.calls.length = 0;
     const hook = await renderHook((enabled: boolean) => useRegistryItems({ kind: 'skill', sourceIds: [entry.id] }, enabled), { initialProps: true, wrapper: Wrapper });
     await waitForHomeGovernance(() => expect({ error: hook.getCurrent().error, status: hook.getCurrent().status,
         failures: hook.getCurrent().sourceFailures.map(f => f.status.state) }).toEqual({ error: null, status: null, failures: ['needs_machine'] }));
-    await act(async () => { publish([general]); });
+    await act(async () => { await publish([general]); });
     await waitForHomeGovernance(() => {
         expect(hook.getCurrent().loading).toBe(false);
         expect(hook.getCurrent().sourceFailures.map(f => f.status.state)).toEqual(['needs_machine']);
     });
     expect(transport.calls).toHaveLength(0);
-    await act(async () => { publish([general, supplier]); });
+    await act(async () => { await publish([general, supplier]); });
     expect(resolveFreshMachineAdministrationExecutionTarget({ serverIdentityId: 'srv_registry_late_supplier', machineId: supplier.id },
         { accountScope: lifetime.scope })?.machine.id).toBe(supplier.id);
     await waitForHomeGovernance(() => expect(hook.getCurrent().sourceFailures).toEqual([]));
@@ -120,9 +116,9 @@ it('recovers a supplier catalog when its Machine arrives after another carrier, 
     transport.nextCursor = 'next';
     await act(async () => { await hook.getCurrent().refresh(); });
     expect(hook.getCurrent().hasNextPage).toBe(true);
-    await act(async () => { publish([general]); await hook.getCurrent().nextPage(); });
+    await act(async () => { await publish([general]); await hook.getCurrent().nextPage(); });
     expect(hook.getCurrent().sourceFailures.map(f => f.status.state)).toEqual(['needs_machine']);
-    await act(async () => { publish([general, supplier]); });
+    await act(async () => { await publish([general, supplier]); });
     await waitForHomeGovernance(() => expect(hook.getCurrent().sourceFailures).toEqual([]));
     await hook.unmount();
 });

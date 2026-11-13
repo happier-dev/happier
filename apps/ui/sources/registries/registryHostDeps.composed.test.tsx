@@ -12,7 +12,7 @@ import { SkillLockV1Schema, encodeSkillRevisionV1 } from '@happier-dev/protocol/
 import { createUiPromptLibraryArtifactStore } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
-import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { observeMachinePresenceForTest, publishMachineActivityForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { listRegistrySourcesV1, projectPluginRegistrySourceDeclarationV1, REGISTRY_ACTION_INPUT_SCHEMAS_V1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, RegistryFetchErrorV1, RegistryFetchRequestV1Schema, type RegistryFetchRequestV1, type RegistrySourceV1 } from '@happier-dev/protocol/registries';
 import type { ServerScopedMachineRpcParams } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import nacl from 'tweetnacl';
@@ -111,8 +111,7 @@ it('reads the Environment database picker on its controller when another own Mac
     const arbitrary = createMachineFixture({ id: 'c71-arbitrary-own-machine', createdAt: 2, activeAt: Date.now() });
     const controller = createMachineFixture({ id: 'environment-controller', createdAt: 1, activeAt: Date.now() });
     const inventory = [arbitrary, controller];
-    storage.setState({ machines: Object.fromEntries(inventory.map(machine => [machine.id, machine])),
-        machineListByServerId: { [account.serverId]: inventory }, machineListStatusByServerId: { [account.serverId]: 'idle' } });
+    await publishMachineInventoryForTest(account.accountLifetime.scope, inventory);
     transport.calls.length = 0;
     const { StoreRegistryItemPicker, Directory } = await import('@/components/store/StoreKindPage');
     const screen = await renderScreen(<StoreRegistryItemPicker presented machine={{ serverId: account.serverId, machineId: controller.id }}
@@ -131,6 +130,8 @@ it('Link preview skips active Machines without usable content and retains its ty
     });
     onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
     await setServerProfileIdentityForUrl(fixture.home.serverUrl, 'srv_registry_link_carrier');
+    const retryAccount = await captureLazyActionAccountContext(fixture.home.id);
+    onTestFinished(() => { retryAccount.dispose(); clearMachineRequestReachabilityForTest(); });
     const older = createMachineFixture({ id: 'older-carrier', createdAt: 1, activeAt: Date.now() });
     const newer = createMachineFixture({ id: 'newer-carrier', createdAt: 2, activeAt: Date.now() });
     const unopened = createMachineFixture({ id: 'newest-unopened-carrier', createdAt: 4, activeAt: Date.now(), metadata: null });
@@ -140,9 +141,12 @@ it('Link preview skips active Machines without usable content and retains its ty
     const locked = createMachineFixture({ id: 'locked-carrier', createdAt: 3, activeAt: Date.now(),
         availability: { kind: 'locked', reason: 'encryption_material_unavailable' } });
     const inventory = [older, newer, unopened, locked, ...presenceOnly];
+    // Keep the deliberately unopened/locked hydration projections while answering live presence.
+    publishMachineActivityForTest(inventory);
     storage.setState({ machines: Object.fromEntries(inventory.map(machine => [machine.id, machine])),
         machineListByServerId: { [fixture.home.id]: inventory },
         machineListStatusByServerId: { [fixture.home.id]: 'idle' } });
+    observeMachinePresenceForTest(retryAccount.accountLifetime.scope, inventory.map(machine => machine.id));
     transport.calls.length = 0;
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
     const { previewSkillInstall } = await import('@/components/settings/skills/add/skillInstall');
@@ -160,9 +164,7 @@ it('Link preview skips active Machines without usable content and retains its ty
     expect(transport.calls.at(-1)?.machineId).toBe(older.id);
     // Raw RPCs need their own cancellation/correlation identity: one parent Action can fan out.
     expect(transport.calls.map(call => call.requestId)).not.toContain(actionRequestId);
-    const retryAccount = await captureLazyActionAccountContext(fixture.home.id);
     recordMachineRequestFailed({ serverId: fixture.home.id, accountId: retryAccount.accountId, machineId: newer.id });
-    onTestFinished(() => { retryAccount.dispose(); clearMachineRequestReachabilityForTest(); });
     const retryPort = createUiPromptLibraryArtifactStore(retryAccount.workflowArtifacts, retryAccount).organization!;
     const retryDefault = await createUiRegistryHostV1(retryAccount, retryPort, {}, { explicitRefresh: true });
     expect(await retryDefault.fetchRequest({ op: 'link', url: source.url })).toMatchObject({ op: 'error', status: { state: 'unreachable' } });
@@ -179,6 +181,7 @@ it('Link preview skips active Machines without usable content and retains its ty
     expect(transport.calls).toHaveLength(beforeUnavailable);
     storage.setState({ machines: { [unopened.id]: unopened, [locked.id]: locked },
         machineListByServerId: { [fixture.home.id]: [unopened, locked] } });
+    observeMachinePresenceForTest(retryAccount.accountLifetime.scope, [unopened.id, locked.id]);
     expect(await previewSkillInstall((actionId, input) => executor.execute(actionId, input, context), source))
         .toMatchObject({ ok: false, status: { state: 'needs_machine' } });
     expect(transport.calls).toHaveLength(beforeUnavailable);
@@ -259,8 +262,10 @@ it('opens an empty web skill recommendation shelf without a daemon browse even w
         key: 'registry-sources', value: { v: 2, sources: [], disabledSourceIds: [] },
     }, 'updated', { handleExternalRequest: async () => new Response(null, { status: 503 }) });
     onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+    const account = await captureLazyActionAccountContext(fixture.home.id);
+    onTestFinished(() => account.dispose());
     const machine = createMachineFixture({ id: 'homepage-online', activeAt: Date.now() });
-    storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [fixture.home.id]: [machine] } });
+    await publishMachineInventoryForTest(account.accountLifetime.scope, [machine]);
     const before = transport.calls.length;
     const hook = await renderHook(() => useRegistrySuggestions('skill'));
     await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
@@ -448,7 +453,7 @@ it('refreshes daemon-created sources in the UI and reads tokened sources through
     const previous = storage.getState().machineListByServerId;
     const machines = storage.getState().machines;
     const machine = createMachineFixture({ id: machineId, activeAt: Date.now() });
-    storage.setState({ machines: { [machineId]: machine }, machineListByServerId: { ...previous, [account.serverId]: [machine] } });
+    await publishMachineInventoryForTest(account.accountLifetime.scope, [machine]);
     onTestFinished(() => storage.setState({ machines, machineListByServerId: previous }));
     const port = createUiPromptLibraryArtifactStore(account.workflowArtifacts, account).organization;
     if (!port) throw new Error('Canonical prompt-library store must expose its organization port');
@@ -766,8 +771,7 @@ it('routes native non-GitHub Git through the captured Account Machine transport 
     const previousActiveMachines = storage.getState().machines;
     const previousStatuses = storage.getState().machineListStatusByServerId;
     const machine = createMachineFixture({ id: 'native-git-machine', activeAt: Date.now() });
-    storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { ...previousMachines, [account.serverId]: [machine] },
-        machineListStatusByServerId: { ...previousStatuses, [account.serverId]: 'idle' } });
+    await publishMachineInventoryForTest(account.accountLifetime.scope, [machine]);
     const port = createUiPromptLibraryArtifactStore(account.workflowArtifacts, account).organization!;
     transport.calls.length = 0;
     setRuntimeFetch(async (url, init) => new URL(String(url)).origin === new URL(homes.homes.home!.serverUrl).origin
@@ -784,8 +788,7 @@ it('routes native non-GitHub Git through the captured Account Machine transport 
             .toEqual([{ machineId: machine.id, serverId: account.serverId, accountId: account.accountId, method: 'daemon.registries.fetch',
                 payload: { op: 'list', kind: 'skill', sourceId: 'native-other-git' } }]);
         const selectedMachine = createMachineFixture({ id: 'zz-explicit-registry-machine', createdAt: machine.createdAt - 1, activeAt: Date.now() });
-        storage.setState({ machines: { [machine.id]: machine, [selectedMachine.id]: selectedMachine },
-            machineListByServerId: { ...previousMachines, [account.serverId]: [machine, selectedMachine] } });
+        await publishMachineInventoryForTest(account.accountLifetime.scope, [machine, selectedMachine]);
         const targeted = await createUiRegistryHostV1(account, port, {
             externalActionTarget: { kind: 'machine', machineId: selectedMachine.id },
         });
@@ -795,12 +798,11 @@ it('routes native non-GitHub Git through the captured Account Machine transport 
             await targeted.execute('registries.items.list', defaultRead));
         expect(targetedOutput.pages[0]?.machineId).toBe(selectedMachine.id);
         expect(transport.calls.at(-1)?.machineId).toBe(selectedMachine.id);
-        storage.setState({ machines: { [machine.id]: machine },
-            machineListByServerId: { ...previousMachines, [account.serverId]: [machine] } });
+        await publishMachineInventoryForTest(account.accountLifetime.scope, [machine]);
         const missingTarget = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse(
             await targeted.execute('registries.items.list', { ...defaultRead, refresh: true }));
         expect(missingTarget.pages[0]?.status.state).toBe('needs_machine');
-        storage.setState({ machines: {}, machineListByServerId: { ...previousMachines, [account.serverId]: [] } });
+        await publishMachineInventoryForTest(account.accountLifetime.scope, []);
         const offline = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse(await host.execute('registries.items.list', {
             kind: 'skill', sourceIds: ['native-other-git', 'native-github'], refresh: true,
         }));
@@ -837,12 +839,12 @@ it.each([
             tree: [{ path: 'review/SKILL.md', mode: '100644', type: 'blob', sha: '3'.repeat(40), size: 10 }] });
     });
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
-    const serverId = homes.homes.home!.id;
+    const account = await captureLazyActionAccountContext(homes.homes.home!.id);
+    onTestFinished(() => account.dispose());
     const previous = storage.getState();
     onTestFinished(() => storage.setState({ machines: previous.machines, machineListByServerId: previous.machineListByServerId,
         machineListStatusByServerId: previous.machineListStatusByServerId }));
-    storage.setState({ machines: {}, machineListByServerId: { ...previous.machineListByServerId, [serverId]: [] },
-        machineListStatusByServerId: { ...previous.machineListStatusByServerId, [serverId]: 'idle' } });
+    await publishMachineInventoryForTest(account.accountLifetime.scope, []);
     transport.calls.length = 0;
     const input = { kind: 'skill' as const, sourceIds: sources.map(source => source.id), query };
     const hook = await renderHook(() => useRegistryItems(input));
@@ -853,8 +855,7 @@ it.each([
     expect(healthyRequests.length).toBeGreaterThan(0);
     const coldHealthyRequests = [...healthyRequests];
     const machine = createMachineFixture({ id: 'carrier-arrives-machine', activeAt: Date.now() });
-    await act(async () => { storage.setState({ machines: { [machine.id]: machine },
-        machineListByServerId: { ...storage.getState().machineListByServerId, [serverId]: [machine] } }); });
+    await act(async () => { await publishMachineInventoryForTest(account.accountLifetime.scope, [machine]); });
     await waitForHomeGovernance(() => expect(hook.getCurrent().sourceFailures).toEqual([]));
     expect(hook.getCurrent().items.map(item => item.itemId)).toEqual(['review']);
     expect(transport.calls.map(call => call.machineId)).toEqual([machine.id]);
@@ -865,12 +866,10 @@ it.each([
     expect(healthyRequests).toEqual([...coldHealthyRequests, ...coldHealthyRequests]);
     // Losing the carrier while paging must retire this source's healthy first
     // page memo, otherwise recovery merely replays it without reaching the supplier.
-    await act(async () => { storage.setState({ machines: {}, machineListByServerId: {
-        ...storage.getState().machineListByServerId, [serverId]: [] } }); });
+    await act(async () => { await publishMachineInventoryForTest(account.accountLifetime.scope, []); });
     await act(async () => { await hook.getCurrent().nextPage(); });
     expect(hook.getCurrent().sourceFailures.map(failure => failure.status.state)).toEqual(['needs_machine']);
-    await act(async () => { storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: {
-        ...storage.getState().machineListByServerId, [serverId]: [machine] } }); });
+    await act(async () => { await publishMachineInventoryForTest(account.accountLifetime.scope, [machine]); });
     await waitForHomeGovernance(() => expect({ requests: transport.calls.length, failures: hook.getCurrent().sourceFailures })
         .toEqual({ requests: 3, failures: [] }));
     expect(hook.getCurrent().items.map(item => item.itemId)).toEqual(['review']);
@@ -922,9 +921,7 @@ it('reads same-Account offline declarations, routes only to suppliers, retries u
     const machines = [
         createMachineFixture({ id: 'supplier-a', activeAt: Date.now() }), createMachineFixture({ id: 'general-b', activeAt: Date.now(), createdAt: 10 }),
     ];
-    storage.setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
-        machineListByServerId: { ...previousMachines, [account.serverId]: machines },
-        machineListStatusByServerId: { ...previousStatuses, [account.serverId]: 'idle' } });
+    await publishMachineInventoryForTest(account.accountLifetime.scope, machines);
     const port = createUiPromptLibraryArtifactStore(account.workflowArtifacts, account).organization!;
     transport.calls.length = 0;
     try {
@@ -956,7 +953,7 @@ it('reads same-Account offline declarations, routes only to suppliers, retries u
         projected = unionPluginUiProjections([{ machineId: 'supplier-a', serverId: account.serverId, phase: 'retainedOffline',
             interactionEnabled: false, projection: publicModel }]).pluginUiProjection;
         await act(async () => { screen.tree.update(content()); });
-        storage.setState({ machines: {}, machineListByServerId: { ...previousMachines, [account.serverId]: [] } });
+        await publishMachineInventoryForTest(account.accountLifetime.scope, []);
         setRuntimeFetch(async (url, init) => String(url) === DEFAULT_CURATED_MARKETPLACE_SOURCE_URL
             ? new Response(null, { status: 503 }) : new URL(String(url)).origin === new URL(homes.homes.home!.serverUrl).origin
             ? homes.fetch(url, init)
@@ -998,8 +995,7 @@ it('uses the Store Machine choice for search and detail instead of the first liv
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     const inventory = [createMachineFixture({ id: 'first-live', createdAt: 2, activeAt: Date.now() }),
         createMachineFixture({ id: 'store-selected', createdAt: 1, activeAt: Date.now() })];
-    storage.setState({ machines: Object.fromEntries(inventory.map(machine => [machine.id, machine])),
-        machineListByServerId: { [account.serverId]: inventory }, machineListStatusByServerId: { [account.serverId]: 'idle' } });
+    await publishMachineInventoryForTest(account.accountLifetime.scope, inventory);
     transport.calls.length = 0;
     const { useRegistryItem } = await import('./useRegistryItem');
     const { useRegistryActionRead } = await import('./useRegistryActionRead');
@@ -1040,10 +1036,7 @@ it('opens a native catalog category with the only online Store Machine and one c
     const machine = createMachineFixture({ id: 'category-machine', activeAt: Date.now(), presenceProtocolVersion: 1 });
     transport.calls.length = 0;
     const alternative = createMachineFixture({ id: 'another-category-machine', activeAt: Date.now(), presenceProtocolVersion: 1 });
-    for (const candidate of [machine, alternative]) publishMachineActivity(candidate, { active: true, activeAt: candidate.activeAt }, []);
-    storage.setState({ machines: { [machine.id]: machine, [alternative.id]: alternative },
-        machineListByServerId: { [account.serverId]: [machine, alternative] },
-        machineListStatusByServerId: { [account.serverId]: 'idle' } });
+    await publishMachineInventoryForTest(account.accountLifetime.scope, [machine, alternative]);
     const { Directory } = await import('@/components/store/StoreKindPage');
     const { StoreScreen } = await import('@/components/store/StoreScreen');
     const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
@@ -1061,8 +1054,7 @@ it('opens a native catalog category with the only online Store Machine and one c
     expect(transport.calls.filter(call => 'sourceId' in call.payload && call.payload.sourceId === 'builtin:chrome-web-store')).toEqual([]);
     await act(async () => { unavailable!.props.action.onPress(); });
     expect(kindPage.findAllByType(MachineAdministrationTargetSelector)[0]!.props.chipOpen).toBe(true);
-    await act(async () => { storage.setState({ machines: { [machine.id]: machine },
-        machineListByServerId: { [account.serverId]: [machine] } }); });
+    await act(async () => { await publishMachineInventoryForTest(account.accountLifetime.scope, [machine]); });
     await waitForHomeGovernance(() => {
         const directory = kindPage.findAllByType(Directory).find(node => node.props.kind === 'browserExtension');
         const group = directory?.props.groups.find((group: DirectoryGroup) => group.category?.categoryId === 'featured');
