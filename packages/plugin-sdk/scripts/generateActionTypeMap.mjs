@@ -209,7 +209,9 @@ async function inspectActionTypeMapCache({ cachePath, outputPath }) {
   } catch {
     record = null;
   }
-  if (record?.version === 1 && Array.isArray(record.inputPaths)) {
+  // The canonical output identifies the generating root; matching bytes alone
+  // can otherwise admit a scratch root's unchanged inputs and family shards.
+  if (record?.version === 1 && record.outputPath === resolve(outputPath) && Array.isArray(record.inputPaths)) {
     let currentFingerprint = null;
     try {
       currentFingerprint = fingerprintInputPaths(record.inputPaths);
@@ -278,6 +280,7 @@ export async function runCachedActionTypeMap({ cachePath, outputPath, derive, pu
     await mkdir(dirname(cachePath), { recursive: true });
     await writeFile(cachePath, JSON.stringify({
       version: 1,
+      outputPath: resolve(outputPath),
       inputPaths,
       fingerprint,
       outputDigest: digest(prepared.output),

@@ -35,7 +35,7 @@ test('Action map null fingerprints never admit stale outputs when an input disap
   const stale = 'export type Catalog = {};\n';
   const current = 'export type Catalog = { catalogRefresh?: { kind: "refresh" } };\n';
   writeFileSync(outputPath, stale);
-  writeFileSync(cachePath, JSON.stringify({ version: 1, inputPaths: [resolve(directory, 'removed-input.ts')],
+  writeFileSync(cachePath, JSON.stringify({ version: 1, outputPath, inputPaths: [resolve(directory, 'removed-input.ts')],
     fingerprint: null, outputDigest: createHash('sha256').update(stale).digest('hex') }));
   let derivations = 0;
   await runCachedActionTypeMap({ cachePath, outputPath, derive: async () => {
@@ -276,6 +276,48 @@ test('Action map cache skips an unchanged compiler program and re-derives change
   rmSync(sourcePath);
   await assert.rejects(run);
   assert.equal(programs, 7, 'missing compiler input must never be admitted as current');
+});
+
+test('Action map cache from another root cannot conceal stale canonical family outputs', async (t) => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'happier-action-map-root-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const scratchRoot = resolve(directory, 'scratch');
+  const canonicalRoot = resolve(directory, 'canonical');
+  const cachePath = resolve(canonicalRoot, 'packages/plugin-sdk/node_modules/.cache/happier-action-type-map.json');
+  const outputRelativePath = 'packages/plugin-sdk/src/actions/actionTypeMap.generated.ts';
+  const familyRelativePath = 'packages/plugin-sdk/src/actions/dtos/family.generated.ts';
+  const index = "export type { Result } from './dtos/family.generated.js';\n";
+  const stale = 'export type Result = { count: number };\n';
+  const current = 'export type Result = { count: string };\n';
+  for (const [root, family] of [[scratchRoot, stale], [canonicalRoot, current]]) {
+    const sourcePath = resolve(root, 'family.ts');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(sourcePath, family);
+  }
+  const generate = (root) => runCachedActionTypeMap({
+    cachePath, outputPath: resolve(root, outputRelativePath), mode: '--write',
+    derive: () => ({
+      inputPaths: [resolve(root, 'family.ts')], output: index,
+      outputs: new Map([
+        [resolve(root, outputRelativePath), index],
+        [resolve(root, familyRelativePath), readFileSync(resolve(root, 'family.ts'), 'utf8')],
+      ]),
+    }),
+    publish: async ({ outputs }) => {
+      for (const [path, output] of outputs) {
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, output);
+      }
+    },
+  });
+  await generate(scratchRoot);
+  mkdirSync(dirname(resolve(canonicalRoot, familyRelativePath)), { recursive: true });
+  writeFileSync(resolve(canonicalRoot, outputRelativePath), index);
+  writeFileSync(resolve(canonicalRoot, familyRelativePath), stale);
+  assert.equal(await generate(canonicalRoot), true, 'another root must derive and publish');
+  assert.equal(readFileSync(resolve(canonicalRoot, familyRelativePath), 'utf8'), current);
+  assert.equal(await generate(canonicalRoot), false, 'the same root must retain its cache hit');
+  assert.equal(readFileSync(resolve(scratchRoot, familyRelativePath), 'utf8'), stale);
 });
 
 test('Action map cache and publication verify every family output, including missing or edited shards', async (t) => {
