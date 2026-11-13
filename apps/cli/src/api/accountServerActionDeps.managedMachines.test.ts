@@ -975,9 +975,7 @@ describe('managed inventory CLI Home adapter', () => {
           resolveCallerPermissionMode: () => originMetadata.permissionMode ?? null })
         .executeActionByToolName('action_execute', { actionId: 'machines.setup.apply', input: environment }, originSessionId,
           { actionRequestId: requestId });
-    expect(applied, JSON.stringify(storageFailures)).toEqual({ ok: true, result: surface === 'cli'
-      ? { operationId: `setup-${surface}`, runId }
-      : { status: 'accepted', operationId: `setup-${surface}`, machineId: 'controller-1' } });
+    expect(applied, JSON.stringify(storageFailures)).toEqual({ ok: true, result: { operationId: `setup-${surface}`, runId } });
     // Agent/MCP acknowledge their Operation through its admission response.
     // Observe that same Operation through its public RPC owner.
     // The public uncertainty projection contains a typed failure, while the
