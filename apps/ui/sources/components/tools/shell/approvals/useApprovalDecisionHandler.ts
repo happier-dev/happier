@@ -97,15 +97,15 @@ export function presentApprovalFailure(
     const reason = error instanceof ApprovalExecutionError ? t('approvals.failureGeneric')
         : /^[a-z][a-z0-9_]*(?::[a-z0-9_]+)*$/.test(fallbackMessage.trim())
             ? neutralReason : fallbackMessage;
-    // Retain the typed code, never opaque transport prose or private details.
-    return { reason: resolveActionExecutionErrorMessage({ code }, reason), code: diagnosticCode };
+    // Keep the validated cause for the shared presenter, without transport prose.
+    return { reason: resolveActionExecutionErrorMessage({ code, failureCause }, reason), code: diagnosticCode };
 }
 
 /**
  * A settled request whose approved effect failed. The decision was saved, so a bare machine code never
  * reads as "failed to update approval": it reads as an unrecorded reason, with the code in Technical details.
  */
-export function presentRecordedApprovalFailure(failure: Readonly<{ errorCode?: string; error?: string; details?: unknown }>): ReturnType<typeof presentApprovalFailure> {
+export function presentRecordedApprovalFailure(failure: Pick<ApprovalExecutionV1, 'errorCode' | 'error' | 'details' | 'failureCause'>): ReturnType<typeof presentApprovalFailure> {
     return presentApprovalFailure(failure, failure.error || failure.errorCode || t('approvals.failureNoReason'), t('approvals.failureNoReason'));
 }
 

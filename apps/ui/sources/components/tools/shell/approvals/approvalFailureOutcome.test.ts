@@ -38,6 +38,36 @@ function approval(result: unknown = response) {
 }
 
 describe('approval failure outcome', () => {
+    it.each([
+        { wrapperCode: 'RPC_FORBIDDEN', error: 'Forbidden', errorCode: 'machine_unavailable', phase: 'rpc.admission.machine', httpStatus: 403,
+            expected: 'errors.daemonUnavailableBody' as const },
+        { wrapperCode: 'target_unavailable', error: 'target_unavailable', errorCode: 'upstream_error', phase: 'machine.socket.connect', httpStatus: 503,
+            expected: 'errors.serverError' as const },
+    ])('presents the retained $errorCode cause of a failed approved Delete through $wrapperCode', ({ wrapperCode, error, errorCode, phase, httpStatus, expected }) => {
+        const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: 'machines.managed.delete',
+            summary: 'Delete managed machine', actionArgs: { homeId: 'home', managedId: 'managed', intent: 'delete',
+                when: 'now', expectedRevision: 4, reviewedDependencies: true },
+            executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+                serverId: 'home', accountId: 'account', machineId: 'machine', actionId: 'machines.managed.delete', requestId: 'delete-request' } });
+        const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: wrapperCode, error,
+            effectAttempted: false, failureCause: { phase, errorClass: 'Error', errorCode, httpStatus } });
+        const stored = StoredApprovalRequestSchema.parse({ ...request, status: 'failed', updatedAtMs: 3,
+            decision: { kind: 'approve', decidedAtMs: 2 },
+            execution: projectApprovalExecutionFailureV2({ request, failure, executedAtMs: 3 }) });
+        const recorded = readApprovalExecutionFailure(stored);
+        expect(recorded).not.toBeNull();
+        const outcome = presentApprovalFailureOutcome(stored, recorded!);
+        expect(outcome.reason).toBe(t(expected));
+        expect(outcome.technicalDetails).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: 'failure-cause-code', value: errorCode }),
+            expect.objectContaining({ key: 'failure-cause-phase', value: phase }),
+            expect.objectContaining({ key: 'failure-http-status', value: String(httpStatus) }),
+        ]));
+        expect(presentActionFailureOutcome({ ...recorded!, errorCode: 'outcome_unknown', error: 'outcome_unknown' }).reason)
+            .toBe(t('entityDragDrop.preview.unknownDetail'));
+    });
+
     it('directs an unconfirmed Doc suggestion back to its thread while retaining diagnostic evidence', () => {
         const artifact = buildDiscussionRequesterApprovalArtifact({ requesterAccountId: 'alice', actionId: 'doc.edit.propose',
             settle: request => ({ ...request, status: 'outcome_unknown', updatedAtMs: 30,

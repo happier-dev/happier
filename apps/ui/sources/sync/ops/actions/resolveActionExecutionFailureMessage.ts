@@ -3,7 +3,7 @@ import { readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
 import { isPluginError } from '@happier-dev/protocol/plugins/errors';
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { PluginDiagnosticRemediationV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
-import { isActionTurnedOffErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionTurnedOffErrorCode, readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DiscussionErrorCodeV1Schema } from '@happier-dev/protocol/discussions/api';
 import { MachineElevationFailureV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import { MachineReachabilityNativeFailureDetailsV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
@@ -132,6 +132,19 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (code === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE) return t('errors.networkError');
     const transient = readTransientFailure(record, options);
     if (transient) return !options?.safeToRetry && transient.effectMayHaveApplied ? t('toolView.pending.unknownDescription') : transient.message;
+    // An unconfirmed effect keeps its recovery even when its transport cause is known.
+    if (code === 'outcome_unknown' || code === 'outcome_uncertain' || code === 'approval_execution_outcome_unknown') return t(options?.safeToRetry ? 'errors.tryAgain' : 'entityDragDrop.preview.unknownDetail');
+    // A transport wrapper can say Forbidden while its producer names unavailable
+    // infrastructure. Present that validated cause before the wrapper's generic copy.
+    const cause = record.failureCause === undefined ? null : readActionFailureCauseV1(record.failureCause);
+    if (cause && !('kind' in cause) && cause.errorCode !== null && cause.errorCode !== code) {
+        const causeMessage = readFailureFallbackMessage({ code: cause.errorCode }, options);
+        if (causeMessage) return causeMessage;
+    }
+    if (code === 'machine_unavailable' || code === 'machine_offline' || code === 'machine_socket_unavailable') {
+        return t('errors.daemonUnavailableBody');
+    }
+    if (code === 'upstream_error' || code === 'service_unavailable') return t('errors.serverError');
     const discussionCode = typeof code === 'string' && code.startsWith('discussion')
         ? DiscussionErrorCodeV1Schema.safeParse(code) : null;
     if (discussionCode?.success) return discussionFailureLabel(discussionCode.data);
@@ -176,8 +189,6 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
         return options?.notAppliedMessage ?? t('voiceSurface.actionCanceled');
     }
     if (isActionTurnedOffErrorCode(code)) return t('actionConfirmations.turnedOffUnnamedMessage');
-    // Sent, with no answer back: it may or may not have landed.
-    if (code === 'outcome_unknown' || code === 'outcome_uncertain' || code === 'approval_execution_outcome_unknown') return t(options?.safeToRetry ? 'errors.tryAgain' : 'entityDragDrop.preview.unknownDetail');
     const widgetRefusal = readWidgetRefusalMessage(code, record.details);
     if (widgetRefusal) return widgetRefusal;
     const sessionInputLabel = getSessionInputFailureLabelKey({ code });
