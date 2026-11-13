@@ -5,17 +5,27 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ApiMachineClient } from '@/api/apiMachine';
+import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
 import type { DaemonState, Machine } from '@/api/types';
+import { createServerFeaturesSnapshotStore } from '@/features/serverFeaturesSnapshotStore';
+import { createActionExecutor, sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
+  sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1,
+  serializeWorkflowStoredContentEnvelopeV1, type WorkflowDefinitionV1 } from '@happier-dev/protocol';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
 import { createApiMachineTransportFixture } from '@/testkit/apiMachineTransport';
 import { createDeferred } from '@/testkit/async/deferred';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { bootstrapMachineSyncRuntime, retireMachineSyncRuntimeAttempt } from './bootstrapMachineSyncRuntime';
 
 import { UsageLimitRecoveryScheduler, type UsageLimitRecoveryIntent } from '../connectedServices/usageLimitRecovery/UsageLimitRecoveryScheduler';
+import { isWorkflowRuntimeEnabled } from '../automation/workflowFeatureGate';
+import { createWorkflowRunRecoveryReader } from '../workflows/recovery';
+import { createWorkflowInvocationRecoveryObserver } from '../workflows/daemonRuntime';
+import { createWorkflowRunStorageTestkit } from '../workflows/workflowRunStorage.testkit';
 
 describe('bootstrapMachineSyncRuntime passive startup', () => {
   it.each([500, 2_000])('re-arms persisted usage-limit deadline %s without synchronous recovery', async deadline => {
@@ -41,6 +51,123 @@ describe('bootstrapMachineSyncRuntime passive startup', () => {
     const source = await readFile(new URL('./bootstrapMachineSyncRuntime.ts', import.meta.url), 'utf8');
     expect(source).toContain('voiceBinaryAppendConsumer');
   });
+});
+
+it('waits for the existing online feature refresh before the one-shot Workflow recovery pass', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'workflow-recovery-feature-order-'));
+  const featureStarted = createDeferred<void>();
+  const featureRead = createDeferred<void>();
+  const ready = { status: 'ready' as const, provenance: 'authenticated' as const,
+    features: { features: { automations: { enabled: true }, workflows: { enabled: true } }, capabilities: {} } };
+  const featureStore = createServerFeaturesSnapshotStore({ fetchSnapshot: async () => {
+    featureStarted.resolve();
+    await featureRead.promise;
+    return ready;
+  } });
+  const accountId = 'account-1';
+  const machineId = 'workflow-feature-machine';
+  const runId = '7be4d65c-d3b7-4868-a416-b18d9ee29c1c';
+  const rootId = '2aaf1a39-4c48-4904-83a4-7eae318dfc2c';
+  const childId = '33333333-3333-4333-8333-333333333333';
+  const checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain',
+    binding: { v: 1, purpose: 'checkpoint', accountId, runId }, checkpoint: { kind: 'happier.workflow-checkpoint.v1',
+      rootRecordId: rootId, nextSequence: '2', frontier: { nextBlockOrdinal: 1, paused: false } } }));
+  const seal = (root: boolean) => serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+    binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: root ? rootId : childId,
+      sequence: root ? '0' : '1', parentRecordId: root ? null : rootId, memberOrdinal: '0', attempt: '0' },
+    progress: { kind: 'happier.workflow-progress.v1', blockKind: root ? 'root' : 'step',
+      invocationPath: { blockId: root ? '$root' : 'background', scope: [] }, attempt: '0', logicalInvocationRecordId: root ? rootId : childId,
+      ...(root ? {} : { reason: { code: 'execution_run_input_not_observed' }, execution: { kind: 'detached_run' as const,
+        runId: 'historical-native-run', localInputId: 'historical-input', runtimeSelection: {} } }) } }));
+  const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [
+    { kind: 'step', id: 'background', document: { text: 'Work', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
+  ] };
+  const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+    binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: {
+      startedBy: 'user', definition, authoredDefinition: definition, workDepth: 0, metadata: null, frozenChildren: {}, materializedLeaves: [],
+      source: { kind: 'inline' }, inputs: {}, machineId, executionTarget: { kind: 'detached_run' },
+      workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' }, originalCommittedRevision: 'a'.repeat(40) },
+      origin: { kind: 'direct' }, authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } },
+    } }));
+  const storage = createWorkflowRunStorageTestkit({ accountId, runId, machineId, origin: { kind: 'direct' }, acceptedEnvelope });
+  await storage.execute({ operation: 'initialize', runId, expectedRevision: 0, checkpointEnvelope,
+    rootInvocation: { id: rootId, contentEnvelope: seal(true) } });
+  await storage.execute({ operation: 'invocations.admit', runId, expectedRevision: 1, checkpointEnvelope,
+    invocations: [{ id: childId, sequence: '1', parentRecordId: rootId, memberOrdinal: '0',
+      lifecycle: 'cancel_requested', contentEnvelope: seal(false) }] });
+  storage.requestControl('cancelled');
+  const recover = createWorkflowRunRecoveryReader({ accountId, machineId,
+    storage: { execute: async (operation, options) => operation.operation === 'recovery.list'
+      ? { candidates: storage.run().workflowCustodyState === 'pending' ? [{ run: storage.run(), parentAttempt: 0 }] : [] }
+      : await storage.execute(operation, options) },
+    resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+    reconcileInvocation: createWorkflowInvocationRecoveryObserver({ credentials: { token: 'token', encryption: null }, machineId,
+      actionExecutor: createActionExecutor(createUnavailableActionTransportDeps()),
+      nativeActionRuns: {
+        get: async () => ({ run: { runId: 'historical-native-run', callId: 'call', sidechainId: 'side', intent: 'agent',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, permissionMode: 'default', retentionPolicy: 'resumable',
+          runClass: 'long_lived', ioMode: 'request_response', status: 'cancelled', startedAtMs: 1, finishedAtMs: 2,
+          inputTurns: { occurrenceId: 'historical-occurrence',
+            last: { turnId: 'historical-turn', inputIds: ['historical-input'], state: 'cancelled' } } } }),
+        stop: async () => { throw new Error('Terminal Run must not be stopped again'); },
+        wait: async () => { throw new Error('Terminal Run must not be waited again'); },
+      },
+    }),
+  });
+  let onlineListener: ((state: ManagedConnectionState) => void) | undefined;
+  const connect = vi.fn<ApiMachineClient['connect']>(() => {});
+  const apiMachine = { ...createApiMachineTransportFixture(),
+    onConnectionStateChange: (listener: (state: ManagedConnectionState) => void) => {
+      onlineListener = listener;
+      return () => { onlineListener = undefined; };
+    },
+    setRPCHandlers: () => ({}), registerLiveStreamRelayRoutes: () => {}, connect,
+    updateDaemonState: async () => {}, updateMachineMetadata: async () => {},
+    emitExternalSessionTranscriptUpdate: () => {}, sendMachineTransferEnvelope: () => {},
+    sendTransferRelayV2Envelope: () => {}, sendMachineLiveStreamRelayEnvelope: () => {},
+    getPeerMediationMachineRpcHandlerManager: () => ({ invokeLocal: async () => ({ ok: true }) }),
+  } as unknown as ApiMachineClient;
+  const machine: Machine = { id: machineId, encryptionMode: 'plain', metadata: null,
+    metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
+  let bootstrap: Awaited<ReturnType<typeof bootstrapMachineSyncRuntime>> | undefined;
+  let connected: Promise<void> | undefined;
+  try {
+    bootstrap = await bootstrapMachineSyncRuntime({
+      cliVersion: 'test', machineId: machine.id, machine, preferredHost: 'host.local',
+      happyHomeDir: root, happyLibDir: root, filesystemAccessPolicy: { kind: 'osUser' },
+      takeoverRequested: false, isShuttingDown: () => false,
+      createConnectedApiMachine: () => apiMachine, attachTransferRuntimeStatePublisher: async () => {},
+      startAutomationWorkerForMachine: () => null, startMemoryWorkerForMachine: async () => null,
+      startVoiceInferenceWorkerForMachine: async () => null,
+      spawnSession: async () => ({ type: 'success', sessionId: 'unused' }),
+      spawnSessionForInternalResume: async () => ({ type: 'success', sessionId: 'unused' }),
+      stopSession: async () => ({ status: 'stopped' }), isSessionAlreadyRunning: async () => false,
+      loadLocalSessionMetadataForHandoff: async () => null, beforeShutdown: async () => {}, requestShutdown: () => {},
+      directPeerServerLifecycle: null, directTransferRegistryHost: createCliRegistryHostV1(),
+      connectedServiceRefreshLoopHandle: null, connectedServiceQuotasLoopHandle: null,
+      daemonServerWorkScheduler: {} as never,
+      onMachineConnectionOnline: async () => { await featureStore.refresh(); },
+      recoverWorkflowRuns: async trigger => {
+        if (isWorkflowRuntimeEnabled({}, featureStore.getSnapshot())) await recover(trigger);
+      },
+    });
+    const onConnect = connect.mock.calls[0]?.[0]?.onConnect;
+    if (!onlineListener || !onConnect) throw new Error('Machine connection hooks unavailable');
+    onlineListener({ phase: 'online', reason: null, attempt: 1, nextRetryAt: null,
+      lastConnectedAt: 1_000, lastDisconnectedAt: null, lastErrorMessage: null });
+    connected = Promise.resolve(onConnect());
+    await featureStarted.promise;
+    expect(storage.run().workflowCustodyState).toBe('pending');
+    featureRead.resolve();
+    await connected;
+    expect(storage.run()).toMatchObject({ state: 'cancelled', workflowCustodyState: 'settled' });
+    expect(storage.rowById(childId)?.index.lifecycle).toBe('cancelled');
+  } finally {
+    featureRead.resolve();
+    await connected;
+    if (bootstrap) await retireMachineSyncRuntimeAttempt(bootstrap);
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 

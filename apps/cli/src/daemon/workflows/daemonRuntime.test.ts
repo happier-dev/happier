@@ -659,7 +659,7 @@ describe('production daemon retained operation target', () => {
 
 describe('production terminal Workflow recovery transport', () => {
   afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
-  it.each(['historical', 'stale_active', 'pending', 'unconfirmed'] as const)('settles stopped historical detached custody through the installed Machine owner when remote raw RPC is unavailable (%s)', async scenario => {
+  it.each(['historical', 'stale_active', 'cancelled_last', 'pending', 'unconfirmed'] as const)('settles stopped historical detached custody through the installed Machine owner when remote raw RPC is unavailable (%s)', async scenario => {
     const accountId = 'account-1';
     const machineId = 'machine-1';
     const runId = '7be4d65c-d3b7-4868-a416-b18d9ee29c1c';
@@ -691,7 +691,8 @@ describe('production terminal Workflow recovery transport', () => {
     await storage.execute({ operation: 'initialize', runId, expectedRevision: 0, checkpointEnvelope,
       rootInvocation: { id: rootId, contentEnvelope: seal(true) } });
     await storage.execute({ operation: 'invocations.admit', runId, expectedRevision: 1, checkpointEnvelope,
-      invocations: [{ id: childId, sequence: '1', parentRecordId: rootId, memberOrdinal: '0', lifecycle: 'outcome_uncertain', contentEnvelope: seal(false) }] });
+      invocations: [{ id: childId, sequence: '1', parentRecordId: rootId, memberOrdinal: '0',
+        lifecycle: scenario === 'cancelled_last' ? 'cancel_requested' : 'outcome_uncertain', contentEnvelope: seal(false) }] });
     storage.requestControl('cancelled');
     // Home HTTP/storage and the Machine process transport are the boundaries.
     vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
@@ -733,21 +734,23 @@ describe('production terminal Workflow recovery transport', () => {
         if (method !== SESSION_RPC_METHODS.EXECUTION_RUN_GET || !request || typeof request !== 'object'
           || !('runId' in request) || request.runId !== 'historical-native-run') throw new Error('Unexpected native effect');
         nativeReads++;
-        const terminal = scenario === 'historical' || scenario === 'stale_active' || scenario === 'pending' && nativeStops > 0;
+        const terminal = scenario === 'historical' || scenario === 'stale_active' || scenario === 'cancelled_last' || scenario === 'pending' && nativeStops > 0;
         return { run: { runId: request.runId, callId: 'call', sidechainId: 'side', intent: 'agent',
           backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, permissionMode: 'default', retentionPolicy: 'resumable',
-          runClass: 'long_lived', ioMode: 'request_response', status: terminal ? 'failed' : 'running', startedAtMs: 1,
+          runClass: 'long_lived', ioMode: 'request_response', status: terminal ? scenario === 'cancelled_last' ? 'cancelled' : 'failed' : 'running', startedAtMs: 1,
           ...(terminal ? { finishedAtMs: 2 } : {}),
           inputTurns: { occurrenceId: 'historical-occurrence', ...(scenario === 'stale_active' ? {
             current: { turnId: 'historical-turn', inputIds: ['historical-input'], state: 'active' },
+          } : scenario === 'cancelled_last' ? {
+            last: { turnId: 'historical-turn', inputIds: ['historical-input'], state: 'cancelled' },
           } : {}) } } };
       } },
     });
     await recover('startup');
     // Recovery consumes installed custody once, without reacquiring it through Home.
     expect(remoteReads).toBe(0);
-    expect(nativeReads).toBe(scenario === 'historical' || scenario === 'stale_active' ? 1 : 2);
-    expect(nativeStops).toBe(scenario === 'historical' || scenario === 'stale_active' ? 0 : 1);
+    expect(nativeReads).toBe(scenario === 'historical' || scenario === 'stale_active' || scenario === 'cancelled_last' ? 1 : 2);
+    expect(nativeStops).toBe(scenario === 'historical' || scenario === 'stale_active' || scenario === 'cancelled_last' ? 0 : 1);
     if (scenario === 'unconfirmed') {
       expect(storage.run()).toMatchObject({ state: 'cancelled', workflowCustodyState: 'pending' });
       expect(storage.rowById(childId)?.index.lifecycle).not.toBe('cancelled');
@@ -759,7 +762,9 @@ describe('production terminal Workflow recovery transport', () => {
     const opened = openWorkflowProgressStoredEnvelopeV1({ mode: 'plain', binding: { v: 1, purpose: 'invocation_progress',
       accountId, runId, recordId: childId, sequence: '1', parentRecordId: rootId, memberOrdinal: '0', attempt: '0' },
       envelope: parseWorkflowStoredContentEnvelopeV1(row.contentEnvelope) });
-    expect(opened).toMatchObject({ kind: 'available', content: { uncertainPriorEffects: { activity: 'stopped' } } });
+    if (scenario !== 'cancelled_last') {
+      expect(opened).toMatchObject({ kind: 'available', content: { uncertainPriorEffects: { activity: 'stopped' } } });
+    }
     if (opened.kind === 'available') expect(opened.content.result).toBeUndefined();
   });
 });

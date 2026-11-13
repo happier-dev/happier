@@ -636,6 +636,8 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   sessionRunnerStatus?: MachineRpcHandlerDeps['sessionRunnerStatus'];
   awaitAgentSessionOpen?: SessionLifecycleMachineDeps['awaitAgentSessionOpen'];
   isSessionAlreadyRunning: (sessionId: string) => Promise<boolean>;
+  /** Orphan settlement leaves a Session the respawn owner holds to it. */
+  isSessionRespawnPending?: (sessionId: string) => boolean;
   loadLocalSessionMetadataForHandoff: (sessionId: string) => Promise<SessionHandoffLocalMetadataSource | null>;
   beforeShutdown: () => Promise<void>;
   requestShutdown: (source: DaemonShutdownSource, errorMessage?: string) => void;
@@ -1255,7 +1257,8 @@ export async function bootstrapMachineSyncRuntime(
             { ...createProviderAccountOperationScope(context), ...(request.actionId === 'providers.models.refresh' ? { forceRefresh: true } : {}) });
         }
         const services = createConnectionRuntimeServices(context);
-        return services ? await services.describeConnections(request.input, context.signal)
+        // Account-scoped operands may omit machineId; this daemon answers for its own Machine, as models does above.
+        return services ? await services.describeConnections({ ...request.input, machineId: request.input.machineId ?? params.machineId }, context.signal)
           : { status: 'error', error: createProviderErrorV1('provider_authorization_changed', { machineId: params.machineId }) };
       },
       machineServices: {
@@ -1593,8 +1596,8 @@ export async function bootstrapMachineSyncRuntime(
             emit: (payload) => connectedApiMachine.sendPeerTcpTunnelRelayEnvelope(payload),
           },
           observability: peerMediationObservabilityEmitter,
-          ...(voiceBinaryAppendConsumer ? { voiceBinaryAppendConsumer } : {}),
-          ...(voiceBinaryTerminalConsumer ? { voiceBinaryTerminalConsumer } : {}),
+          // The role runtime always supplies stable voice consumers; they refuse typed while voice is off.
+          voiceBinaryAppendConsumer, voiceBinaryTerminalConsumer,
           ...(params.peerMediationMachineRpc?.resolveExternalProviderBrokerApplicationTarget
             ? {
                 resolveProviderBrokerApplicationTarget:
@@ -2125,6 +2128,7 @@ export async function bootstrapMachineSyncRuntime(
     });
 
     const cleanupPluginConnectionStateSource = bindPluginDaemonConnectionStateSource(connectedApiMachine);
+    let onlinePreparation: Promise<void> | null = null;
     const cleanupDaemonConnectivityState = connectedApiMachine.onConnectionStateChange((state) => {
       if (params.isShuttingDown()) return;
 
@@ -2132,7 +2136,7 @@ export async function bootstrapMachineSyncRuntime(
       params.setDaemonServerWorkOnline?.(online);
       if (online) {
         params.wakeRuntimeAuthRecoveryPresentation?.();
-        void (async () => {
+        onlinePreparation = (async () => {
           try {
             await usageLimitRecoveryMutationCustody?.bindRecoveredJournals([]);
             if (params.isShuttingDown()) return;
@@ -2145,7 +2149,7 @@ export async function bootstrapMachineSyncRuntime(
         })().catch((error) => {
           logger.warn('[DAEMON RUN] Failed to refresh reconnect-owned daemon work', error);
         });
-      }
+      } else onlinePreparation = null;
       void daemonConnectivityCoordinator!.applyState(state).catch((error) => {
         logger.warn('[DAEMON RUN] Failed to apply daemon connectivity state', error);
       });
@@ -2276,6 +2280,7 @@ export async function bootstrapMachineSyncRuntime(
               apiMachine: connectedApiMachine,
               orphanedDeadDaemonSessions: pendingOrphanedSessions,
               isSessionAlreadyRunning: params.isSessionAlreadyRunning,
+              ...(params.isSessionRespawnPending ? { isSessionRespawnPending: params.isSessionRespawnPending } : {}),
               isShuttingDown: params.isPublicationQuiescing ?? params.isShuttingDown,
               ...(params.credentials ? { retireTerminalControlServiceability: async (marker: OrphanedDeadDaemonSession) => {
                 await retireOrphanedTerminalControlServiceability({ marker, credentials: params.credentials!,
@@ -2337,7 +2342,10 @@ export async function bootstrapMachineSyncRuntime(
       if (params.isShuttingDown()) return;
       await Promise.all([
         pendingRecovery,
-        workflowRecoveryTriggers?.onResumed().catch((error) => {
+        (async () => {
+          await onlinePreparation;
+          await workflowRecoveryTriggers?.onResumed();
+        })().catch((error) => {
           logger.warn('[DAEMON RUN] Workflow custody resume recovery failed; pending custody retained', error);
         }),
       ]);
@@ -2368,7 +2376,12 @@ export async function bootstrapMachineSyncRuntime(
         params.dispatchSessionFollowOccurrence?.({ accountFollowSourcesChanged: {} }).catch(error => {
           logger.warn('[DAEMON RUN] Personal Run Follow reconnect read remains pending', serializeAxiosErrorForLog(error));
         }),
-        workflowRecoveryTriggers?.onConnected().catch((error) => {
+        (async () => {
+          // Connection publication refreshes the existing server feature source.
+          // Recovery must consume that decision after refresh, not a cold snapshot.
+          await onlinePreparation;
+          await workflowRecoveryTriggers?.onConnected();
+        })().catch((error) => {
           logger.warn('[DAEMON RUN] Workflow custody startup/reconnect recovery failed; pending custody retained', error);
         }),
       ]);
