@@ -44,6 +44,8 @@ vi.mock('expo-file-system', () => ({
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { resetServerFeaturesClientForTests } = await import("@/sync/api/capabilities/serverFeaturesClient");
+// Load the real screen after its boundaries are installed, outside any case's deadline.
+const { TeamCreateScreen } = await import('./TeamCreateScreen');
 
 const ELIGIBILITY_PATH = '/v1/home/governance/eligibility/get';
 const GOVERNANCE_PATH = '/v1/home/governance/get';
@@ -52,7 +54,6 @@ const TEAM_LOGO_SET_PATH = '/v1/teams/logo/set';
 const HOME_ACCOUNT_SEARCH_PATH = '/v1/home/accounts/search';
 
 async function renderCreate(administrationServerId?: string) {
-    const { TeamCreateScreen } = await import('./TeamCreateScreen');
     return renderScreen(<TeamCreateScreen administrationServerId={administrationServerId} />);
 }
 

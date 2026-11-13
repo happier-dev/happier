@@ -17,6 +17,9 @@ import {
     teamCredentialsPath,
 } from '../teamsRoutes';
 
+// Resolve the real registry during collection, outside any case's deadline.
+const { resolveSettingsNestedRouteName } = await import('@/components/settings/navigation/settingsRouteRegistry');
+
 const UI_SOURCES_ROOT = join(__dirname, '..', '..', '..', '..');
 const SETTINGS_ROUTES_ROOT = join(UI_SOURCES_ROOT, 'app', '(app)', 'settings');
 
@@ -75,8 +78,7 @@ describe('team credential destinations', () => {
         expect(unreachable).toEqual([]);
     });
 
-    it('registers every credential destination with the settings stack chrome', async () => {
-        const { resolveSettingsNestedRouteName } = await import('@/components/settings/navigation/settingsRouteRegistry');
+    it('registers every credential destination with the settings stack chrome', () => {
         // Team destinations live in the Teams collection's nested navigator; each one must resolve to
         // the registered screen of its own route file, or it falls back to the raw router segment
         // for its title and Back affordance instead of the Settings chrome.

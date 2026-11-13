@@ -33,6 +33,10 @@ vi.mock('@/utils/ui/shareText', () => ({
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+// Load real surfaces after boundary installation, outside any case's deadline.
+const { TeamInvitationForm } = await import('./TeamInvitationCreateScreen');
+const { TeamSection } = await import('../TeamSection');
+const { HomeInvitePeopleDialog } = await import('../../home/governance/HomeInvitePeopleDialog');
 
 const TEAM_GET_PATH = '/v1/teams/get';
 const INVITATION_CREATE_PATH = '/v1/teams/invitations/create';
@@ -41,8 +45,6 @@ const INVITATION_LIST_PATH = '/v1/teams/invitations/list';
 
 async function renderCreateScreen(serverId: string) {
     // The form has no page of its own: it mounts inside the Team shell, as the Invite people dialog mounts it.
-    const { TeamInvitationForm } = await import('./TeamInvitationCreateScreen');
-    const { TeamSection } = await import('../TeamSection');
     return renderScreen(
         <TeamSection serverId={serverId} teamId="team-1">
             {(context) => <TeamInvitationForm context={context} />}
@@ -108,7 +110,6 @@ describe('TeamInvitationCreateScreen', () => {
         harness.answer(serverId, INVITATION_CREATE_PATH, {
             body: { invitation: teamInvitationRowFixture(), joinUrl: 'https://home-a.example/join/first-bearer' },
         });
-        const { HomeInvitePeopleDialog } = await import('../../home/governance/HomeInvitePeopleDialog');
         const onClose = vi.fn();
         const screen = await renderScreen(<HomeInvitePeopleDialog serverId={serverId} teamId="team-1" onClose={onClose} />);
         await waitForTestId(screen, 'team-invite-submit');
@@ -135,7 +136,6 @@ describe('TeamInvitationCreateScreen', () => {
         harness.answer(serverId, INVITATION_CREATE_PATH, {
             body: { invitation: teamInvitationRowFixture(), joinUrl: 'https://home-a.example/join/ready-bearer' },
         });
-        const { HomeInvitePeopleDialog } = await import('../../home/governance/HomeInvitePeopleDialog');
         const titles: unknown[] = [];
         const screen = await renderScreen(<HomeInvitePeopleDialog serverId={serverId} teamId="team-1" onClose={vi.fn()} setChrome={(chrome) => { titles.push(chrome?.title); }} />);
         await waitForTestId(screen, 'team-invite-submit');

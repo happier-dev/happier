@@ -20,6 +20,9 @@ vi.mock('@legendapp/list/react-native', async (importOriginal) => {
 });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+// Load real surfaces after boundary installation, outside any case's deadline.
+const { IdentityConnectionGroupMappings } = await import('./IdentityConnectionGroupMappings');
+const { DirectorySourceDetailScreen } = await import('./DirectorySourceDetailScreen');
 const PATH = '/v1/teams/team-1/external-group-bindings';
 const LIST_PATH = bindHomeDomainActionHttpRequestV1('teams.externalGroupBindings.list', {
     v: 1, teamId: 'team-1', ownerKind: 'identity_connection', teamIdentityConnectionId: 'connection-1', limit: 50, cursor: null,
@@ -40,7 +43,6 @@ describe('IdentityConnectionGroupMappings acknowledged writes', () => {
         harness.answer(serverId, `GET ${LIST_PATH}`, { body: { items: operation === 'remove' ? [binding] : [], nextCursor: null } });
         harness.answer(serverId, `PUT ${PATH}`, { body: binding });
         harness.answer(serverId, `DELETE ${PATH}/binding-1`, { body: { v: 1, outcome: 'removed' } });
-        const { IdentityConnectionGroupMappings } = await import('./IdentityConnectionGroupMappings');
         const screen = await renderScreen(<IdentityConnectionGroupMappings
             scope={{ serverId, accountId: 'owner' }} address={{ serverId, teamId: 'team-1' }}
             connectionId="connection-1" mutationsAvailable requestApproval={() => undefined}
@@ -99,7 +101,6 @@ describe('DirectorySourceDetailScreen acknowledged mappings', () => {
         harness.answer(serverId, groupsPath, { body: { items: [group], nextCursor: null } });
         harness.answer(serverId, `PUT ${PATH}`, { body: { ...binding, owner: { kind: 'directory_source', directorySourceId: source.id } } });
         harness.answer(serverId, `DELETE ${PATH}/binding-1`, { body: { v: 1, outcome: 'removed' } });
-        const { DirectorySourceDetailScreen } = await import('./DirectorySourceDetailScreen');
         const screen = await renderScreen(<DirectorySourceDetailScreen serverId={serverId} teamId="team-1" sourceId={source.id} />);
         await vi.waitFor(() => expect(screen.findByTestId('directory-group:external-1'), screen.getTextContent()).not.toBeNull());
         await screen.pressByTestIdAsync('directory-group:external-1');
