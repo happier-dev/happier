@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createDeferred, createMachineFixture, renderHook } from '@/dev/testkit';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
 import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -253,6 +254,7 @@ describe('useMachinePoolGroups', () => {
             active: true,
             activeAt: Date.now(),
         };
+        publishMachineActivityForTest([onlyMachine]);
         expect(buildMachineDestinationModel({
             scopesByServerId: new Map([[boundary.serverId, { serverId: boundary.serverId, accountId: 'account-a' }]]),
             groups: [{

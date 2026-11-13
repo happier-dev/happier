@@ -81,6 +81,9 @@ describe('useMachinePoolSelection', () => {
         await getServerFeaturesSnapshot({ serverId: boundary.serverId, force: true });
         await getServerFeaturesSnapshot({ serverId: boundary.backgroundServerId, force: true });
         setRuntimeFetch(async (url, init) => {
+            if (String(url).endsWith('/v1/auth/ping')) {
+                return Response.json({ ok: true });
+            }
             if (String(url).endsWith('/v1/account/encryption')) {
                 return Response.json({ mode: 'plain', updatedAt: 1 });
             }
