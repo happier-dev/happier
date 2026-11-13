@@ -40,7 +40,7 @@ export async function cmdSessionList(
   const plain = hasFlag(argv, '--plain');
   const resumableOnly = hasFlag(argv, '--resumable');
   const limitRaw = readIntFlagValue(argv, '--limit', { min: 1 });
-  const limit = limitRaw !== null ? Math.min(limitRaw, 200) : undefined;
+  const limit = limitRaw !== null ? Math.min(limitRaw, 200) : 50;
   const cursor = (readFlagValue(argv, '--cursor') ?? '').trim();
 
   if (hasFlag(argv, '--cursor') && !cursor) {
@@ -69,7 +69,7 @@ export async function cmdSessionList(
       ...(archivedOnly ? { archivedOnly: true } : {}),
       ...(includeSystem ? { includeSystem: true } : {}),
       ...(resumableOnly ? { resumableOnly: true } : {}),
-      ...(limit ? { limit } : {}),
+      limit,
       ...(cursor ? { cursor } : {}),
       ...(!json ? { includeRows: true } : {}),
     },
@@ -132,5 +132,10 @@ export async function cmdSessionList(
 
   for (const line of renderSessionListTable({ rows })) {
     console.log(line);
+  }
+
+  if (hasNext && nextCursor) {
+    console.log();
+    console.log(chalk.gray(`More sessions available. Use ${cmd(`--cursor ${nextCursor}`)} to continue.`));
   }
 }
