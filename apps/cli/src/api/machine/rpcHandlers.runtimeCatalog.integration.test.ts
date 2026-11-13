@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { registerMachineSessionRpcHandlers } from './rpcHandlers.sessions';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -267,7 +268,7 @@ function registerMachineRpcHandlers(
   params: Parameters<typeof registerMachineRpcHandlersImpl>[0],
 ): ReturnType<typeof registerMachineRpcHandlersImpl> {
   let latestSpawnOptions: Record<string, any> | null = null;
-  return registerMachineRpcHandlersImpl({
+  const registration = registerMachineRpcHandlersImpl({
     ...params,
     handlers: {
       ...params.handlers,
@@ -296,6 +297,9 @@ function registerMachineRpcHandlers(
       }),
     },
   });
+  // The active `sessions` Machine role registers the new-Session family on the same dispatcher.
+  registerMachineSessionRpcHandlers({ rpcHandlerManager: params.rpcHandlerManager, ...registration.sessionsRoleFamily });
+  return registration;
 }
 
 describe('registerMachineRpcHandlers', () => {
@@ -7187,6 +7191,7 @@ describe('registerMachineRpcHandlers', () => {
     registerMachineMemoryRpcHandlers({
       rpcHandlerManager,
       memoryWorker: {
+        waitForReady: async () => {},
         stop: () => {},
         reloadSettings: async () => {},
         clearIndex: async () => {},

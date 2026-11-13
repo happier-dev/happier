@@ -1,4 +1,5 @@
 import { createProviderAccountUsageStore } from '@/daemon/connectedServices/accountUsage/store';
+import { activateSessionsRoleForMachineClient } from '@/daemon/testkit/sessionsRole.testkit';
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
@@ -258,10 +259,10 @@ it.each(['refused_advertisement', 'late_feature_snapshot'] as const)('admits the
       },
     });
   publishEarlier = () => client.setProjectFiniteExecutionLive(true);
-  client.setRPCHandlers({ spawnSession: async () => { throw new Error('Launch uses the exact Machine process boundary'); },
+  await activateSessionsRoleForMachineClient(client, client.setRPCHandlers({ spawnSession: async () => { throw new Error('Launch uses the exact Machine process boundary'); },
     sessionSpawnV1OutcomeRequired: true,
     resolveSpawnSessionByNonce: async () => { throw new Error('No replacement launch'); },
-    stopSession: async () => true, requestShutdown: () => {} });
+    stopSession: async () => true, requestShutdown: () => {} }));
   installControlRegistrations(client);
   try {
     client.connect();

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { activateSessionsRoleForMachineClient } from '@/daemon/testkit/sessionsRole.testkit';
 
 import type { Machine } from '@/api/types';
 import { decodeBase64, encodeBase64, decrypt, encrypt } from '@/api/encryption';
@@ -22,14 +23,14 @@ describe('ApiMachineClient spawn-happy-session handler', () => {
     const client = new ApiMachineClient('token', machine);
 
     let captured: any = null;
-    client.setRPCHandlers({
+    await activateSessionsRoleForMachineClient(client, client.setRPCHandlers({
       spawnSession: async (options) => {
         captured = options;
         return { type: 'success', sessionId: 'session-1' };
       },
       stopSession: async () => true,
       requestShutdown: () => {},
-    });
+    }));
 
     const rpc = (client as any).rpcHandlerManager;
     const params = {
@@ -64,12 +65,12 @@ describe('ApiMachineClient spawn-happy-session handler', () => {
       daemonStateVersion: 0,
     };
     const client = new ApiMachineClient('token', machine);
-    client.setRPCHandlers({
+    await activateSessionsRoleForMachineClient(client, client.setRPCHandlers({
       spawnSession: async () => ({ type: 'success', sessionId: 'session-without-outcome' }),
       sessionSpawnV1OutcomeRequired: true,
       stopSession: async () => true,
       requestShutdown: () => {},
-    });
+    }));
 
     const rpc = (client as any).rpcHandlerManager;
     const params = {
@@ -102,14 +103,14 @@ describe('ApiMachineClient spawn-happy-session handler', () => {
     const client = new ApiMachineClient('token', machine);
 
     let captured: any = null;
-    client.setRPCHandlers({
+    await activateSessionsRoleForMachineClient(client, client.setRPCHandlers({
       spawnSession: async (options) => {
         captured = options;
         return { type: 'success', sessionId: 'session-1' };
       },
       stopSession: async () => true,
       requestShutdown: () => {},
-    });
+    }));
 
     const rpc = (client as any).rpcHandlerManager;
     const params = {
@@ -171,14 +172,14 @@ describe('ApiMachineClient spawn-happy-session handler', () => {
     const client = new ApiMachineClient('token', machine);
 
     let captured: any = null;
-    client.setRPCHandlers({
+    await activateSessionsRoleForMachineClient(client, client.setRPCHandlers({
       spawnSession: async (options) => {
         captured = options;
         return { type: 'success', sessionId: 'session-1' };
       },
       stopSession: async () => true,
       requestShutdown: () => {},
-    });
+    }));
 
     const rpc = (client as any).rpcHandlerManager;
     const params = {

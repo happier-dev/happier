@@ -1090,7 +1090,7 @@ export async function bootstrapMachineSyncRuntime(
     const roleRuntime = createMachineRoleActivationRuntime({
       rpcHandlerManager: connectedApiMachine.getMachineRoleRpcHandlerManager(),
       ...(params.machineRoles ? { roles: params.machineRoles } : {}),
-      // Roles bound to this Machine connection; `devices` follows the daemon (session control runtime).
+      // Roles bound to this Machine connection; `sessions` is provided once the RPC composition below exists; `devices` follows the daemon (session control runtime).
       contexts: { memory: machineConnectionRoleContext, voice: machineConnectionRoleContext },
     });
     roleActivations = roleRuntime;
@@ -1460,8 +1460,12 @@ export async function bootstrapMachineSyncRuntime(
       machineRpcLifecycleRegistration.externalSessionPluginAdmissionOwner;
     externalSessionHostActionExecutor =
       machineRpcLifecycleRegistration.externalSessionHostActionExecutor;
-    sessionSpawnDirectTargetTransport =
-      machineRpcLifecycleRegistration.sessionSpawnDirectTargetTransport;
+    // The `sessions` role registers the new-Session family composed above (inactive: never
+    // registered, so those methods answer machine_role_inactive). The Machine client always
+    // composes it; Machine-client fakes without an RPC composition leave the role with nothing to register.
+    const sessionsRoleFamily = machineRpcLifecycleRegistration.sessionsRoleFamily;
+    if (sessionsRoleFamily) await roleRuntime.provide('sessions', { family: sessionsRoleFamily });
+    sessionSpawnDirectTargetTransport = roleRuntime.get('sessions')?.sessionSpawnDirectTargetTransport;
     // Stable consumers follow live voice role toggles; they refuse typed while voice is off.
     voiceBinaryAppendConsumer = roleRuntime.voiceBinaryConsumers.append;
     voiceBinaryTerminalConsumer = roleRuntime.voiceBinaryConsumers.terminal;

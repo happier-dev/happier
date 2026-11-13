@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { activateSessionsRoleForMachineClient } from '@/daemon/testkit/sessionsRole.testkit';
 import axios from 'axios';
 import { spawn as observedSpawn } from 'node:child_process';
 
@@ -306,7 +307,7 @@ describe('registered configured ACP replay fork to a native child', () => {
             }
             return await previousPost(url, body, options);
         });
-        h.machine.setRPCHandlers({ spawnSession: async options => {
+        await activateSessionsRoleForMachineClient(h.machine, h.machine.setRPCHandlers({ spawnSession: async options => {
             // This is the existing process-creation/tracking boundary. Preserve
             // precisely the fork owner's output; no requester identity is added.
             launched = options;
@@ -330,7 +331,7 @@ describe('registered configured ACP replay fork to a native child', () => {
             } finally { await child.dispose(); await child.waitForSettlement(); }
             await h.dispatch({ kind: 'plugin_services.close_v1', ...h.operationBase('configured-replay-fork') });
             return { type: 'success', sessionId: h.sessionId };
-        }, stopSession: async () => true, requestShutdown() {} }, { currentMachineId: 'machine' });
+        }, stopSession: async () => true, requestShutdown() {} }, { currentMachineId: 'machine' }));
         const manager: unknown = Reflect.get(h.machine, 'rpcHandlerManager');
         if (!(manager instanceof RpcHandlerManager)) throw new Error('Missing installed Machine receiver');
         const before = vi.mocked(observedSpawn).mock.calls.length;
