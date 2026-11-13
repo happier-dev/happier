@@ -128,6 +128,39 @@ async function createRuntime(params: Readonly<{
 }
 
 describe('OpenCode native interactions', () => {
+  it('binds recorded V2 OpenRouter terminal accounting read from the native inventory to its admitted turn', async () => {
+    const client = createClient();
+    const sessionId = 'provider-session-1';
+    // reload161: native session_message seq5 user, seq6 assistant, seq13 idle.
+    // Identifiers and text are sanitized; accounting/time/model retain the recorded values.
+    const history = normalizeOpenCodeV2Messages([
+      { id: 'router-user', type: 'user', time: { created: 1794542190466 }, text: 'hello' },
+      { id: 'router-answer', type: 'assistant', finish: 'stop',
+        time: { created: 1794542190495, streamed: 1794542191680, completed: 1794542191683 },
+        model: { id: 'openai/gpt-4.1-mini', providerID: 'happier-openrouter', variant: 'default' },
+        cost: 0.0006932, tokens: { input: 1713, output: 5, reasoning: 0, cache: { read: 0, write: 0 } },
+        content: [{ type: 'text', text: 'OK' }] },
+    ], sessionId);
+    vi.mocked(client.sessionPromptAsync).mockResolvedValue({ id: 'router-user' });
+    const runtime = await createRuntime({ client, dialect: 'v2', askQuestions: vi.fn() });
+    const native = createOpenCodeSessionRuntime({ operations: runtime,
+      request: { kind: 'create', sessionId: 'happier-session-1', cwd: '/repo' },
+      disposeOperations: () => runtime.resetOrDisposeRuntime(),
+      runtimeCapabilities: { sessionCapabilities: AGENT_DEFINITION.core.sessionCapabilities,
+        tools: { delivery: 'native_mcp', support: 'supported' } },
+    });
+    const events: Array<{ kind: string; turnId?: string }> = [];
+    const watcher = native.watch(event => events.push(event));
+    try {
+      runtime.beginTurnLifecycle('router-turn');
+      await runtime.sendTurnPrompt('hello');
+      vi.mocked(client.sessionMessages).mockResolvedValue(history);
+      await runtime.handleProviderEvent(normalizeOpenCodeV2Event('session.execution.succeeded', { sessionID: sessionId }));
+      expect(events.filter(event => event.kind === 'usage-observed')).toMatchObject([{ turnId: 'router-turn' }]);
+      expect(events).toContainEqual(expect.objectContaining({ kind: 'turn-complete', turnId: 'router-turn' }));
+    } finally { watcher.dispose(); await native.dispose(); }
+  });
+
   it('binds recorded live paid inferences to their admitted turn without assigning late accounting to a newer turn', async () => {
     const client = createClient();
     const history = recordedNativeHistory.history.body;
@@ -162,16 +195,18 @@ describe('OpenCode native interactions', () => {
       vi.mocked(client.sessionMessages).mockResolvedValue(history);
       await runtime.handleProviderEvent({ type: 'session.idle', properties: { sessionID: user.sessionID } });
       expect(events).toContainEqual(expect.objectContaining({ kind: 'turn-complete', turnId: 'paid-turn' }));
-      // A revised accounting frame after completion has no live ownership proof.
+      // A revision of an already-correlated inference retains that proven owner.
       await publish({ ...assistant, cost: (assistant.cost ?? 0) + 1 });
-      expect(usage().at(-1)).not.toHaveProperty('turnId');
+      expect(usage().at(-1)).toMatchObject({ turnId: 'paid-turn' });
       vi.mocked(client.sessionMessages).mockResolvedValue([]);
       vi.mocked(client.sessionPromptAsync).mockResolvedValue({ id: 'next-native-user' });
       runtime.beginTurnLifecycle('next-turn');
       await runtime.sendTurnPrompt('next');
       await publish({ ...assistant, cost: (assistant.cost ?? 0) + 2 });
+      expect(usage().at(-1)).toMatchObject({ turnId: 'paid-turn' });
+      await publish({ ...assistant, id: 'uncorrelated-old-answer', cost: (assistant.cost ?? 0) + 3 });
       expect(usage().at(-1)).not.toHaveProperty('turnId');
-      await publish({ ...assistant, summary: true, parentID: 'next-native-user', cost: (assistant.cost ?? 0) + 3 });
+      await publish({ ...assistant, id: 'summary-answer', summary: true, parentID: 'next-native-user', cost: (assistant.cost ?? 0) + 4 });
       expect(usage().at(-1)).not.toHaveProperty('turnId');
     } finally {
       watcher.dispose();

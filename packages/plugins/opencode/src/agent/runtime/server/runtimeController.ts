@@ -396,24 +396,24 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       if (observeNativeModel(info)) return;
     }
   };
-  const paidUsageFingerprints = new Map<string, string>();
+  const paidUsageFingerprints = new Map<string, Readonly<{ fingerprint: string; turnId?: string }>>();
   let turnStartedAtMs: number | undefined;
   let lastNonModelItemCompletedAtMs: number | undefined;
   const currentTurnCacheMessageIds = new Set<string>();
-  const publishPaidUsage = (info: Readonly<Record<string, unknown>> | null, live = false): void => {
+  const publishPaidUsage = (info: Readonly<Record<string, unknown>> | null): void => {
     if (!info || info.role !== 'assistant') return;
     const nativeSessionId = readNonBlankOpaqueIdentifier(info.sessionID);
     const inferenceId = readNonBlankOpaqueIdentifier(info.id);
     const time = asRecord(info.time);
     const createdAtMs = typeof time?.created === 'number' && Number.isFinite(time.created) && time.created >= 0
       ? time.created : undefined;
-    const ownsLiveInference = live && state.turnInFlight && nativeSessionId === state.providerSessionId
+    const ownsCurrentInference = state.turnInFlight && nativeSessionId === state.providerSessionId
       && info.summary !== true && state.currentTurnProviderUserMessageIds.has(readNonBlankOpaqueIdentifier(info.parentID) ?? '');
-    if (ownsLiveInference && inferenceId && createdAtMs !== undefined) {
+    if (ownsCurrentInference && inferenceId && createdAtMs !== undefined) {
       turnStartedAtMs ??= createdAtMs;
       currentTurnCacheMessageIds.add(inferenceId);
     }
-    const lastUseAtMs = ownsLiveInference ? resolvePromptCacheLastUseAtMs({
+    const lastUseAtMs = ownsCurrentInference ? resolvePromptCacheLastUseAtMs({
       turnStartedAtMs,
       ...(lastNonModelItemCompletedAtMs !== undefined && createdAtMs !== undefined && lastNonModelItemCompletedAtMs <= createdAtMs
         ? { lastNonModelItemCompletedAtMs } : {}),
@@ -423,17 +423,21 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     const usage = normalizeOpenCodePaidUsage(info, params.dialect ?? 'v1'); if (!usage) return;
     const modelId = readNonBlankOpaqueIdentifier(info.modelID);
     const key = JSON.stringify([nativeSessionId, inferenceId]);
-    const fingerprint = JSON.stringify([modelId, usage, promptCache]);
-    if (paidUsageFingerprints.get(key) === fingerprint) return;
-    paidUsageFingerprints.set(key, fingerprint);
+    // Inventory reconciliation and live frames describe the same native inference.
+    // Keep a proven owner across later accounting revisions; never borrow a newer turn.
+    const turnId = paidUsageFingerprints.get(key)?.turnId
+      ?? (ownsCurrentInference ? state.activeTurnId ?? undefined : undefined);
+    const fingerprint = JSON.stringify([modelId, usage, promptCache, turnId]);
+    if (paidUsageFingerprints.get(key)?.fingerprint === fingerprint) return;
+    paidUsageFingerprints.set(key, { fingerprint, ...(turnId ? { turnId } : {}) });
     const observedAtMs = Date.now();
     publishRuntimeEvent({ kind: 'usage-observed', ...projectOpenCodeRuntimeScope(params.scope), emittedAtMs: observedAtMs,
       observationId: key, source: 'opencode-native-accounting', scope: 'turn_delta', ...(modelId ? { modelId } : {}),
-      ...(ownsLiveInference && state.activeTurnId ? { turnId: state.activeTurnId } : {}),
+      ...(turnId ? { turnId } : {}),
       ...(promptCache ? { promptCache } : {}),
       // Native compaction sizes the latest assistant aggregate, not the paid
       // Session ledger. The normalizer already resolves dialect overlap.
-      ...(ownsLiveInference && usage.tokens.total !== null ? { context: {
+      ...(ownsCurrentInference && usage.tokens.total !== null ? { context: {
         v: 1,
         modelId: modelId ?? null,
         usedTokens: usage.tokens.total,
@@ -454,7 +458,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       const messages = await client.sessionMessages({ sessionId: nativeSessionId });
       observeNativeModelFromHistory(messages);
       for (const message of messages) {
-        publishPaidUsage(asRecord(asRecord(message)?.info), true);
+        publishPaidUsage(asRecord(asRecord(message)?.info));
       }
     } catch (error) {
       params.ctx.logger.debug('[OpenCodeServer] settled native accounting read failed (non-fatal)', { error });
@@ -2035,7 +2039,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
 
     if (type === 'message.updated') {
       const info = asRecord(properties.info);
-      publishPaidUsage(info, true);
+      publishPaidUsage(info);
       const messageId = readNonBlankOpaqueIdentifier(info?.id) ?? '';
       const messageProjection = classifyOpenCodeMessageForProjection({ info });
       observeNativeModel(info);
