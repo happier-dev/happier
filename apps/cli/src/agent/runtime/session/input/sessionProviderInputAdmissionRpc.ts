@@ -3,6 +3,7 @@ import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { randomUUID } from 'node:crypto';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ACTION_IDS, isExecutionRunStartActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { z } from 'zod/mini';
@@ -12,7 +13,7 @@ import { registerSessionGuardNoticeRpc, type SessionGuardNoticeOwner } from './s
 import { readSessionRunnerRestartAdmissionCurrent, SessionRunnerRestartAdmissionIdentitySchema,
   type SessionRunnerRestartAdmissionAttempt, type SessionRunnerRestartAdmissionIdentity } from '@/daemon/plannedRunnerRestart/sessionRunnerRestartAdmission';
 
-const RUN_CREATION_METHODS = (['execution.run.start', 'execution.run.ensure', 'execution.run.ensure_or_start'] as const)
+const RUN_CREATION_METHODS = ACTION_IDS.filter(isExecutionRunStartActionIdV1)
   .flatMap(id => {
     const { bindings } = getActionSpec(id);
     return [bindings?.rpcMethod, ...(bindings?.rpcMethodAliases ?? [])].filter((method): method is string => typeof method === 'string');
