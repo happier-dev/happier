@@ -201,7 +201,7 @@ async function createCuaComputerDriver(params: Readonly<{ displayId: string; exe
     const point = (x: number, y: number) => {
       if (!observation || !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0
         || x >= observation.geometry.captureWidth || y >= observation.geometry.captureHeight) throw new ComputerDriverError('point_outside_capture');
-      return { x: x * observation.geometry.scaleX, y: y * observation.geometry.scaleY };
+      return { x, y };
     };
     if (observation) captureBinding = undefined;
     const nativeTarget = target.kind === 'display' ? { target: { kind: 'desktop', display_id: 'primary' } }
@@ -225,7 +225,10 @@ async function createCuaComputerDriver(params: Readonly<{ displayId: string; exe
         if (size.data.width !== observation.geometry.nativeWidth || size.data.height !== observation.geometry.nativeHeight
           || size.data.scale_factor !== observation.nativeScale) return { status: 'failed', code: 'stale_capture' };
       } else if (observation && target.kind === 'window' && operation.kind !== 'element') {
-        const current = await native.call('get_window_state', { ...nativeTarget, include_screenshot: false, include_accessibility_tree: true, full_output: true });
+        // A tree-only read replaces Cua's screenshot context used by drag/scroll.
+        // Display-only reads preserve the original action snapshot and its scale.
+        const current = await native.call('get_window_state', { ...nativeTarget, display_only: true,
+          include_screenshot: true, include_accessibility_tree: false, full_output: true });
         if (context?.signal?.aborted) return { status: 'interrupted', completion: 'known' };
         if (current.isError) return { status: 'failed', code: nativeRefusalCode(current) };
         const state = nativeStateSchema.safeParse(current.structuredContent);
@@ -242,7 +245,7 @@ async function createCuaComputerDriver(params: Readonly<{ displayId: string; exe
       if (context?.signal?.aborted) return { status: 'interrupted', completion: 'known' };
       if (closing || native.unavailable()) return { status: 'failed', code: 'driver_unavailable' };
       const calls: Array<Readonly<{ name: string; args: Record<string, unknown> }>> = [];
-      const frame = { scope: target.kind === 'display' ? 'desktop' : 'window', coordinate_frame: target.kind === 'display' ? 'desktop' : 'window' };
+      const frame = { coordinate_frame: target.kind === 'display' ? 'desktop' : 'window' };
       switch (operation.kind) {
         case 'move':
           point(operation.x, operation.y);

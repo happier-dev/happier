@@ -268,7 +268,7 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
       expect(await driver.input(target, null, { kind: 'press', key: 'Return' })).toEqual({ status: 'dispatched' });
       expect(await driver.input(target, null, { kind: 'click', x: 1, y: 1 })).toEqual({ status: 'failed', code: 'stale_capture' });
       expect(await driver.input(target, capture.captureId, { kind: 'click', x: 1, y: 1 })).toEqual({ status: 'dispatched' });
-      expect(native.tools.filter(tool => tool.name === 'get_window_state' && tool.arguments.include_screenshot === true)).toHaveLength(1);
+      expect(native.tools.filter(tool => tool.name === 'get_window_state' && tool.arguments.display_only !== true)).toHaveLength(1);
     } finally { await driver.close(); }
   });
 
@@ -392,7 +392,7 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
       const capture = await driver.capture(target);
       await driver.input(target, capture.captureId, { kind: 'click', x: 1, y: 1 });
       const treeReads = native.tools.filter(tool => tool.name === 'get_window_state' && tool.arguments.include_accessibility_tree === true);
-      expect(treeReads).toHaveLength(2);
+      expect(treeReads).toHaveLength(1);
       // Newer drivers default to a trimmed markdown tree; the structured elements and walk limits need full_output.
       for (const read of treeReads) expect(read.arguments).toMatchObject({ full_output: true });
     } finally { await driver.close(); }
@@ -440,7 +440,7 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
     let finishCapture: ((value: unknown) => void) | undefined;
     let finishInput: ((value: unknown) => void) | undefined;
     native.call.mockImplementation(({ name, arguments: args }) => name === 'get_window_state'
-      ? args.include_screenshot === false ? Promise.resolve(captureResult()) : new Promise(resolve => { finishCapture = resolve; })
+      ? args.display_only === true ? Promise.resolve(captureResult()) : new Promise(resolve => { finishCapture = resolve; })
         : new Promise(resolve => { finishInput = resolve; }));
     const source = createComputerCaptureSource({ sessionId: 'session', target, executablePath: '/managed/native-driver' });
     let observing: ReturnType<typeof source.observe> | undefined;
