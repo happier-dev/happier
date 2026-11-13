@@ -167,7 +167,8 @@ describe('OpenCode Voice authority through shared MCP', () => {
     let handle: VoiceAgentHandle | undefined;
     let opened: AgentSessionOpenRequest | undefined;
     let executed: unknown;
-    const actionInput = { anchor: 'voiceConversations.minSpeechMs', value: 1100 };
+    const actionInput = { anchor: 'voiceConversations.audibleWaitingCue', value: true };
+    const readBacks: string[] = [];
     let noteApproval!: () => void;
     const approvalCreated = new Promise<void>(resolve => { noteApproval = resolve; });
     homes.artifacts(serverId).afterNextCreate(async () => { noteApproval(); });
@@ -189,6 +190,9 @@ describe('OpenCode Voice authority through shared MCP', () => {
         const block = Array.isArray(result.content) ? result.content.find(item => item.type === 'text') : undefined;
         if (!block || block.type !== 'text') throw new Error('Missing Action result');
         executed = JSON.parse(block.text);
+        if (canApprove) {
+          expect(readBacks).toEqual([]);
+        }
         const listing = await client.request({ method: 'tools/list' }, ListToolsResultSchema);
         expect(listing.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['action_spec_get', 'action_execute']));
         return 'Setting updated.';
@@ -392,6 +396,7 @@ describe('OpenCode Voice authority through shared MCP', () => {
       const client = new DaemonVoiceAgentClient(account.accountLifetime.scope, controller.signal);
       const started = await client.start({ sessionId: session.sessionId, agentId, chatModelId: 'ollama/qwen2.5:3b', commitModelId: 'ollama/qwen2.5:3b', connectedServices: { v: 2, bindingsByServiceId: {} },
         permissionIntent: 'read-only', idleTtlSeconds: 300, initialContext: '', retentionPolicy: 'resumable' }).catch(error => {
+          if (deliveredStarts === 0 && producedStart === undefined) throw error;
           if (deliveredStarts === 0) expect(producedStart, 'the real CLI producer must issue its admitted Start').toMatchObject({ ok: true });
           expect(deliveredStarts, 'one admitted Start must reach the installed Run host without another Start RPC').toBe(1);
           throw error;
@@ -412,7 +417,9 @@ describe('OpenCode Voice authority through shared MCP', () => {
       setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'voice-call', status: 'connected', mode: 'listening', canStop: true });
       handle = { accountLifetime: account.accountLifetime, client, voiceAgentId: started.voiceAgentId, rpcSessionId: session.sessionId,
         transcriptEpoch: 0, metadataSessionId: null, backend: 'daemon', agentBackendId: agentId, signal: controller.signal,
-        actionInvocation: started.actionInvocation, toolTurnContext: { current: { turnOrigin: 'person', playHostText: async () => ({ status: 'completed' as const }) } } };
+        actionInvocation: started.actionInvocation, toolTurnContext: { current: { turnOrigin: 'person', playHostText: async ({ text }) => {
+          readBacks.push(text); return { status: 'completed' as const };
+        } } } };
       const receive = createVoiceRunActionReverseHandler(handle, 'voice-call');
       execute = createDaemonSessionAccountActionExecutor({ serverId, serverHttpBaseUrl: account.endpointUrl, token: credentials.token,
         createExecutor: () => { throw new Error('Voice must use its existing App Action front door'); }, getMachineClient: () => ({
@@ -423,7 +430,7 @@ describe('OpenCode Voice authority through shared MCP', () => {
         }) });
       const turnBridge = bridge;
       const pending = (async () => {
-        const stream = await turnBridge.startTurnStream(started.voiceAgentId, { message: 'Set minimum speech to 1100 milliseconds.' });
+        const stream = await turnBridge.startTurnStream(started.voiceAgentId, { message: 'Turn the waiting sound on.' });
         if (!stream.ok) throw new Error(`${stream.errorCode}: ${stream.error}`);
         let cursor = 0;
         let finalText: string | undefined;

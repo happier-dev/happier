@@ -15,6 +15,7 @@ import { getActionSpec, resolveActionExecutionPlacementForInput, type ActionSpec
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { isAgentOrUnresolvedSurface, resolveApprovalSurface, type ApprovalSurfaceResolution } from './actionApprovalSurface.js';
 import { readBuiltInSettingDeclarationV1, readBuiltInSettingsPermissionChangingV1 } from './settings/settingsDeclarations.js';
+import { isSettingsDeclarationWriteActionIdV1 } from './settingsDeclarationActionIdsV1.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import { matchesApprovedOperationStepV1 } from './approvedOperationV1.js';
 import { isApiTokenDeploymentGrantV1 } from '../auth/apiTokenGrant.js';
@@ -189,10 +190,15 @@ function requiresDefaultApprovalFloor(
   ) {
     return false;
   }
+  // A Voice Settings write needs the person's answer even when its reversible input
+  // is safe. Spoken confirmation answers this above; without delegation the
+  // existing approval request supplies the one-tap answer (owner 2026-10-30).
+  if (surface.kind === 'non_agent' && surface.surface === 'voice'
+    && isSettingsDeclarationWriteActionIdV1(actionId)) return true;
   // CLI surface default (owner ruling 2026-10-29: per-Action, per-surface; the CLI asks only for
   // consequential Actions). A Settings write is direct unless its declaration is consequential
   // (permission-changing or sensitive). Keyed on the surface only, never on who is calling.
-  if (surface.kind === 'non_agent' && surface.surface === 'cli' && (actionId === 'settings.set' || actionId === 'settings.reset')
+  if (surface.kind === 'non_agent' && surface.surface === 'cli' && isSettingsDeclarationWriteActionIdV1(actionId)
     && !readBuiltInSettingsPermissionChangingV1(input) && isNonConsequentialSettingDeclaration(readRecord(input).anchor)) {
     return false;
   }

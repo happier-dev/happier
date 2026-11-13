@@ -51,6 +51,38 @@ const { createDefaultActionExecutor } = await import('@/sync/ops/actions/default
 describe('Voice Action reference catalog', () => {
   beforeEach(async () => { await home.reset(); });
   afterEach(async () => { await home.reset(); });
+  it('applies the person’s waiting-sound toggle without a consequential read-back', async () => {
+    const serverId = await home.addHome({ name: 'Waiting sound', serverUrl: 'https://waiting-sound.test',
+      accountId: 'alice', currentAccount: true });
+    const features = createRootLayoutFeaturesResponse();
+    tryWriteServerEnabledBitInPlace(features, 'voice', true);
+    home.answer(serverId, '/v1/features', { body: features });
+    let content: Extract<AccountSettingsStoredContentEnvelope, { t: 'plain' }> = {
+      t: 'plain', v: { voice: { ...settingsDefaults.voice, canApproveRequests: true, audibleWaitingCue: true } },
+    };
+    home.answer(serverId, 'GET /v2/account/settings', { select: () => ({ body: { content, version: 1 } }) });
+    home.answer(serverId, 'POST /v2/account/settings', { select: raw => {
+      const request = AccountSettingsV2UpdateRequestSchema.parse(raw);
+      if (request.content?.t !== 'plain') throw new Error('Expected plain settings');
+      content = request.content;
+      return { body: { success: true, version: 2 } };
+    } });
+    const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'waiting-sound-call',
+      status: 'connected', mode: 'listening', canStop: true });
+    const readBacks: string[] = [];
+    const handlers = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: serverId,
+      playHostText: async ({ text }) => { readBacks.push(text); return { status: 'completed' as const }; } });
+    try {
+      const result = JSON.parse(await handlers.action_execute!({ actionId: 'settings.set',
+        input: { anchor: 'voiceConversations.audibleWaitingCue', value: false } },
+      { serverId, effectId: 'waiting-sound-off', turnOrigin: 'person' }));
+      expect(result).toMatchObject({ ok: true, result: { value: false } });
+      expect(content.v).toMatchObject({ voiceSettingsV1: { audibleWaitingCue: false } });
+      expect(readBacks).toEqual([]);
+      expect(home.artifacts(serverId).list()).toEqual([]);
+    } finally { resetVoiceSessionStoreForTests(); }
+  });
   it('reads back a model-produced permission grant before executing it', async () => {
     const serverId = await home.addHome({ name: 'Permission readback', serverUrl: 'https://permission-readback.test', accountId: 'alice', currentAccount: true });
     const features = createRootLayoutFeaturesResponse();

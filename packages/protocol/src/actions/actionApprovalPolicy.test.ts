@@ -178,6 +178,21 @@ async function loadRoutingResolver() {
 }
 
 describe('isApprovalRequiredByActionsSettings', () => {
+  it('keeps safe Voice Settings writes behind an answer while safe reads remain direct', () => {
+    const actionId = 'settings.set';
+    const spec = getActionSpec(actionId);
+    const input = { anchor: 'voiceConversations.audibleWaitingCue', value: true };
+    const context = { surface: 'voice', authority: 'account_automation', actionCaller: { kind: 'host' } } as const;
+    expect(resolveActionApprovalRouting({ actionId, spec, input, context, settings: EMPTY_SETTINGS }).required).toBe(true);
+    expect(resolveActionApprovalRouting({ actionId, spec, input, context: { ...context,
+      authority: 'present_user', presentUserConfirmation: { actionId } }, settings: EMPTY_SETTINGS }).required).toBe(false);
+    expect(resolveActionApprovalRouting({ actionId: 'settings.get', spec: getActionSpec('settings.get'),
+      input: { anchor: input.anchor }, context, settings: EMPTY_SETTINGS }).required).toBe(false);
+    expect(resolveActionApprovalRouting({ actionId: 'session.attention.set', spec: getActionSpec('session.attention.set'),
+      input: { sessionId: 'own-session', state: 'read' }, context, settings: EMPTY_SETTINGS }).required).toBe(false);
+    const waived = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['voice'] } });
+    expect(resolveActionApprovalRouting({ actionId, spec, input, context, settings: waived }).required).toBe(false);
+  });
   it('consumes completed Voice software confirmation while preserving Require and non-human Ask', () => {
     const actionId = 'machines.setup.apply';
     const spec = getActionSpec(actionId);
