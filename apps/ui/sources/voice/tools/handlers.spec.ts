@@ -919,6 +919,10 @@ describe('voice tool handlers', () => {
     const { sync } = await import('@/sync/sync');
     await sync.resumeSync('manual');
     storage.setState({ ...createBaseState(), settings: account.settings });
+    // Replacing the bootstrap rows also replaces their answered presence. Admit
+    // the fixture inventory through the shared Machine ingress before tool use.
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    await publishMachineInventoryForTest(account.scope, Object.values(storage.getState().machines));
     state = storage.getState();
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
