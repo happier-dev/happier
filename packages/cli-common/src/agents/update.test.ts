@@ -6,6 +6,7 @@ import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { AgentCliInstallPlatform } from '@happier-dev/agents/cli/runtime';
 import type { AgentCliRuntimeDescriptor } from './resolution.js';
 import { classifyAgentCliInstall, fetchAgentCliLatestVersion } from './update.js';
 
@@ -25,7 +26,7 @@ function runtimeSpec(overrides: Partial<AgentCliRuntimeDescriptor> = {}): AgentC
   };
 }
 
-const platform = process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
+const platform: AgentCliInstallPlatform = process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
 
 it.each(['npm', 'github'] as const)('latest-version lookup cancels its real %s response transport', async (source) => {
   const controller = new AbortController();
