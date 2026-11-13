@@ -1,3 +1,4 @@
+import { isScmRunStartRpcPurpose } from './externalActionScmRunPurpose';
 import { readAdmittedManagedCreationChildInTx, hasAdmittedManagedCreationRootInTx, readSelectedManagedCreationChildAdmission, type ManagedCreationChildAdmission } from './externalActionManagedAdmission';
 import { readTeamCredentialActionHttpPurposeV1 } from '@happier-dev/protocol/teams/credentials/actionHttpPurposeV1';
 import { TeamCredentialDirectMaterialOpenRequestV1Schema, TeamCredentialDirectMaterialRouteParamsV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
@@ -60,7 +61,7 @@ import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/pro
 import { ExternalActionActionIdV1Schema, bindExternalActionExecutionAuthorizationVerifyHttpPathV1, bindExternalActionExecutionAuthorizationHttpPathV1, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationVerifyRequestV1Schema, isExternalActionResolvedTargetAllowedV1, isExternalActionWorkflowActionIdV1, isExternalActionMachineWorkflowActionIdV1, type ExternalActionExecutionAuthorizationBindingV1, type ExternalActionExecutionAuthorizationV1, type ExternalActionMachineRpcExecutionV1, type ExternalActionTargetV1, type ExternalActionServerPrincipalV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { decodeExternalActionResolvedTargetV1, encodeExternalActionResolvedTargetV1, verifyExternalActionMachineRpcRequestV1, verifyExternalActionMachineRequestV1, isExternalActionAuthorizationBoundToEnvelope, type ExternalActionMachineRpcEventV1, type DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { isDeploymentDomainNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1, type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { getActionSpec, isPluginProvenanceOnlyActionId, isSessionTargetPreparationAction, isScmDiffSummaryRunAction, PublicActionIdSchema, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, resolveActionExecutionPlacementForInput, isPluginProvenanceOnlyActionId, isSessionTargetPreparationAction, isScmDiffSummaryRunAction, PublicActionIdSchema, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { ActionIdSchema, ACCOUNT_API_TOKENS_LIST_ACTION_ID_V1, SESSION_ORGANIZATION_PIN_SET_ACTION_ID_V1,
     isMachineDeploymentEnvironmentAccessActionIdV1, isDeploymentPrepareSessionMessageEffectV1,
@@ -234,10 +235,13 @@ export function readExternalActionSessionProposalSurface(
 }
 
 function isInstalledSessionClientAction(
-    spec: Pick<ReturnType<typeof getActionSpec>, 'executionPlacement'>,
+    spec: ReturnType<typeof getActionSpec>,
     origin?: Pick<ExternalActionExecutionAuthorizationBindingV1, 'sessionActionOrigin' | 'sessionActionSource' | 'workflowActionOrigin'>,
 ): boolean {
-    return spec.executionPlacement === 'client' && readExternalActionSessionProposalSurface(origin) !== undefined;
+    if (spec.executionPlacement !== 'client' && !spec.executionPlacements?.includes('client')) return false;
+    if (readExternalActionSessionProposalSurface(origin) === undefined) return false;
+    const caller = origin?.workflowActionOrigin ? { kind: 'workflowRun' } : origin?.sessionActionOrigin?.caller;
+    return resolveActionExecutionPlacementForInput(spec, undefined, caller) === 'client';
 }
 
 /** Interactive Account execution consumes the canonical signed-root catalog and declaration families. */
@@ -756,6 +760,9 @@ export async function hasCurrentExternalActionWorkflowOriginInTx(reader: Tx, inp
         // decide child consent from E2EE content; the receiver owns that match.
         const target = await readCurrentMachineWorkflowOriginInTx(reader, input, phase);
         return target?.accountId === input.accountId;
+    }
+    if (isInstalledSessionClientAction(getActionSpec(input.actionId), { workflowActionOrigin: origin })) {
+        return await readCurrentMachineWorkflowOriginInTx(reader, input, phase) !== null;
     }
     const publisher = await isAutomationOriginRunPublisherTx(reader, { accountId: input.accountId, machineId: input.machineId,
         runId: origin.runId, requireCurrentScopeEnd: true });
@@ -4521,10 +4528,11 @@ export async function verifyExternalActionMachineRpcExecution(
         return admitted.verified;
     }
 
+    const scmRunStartPurpose = isScmRunStartRpcPurpose(binding, execution, request);
     const sessionRule = resolveSocketRpcSessionAuthorization(request.method);
     const scopedSessionId = separator > 0 && request.method.slice(0, separator) !== binding.machineId
         && sessionRule?.routeToSessionOwnerDaemon && sessionRule.machineScope === true
-        && binding.actionId === execution.effectActionId
+        && (binding.actionId === execution.effectActionId || scmRunStartPurpose)
         && resolveMachineRpcExternalActionEffectV1(sessionRule.method, binding) === execution.effectActionId
         ? request.method.slice(0, separator) : null;
     const sessionRpcTarget = scopedSessionId ? { sessionId: scopedSessionId, machineId: binding.machineId } : null;
@@ -4603,7 +4611,7 @@ export async function verifyExternalActionMachineRpcExecution(
             : pendingEvent
             ? request.method === request.event ? 'session.message.send' : null
             : resolveMachineRpcExternalActionEffectV1(method, binding);
-        if (!transitionPurpose && !refineInputPurpose && !readinessPurpose && !prepareInputPurpose && (binding.actionId !== execution.effectActionId
+        if (!transitionPurpose && !refineInputPurpose && !readinessPurpose && !prepareInputPurpose && !scmRunStartPurpose && (binding.actionId !== execution.effectActionId
                 && !isContributedActionRoot(binding.actionId)
                 && !isSessionArchiveStopEffect(binding.actionId, execution.effectActionId)
             || effectActionId !== execution.effectActionId)) return null;
@@ -4651,7 +4659,7 @@ export async function verifyExternalActionMachineRpcExecution(
     const currentPrincipal = await verifyCurrentExternalActionPrincipal(binding);
     const principal = currentPrincipal && projectVerifiedExternalActionBoundPrincipal(binding, currentPrincipal);
     if (!principal) return null;
-    const credentialAction = isTransitionRoot || refineInputPurpose || prepareInputPurpose ? parseExternalActionEffectAction(binding, binding.actionId) : binding.handoffContinuation
+    const credentialAction = isTransitionRoot || refineInputPurpose || prepareInputPurpose || scmRunStartPurpose ? parseExternalActionEffectAction(binding, binding.actionId) : binding.handoffContinuation
         ? PublicActionIdSchema.safeParse(readExternalActionCredentialActionId(binding)) : effect;
     if (!credentialAction.success || !readinessPurpose && !await hasCurrentExecutionMachineAdmission(binding, machine)
         || !binding.handoffAdmission && !resolveCredentialActionAdmissionV1({ spec: getActionSpec(credentialAction.data),

@@ -28,7 +28,7 @@ describe('signed Account Session Run RPC admission', () => {
     }, 300_000);
     afterAll(async () => { await harness?.close(); });
 
-    async function fixture(actionId: 'execution.run.start' | 'execution.run.ensure' | 'execution.run.ensure_or_start', preflight = false) {
+    async function fixture(actionId: 'execution.run.start' | 'execution.run.ensure' | 'execution.run.ensure_or_start' | 'scm.diffSummary.generate', preflight = false) {
         const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const keys = nacl.sign.keyPair();
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id,
@@ -36,7 +36,7 @@ describe('signed Account Session Run RPC admission', () => {
             metadata: encodePlainMachineStoredContent({}), dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
         const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
         await db.accessKey.create({ data: { accountId: account.id, machineId: machine.id, sessionId: session.id, data: 'session-key' } });
-        const methodSuffix = preflight ? RPC_METHODS.CAPABILITIES_DESCRIBE : actionId === 'execution.run.start' ? SESSION_RPC_METHODS.EXECUTION_RUN_START
+        const methodSuffix = preflight ? RPC_METHODS.CAPABILITIES_DESCRIBE : actionId === 'execution.run.start' || actionId === 'scm.diffSummary.generate' ? SESSION_RPC_METHODS.EXECUTION_RUN_START
             : actionId === 'execution.run.ensure' ? SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE : SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START;
         const params = preflight ? {} : { runId: 'run-voice' };
         const envelope = { v: 1 as const, requestId: randomUUID(), target: { kind: 'machine' as const, machineId: machine.id },
@@ -51,13 +51,14 @@ describe('signed Account Session Run RPC admission', () => {
             credentials: { token: await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' }) },
             invocation: { caller: { kind: 'host' }, surface: 'voice', authority: 'present_user' },
             purpose: { kind: 'machine_rpc', method: methodSuffix, params }, installationPublicKey: keys.publicKey, randomBytes: nacl.randomBytes });
+        const effectActionId = actionId === 'scm.diffSummary.generate' ? 'execution.run.start' : actionId;
         const packet = (sessionId = preflight ? machine.id : session.id, signingKey = keys.secretKey) => {
             const method = `${sessionId}:${methodSuffix}`;
             const requestId = randomUUID();
             return { method, requestId, params, externalActionExecution: { v: 1 as const, authorization,
-                effectActionId: actionId, target: authorization.binding.target, installationId: machine.installationId!,
+                effectActionId, target: authorization.binding.target, installationId: machine.installationId!,
                 machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
-                    requesterAccountContext: authorization.requesterAccountContext, effectActionId: actionId,
+                    requesterAccountContext: authorization.requesterAccountContext, effectActionId,
                     target: authorization.binding.target, installationId: machine.installationId!, method, requestId, params, privateKey: signingKey }) } };
         };
         const resolveCurrentSessionMachine = async (input: Readonly<{ accountId: string; sessionId: string }>) =>
@@ -79,8 +80,8 @@ describe('signed Account Session Run RPC admission', () => {
                 { ...forged, resolveCurrentSessionMachine: f.resolveCurrentSessionMachine })).toBeNull();
         });
 
-    async function relayFixture(publisherOnOtherMachine = false) {
-        const f = await fixture('execution.run.start');
+    async function relayFixture(publisherOnOtherMachine = false, actionId: 'execution.run.start' | 'scm.diffSummary.generate' = 'execution.run.start') {
+        const f = await fixture(actionId);
         const publisherMachine = publisherOnOtherMachine
             ? await db.machine.create({ data: { id: randomUUID(), accountId: f.account.id,
                 installationId: randomUUID(), installationPublicKey: nacl.sign.keyPair().publicKey,
@@ -128,6 +129,32 @@ describe('signed Account Session Run RPC admission', () => {
                     sessionRpcTarget: { sessionId: f.session.id, machineId: f.machine.id } });
             expect(publisherResolutionReads).toBe(0);
         });
+
+    it('forwards a signed SCM summary nested Start to its exact Session publisher', async () => {
+        const f = await relayFixture(false, 'scm.diffSummary.generate');
+        const ack = vi.fn();
+        await triggerSocketHandler(f.caller, SOCKET_RPC_EVENTS.CALL, f.packet, ack);
+        expect(ack).toHaveBeenCalledWith({ ok: true, result: { runId: 'run-voice' } });
+        expect(f.forwarded).toHaveLength(1);
+        expect(f.forwarded[0]).toMatchObject({ callerInputAuthorization: f.authorization,
+            authorization: { kind: 'session.write', sessionId: f.session.id } });
+    });
+
+    it('keeps SCM Start isolated to its signed installation, Account and current Session publisher', async () => {
+        const f = await relayFixture(true, 'scm.diffSummary.generate');
+        const ack = vi.fn();
+        await triggerSocketHandler(f.caller, SOCKET_RPC_EVENTS.CALL, f.packet, ack);
+        expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+        expect(f.forwarded).toEqual([]);
+        const forged = f.makePacket(f.session.id, nacl.sign.keyPair().secretKey);
+        expect(await verifyExternalActionMachineRpcExecution(forged.externalActionExecution, forged)).toBeNull();
+        const other = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const otherSession = await db.session.create({ data: { accountId: other.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        const foreignAck = vi.fn();
+        await triggerSocketHandler(f.caller, SOCKET_RPC_EVENTS.CALL, f.makePacket(otherSession.id), foreignAck);
+        expect(foreignAck).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+        expect(f.forwarded).toEqual([]);
+    });
 
     it('refuses an installation signature substitution', async () => {
         const f = await fixture('execution.run.start');
