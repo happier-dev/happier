@@ -1,4 +1,5 @@
 import { SessionSpawnLaunchErrorV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 /**
  * Minimal persistence functions for Happier CLI
@@ -27,7 +28,7 @@ import {
 import { deriveServerIdFromUrl, isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from './server/serverId';
 import { isLocalishServerUrl } from './server/serverUrlClassification';
 import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
-import { isPidPresent, isPidProvablyAbsent, parseDaemonLockSnapshot, type DaemonLockRecord, type DaemonLockSnapshot } from '@happier-dev/cli-common/process';
+import { isPidPresent, isPidProvablyAbsent, parseDaemonLockSnapshot, probeProcessLiveness, type DaemonLockRecord, type DaemonLockSnapshot } from '@happier-dev/cli-common/process';
 export type { DaemonLockSnapshot } from '@happier-dev/cli-common/process';
 import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import { processGenerationProvesReuse } from '@happier-dev/cli-common/processInstance';
@@ -172,6 +173,11 @@ export interface Settings {
   machineIdConfirmedByServerByServerId?: Record<string, boolean | undefined>
   machineReplacementCandidatesByServerIdByAccountId?: Record<string, Record<string, MachineReplacementCandidate> | undefined>
   daemonAutoStartWhenRunningHappy?: boolean
+  /**
+   * Last applied Machine role set per server and Machine (stored `rolesV1.active`; absent = every core role).
+   * The daemon boots from it so roles that are off never start, even offline; metadata stays the desired value.
+   */
+  machineRolesByServerIdByMachineId?: Record<string, Record<string, readonly string[] | undefined> | undefined>
   /** Opt-in startup refresh of stale runners; known active turns are skipped. */
   restartSessionRunnersOnUpdate?: boolean
   chromeMode?: boolean
@@ -812,10 +818,10 @@ export function readAccountE2eeCustody(credentials: AccountE2eeCustodyHolder): A
  * private Session custody are read through their own exact owners.
  */
 export async function readAccountE2eeCustodyForToken(token: string): Promise<AccountE2eeCustody> {
-  if (process.env.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined || resolveCliApiToken()) {
+  if (sessionProcessEnvironment().HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined || resolveCliApiToken()) {
     const scoped = await readStoredCredentials().catch(() => null);
     if (scoped?.token === token) return readAccountE2eeCustody(scoped);
-    if (process.env.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined) return 'absent';
+    if (sessionProcessEnvironment().HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined) return 'absent';
   }
   const serverIds = await readdir(configuration.serversDir).catch(() => [] as string[]);
   for (const serverId of new Set([configuration.activeServerId, ...serverIds, 'cloud'])) {
@@ -901,13 +907,19 @@ export async function readCredentials(): Promise<Credentials | null> {
   return credentials?.encryption ? credentials : null;
 }
 
-export async function readStoredCredentials(): Promise<StoredCredentials | null> {
+export async function readStoredCredentials(
+  options: Readonly<{ serverId?: string }> = {},
+): Promise<StoredCredentials | null> {
+  const serverId = options.serverId ?? configuration.activeServerId;
+  if (options.serverId !== undefined && !isServerIdFilesystemSafe(serverId)) return null;
   // Explicit Session custody is authoritative for this child. A missing,
   // unsafe, or mismatched file must never become a custodian/global sign-in.
-  const requesterCredentialFile = process.env.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE;
+  const requesterCredentialFile = sessionProcessEnvironment().HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE;
   if (requesterCredentialFile !== undefined) {
     const { readRequesterSessionCredentialsForChild } = await import('./daemon/sessionEncryption/requesterSessionCustody');
-    return await readRequesterSessionCredentialsForChild(requesterCredentialFile);
+    const credentials = await readRequesterSessionCredentialsForChild(requesterCredentialFile);
+    return options.serverId === undefined || credentials?.requesterSessionCredentialScope?.serverId === serverId
+      ? credentials : null;
   }
   const apiToken = resolveCliApiToken();
   if (apiToken) {
@@ -918,10 +930,12 @@ export async function readStoredCredentials(): Promise<StoredCredentials | null>
     };
   }
 
-  const primaryPath = configuration.privateKeyFile;
+  const primaryPath = options.serverId === undefined
+    ? configuration.privateKeyFile
+    : join(configuration.serversDir, serverId, 'access.key');
   const legacyPath = configuration.legacyPrivateKeyFile;
   const canUseLegacy =
-    configuration.activeServerId === 'cloud' &&
+    serverId === 'cloud' &&
     existsSync(legacyPath) &&
     !existsSync(primaryPath);
 
@@ -948,6 +962,15 @@ async function readStoredCredentialsFile(path: string, options?: Readonly<{ inva
     return decodeStoredCredentials(credentials);
   } catch (error) {
     if (error instanceof CliReloginRequiredError) throw error;
+    // A file removed between the existence check and the read is ordinary sign-out.
+    // Anything else (corrupt JSON, invalid shape, IO) reads as signed out too, but
+    // must stay diagnosable. Name only the failure class: a parser message can quote the bearer.
+    const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : null;
+    if (code !== 'ENOENT') {
+      logger.warnLocalFile('[persistence] Stored credentials are unreadable; treating them as signed out', {
+        path, reason: code ?? (error instanceof Error ? error.name : typeof error),
+      });
+    }
     return null
   }
 }
@@ -962,9 +985,8 @@ export async function readStoredCredentialsForServerId(serverIdRaw: string): Pro
   if (!isServerIdFilesystemSafe(serverId)) return null;
   // A saved-Home selector cannot escape the child's authoritative custody or
   // turn its borrowed Account bearer into a present-person terminal sign-in.
-  if (process.env.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined) {
-    const credentials = await readStoredCredentials();
-    return credentials?.requesterSessionCredentialScope?.serverId === serverId ? credentials : null;
+  if (sessionProcessEnvironment().HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined) {
+    return await readStoredCredentials({ serverId });
   }
   const primaryPath = join(configuration.serversDir, serverId, 'access.key');
   if (existsSync(primaryPath)) return await readStoredCredentialsFile(primaryPath);
@@ -1654,15 +1676,12 @@ async function inspectDaemonLockSnapshotOwner(snapshot: DaemonLockSnapshot, opti
   const pid = snapshot.pid;
   if (!pid) return { status: 'replaceable', pid: null, reason: 'invalid' };
 
-  try {
-    process.kill(pid, 0);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException | null)?.code === 'ESRCH') {
-      if (options.unobservablePidIsUnverified) return { status: 'starting', pid, evidence: 'live-unclassified' };
-      return { status: 'replaceable', pid, reason: 'dead' };
-    }
-    return { status: 'starting', pid, evidence: 'live-unclassified' };
+  const liveness = probeProcessLiveness(pid);
+  if (liveness === 'absent') {
+    if (options.unobservablePidIsUnverified) return { status: 'starting', pid, evidence: 'live-unclassified' };
+    return { status: 'replaceable', pid, reason: 'dead' };
   }
+  if (liveness === 'access_denied') return { status: 'starting', pid, evidence: 'live-unclassified' };
 
   const currentIdentity = snapshot.record
     ? await (await import('@/daemon/processIdentity')).readProcessIdentityByPid(pid)

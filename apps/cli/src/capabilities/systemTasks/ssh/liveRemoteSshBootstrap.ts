@@ -30,7 +30,10 @@ import {
   type CliDirectHomeQrResult,
 } from '@/auth/directHomeQr/runCliDirectHomeQr';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from '@/cloud/loopbackPort';
-import { configuration, reloadConfiguration } from '@/configuration';
+import { configuration } from '@/configuration';
+import { readActiveServerFromSettingsFile, resolveServerSelection } from '@/configuration/serverSelection';
+import { readStoredCredentials } from '@/persistence';
+import { isServerIdFilesystemSafe } from '@/server/serverId';
 import { isLoopbackServerHost } from '@/server/serverUrlClassification';
 import { createLivePersonalHomeOperations } from '../relayRuntime/liveRelayRuntime';
 
@@ -140,111 +143,54 @@ function resolveSshAuthForTunnel(ssh: SystemTaskSshConnectionConfig): OpenSshAut
   return { mode: 'agent' };
 }
 
-type ServerSelectionEnvSnapshot = Readonly<{
-  HAPPIER_SERVER_URL?: string;
-  HAPPIER_PUBLIC_SERVER_URL?: string;
-  HAPPIER_LOCAL_SERVER_URL?: string;
-  HAPPIER_WEBAPP_URL?: string;
-}>;
-
-function snapshotServerSelectionEnv(): ServerSelectionEnvSnapshot {
+async function resolveLegacyApprovalSelection(
+  relay: Readonly<{ relayUrl: string; publicRelayUrl?: string; webappUrl?: string }>,
+  useAmbientLocalRoute = true,
+): Promise<Required<Pick<Parameters<typeof approveTerminalAuthRequest>[0], 'target' | 'accountCredentials'>>> {
+  const relayUrl = relay.relayUrl.trim();
+  const publicRelayUrl = relay.publicRelayUrl?.trim();
+  const currentPublicUrl = (process.env.HAPPIER_PUBLIC_SERVER_URL ?? '').trim();
+  const currentLocalUrl = (process.env.HAPPIER_LOCAL_SERVER_URL ?? '').trim();
+  const explicitPublicUrl = publicRelayUrl && publicRelayUrl !== relayUrl ? publicRelayUrl : null;
+  const retainCurrentLocalRoute = useAmbientLocalRoute && !explicitPublicUrl && currentPublicUrl && currentLocalUrl && relayUrl === currentPublicUrl;
+  let webappUrl = relay.webappUrl?.trim() ?? '';
+  if (!webappUrl) {
+    try {
+      webappUrl = new URL(relayUrl).origin;
+    } catch {
+      webappUrl = relayUrl;
+    }
+  }
+  const activeServerId = process.env.HAPPIER_ACTIVE_SERVER_ID?.trim();
+  const selected = resolveServerSelection({
+    envServerUrl: retainCurrentLocalRoute ? currentLocalUrl : relayUrl,
+    envPublicServerUrl: explicitPublicUrl ?? (retainCurrentLocalRoute ? currentPublicUrl : null),
+    envLocalServerUrl: retainCurrentLocalRoute ? currentLocalUrl : null,
+    envWebappUrl: webappUrl,
+    envActiveServerId: activeServerId && isServerIdFilesystemSafe(activeServerId) ? activeServerId : null,
+    persisted: readActiveServerFromSettingsFile(configuration.settingsFile),
+    serversDir: configuration.serversDir,
+    organizationPolicy: configuration.organizationPolicy,
+  });
+  // Preserve the released relay selector's credential source without changing
+  // the process's active Home. API-token and Session custody remain owned by
+  // the normal credential reader; a different saved Home uses its own files.
+  const credentials = await readStoredCredentials({ serverId: selected.activeServerId });
+  if (!credentials) throw new Error('Not authenticated. Run `happier auth login` first.');
   return {
-    HAPPIER_SERVER_URL: process.env.HAPPIER_SERVER_URL,
-    HAPPIER_PUBLIC_SERVER_URL: process.env.HAPPIER_PUBLIC_SERVER_URL,
-    HAPPIER_LOCAL_SERVER_URL: process.env.HAPPIER_LOCAL_SERVER_URL,
-    HAPPIER_WEBAPP_URL: process.env.HAPPIER_WEBAPP_URL,
+    accountCredentials: credentials,
+    target: {
+      profileId: selected.activeServerId,
+      homeServerIdentityId: null,
+      descriptor: null,
+      canonicalAuthUrl: selected.serverUrl,
+      applicationUrl: selected.apiServerUrl,
+      webappUrl: selected.webappUrl,
+      credentialDestination: null,
+      preferredTransport: 'https',
+      authority: 'current_connection',
+    },
   };
-}
-
-function restoreServerSelectionEnv(snapshot: ServerSelectionEnvSnapshot): void {
-  const keys: Array<keyof ServerSelectionEnvSnapshot> = [
-    'HAPPIER_SERVER_URL',
-    'HAPPIER_PUBLIC_SERVER_URL',
-    'HAPPIER_LOCAL_SERVER_URL',
-    'HAPPIER_WEBAPP_URL',
-  ];
-  for (const key of keys) {
-    const value = snapshot[key];
-    if (typeof value === 'string') {
-      process.env[key] = value;
-    } else {
-      delete process.env[key];
-    }
-  }
-}
-
-async function withEphemeralLoopbackServerSelection(
-  params: Readonly<{
-    port: number;
-    fn: () => Promise<void>;
-  }>,
-): Promise<void> {
-  const snapshot = snapshotServerSelectionEnv();
-  try {
-    const url = `http://localhost:${params.port}`;
-    process.env.HAPPIER_SERVER_URL = url;
-    process.env.HAPPIER_WEBAPP_URL = url;
-    delete process.env.HAPPIER_PUBLIC_SERVER_URL;
-    delete process.env.HAPPIER_LOCAL_SERVER_URL;
-    reloadConfiguration();
-    await params.fn();
-  } finally {
-    restoreServerSelectionEnv(snapshot);
-    reloadConfiguration();
-  }
-}
-
-async function withEphemeralRelaySelection(
-  params: Readonly<{
-    relayUrl: string;
-    publicRelayUrl?: string;
-    webappUrl?: string;
-    fn: () => Promise<void>;
-  }>,
-): Promise<void> {
-  const snapshot = snapshotServerSelectionEnv();
-  try {
-    const relayUrl = String(params.relayUrl ?? '').trim();
-    const publicRelayUrl = String(params.publicRelayUrl ?? '').trim();
-    const webappUrl = String(params.webappUrl ?? '').trim();
-
-    const snapshotPublicRelayUrl = String(snapshot.HAPPIER_PUBLIC_SERVER_URL ?? '').trim();
-    const snapshotLocalRelayUrl = String(snapshot.HAPPIER_LOCAL_SERVER_URL ?? '').trim();
-
-    if (publicRelayUrl && publicRelayUrl !== relayUrl) {
-      process.env.HAPPIER_PUBLIC_SERVER_URL = publicRelayUrl;
-      process.env.HAPPIER_SERVER_URL = relayUrl;
-      delete process.env.HAPPIER_LOCAL_SERVER_URL;
-    } else if (
-      snapshotPublicRelayUrl
-      && snapshotLocalRelayUrl
-      && relayUrl === snapshotPublicRelayUrl
-    ) {
-      process.env.HAPPIER_PUBLIC_SERVER_URL = snapshotPublicRelayUrl;
-      process.env.HAPPIER_LOCAL_SERVER_URL = snapshotLocalRelayUrl;
-      process.env.HAPPIER_SERVER_URL = snapshotLocalRelayUrl;
-    } else {
-      process.env.HAPPIER_SERVER_URL = relayUrl;
-      delete process.env.HAPPIER_PUBLIC_SERVER_URL;
-      delete process.env.HAPPIER_LOCAL_SERVER_URL;
-    }
-
-    if (webappUrl) {
-      process.env.HAPPIER_WEBAPP_URL = webappUrl;
-    } else {
-      try {
-        process.env.HAPPIER_WEBAPP_URL = new URL(relayUrl).origin;
-      } catch {
-        process.env.HAPPIER_WEBAPP_URL = relayUrl;
-      }
-    }
-
-    reloadConfiguration();
-    await params.fn();
-  } finally {
-    restoreServerSelectionEnv(snapshot);
-    reloadConfiguration();
-  }
 }
 
 function resolveSshEndpoint(params: Readonly<{
@@ -1016,35 +962,33 @@ export function createLiveRemoteSshBootstrapTaskKind(options: Pick<systemTasks.R
         const localPort = (await isLoopbackPortAvailable(requestedPort))
           ? requestedPort
           : await findAvailableLoopbackPort();
-        await withEphemeralLoopbackServerSelection({
-          port: localPort,
-          fn: async () => {
-            await withOpenSshLocalPortForward({
-              sshBin: 'ssh',
-              target: parsed.ssh.target,
-              port: parsed.ssh.port,
-              sshConfigFile: parsed.ssh.sshConfigFile,
-              auth: tunnelAuth,
-              knownHostsPath,
-              knownHostsMode,
-              localPort,
-              remotePort: requestedPort,
-              connectTimeoutSec: 10,
-              serverAliveIntervalSec: 15,
-              serverAliveCountMax: 2,
-            }, async () => {
-              await approveTerminalAuthRequest(parsed.homeTarget
-                ? {
-                    ...approvalRequest,
-                    target: {
-                      ...parsed.homeTarget,
-                      applicationUrl: `http://localhost:${localPort}`,
-                      preferredTransport: 'https',
-                    },
-                  }
-                : approvalRequest);
-            });
-          },
+        // A forwarded loopback Home does not inherit the process's public/local split.
+        const approvalSelection = parsed.homeTarget
+          ? { target: parsed.homeTarget }
+          : await resolveLegacyApprovalSelection({ relayUrl: `http://localhost:${localPort}` }, false);
+        await withOpenSshLocalPortForward({
+          sshBin: 'ssh',
+          target: parsed.ssh.target,
+          port: parsed.ssh.port,
+          sshConfigFile: parsed.ssh.sshConfigFile,
+          auth: tunnelAuth,
+          knownHostsPath,
+          knownHostsMode,
+          localPort,
+          remotePort: requestedPort,
+          connectTimeoutSec: 10,
+          serverAliveIntervalSec: 15,
+          serverAliveCountMax: 2,
+        }, async () => {
+          await approveTerminalAuthRequest({
+            ...approvalRequest,
+            ...approvalSelection,
+            target: {
+              ...approvalSelection.target,
+              applicationUrl: `http://localhost:${localPort}`,
+              preferredTransport: 'https',
+            },
+          });
         });
         return;
       }
@@ -1057,13 +1001,9 @@ export function createLiveRemoteSshBootstrapTaskKind(options: Pick<systemTasks.R
         return;
       }
 
-      await withEphemeralRelaySelection({
-        relayUrl: parsed.relay.relayUrl,
-        publicRelayUrl: parsed.relay.publicRelayUrl,
-        webappUrl: parsed.relay.webappUrl,
-        fn: async () => {
-          await approveTerminalAuthRequest(approvalRequest);
-        },
+      await approveTerminalAuthRequest({
+        ...approvalRequest,
+        ...await resolveLegacyApprovalSelection(parsed.relay),
       });
     }),
     runRemoteCommand: async ({ label, parsed, auth, knownHostsMode, data, signal }) => {

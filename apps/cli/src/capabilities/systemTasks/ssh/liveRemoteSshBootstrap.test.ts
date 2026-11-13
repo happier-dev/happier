@@ -22,7 +22,6 @@ const {
   renameSync,
   unlinkSync,
   approveTerminalAuthRequest,
-  reloadConfiguration,
   lastOpenSshParams,
   openSshParamsCalls,
   transferOpenSshFile,
@@ -37,8 +36,7 @@ const {
   chmodSync: vi.fn(),
   renameSync: vi.fn(),
   unlinkSync: vi.fn(),
-  approveTerminalAuthRequest: vi.fn(async () => undefined),
-  reloadConfiguration: vi.fn(),
+  approveTerminalAuthRequest: vi.fn<(params: Parameters<typeof import('@/auth/terminalAuthApproval').approveTerminalAuthRequest>[0]) => Promise<void>>(async () => undefined),
   lastOpenSshParams: { current: null as null | Record<string, unknown> },
   openSshParamsCalls: [] as Array<Record<string, unknown>>,
   transferOpenSshFile: vi.fn<(params: OpenSshFileTransferParams) => Promise<void>>(async () => undefined),
@@ -160,8 +158,9 @@ vi.mock('@/auth/terminalAuthApproval', () => ({
 vi.mock('@/configuration', () => ({
   configuration: {
     happyHomeDir: '/mock-home',
+    settingsFile: '/mock-home/settings.json',
+    serversDir: '/mock-home/servers',
   },
-  reloadConfiguration,
 }));
 
 vi.mock('@/cloud/loopbackPort', () => ({
@@ -386,6 +385,7 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
     vi.clearAllMocks();
     // Payload acquisition is an environment/filesystem boundary; keep the installer real.
     vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', payloadFixture.payloadRoot);
+    vi.stubEnv('HAPPIER_TOKEN', `hap_v1_123e4567-e89b-42d3-a456-426614174000_${'A'.repeat(43)}`);
     const createdAtMs = Date.now();
     REMOTE_REQUEST_PAIRING.createdAtMs = createdAtMs;
     REMOTE_REQUEST_PAIRING.expiresAtMs = createdAtMs + 60_000;
@@ -1157,12 +1157,12 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
     expect(sshRemoteCommands).toContainEqual(expect.stringContaining('self __install-payload --component happier-cli'));
     expect(sshRemoteCommands).toContainEqual(expect.stringMatching(/--version local-preview-\d+ --channel preview/u));
     expect(sshRemoteCommands.join('\n')).not.toContain('curl -fsSL https://happier.dev/install');
-    expect(approveTerminalAuthRequest).toHaveBeenCalledWith({
+    expect(approveTerminalAuthRequest).toHaveBeenCalledWith(expect.objectContaining({
       publicKey: REMOTE_PUBLIC_KEY,
       pairing: REMOTE_REQUEST_PAIRING,
       supportsTokenOnly: true,
       signal: controller.signal,
-    });
+    }));
   });
 
   it('executes remote shell commands via bash -lc to avoid /bin/sh pipefail incompatibilities', async () => {
@@ -1592,14 +1592,14 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
       },
     })).resolves.toBeDefined();
 
-    expect(approveTerminalAuthRequest).toHaveBeenCalledWith({
+    expect(approveTerminalAuthRequest).toHaveBeenCalledWith(expect.objectContaining({
       publicKey: REMOTE_PUBLIC_KEY,
       pairing: REMOTE_REQUEST_PAIRING,
       supportsTokenOnly: true,
-    });
+    }));
   });
 
-  it('temporarily applies the target relay selection when approving remote provisioning against a non-loopback relay URL', async () => {
+  it('passes the target relay selection explicitly without changing the active Home', async () => {
     const kind = createLiveRemoteSshBootstrapTaskKind();
     const previousServerUrl = process.env.HAPPIER_SERVER_URL;
     const previousWebappUrl = process.env.HAPPIER_WEBAPP_URL;
@@ -1614,9 +1614,9 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
     let observedServerUrl: string | null = null;
     let observedWebappUrl: string | null = null;
 
-    approveTerminalAuthRequest.mockImplementation(async () => {
-      observedServerUrl = String(process.env.HAPPIER_SERVER_URL ?? '');
-      observedWebappUrl = String(process.env.HAPPIER_WEBAPP_URL ?? '');
+    approveTerminalAuthRequest.mockImplementation(async params => {
+      observedServerUrl = params.target?.applicationUrl ?? null;
+      observedWebappUrl = params.target?.webappUrl ?? null;
     });
 
     await kind.run({
@@ -1689,12 +1689,12 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
         : Promise.reject(new Error(`Unexpected prompt: ${request.kind}`)),
     });
 
-    expect(approveTerminalAuthRequest).toHaveBeenCalledWith({
+    expect(approveTerminalAuthRequest).toHaveBeenCalledWith(expect.objectContaining({
       publicKey: REMOTE_PUBLIC_KEY,
       pairing: REMOTE_REQUEST_PAIRING,
       supportsTokenOnly: true,
       target: homeTarget,
-    });
+    }));
   });
 
   it('preserves the local/public relay split when the approval target matches the current public relay url', async () => {
@@ -1714,11 +1714,11 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
     let observedLocalServerUrl: string | null = null;
     let observedWebappUrl: string | null = null;
 
-    approveTerminalAuthRequest.mockImplementation(async () => {
-      observedServerUrl = String(process.env.HAPPIER_SERVER_URL ?? '');
-      observedPublicServerUrl = String(process.env.HAPPIER_PUBLIC_SERVER_URL ?? '');
-      observedLocalServerUrl = String(process.env.HAPPIER_LOCAL_SERVER_URL ?? '');
-      observedWebappUrl = String(process.env.HAPPIER_WEBAPP_URL ?? '');
+    approveTerminalAuthRequest.mockImplementation(async params => {
+      observedServerUrl = params.target?.applicationUrl ?? null;
+      observedPublicServerUrl = params.target?.canonicalAuthUrl ?? null;
+      observedLocalServerUrl = params.target?.applicationUrl ?? null;
+      observedWebappUrl = params.target?.webappUrl ?? null;
     });
 
     await kind.run({
@@ -1779,8 +1779,8 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
       throw new Error('Expected to reserve an available loopback port for test');
     }
 
-    approveTerminalAuthRequest.mockImplementation(async () => {
-      observedServerUrl = String(process.env.HAPPIER_SERVER_URL ?? '');
+    approveTerminalAuthRequest.mockImplementation(async params => {
+      observedServerUrl = params.target?.applicationUrl ?? null;
     });
 
     await kind.run({
@@ -1826,13 +1826,12 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
       .flatMap(([, args]) => Array.from(args as readonly string[]))
       .find((arg) => typeof arg === 'string' && arg.startsWith('ControlPath='));
     expect(controlPathArg).toMatch(/^ControlPath=\/tmp\//u);
-    expect(observedServerUrl).toMatch(new RegExp(`^http://(127\\\\.0\\\\.0\\\\.1|localhost):${relayPort}$`, 'u'));
-    expect(approveTerminalAuthRequest).toHaveBeenCalledWith({
+    expect(observedServerUrl).toBe(`http://localhost:${relayPort}`);
+    expect(approveTerminalAuthRequest).toHaveBeenCalledWith(expect.objectContaining({
       publicKey: REMOTE_PUBLIC_KEY,
       pairing: REMOTE_REQUEST_PAIRING,
       supportsTokenOnly: true,
-    });
-    expect(reloadConfiguration).toHaveBeenCalled();
+    }));
     expect(process.env.HAPPIER_SERVER_URL).toBe(previousServerUrl);
     expect(process.env.HAPPIER_WEBAPP_URL).toBe(previousWebappUrl);
   });
@@ -1860,8 +1859,8 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
 	    findAvailableLoopbackPort.mockImplementation(async () => occupiedPort + 1);
 
 	    try {
-	      approveTerminalAuthRequest.mockImplementation(async () => {
-	        observedServerUrl = String(process.env.HAPPIER_SERVER_URL ?? '');
+	      approveTerminalAuthRequest.mockImplementation(async params => {
+	        observedServerUrl = params.target?.applicationUrl ?? null;
 	      });
 
       await kind.run({
@@ -1906,13 +1905,12 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
       const localPort = Number(String(forwarded ?? '').split(':')[0] ?? '');
       expect(Number.isFinite(localPort)).toBe(true);
       expect(localPort).not.toBe(occupiedPort);
-      expect(observedServerUrl).toMatch(new RegExp(`^http://(127\\\\.0\\\\.0\\\\.1|localhost):${localPort}$`, 'u'));
-      expect(approveTerminalAuthRequest).toHaveBeenCalledWith({
+      expect(observedServerUrl).toBe(`http://localhost:${localPort}`);
+      expect(approveTerminalAuthRequest).toHaveBeenCalledWith(expect.objectContaining({
         publicKey: REMOTE_PUBLIC_KEY,
         pairing: REMOTE_REQUEST_PAIRING,
         supportsTokenOnly: true,
-      });
-      expect(reloadConfiguration).toHaveBeenCalled();
+      }));
       expect(process.env.HAPPIER_SERVER_URL).toBe(previousServerUrl);
       expect(process.env.HAPPIER_WEBAPP_URL).toBe(previousWebappUrl);
     } finally {

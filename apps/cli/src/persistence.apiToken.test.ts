@@ -16,6 +16,8 @@ const envKeys = [
   'HAPPIER_LOCAL_SERVER_URL',
   'HAPPIER_PUBLIC_SERVER_URL',
   'HAPPIER_WEBAPP_URL',
+  'HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE',
+  'HAPPIER_SESSION_REQUESTER_SESSION_ID',
 ] as const;
 
 let envScope = createEnvKeyScope(envKeys);
@@ -52,6 +54,23 @@ describe('readStoredCredentials API Token selection', () => {
       await writeStoredToken(bearer({}));
       await expect(readStoredCredentials()).rejects.toMatchObject({ code: 'cli_relogin_required' });
       expect(JSON.parse(await readFile(configuration.privateKeyFile, 'utf8'))).toEqual({});
+    });
+  });
+  it('reports an unreadable stored credential file instead of reading it silently as signed out', async () => {
+    await withTempDir('happier-cli-corrupt-credential-', async (homeDir) => {
+      envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_TOKEN: undefined, HAPPIER_ACTIVE_SERVER_ID: undefined });
+      reloadConfiguration();
+      const { logger } = await import('@/ui/logger');
+      const warn = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+      const { readStoredCredentials } = await import('./persistence');
+      await mkdir(dirname(configuration.privateKeyFile), { recursive: true });
+      await writeFile(configuration.privateKeyFile, '{"token": "hdr.secret-bearer', 'utf8');
+      await expect(readStoredCredentials()).resolves.toBeNull();
+      expect(warn.mock.calls.length).toBe(1);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('secret-bearer');
+      await writeFile(configuration.privateKeyFile, JSON.stringify({ secret: 7 }), 'utf8');
+      await expect(readStoredCredentials()).resolves.toBeNull();
+      expect(warn.mock.calls.length).toBe(2);
     });
   });
   it('invalidates an account bearer while preserving encryption material and other profile state', async () => {
@@ -126,4 +145,37 @@ describe('readStoredCredentials API Token selection', () => {
       });
     });
   });
+
+  it('selects a finite invocation Home without changing global selection or weakening credential refusal', async () => {
+    await withTempDir('happier-cli-selected-credentials-', async homeDir => {
+      envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_TOKEN: undefined,
+        HAPPIER_ACTIVE_SERVER_ID: undefined, HAPPIER_SERVER_URL: 'https://current.example.test',
+        HAPPIER_LOCAL_SERVER_URL: undefined, HAPPIER_PUBLIC_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined,
+        HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE: undefined, HAPPIER_SESSION_REQUESTER_SESSION_ID: undefined });
+      reloadConfiguration();
+      const currentBytes = await writeStoredToken('current-fixture-bearer');
+      const selectedPath = join(configuration.serversDir, 'selected-home', 'access.key');
+      await mkdir(dirname(selectedPath), { recursive: true });
+      await writeFile(selectedPath, JSON.stringify({ token: 'selected-fixture-bearer' }));
+      const originalConfiguration = configuration;
+      const { readStoredCredentials } = await import('./persistence');
+      await expect(readStoredCredentials({ serverId: configuration.activeServerId })).resolves.toMatchObject({ token: 'current-fixture-bearer' });
+      await expect(readStoredCredentials({ serverId: '../outside-home' })).resolves.toBeNull();
+      await expect(readStoredCredentials({ serverId: 'selected-home' })).resolves.toMatchObject({ token: 'selected-fixture-bearer' });
+      await expect(readStoredCredentials({ serverId: 'missing-home' })).resolves.toBeNull();
+      envScope.patch({ HAPPIER_TOKEN: SYNTHETIC_API_TOKEN });
+      await expect(readStoredCredentials({ serverId: 'selected-home' })).resolves.toMatchObject({ token: SYNTHETIC_API_TOKEN, credentialProvenance: 'api_token' });
+      envScope.patch({ HAPPIER_TOKEN: undefined });
+      const payload = Buffer.from(JSON.stringify({ sub: 'account-a', provenance: {
+        v: 1, kind: 'account', authority: 'present_user',
+      } })).toString('base64url');
+      const material = { secret: Buffer.alloc(32, 7).toString('base64') };
+      await writeFile(selectedPath, JSON.stringify({ ...material, token: `hdr.${payload}.sig` }));
+      await expect(readStoredCredentials({ serverId: 'selected-home' })).rejects.toMatchObject({ code: 'cli_relogin_required' });
+      expect(JSON.parse(await readFile(selectedPath, 'utf8'))).toEqual(material);
+      await expect(readFile(configuration.privateKeyFile, 'utf8')).resolves.toBe(currentBytes);
+      expect(configuration).toBe(originalConfiguration);
+    });
+  });
+
 });

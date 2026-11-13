@@ -47,6 +47,9 @@ describe('requester Session private credential custody', () => {
     const selected = await readStoredCredentialsForServerId(configuration.activeServerId);
     expect(selected?.requesterSessionCredentialScope?.requesterSession?.sessionId).toBe(binding.sessionId);
     expect(await readStoredCredentialsForServerId('another-home')).toBeNull();
+    vi.stubEnv('HAPPIER_TOKEN', `hap_v1_11111111-1111-4111-8111-111111111111_${'A'.repeat(43)}`);
+    expect((await readStoredCredentials({ serverId: configuration.activeServerId }))?.token).toBe('bob-token');
+    expect(await readStoredCredentials({ serverId: 'another-home' })).toBeNull();
     expect(await retireRequesterSessionCredentialCustody({ ...binding, attribution: { ...binding.attribution, accountId: 'alice' } })).toBe(false);
     expect((await readStoredCredentials())?.token).toBe('bob-token');
     expect(await retireRequesterSessionCredentialCustody(binding)).toBe(true);
