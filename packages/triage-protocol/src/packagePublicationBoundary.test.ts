@@ -5,6 +5,8 @@ import { promisify } from 'node:util';
 
 import { describe, expect, it } from 'vitest';
 
+import { collectWorkspacePackageJsonPaths } from '../../../apps/stack/scripts/utils/proc/workspace_package_manifests.mjs';
+
 const execFileAsync = promisify(execFile);
 
 const packageDirectory = new URL('../', import.meta.url);
@@ -171,12 +173,11 @@ describe('Triage protocol publication boundary', () => {
     });
 
     it('is registered as a repository workspace so its published name resolves', async () => {
-        const rootPackageJson = JSON.parse(await readFile(
-            new URL('../../../package.json', import.meta.url),
-            'utf8',
-        )) as Readonly<{ workspaces?: Readonly<{ packages?: readonly string[] }> }>;
+        const workspaceManifests = await collectWorkspacePackageJsonPaths(
+            fileURLToPath(new URL('../../../', import.meta.url)),
+        );
 
-        expect(rootPackageJson.workspaces?.packages).toContain('packages/triage-protocol');
+        expect(workspaceManifests).toContain(fileURLToPath(new URL('../package.json', import.meta.url)));
     });
 
     /**
