@@ -4,8 +4,25 @@ import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachine
   machineSetupPlansRequireAdministratorV1, type MachineRecipeStepV1 } from '@happier-dev/cli-common/machineSetup';
 import { createActionOperationRunner } from './actionOperationRunner';
 import { createActionOperationStore } from './actionOperationStore';
+import { createHostActionOperationRuntime } from './createHostActionOperationRuntime';
 
 describe('native setup cancellation custody', () => {
+  it.each(['machines.setup.apply', 'machines.setup.remove', 'machines.setup.updates.apply'] as const)(
+    'routes %s Stop through the admitted operation signal', async actionId => {
+      const runtime = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
+        generateOperationId: () => 'setup-operation' });
+      const accepted = await runtime.observeExecution({ actionId, input: {}, response: 'admission', execute: async ({ signal }) => {
+        await new Promise<void>(resolve => {
+          signal.addEventListener('abort', () => resolve(), { once: true });
+          if (signal.aborted) resolve();
+        });
+        return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+      } });
+      expect(accepted.ok).toBe(true);
+      expect(await runtime.handlers.cancel({ operationId: 'setup-operation' })).toEqual({ kind: 'requested' });
+      expect(await runtime.handlers.getV2({ operationId: 'setup-operation', waitForTerminal: true }))
+        .toMatchObject({ kind: 'found', operation: { state: 'cancelled' } });
+    });
   it.each([true, false])('retains custody only when its nonroot package process stop is unconfirmed (%s)', async unconfirmed => {
     const controller = new AbortController();
     const refusal = Object.assign(new Error('Native tree termination is unconfirmed'), { code: 'plugin_exec_termination_incomplete' });

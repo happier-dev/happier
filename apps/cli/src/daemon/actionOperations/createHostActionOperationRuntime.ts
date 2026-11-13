@@ -2,7 +2,7 @@ import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { isMachineSetupOperationActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isMachineSetupOperationActionIdV1, isOrdinaryMachineSetupNativeActionIdV1, MACHINE_SETUP_PLAN_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionOperationDomainRefV1, ActionOperationSnapshotV1, ActionOperationDeclarationV1 } from '@happier-dev/protocol/actions';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
@@ -405,7 +405,8 @@ export function createHostActionOperationRuntime(deps: Readonly<{
         || request.actionId === 'projects.script.run' || request.actionId === 'projects.compute.exec' || request.actionId === 'projects.prepare'
         || request.actionId === 'machines.managed.power.set' || request.actionId === 'machines.managed.delete'
         || request.actionId === 'machines.managed.acquire' || request.actionId === 'machines.managed.bootstrap.retry'
-        || request.actionId === 'machines.setup.apply' || request.actionId === 'machines.setup.adminAccess.set' || request.actionId === 'machines.reboot'
+        || (isOrdinaryMachineSetupNativeActionIdV1(request.actionId) && request.actionId !== MACHINE_SETUP_PLAN_ACTION_ID_V1)
+        || request.actionId === 'machines.setup.adminAccess.set' || request.actionId === 'machines.reboot'
         || request.actionId === 'machines.services.exec'
         || request.actionId === 'deployments.backups.restore'
         || (request.rpcContext?.externalActionExecutionAuthorization
@@ -436,12 +437,13 @@ export function createHostActionOperationRuntime(deps: Readonly<{
         if (isDeploymentDomainChildActionIdV1(request.actionId) && !result.ok && serverId && observedOperationId) {
           const input = DeploymentActionInputSchemasV1[request.actionId].safeParse(request.input);
           if (input.success) {
-            const native = { environmentId: input.data.environmentId, domainId: input.data.domainId,
-              step: 'native_execution' as const };
+            // A DNS preview verify names no Domain yet; its failure keeps the Environment-only recovery facts.
+            const domainId = 'domainId' in input.data ? input.data.domainId : undefined;
+            const native = { environmentId: input.data.environmentId, domainId, step: 'native_execution' as const };
             const details = DeploymentDomainFailureDetailsV1Schema.safeParse({ ...native,
               ...(result.details && typeof result.details === 'object' && !Array.isArray(result.details) ? result.details : {}) });
             const diagnostic = details.success && details.data.environmentId === input.data.environmentId
-              && details.data.domainId === input.data.domainId ? details.data : native;
+              && details.data.domainId === domainId ? details.data : native;
             // The runner stores this same bound result before live/public consumers read it.
             return { ...result, details: { ...projectDeploymentFailureRecoveryV1(diagnostic),
               operation: { serverId, machineId: scope.machineId, operationId: observedOperationId } } };

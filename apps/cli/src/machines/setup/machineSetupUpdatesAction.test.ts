@@ -4,11 +4,70 @@ import { MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema } from '@
 import { MachineSetupObservationV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupObservationV1';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { createNativeSoftwareInstallFixture } from '@/testkit/machines/nativeSoftwareInstall';
+import { packageOs } from '@/testkit/machines/nativeSoftwareOs';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { createMachineSetupUpdatesAction } from './machineSetupUpdatesAction';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 
 describe('reviewed Machine OS update Action', () => {
+  it('cancels an admitted update through the operation owner and settles its native installation', async () => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });
+    const reviewed = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: MachineSetupPlanInputV1Schema.parse({ homeId: 'srv_home', machineId: fixture.machine.id,
+        mode: 'effects', updates: { scope: 'security' } }), context: fixture.context('machines.setup.plan'),
+    }));
+    if (!reviewed.updates?.plan) throw new Error('Missing reviewed update plan');
+    let entered!: () => void;
+    const checking = new Promise<void>(resolve => { entered = resolve; });
+    let release!: () => void;
+    const released = new Promise<void>(resolve => { release = resolve; });
+    let observeAbort!: () => void;
+    const nativeAborted = new Promise<void>(resolve => { observeAbort = resolve; });
+    onTestFinished(() => { release(); });
+    // Hold only the OS package install; Action admission, operation cancellation
+    // and update execution remain real. Release even when the RED assertion fails.
+    packageOs.runNative = async command => {
+      if (command.executable !== 'apt-get' || command.args[0] !== 'install') return null;
+      if (!command.signal) throw new Error('Native install has no cancellation signal');
+      command.signal.addEventListener('abort', observeAbort, { once: true });
+      if (command.signal.aborted) observeAbort();
+      entered();
+      await released;
+      command.signal.throwIfAborted();
+      return { code: 1, stdout: '', stderr: '' };
+    };
+    const apply = createMachineSetupUpdatesAction({ apiMachine: fixture.client, homeId: 'srv_home',
+      machineId: fixture.machine.id, installation: fixture.installation });
+    const context = fixture.context('machines.setup.updates.apply');
+    const executor = createActionExecutor({ machineSetupUpdatesApply: request => apply({ ...request,
+      context: { ...context, ...request.context } }) });
+    const input = { homeId: 'srv_home', machineId: fixture.machine.id, scope: 'security' as const, plan: reviewed.updates.plan };
+    let operationId = '';
+    const accepted = await fixture.operations.observeExecution({ actionId: 'machines.setup.updates.apply', input,
+      actionRequestId: 'cancel-updates', rpcContext: context, response: 'admission',
+      onOperation: operation => { operationId = operation.operationId; },
+      execute: operation => executor.execute('machines.setup.updates.apply', input, { ...operation,
+        surface: 'cli', authority: 'present_user', presentUserConfirmation: { actionId: 'machines.setup.updates.apply' } }) });
+    expect(accepted.ok).toBe(true);
+    if (!accepted.ok) throw new Error('Missing operation');
+    expect(operationId).not.toBe('');
+    try {
+      await Promise.race([checking, fixture.operations.handlers.getV2({ operationId,
+        waitForTerminal: true }).then(terminal => { throw new Error(`Update settled before package install: ${JSON.stringify(terminal)}`); })]);
+      expect(await fixture.operations.handlers.cancel({ operationId }))
+        .toEqual({ kind: 'requested' });
+      await nativeAborted;
+    } finally { release(); }
+    const terminal = await fixture.operations.handlers.getV2({ operationId, waitForTerminal: true });
+    // Stopping a privileged installer after mutation begins cannot prove which
+    // package effects committed. Preserve the existing typed uncertain outcome,
+    // rather than claiming cancellation rolled those effects back.
+    expect(terminal, JSON.stringify(terminal))
+      .toMatchObject({ kind: 'found', operation: { state: 'failed', error: { errorCode: 'outcome_unknown' } } });
+    expect(fixture.rootLaunches).toHaveLength(1);
+    expect((await fixture.readInstalled()).effects).toEqual([]);
+  });
   it('reports the receiving None prerequisite for the separate system-update Plan without starting native work', async () => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', adminAccessMode: 'none' });
     const reviewed = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
