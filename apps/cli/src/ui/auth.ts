@@ -1,4 +1,5 @@
 import { decodeBase64, encodeBase64, encodeBase64Url } from "@/api/encryption";
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { configuration, reloadConfiguration } from "@/configuration";
 import { createHash, randomBytes } from "node:crypto";
 import tweetnacl from 'tweetnacl';
@@ -1000,7 +1001,7 @@ export async function ensureMachineIdForCredentials(
     // custody. Their admitted Machine never selects the custodian's global one.
     const requester = credentials.requesterSessionCredentialScope?.requesterSession;
     if (requester) return { machineId: requester.attribution.machineId };
-    if (process.env.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined) {
+    if (sessionProcessEnvironment().HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined) {
         throw new Error('requester_session_credentials_unavailable');
     }
 
@@ -1062,7 +1063,7 @@ async function authAndPrepareMachineIfNeeded(
     let machineSetup: Readonly<{ machineId: string }> | null = null;
     let accountMaterialRecoveryRequired = false;
 
-    if (process.env.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined) {
+    if (sessionProcessEnvironment().HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined) {
         // The private-custody reader already validates this child's exact Home
         // and Session. It runs on the admitted Machine, without selecting or
         // registering a new requester Machine in the custodian's settings.

@@ -7,6 +7,7 @@ import { ensureMachineIdForCredentials, ensureMachineIdInSettings } from './auth
 import { readStoredCredentials } from '@/persistence';
 import { createRequesterSessionCredentialCustody } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { runInHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 describe('ensureMachineIdInSettings', () => {
   const previousHomeDir = process.env.HAPPIER_HOME_DIR;
@@ -154,7 +155,7 @@ describe('ensureMachineIdInSettings', () => {
     }
   });
 
-  it('keeps direct requester Session startup on its admitted Machine without changing custodian settings', async () => {
+  it.each([false, true])('keeps requester Session startup on its admitted Machine without changing custodian settings (hosted=%s)', async (hosted) => {
     const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-requester-machine-binding-'));
     const scope = createEnvKeyScope(['HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE', 'HAPPIER_SESSION_REQUESTER_SESSION_ID']);
     process.env.HAPPIER_HOME_DIR = homeDir;
@@ -177,15 +178,17 @@ describe('ensureMachineIdInSettings', () => {
       credentials: { token: `${header}.${payload}.signature`, encryption: null },
     });
     try {
-      scope.patch({ HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE: custody.path,
-        HAPPIER_SESSION_REQUESTER_SESSION_ID: 'requester-session' });
-      const credentials = await readStoredCredentials();
+      const environment = { HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE: custody.path,
+        HAPPIER_SESSION_REQUESTER_SESSION_ID: 'requester-session' };
+      if (!hosted) scope.patch(environment);
+      const run = <T>(callback: () => T): T => hosted ? runInHostedSessionScope({ environment }, callback) : callback();
+      const credentials = await run(readStoredCredentials);
       expect(credentials).not.toBeNull();
       if (!credentials) throw Error('requester custody fixture unavailable');
       const before = readFileSync(settingsPath, 'utf8');
-      expect(await ensureMachineIdForCredentials(credentials)).toEqual({ machineId: 'custodian-machine' });
-      expect(await ensureMachineIdForCredentials(credentials, { forceNew: true })).toEqual({ machineId: 'custodian-machine' });
-      await expect(ensureMachineIdForCredentials({ ...credentials })).rejects.toThrow('requester_session_credentials_unavailable');
+      expect(await run(() => ensureMachineIdForCredentials(credentials))).toEqual({ machineId: 'custodian-machine' });
+      expect(await run(() => ensureMachineIdForCredentials(credentials, { forceNew: true }))).toEqual({ machineId: 'custodian-machine' });
+      await expect(run(() => ensureMachineIdForCredentials({ ...credentials }))).rejects.toThrow('requester_session_credentials_unavailable');
       expect(readFileSync(settingsPath, 'utf8')).toBe(before);
     } finally {
       scope.restore();

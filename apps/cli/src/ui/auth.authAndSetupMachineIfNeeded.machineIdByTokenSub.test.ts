@@ -12,6 +12,8 @@ import {
 } from '@happier-dev/protocol';
 import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+// Transform the auth graph during collection; cases still reload their configured Home after resetModules.
+import './auth';
 
 const homeBoundary = vi.hoisted(() => ({
   origin: 'https://api.happier.dev',
@@ -339,7 +341,7 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
     }
   });
 
-  it('keeps requester child startup on its admitted machine without selecting or registering a requester machine', async () => {
+  it.each([false, true])('keeps requester child startup on its admitted machine without selecting or registering a requester machine (hosted=%s)', async (hosted) => {
     const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-auth-requester-machine-'));
     process.env.HAPPIER_HOME_DIR = homeDir;
     process.env.HAPPIER_ACTIVE_SERVER_ID = 'cloud';
@@ -356,10 +358,14 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
       const custody = await createRequesterSessionCredentialCustody({ happyHomeDir: homeDir, sessionId: 'requester-session',
         attribution: { serverId: 'cloud', accountId: 'requester', machineId: 'custodian-machine', installationId: 'installation' },
         credentials: { token: makeJwtWithSub('requester'), encryption: null } });
-      envScope.patch({ HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE: custody.path,
-        HAPPIER_SESSION_REQUESTER_SESSION_ID: 'requester-session' });
+      const environment = { HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE: custody.path,
+        HAPPIER_SESSION_REQUESTER_SESSION_ID: 'requester-session' };
+      if (!hosted) envScope.patch(environment);
       const { authAndSetupMachineIfNeeded } = await import('./auth');
-      const result = await authAndSetupMachineIfNeeded();
+      const { runInHostedSessionScope } = await import('@/agent/runtime/lifecycle/hostedSessionScope');
+      const run = () => hosted ? runInHostedSessionScope({ environment }, () => authAndSetupMachineIfNeeded())
+        : authAndSetupMachineIfNeeded();
+      const result = await run();
       expect(result.machineId).toBe('custodian-machine');
       expect(result.credentials.token).toBe(makeJwtWithSub('requester'));
       expect(homeBoundary.requests.filter(request => request.method === 'POST' && request.path === '/v1/machines')).toEqual([]);
@@ -368,7 +374,7 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
         lastTokenSubByServerId: { cloud: 'custodian' }, machineIdConfirmedByServerByServerId: { cloud: true } });
       expect(settings.machineIdByServerIdByAccountId.cloud).toEqual({ custodian: 'custodian-machine' });
       await custody.cleanup();
-      await expect(authAndSetupMachineIfNeeded()).rejects.toThrow('requester_session_credentials_unavailable');
+      await expect(run()).rejects.toThrow('requester_session_credentials_unavailable');
       expect(homeBoundary.requests).toEqual([]);
     } finally {
       const { logger } = await import('./logger');

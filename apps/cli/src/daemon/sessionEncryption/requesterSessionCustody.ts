@@ -5,6 +5,7 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { SessionRequesterBootstrapCredentialsV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 import { configuration } from '@/configuration';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { bindRequesterSessionCredentialScope, decodeStoredCredentials, type StoredCredentials } from '@/persistence';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readPrivateOwnerFile } from '../privateBearerFile';
@@ -76,9 +77,10 @@ export function requesterSessionCredentialPath(binding: Pick<RequesterSessionCre
 /** Only a private path travels to the child; failure never selects a global credential. */
 export async function readRequesterSessionCredentialsForChild(path: string): Promise<StoredCredentials | null> {
   try {
-    if (!path || !process.env[REQUESTER_SESSION_ID_ENV]) return null;
+    const environment = sessionProcessEnvironment();
+    if (!path || !environment[REQUESTER_SESSION_ID_ENV]) return null;
     const value = CustodyStoredReadSchema.parse(JSON.parse(await readPrivateOwnerFile(path)) as unknown);
-    if (value.scope || value.sessionId !== process.env[REQUESTER_SESSION_ID_ENV]
+    if (value.scope || value.sessionId !== environment[REQUESTER_SESSION_ID_ENV]
       || value.attribution.serverId !== configuration.activeServerId) return null;
     const credentials = decodeStoredCredentials(value.credentials);
     return credentials ? bindRequesterSessionCredentialScope(credentials, { serverId: value.attribution.serverId,
