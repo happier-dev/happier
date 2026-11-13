@@ -3,6 +3,7 @@ import { commandExistsOnPath } from '@happier-dev/cli-common/process';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import {
   buildMissingAgentCliCommandErrorMessage,
   resolveAgentCliRuntimeSpecForLookupId,
@@ -26,14 +27,15 @@ export async function resolveAgentCliLaunchSpecForSession(agentId: string, opts:
   const configured = identity ? await resolveAccountConfiguredAcpLaunchForAgent({ identity,
     agentTarget: opts.options.agentTarget, startupRuntimeDescriptorV1: opts.options.runtimeDescriptorV1,
     savedSecretOperationContext: opts.savedSecretOperationContext }) : null;
-  if (!configured) return declaration?.runtimeSpec ? resolveAgentCliLaunchSpec(agentId, opts) : null;
+  const launchOptions = { ...opts, cwd: opts.options.directory };
+  if (!configured) return declaration?.runtimeSpec ? resolveAgentCliLaunchSpec(agentId, launchOptions) : null;
   const launch = await configured.resolveHostLaunch({ cwd: opts.options.directory });
   if (!commandExistsOnPath(launch.command, { cwd: opts.options.directory,
-    env: { ...(opts.processEnv ?? process.env), ...launch.env } })) {
+    env: { ...(opts.processEnv ?? sessionProcessEnvironment()), ...launch.env } })) {
     throw new AgentCliNotFoundError(agentId, `Agent '${configured.configuredBackend.title}' is not installed or its configured command is unavailable.`);
   }
   const spec = buildAgentCliLaunchSpecFromResolution({ command: launch.command,
-    source: configured.configuredBackend.launch.kind === 'command' ? 'system' : 'managed' }, opts);
+    source: configured.configuredBackend.launch.kind === 'command' ? 'system' : 'managed' }, launchOptions);
   if (!spec) {
     throw new AgentCliNotFoundError(agentId, `Agent '${configured.configuredBackend.title}' requires an available JavaScript runtime.`);
   }

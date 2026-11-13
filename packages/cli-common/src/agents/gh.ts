@@ -119,7 +119,7 @@ export async function runGhCommand(params: GhCommandParams): Promise<GhCommandRe
   try {
     const { stdout, stderr } = await execFileWithDeadline(invocation.command, invocation.args, {
       encoding: 'utf8',
-      env: params.env ? { ...process.env, ...params.env } : process.env,
+      env: params.env ?? process.env,
       windowsHide: true,
       windowsVerbatimArguments: invocation.windowsVerbatimArguments,
       ...(params.timeoutMs !== undefined ? { timeout: params.timeoutMs } : {}),

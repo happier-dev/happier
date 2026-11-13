@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/cli-common/agents/resolution';
 import { resolveDirectJavaScriptRuntimeCommand } from '@happier-dev/cli-common/agents/managedJavaScriptRuntime';
 import { isWindowsShellShimPath } from '@happier-dev/cli-common/process';
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 import { resolveCliRuntimeAssetPath } from '../assets/resolveCliRuntimeAssetPath';
 import { isBun } from '../../utils/runtime';
@@ -48,16 +49,18 @@ export function bindAgentCliLaunchSpec(params: Readonly<{
 
 export function resolveAgentCliLaunchSpecForRuntime(
   runtimeSpec: AgentCliRuntimeDescriptor,
-  opts: Readonly<{ processEnv?: NodeJS.ProcessEnv; platform?: NodeJS.Platform }> = {},
+  opts: Readonly<{ processEnv?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; cwd?: string }> = {},
 ): AgentCliLaunchSpec | null {
-  const processEnv = opts.processEnv ?? process.env;
+  const processEnv = opts.processEnv ?? sessionProcessEnvironment();
+  const cwd = opts.cwd ?? sessionWorkingDirectory();
   const resolved = resolveAgentCliCommandForRuntime(runtimeSpec, {
     processEnv,
+    cwd,
     isBunRuntime: isBun(),
     currentExecPath: process.execPath,
   });
   if (!resolved) return null;
-  return buildAgentCliLaunchSpecFromResolution(resolved, { processEnv, platform: opts.platform });
+  return buildAgentCliLaunchSpecFromResolution(resolved, { processEnv, platform: opts.platform, cwd });
 }
 
 /**
@@ -71,9 +74,9 @@ export function resolveAgentCliLaunchSpecForRuntime(
  */
 export function buildAgentCliLaunchSpecFromResolution(
   resolved: AgentCliCommandResolution,
-  opts: Readonly<{ processEnv?: NodeJS.ProcessEnv; platform?: NodeJS.Platform }> = {},
+  opts: Readonly<{ processEnv?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; cwd?: string }> = {},
 ): AgentCliLaunchSpec | null {
-  const processEnv = opts.processEnv ?? process.env;
+  const processEnv = opts.processEnv ?? sessionProcessEnvironment();
   const platform = opts.platform ?? process.platform;
 
   if (platform === 'win32' && isWindowsShellShimPath(resolved.command)) {
@@ -96,6 +99,7 @@ export function buildAgentCliLaunchSpecFromResolution(
   }
 
   const runtimeCommand = resolveAgentCliJavaScriptRuntimeCommand(resolved.command, processEnv, {
+    cwd: opts.cwd ?? sessionWorkingDirectory(),
     isBunRuntime: isBun(),
     currentExecPath: process.execPath,
   });

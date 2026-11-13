@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { InstallableDependencyDescriptorSchema } from '@happier-dev/protocol/installables/descriptor';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 const roots: string[] = [];
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -46,6 +47,29 @@ function fixtureDescriptor(legacyExecutables?: readonly Readonly<{
 }
 
 describe('configured binary through the release source adapter', () => {
+  it('resolves relative overrides in each hosted Session directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-session-configured-binary-'));
+    roots.push(root);
+    const { getGitHubReleaseBinaryRuntimeInstallableAdapter } = await import('./githubReleaseBinary');
+    const adapter = await getGitHubReleaseBinaryRuntimeInstallableAdapter(fixtureDescriptor());
+    await Promise.all(['first', 'second'].map(async (name) => {
+      const directory = join(root, name);
+      const filename = process.platform === 'win32' ? 'fixture.exe' : 'fixture';
+      const binary = join(directory, 'bin', filename);
+      await executable(binary);
+      await runAddedHostedSession({ environment: {
+        HOME: directory, USERPROFILE: directory, HAPPIER_HOME_DIR: join(directory, '.happier'), PATH: '',
+        FIXTURE_BINARY: `./bin/${filename}`, FIXTURE_CONFIG: `session=${name}`,
+      }, workingDirectory: directory, end: () => {} }, async () => {
+        await Promise.resolve();
+        await expect(adapter?.resolveLaunchCommand?.()).resolves.toMatchObject({
+          ok: true, command: binary, args: ['--config', `session=${name}`], source: 'user_config',
+        });
+        await expect(adapter?.detectLaunchResolution()).resolves.toMatchObject({ availability: { ok: true }, canAutoInstall: false });
+      });
+    }));
+  });
+
   it('uses the selected dependency for status and override/system/managed precedence', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-configured-binary-'));
     roots.push(home);

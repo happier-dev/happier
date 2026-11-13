@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 import {
   canonicalAbsolutePathsEqual,
@@ -12,6 +13,24 @@ import {
 } from './expandHomeDirPath';
 
 describe('CLI path canonicalization', () => {
+  it('uses each hosted Session home and directory while preserving an explicit environment', async () => {
+    await Promise.all(['first', 'second'].map(async (name) => {
+      const home = join('/tmp', `path-home-${name}`);
+      const directory = join(home, 'workspace');
+      await runAddedHostedSession({ environment: { HOME: home, USERPROFILE: home }, workingDirectory: directory, end: () => {} }, async () => {
+        await Promise.resolve();
+        expect(expandHomeDirPath('~/file')).toBe(join(home, 'file'));
+        expect(resolveCanonicalAbsolutePath('~/file')?.path).toBe(join(home, 'file'));
+        expect(resolveCanonicalAbsolutePathComparisonIdentity('~/file'))
+          .toBe(resolveCanonicalAbsolutePathComparisonIdentity(join(home, 'file')));
+        expect(canonicalAbsolutePathsEqual('~/file', join(home, 'file'))).toBe(true);
+        expect(resolveAbsolutePathFromWorkingDirectory('./file')).toBe(join(directory, 'file'));
+        expect(expandHomeDirPath('~/file', { HOME: '/explicit-home', USERPROFILE: '/explicit-home' }))
+          .toBe(join('/explicit-home', 'file'));
+      });
+    }));
+  });
+
   it('expands both home separator spellings and normalizes mixed Windows separators', () => {
     const env = { USERPROFILE: 'C:\\Users\\Alice' };
 

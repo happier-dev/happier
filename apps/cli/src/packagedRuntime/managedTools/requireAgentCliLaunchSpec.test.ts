@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 import { createEnvKeyScope } from '../../testkit/env/envScope';
 import { writeTextFile } from '../../testkit/fs/fileHelpers';
@@ -58,6 +59,22 @@ afterEach(async () => {
 });
 
 describe('requireAgentCliLaunchSpec', () => {
+  it('resolves relative PATH entries separately for two hosted Sessions', async () => {
+    const root = await createTempDir('happier-session-agent-launch-', tmpdir());
+    tempDirs.add(root);
+    await Promise.all(['first', 'second'].map(async (name) => {
+      const directory = join(root, name);
+      const binary = await createExecutable(join(directory, 'bin'), process.platform === 'win32' ? 'claude.exe' : 'claude', 'native fixture');
+      await runAddedHostedSession({
+        environment: { HOME: directory, USERPROFILE: directory, HAPPIER_HOME_DIR: join(directory, '.happier'), PATH: 'bin' },
+        workingDirectory: directory, end: () => {},
+      }, async () => {
+        await Promise.resolve();
+        expect(requireAgentCliLaunchSpec('claude')).toMatchObject({ source: 'system', command: binary });
+      });
+    }));
+  });
+
   it('routes Windows command shims through the managed Agent CLI runner', async () => {
     if (!originalPlatformDescriptor) {
       throw new Error('Expected process.platform to be configurable for this test');

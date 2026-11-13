@@ -1,6 +1,7 @@
 import { compareVersions } from '@happier-dev/cli-common/update';
 import type { InstallableDependencyDescriptor } from '@happier-dev/protocol';
 import { resolveManagedDependencyCommand, validateManagedDependencyCommand, type ManagedDependencyCommand } from '@happier-dev/cli-common/agents';
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 import { getManagedBinaryDepStatus, resolveExistingManagedBinaryPath } from '@/capabilities/deps/managedBinary';
 import { logger } from '@/ui/logger';
@@ -17,6 +18,7 @@ export function createConfiguredBinaryRuntimeInstallableAdapter(
   const hasExplicitOverride = (env: NodeJS.ProcessEnv) => Boolean(env[declaration.overrideEnvironmentKey]?.trim());
   const resolveSpawn = (env: NodeJS.ProcessEnv, resolveExistingManagedBinPath = resolveManagedBin) => resolveManagedDependencyCommand({
     binaryName, displayName: descriptor.display.name, declaration, env, resolveExistingManagedBinPath,
+    currentWorkingDirectory: sessionWorkingDirectory(),
   });
   const validate = (spec: ManagedDependencyCommand, env: NodeJS.ProcessEnv) => validateManagedDependencyCommand(spec, binaryName, { env });
 
@@ -26,7 +28,7 @@ export function createConfiguredBinaryRuntimeInstallableAdapter(
     capabilityId: descriptor.capabilityId,
     detectCapabilityStatus: (params) => getManagedBinaryDepStatus(descriptor, params),
     detectLaunchResolution: async (params = {}) => {
-      const env = params.env ?? process.env;
+      const env = params.env ?? sessionProcessEnvironment();
       try {
         const resolved = resolveSpawn(env);
         const availability = validate(resolved, env);
@@ -44,7 +46,7 @@ export function createConfiguredBinaryRuntimeInstallableAdapter(
       }
     },
     resolveLaunchCommand: async (params = {}) => {
-      const env = params.env ?? process.env;
+      const env = params.env ?? sessionProcessEnvironment();
       try {
         const explicitOverride = hasExplicitOverride(env);
         const managedPath = resolveManagedBin(env);

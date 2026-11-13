@@ -1,12 +1,14 @@
 import { legacyCustomAcpCompat } from '@happier-dev/agents';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 import { AgentCliNotFoundError } from './agentCliNotFoundError';
 import { readAgentCliOverrideForRuntime, resolveAgentCliCommandForRuntime } from './agentCliResolution';
 
 export type AgentCliResolutionOptions = Readonly<{
   processEnv?: NodeJS.ProcessEnv;
+  cwd?: string;
   catalogSnapshot?: ReturnType<typeof readAgentCatalogSnapshot>;
 }>;
 
@@ -32,7 +34,7 @@ export function buildMissingAgentCliCommandErrorMessage(
   agentId: string,
   opts: AgentCliResolutionOptions = {},
 ): string {
-  const processEnv = opts.processEnv ?? process.env;
+  const processEnv = opts.processEnv ?? sessionProcessEnvironment();
   const runtimeSpec = resolveAgentCliRuntimeSpecForLookupId(agentId, opts);
   const envKey = resolveAgentCliOverrideEnvKey(runtimeSpec.id);
   if (readAgentCliOverrideForRuntime(runtimeSpec, processEnv)) {
@@ -52,7 +54,8 @@ export function requireAgentCliCommand(
   opts: AgentCliResolutionOptions = {},
 ): string {
   const resolved = resolveAgentCliCommandForRuntime(resolveAgentCliRuntimeSpecForLookupId(agentId, opts), {
-    processEnv: opts.processEnv,
+    processEnv: opts.processEnv ?? sessionProcessEnvironment(),
+    cwd: opts.cwd ?? sessionWorkingDirectory(),
   });
   if (resolved) return resolved.command;
   throw new AgentCliNotFoundError(agentId, buildMissingAgentCliCommandErrorMessage(agentId, opts));

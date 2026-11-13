@@ -70,6 +70,7 @@ export type AgentCliRuntimeDescriptor = Readonly<
 >;
 
 type RuntimeResolutionOptions = Readonly<{
+  cwd?: string;
   isBunRuntime?: boolean;
   currentExecPath?: string | null;
 }>;
@@ -377,7 +378,7 @@ function resolveBunRuntimeCommand(
     currentDir = dirname(currentDir);
   }
 
-  return resolveExecutableCommand('bun', { env: processEnv });
+  return resolveExecutableCommand('bun', { env: processEnv, cwd: runtimeOptions.cwd });
 }
 
 export function resolveAgentCliJavaScriptRuntimeCommand(
@@ -437,7 +438,7 @@ function resolveAgentCliSystemCommand(
   const binaryNames = [runtimeSpec.binaryName, ...(runtimeSpec.alternativeBinaryNames ?? [])];
   const candidates = binaryNames.map((binaryName) => ({
     knownUserCommand: resolveCommandInKnownUserDirs(runtimeSpec, binaryName, processEnv),
-    pathCommand: resolveExecutableCommand(binaryName, { env: processEnv }),
+    pathCommand: resolveExecutableCommand(binaryName, { env: processEnv, cwd: runtimeOptions.cwd }),
   }));
   if (runtimeSpec.systemCommandResolutionStrategy !== 'known-user-first-runnable') {
     for (const candidate of candidates) {
