@@ -179,6 +179,9 @@ function writePublicComposerAgent(dir: string): string {
       // FX 0.0.14 session/new capture, 2026-10-27; E-fx-live-probe.md §3.
       let configCatalog = ${JSON.stringify(createFxConfigOptionsFixture())};
       const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+      // This scripted ACP producer supports these concrete modes for the raw-policy scenario.
+      // Advertisement and setter admission share the producer's catalog.
+      const inputPolicyModes = ['bypass', 'plan', 'ask'];
       const modeState = () => ({ currentModeId: 'default', availableModes: [
         { id: 'default', name: 'Default' }, { id: 'auto_edit', name: 'Auto edit' }, { id: 'yolo', name: 'YOLO' },
       ] });
@@ -198,6 +201,10 @@ function writePublicComposerAgent(dir: string): string {
           send({ jsonrpc: '2.0', method: 'session/update', params: {
             sessionId: result.sessionId, update: { sessionUpdate: 'available_commands_update', availableCommands: [] },
           } });
+        }
+        if (result.sessionId && scenario === 'configuration-update-input-policy') {
+          result.modes = { currentModeId: inputPolicyModes[0],
+            availableModes: inputPolicyModes.map(id => ({ id, name: id })) };
         }
         if (result.sessionId && scenario.startsWith('configuration-update-candidates-')) {
           const ids = scenario.endsWith('legacy') ? ['legacy', 'ask']
@@ -522,6 +529,10 @@ function writePublicComposerAgent(dir: string): string {
                   }
               : { configOptions: [] });
           } else if (request.method === 'session/set_mode') {
+            if (scenario === 'configuration-update-input-policy' && !inputPolicyModes.includes(request.params.modeId)) {
+              send({ jsonrpc: '2.0', id: request.id, error: { code: -32602, message: 'mode not advertised' } });
+              continue;
+            }
             if (scenario === 'configuration-update-clear-retry' && request.params.modeId === 'ask' && !modeClearRejected) {
               modeClearRejected = true;
               send({ jsonrpc: '2.0', id: request.id, error: { code: -32000, message: 'mode clear rejected once' } });
@@ -1699,7 +1710,7 @@ describe('createPublicAcpSession', () => {
 
   it.each(['mapped', 'unmapped'] as const)('enforces raw ACP input policy before native prompts despite an explicit wider mode (%s)', async (mapping) => {
     await withTempDir('happier-public-acp-input-policy-', async dir => {
-      const fixture = createFixture(dir, 'configuration-update-candidates-current');
+      const fixture = createFixture(dir, 'configuration-update-input-policy');
       const authored = applyAcpBackendUpsertV1({ settings: undefined, nowMs: 1, backend: {
         id: 'raw-policy', name: 'raw-policy', title: 'Raw policy',
         launch: { kind: 'command', command: 'fixture-agent', args: [] },
@@ -3253,6 +3264,9 @@ describe('createPublicAcpSession', () => {
         const failure = events.find(event => event.kind === 'input-rejected' || event.kind === 'turn-failed' || event.kind === 'run-failed');
         if (!failure || !('diagnostic' in failure) || !failure.diagnostic) throw new Error('Expected native failed diagnostic');
         expect(failure.diagnostic).toMatchObject({ code: requestErrorCode === -32603 ? 'acp_turn_failed' : 'acp_input_rejected_before_effect', details: { requestErrorCode } });
+        expect(failure.diagnostic.details).toMatchObject({ failureCause: {
+          phase: 'turn', providerErrorCode: requestErrorCode,
+        } });
         expect(readFileSync(promptCountPath, 'utf8')).toBe('1');
         expect(events.some(event => event.kind === 'input-accepted')).toBe(requestErrorCode === -32603);
         expect(events.some(event => event.kind === 'run-complete')).toBe(false);
