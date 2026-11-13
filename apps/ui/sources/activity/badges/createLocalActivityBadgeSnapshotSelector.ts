@@ -1,3 +1,4 @@
+import { compareCodeUnits } from '@/utils/strings/compareCodeUnits';
 import { readSessionViewerAttentionSignature } from '@/sync/domains/session/readState/sessionViewerAttention';
 import type { AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 import { readSessionRequestCoverage } from '@/sync/domains/session/pending/readSessionRequestCoverage';
@@ -295,7 +296,7 @@ function buildOrdinaryRowsSignature(
             const address = { serverId, sessionId };
             return [sessionAddressKey(address), address] as const;
         }))
-        .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
+        .sort(([leftKey], [rightKey]) => compareCodeUnits(leftKey, rightKey));
     const liveKeys = new Set(addresses.map(([key]) => key));
     for (const key of cache.keys()) if (!liveKeys.has(key)) cache.delete(key);
     return joinSignatureParts(addresses.map(([key, { serverId, sessionId }]) => {

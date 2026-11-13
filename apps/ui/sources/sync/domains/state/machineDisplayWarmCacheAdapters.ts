@@ -1,3 +1,4 @@
+import { compareCodeUnits } from '@/utils/strings/compareCodeUnits';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import { isPersistentMachine, MachineKindFromLegacyProjectionSchema } from '@happier-dev/protocol/machines/machineKind';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -30,7 +31,7 @@ export function readWarmMachineDisplays(params: Readonly<{
     return Object.freeze([...entriesByMachineId.values()]
         .map(buildMachineDisplayRenderableFromCacheEntry)
         .filter(isPersistentMachine)
-        .sort((left, right) => left.id.localeCompare(right.id)));
+        .sort((left, right) => compareCodeUnits(left.id, right.id)));
 }
 
 export function buildMachineDisplayRenderableFromCacheEntry(entry: MachineDisplayCacheEntryV1): MachineDisplayRenderable {

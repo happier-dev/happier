@@ -1,3 +1,4 @@
+import { compareCodeUnits } from '@/utils/strings/compareCodeUnits';
 import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { PluginProjectedDragSourceEntryV1, PluginProjectedDropTargetEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -605,7 +606,7 @@ export function resolveProjectedPluginUiClientExecutables(input: Readonly<{
 
     const grouped = new Map<string, ProjectedClientExecutableTargetGroup>();
     for (const candidate of candidates.sort((left, right) => (
-        candidateSortKey(left).localeCompare(candidateSortKey(right))
+        compareCodeUnits(candidateSortKey(left), candidateSortKey(right))
     ))) {
         const groupKey = getPluginUiClientExecutableTargetAddressKey(candidate);
         const technicalKey = targetTechnicalKey(candidate);
@@ -681,7 +682,8 @@ export function resolveProjectedPluginUiClientExecutables(input: Readonly<{
             });
         })
         .sort((left, right) => (
-            getPluginUiClientExecutableTargetAddressKey(left).localeCompare(
+            compareCodeUnits(
+                getPluginUiClientExecutableTargetAddressKey(left),
                 getPluginUiClientExecutableTargetAddressKey(right),
             )
         )));

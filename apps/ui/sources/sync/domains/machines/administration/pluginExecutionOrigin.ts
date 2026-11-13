@@ -1,4 +1,5 @@
 import { arePluginMachineExecutionOriginsEqual, arePluginMachineExecutionRoutingsEqual, getPluginMachineExecutionRouting, getPluginMachineExecutionOriginRef, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { compareCodeUnits } from '@/utils/strings/compareCodeUnits';
 import { type PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 
@@ -151,7 +152,7 @@ export function readPluginExecutionOriginMachineTargets(params: Readonly<{
             .map(({ serverIdentityId, machineId }) => ({ serverIdentityId, machineId })),
         ...params.sources.filter((entry) => getPluginMachineExecutionOriginRef(entry.source.origin).pluginId === params.pluginId)
             .map((entry) => ({ serverIdentityId: entry.source.origin.serverIdentityId, machineId: getPluginMachineExecutionOriginRef(entry.source.origin).machineId })),
-    ].sort((left, right) => left.serverIdentityId.localeCompare(right.serverIdentityId) || left.machineId.localeCompare(right.machineId));
+    ].sort((left, right) => compareCodeUnits(left.serverIdentityId, right.serverIdentityId) || compareCodeUnits(left.machineId, right.machineId));
 }
 
 /** Selection consumes eligibility and activity order, not raw heartbeat timestamps or labels. */
@@ -171,8 +172,8 @@ export function createPluginMachineExecutionOriginMachineFacts(params: MachineFa
 }>) {
     type Row = { target: PluginExecutionOriginContextualTarget; fact: ReturnType<PluginExecutionOriginMachineFactReader>;
         serialized: string; rank: number };
-    const compareTarget = (left: Row, right: Row) => left.target.serverIdentityId.localeCompare(right.target.serverIdentityId)
-        || left.target.machineId.localeCompare(right.target.machineId);
+    const compareTarget = (left: Row, right: Row) => compareCodeUnits(left.target.serverIdentityId, right.target.serverIdentityId)
+        || compareCodeUnits(left.target.machineId, right.target.machineId);
     const activity = (row: Row) => row.fact.rejection === null ? row.fact.activeAt : 0;
     const compareActivity = (left: Row, right: Row) => activity(right) - activity(left) || compareTarget(left, right);
     const serializeRow = (target: PluginExecutionOriginContextualTarget, fact: Row['fact']) =>
@@ -323,12 +324,12 @@ function compareCandidates(
 ): number {
     const leftOrigin = getPluginExecutionOriginCandidateOrigin(left);
     const rightOrigin = getPluginExecutionOriginCandidateOrigin(right);
-    const serverOrder = leftOrigin.serverIdentityId.localeCompare(rightOrigin.serverIdentityId);
+    const serverOrder = compareCodeUnits(leftOrigin.serverIdentityId, rightOrigin.serverIdentityId);
     if (serverOrder !== 0) return serverOrder;
-    const machineOrder = getPluginMachineExecutionOriginRef(leftOrigin).machineId.localeCompare(getPluginMachineExecutionOriginRef(rightOrigin).machineId);
+    const machineOrder = compareCodeUnits(getPluginMachineExecutionOriginRef(leftOrigin).machineId, getPluginMachineExecutionOriginRef(rightOrigin).machineId);
     return machineOrder !== 0
         ? machineOrder
-        : JSON.stringify(leftOrigin).localeCompare(JSON.stringify(rightOrigin));
+        : compareCodeUnits(JSON.stringify(leftOrigin), JSON.stringify(rightOrigin));
 }
 
 // Materializations are immutable admitted rows. Their compact origin is produced

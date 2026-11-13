@@ -123,6 +123,36 @@ describe('execution-origin Machine fact serialization', () => {
             .map(row => ['srv_one', row.id, 'revoked', false]));
         expect(activityReads).toBe(rows.length);
     });
+
+    it('orders targets and candidates by id code units without platform locale collation', () => {
+        // Hermes on Android answers each String#localeCompare through a JNI Collator
+        // copy; a 64-Machine cold start spent ~660,000 of them in these sorts.
+        const ids = Array.from({ length: 40 }, (_, index) => `${index % 2 ? 'M' : 'm'}achine-${String(39 - index).padStart(2, '0')}`);
+        const materializations = ids.map(id => candidate({ serverIdentityId: id.startsWith('M') ? 'srv_B' : 'srv_a',
+            machineId: id, materializationId: id }).materialization);
+        const original = String.prototype.localeCompare;
+        let collations = 0;
+        String.prototype.localeCompare = function (this: string, ...args: Parameters<typeof original>) {
+            collations += 1;
+            return original.apply(this, args);
+        };
+        try {
+            const targets = executionOrigins.readPluginExecutionOriginMachineTargets({ pluginId: 'acme.plugin', materializations, sources: [] });
+            const facts = serializePluginMachineExecutionOriginMachineFacts({ pluginId: 'acme.plugin', materializations, sources: [],
+                targets, machineSnapshots: [], readMachineFact: () => ({ activeAt: 0, eligible: true, rejection: null }) });
+            const candidates = buildPluginMachineExecutionOriginCandidates({ pluginId: 'acme.plugin', materializations, machineSnapshots: [],
+                classifyRelease: () => ({ releaseContent: 'matched', validation: { kind: 'admitted' } }) });
+            const codeUnitOrder = [...materializations].map(row => [row.serverIdentityId, row.machineId] as const)
+                .sort(([leftServer, leftMachine], [rightServer, rightMachine]) =>
+                    leftServer < rightServer ? -1 : leftServer > rightServer ? 1 : leftMachine < rightMachine ? -1 : leftMachine > rightMachine ? 1 : 0);
+            expect(targets.map(target => [target.serverIdentityId, target.machineId])).toEqual(codeUnitOrder);
+            expect(JSON.parse(facts.eligibilityKey).map((row: unknown[]) => row.slice(0, 2))).toEqual(codeUnitOrder);
+            expect(candidates.map(entry => [entry.materialization.serverIdentityId, entry.materialization.machineId])).toEqual(codeUnitOrder);
+            expect(collations).toBe(0);
+        } finally {
+            String.prototype.localeCompare = original;
+        }
+    });
 });
 
 function candidate(input: Readonly<{

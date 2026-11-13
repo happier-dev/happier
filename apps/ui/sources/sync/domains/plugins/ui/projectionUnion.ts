@@ -1,3 +1,4 @@
+import { compareCodeUnits } from '@/utils/strings/compareCodeUnits';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
     samePluginUiMaterializationFacts,
@@ -915,8 +916,8 @@ function prepareUnionPublicationSource(members: readonly PluginUiProjectionUnion
     const modelIndexes = new Map<PluginUiProjectionModel, UnionSourceModelIndex>();
     const slices = new Map<PluginUiProjectionModel, ReadonlyMap<string, PluginUiProjectionModel>>();
     const hasDeclarations = new Map<PluginUiProjectionModel, boolean>();
-    const sortedMembers = [...members].sort((left, right) => left.machineId.localeCompare(right.machineId)
-        || (left.serverIdentityId ?? left.serverId ?? '').localeCompare(right.serverIdentityId ?? right.serverId ?? ''));
+    const sortedMembers = [...members].sort((left, right) => compareCodeUnits(left.machineId, right.machineId)
+        || compareCodeUnits(left.serverIdentityId ?? left.serverId ?? '', right.serverIdentityId ?? right.serverId ?? ''));
     // Make every reusable current dictionary visible before normalizing any
     // new one. A new source may converge on a later member's existing content.
     for (const member of sortedMembers) {
@@ -1328,7 +1329,7 @@ function readProjectionDeclarationComparison(model: PluginUiProjectionModel, com
     const familiesByPluginId = new Map<string, DeclarationComparisonFamilies>();
     for (const [pluginId, grouped] of groupedFamiliesByPluginId) {
         for (const family of grouped) {
-            family.sort(([left], [right]) => left.localeCompare(right));
+            family.sort(([left], [right]) => compareCodeUnits(left, right));
             for (const entry of family) Object.freeze(entry);
             Object.freeze(family);
         }
@@ -1731,8 +1732,8 @@ function readUnionPublicationFacts(
             member.projection !== null
         ))
         // Deterministic and presence-free: machine id, never `activeAt`.
-        .sort((left, right) => left.machineId.localeCompare(right.machineId)
-            || (left.serverIdentityId ?? left.serverId ?? '').localeCompare(right.serverIdentityId ?? right.serverId ?? ''));
+        .sort((left, right) => compareCodeUnits(left.machineId, right.machineId)
+            || compareCodeUnits(left.serverIdentityId ?? left.serverId ?? '', right.serverIdentityId ?? right.serverId ?? ''));
 
     const admittedContributing = contributing.filter(member => source
         ? source.hasDeclarations.get(member.projection) === true || memberHasAdmittedContribution(member, selectedOriginsByPluginId, false,

@@ -1,3 +1,4 @@
+import { compareCodeUnits } from '@/utils/strings/compareCodeUnits';
 import { t } from '@/text';
 import type { MachineLockedReason } from '@/sync/domains/state/storageTypes';
 import { readMachineName as readPublishedMachineName, resolveMachineDisplayNameParts as resolvePublishedMachineNameParts, type MachineNameMetadata as PublishedMachineNameMetadata } from '@happier-dev/protocol/machines/machineDisplayNames';
@@ -165,7 +166,7 @@ export function selectMachineDisplayNamePeers(
     if (!listed) return [];
     const name = machineBaseDisplayName(listed).toLocaleLowerCase();
     return inventory.filter(candidate => machineBaseDisplayName(candidate).toLocaleLowerCase() === name)
-        .sort((left, right) => left.id.localeCompare(right.id));
+        .sort((left, right) => compareCodeUnits(left.id, right.id));
 }
 
 /**

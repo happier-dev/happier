@@ -1,3 +1,4 @@
+import { compareCodeUnits } from '@/utils/strings/compareCodeUnits';
 import * as React from 'react';
 import type { SessionEffectiveAccessV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 
@@ -20,7 +21,7 @@ type AudienceTarget = Readonly<{
 export function useSessionAudienceContext(addresses: readonly SessionAddress[]) {
     const addressesKey = React.useMemo(() => JSON.stringify(
         [...new Map(addresses.map((address) => [sessionAddressKey(address), address])).entries()]
-            .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+            .sort(([leftKey], [rightKey]) => compareCodeUnits(leftKey, rightKey))
             .map(([, address]) => address),
     ), [addresses]);
     // These are our own serialized address tuples. Keeping this primitive as the selector result

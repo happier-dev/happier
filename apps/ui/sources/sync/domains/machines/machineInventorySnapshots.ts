@@ -1,3 +1,4 @@
+import { compareCodeUnits } from '@/utils/strings/compareCodeUnits';
 import {
     readWarmMachineDisplays,
 } from '@/sync/domains/state/machineDisplayWarmCacheAdapters';
@@ -82,7 +83,7 @@ function normalizePortableIdentity(value: unknown): string | null {
 }
 
 function compareMachineDisplays(left: MachineDisplayRenderable, right: MachineDisplayRenderable): number {
-    return left.id.localeCompare(right.id);
+    return compareCodeUnits(left.id, right.id);
 }
 
 function resolveRawMachineList(params: Readonly<{
@@ -274,8 +275,8 @@ export function resolveAllProfileMachineInventorySnapshots(params: Readonly<{
     return Object.freeze(snapshots.sort((left, right) => {
         const leftIdentity = left.kind === 'missingIdentity' ? '' : left.serverIdentityId;
         const rightIdentity = right.kind === 'missingIdentity' ? '' : right.serverIdentityId;
-        const identityOrder = leftIdentity.localeCompare(rightIdentity);
-        return identityOrder !== 0 ? identityOrder : left.profileId.localeCompare(right.profileId);
+        const identityOrder = compareCodeUnits(leftIdentity, rightIdentity);
+        return identityOrder !== 0 ? identityOrder : compareCodeUnits(left.profileId, right.profileId);
     }));
 }
 

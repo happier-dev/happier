@@ -1,3 +1,4 @@
+import { compareCodeUnits } from '@/utils/strings/compareCodeUnits';
 import type {
     PluginUiDestinationContainerV1,
     PluginUiDestinationReferenceV1,
@@ -33,7 +34,7 @@ function sortedPlacements<TPlacement extends Readonly<{ id: string }>>(
     // V2 projections have no contributor-controlled placement rank. Keep the
     // host-owned registry selection stable by its generated qualified id rather
     // than reviving a raw `order` field from a stale projection row.
-    return Object.freeze([...placements].sort((left, right) => left.id.localeCompare(right.id)));
+    return Object.freeze([...placements].sort((left, right) => compareCodeUnits(left.id, right.id)));
 }
 
 /** The destination-only view of the one physical placement projection. */
