@@ -1479,6 +1479,7 @@ export async function startDaemonSessionControlRuntime(
     controlToken: string;
     daemonWorkSignal: AbortSignal;
     stopControlServer: () => Promise<void>;
+    initializeReattachedSessions: () => Promise<void>;
     activateRuntimeAuthRecoveryAfterStatePublication: () => void;
     connectedServiceAuthGroupPreTurnSwitchCoordinator: Readonly<{
       credentialHealthSwitchLeases: InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry<QualifiedConnectedAccountServiceRef>;
@@ -2963,7 +2964,6 @@ export async function startDaemonSessionControlRuntime(
     if (!requester) replaceConnectedServiceProjectionSnapshot(snapshot);
     return snapshot;
   };
-  await registerTrackedConnectedServiceRuntimeTargets();
   const resolveCanonicalTrackedSessionId = (trackingKey: SessionTrackingKey): string => {
     const session = params.trackedSessionsByKey.get(trackingKey);
     const sessionId =
@@ -15395,32 +15395,31 @@ export async function startDaemonSessionControlRuntime(
       error,
     );
   });
-  await recoverReattachedAgentRequestAuth();
-  const reattachedRuntimeTargets = connectedServiceRuntimeRegistry
-    .listTargets()
-    .filter((target) => !connectedServiceRuntimeRegistry.isRunTarget(target));
-  const initialRuntimeTargetGenerationReconciliation = Promise.allSettled(
-    reattachedRuntimeTargets.map((target) =>
-      scheduleRuntimeTargetGenerationReconciliation(
-        target,
-        undefined,
-        false,
-        false,
-      ),
-    ),
+  const reattachedRuntimeTargets: ReturnType<typeof connectedServiceRuntimeRegistry.listTargets> = [];
+  const reconcileInitialRuntimeTargets = () => Promise.allSettled(
+    reattachedRuntimeTargets.map(target => scheduleRuntimeTargetGenerationReconciliation(target, undefined, false, false)),
   );
-  void initialRuntimeTargetGenerationReconciliation.then((outcomes) => {
-    for (const outcome of outcomes) {
-      if (outcome.status === 'rejected') {
-        logger.debug(
-          '[DAEMON RUN] Failed to reconcile connected-service provider adoption after daemon replacement',
-          {
-            error: serializeAxiosErrorForLog(outcome.reason),
-          },
-        );
+  let initialRuntimeTargetGenerationReconciliation = reconcileInitialRuntimeTargets();
+  // startDaemon invokes this only after installing requester runtime custody.
+  const initializeReattachedSessions = async (): Promise<void> => {
+    await registerTrackedConnectedServiceRuntimeTargets();
+    await recoverReattachedAgentRequestAuth();
+    reattachedRuntimeTargets.push(...connectedServiceRuntimeRegistry.listTargets()
+      .filter(target => !connectedServiceRuntimeRegistry.isRunTarget(target)));
+    initialRuntimeTargetGenerationReconciliation = reconcileInitialRuntimeTargets();
+    void initialRuntimeTargetGenerationReconciliation.then((outcomes) => {
+      for (const outcome of outcomes) {
+        if (outcome.status === 'rejected') {
+          logger.debug(
+            '[DAEMON RUN] Failed to reconcile connected-service provider adoption after daemon replacement',
+            {
+              error: serializeAxiosErrorForLog(outcome.reason),
+            },
+          );
+        }
       }
-    }
-  });
+    });
+  };
   let reattachedCredentialProjectionReconciliation: Promise<void> | null = null;
   const reconcileReattachedConnectedServiceCredentialProjection =
     (): Promise<void> => {
@@ -15727,6 +15726,7 @@ export async function startDaemonSessionControlRuntime(
     controlToken,
     daemonWorkSignal: shutdownCancellationDomains.daemonWorkSignal,
     stopControlServer: stopControlServerWithConnectedServiceDeferralCleanup,
+    initializeReattachedSessions,
     activateRuntimeAuthRecoveryAfterStatePublication: () => {
       if (isRuntimePublicationQuiescing()) return;
       runtimeAuthRecoveryScheduler.hydrate();

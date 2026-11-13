@@ -2401,6 +2401,20 @@ export async function startDaemon(
       : undefined;
     let createRequesterRuntime: ((bootstrap: AdmittedRequesterSessionBootstrap, signal?: AbortSignal,
       options?: Readonly<{ bootstrapOwnership?: 'borrowed' }>) => Promise<RequesterSessionRuntimeContext | null>) | null = null;
+    // Settles when the factory above is installed (startup finished) or Home transport ends.
+    // Sessions recovered before then (a host update hands its Sessions over during startup)
+    // wait for it instead of being refused as having no requester custody.
+    let markRequesterRuntimeCreatable!: () => void;
+    const requesterRuntimeCreatable = new Promise<void>(resolve => { markRequesterRuntimeCreatable = resolve; });
+    homeTransportCancellation.signal.addEventListener('abort', () => markRequesterRuntimeCreatable(), { once: true });
+    const whenRequesterRuntimeCreatable = async (signal?: AbortSignal): Promise<void> => {
+      if (createRequesterRuntime || signal?.aborted) return;
+      await new Promise<void>(resolve => {
+        const done = () => { signal?.removeEventListener('abort', done); resolve(); };
+        signal?.addEventListener('abort', done, { once: true });
+        void requesterRuntimeCreatable.then(done);
+      });
+    };
     const readRequesterRuntimeServerHttpBaseUrl = captureServerHttpBaseUrl();
     const openRunAccountConnectionSource = managedPolicyHomeId && externalActionAccountId
       ? createDaemonAccountConnectionManagedConsumerOpen({
@@ -2453,6 +2467,7 @@ export async function startDaemon(
     const resolveRequesterSessionRuntimeContext = createRequesterSessionRuntimeContextResolver({
       trackedSessions: trackedSessionsByKey,
       getCreateRuntime: () => createRequesterRuntime,
+      whenRuntimeCreatable: whenRequesterRuntimeCreatable,
       recoverBootstrap: ({ sessionId, attribution: stamp, tracked, signal, onRecoveryRefused }) => resolveRequesterSessionBootstrapFromCustody({ happyHomeDir: configuration.happyHomeDir,
         serverId: requesterRuntimeServerId, sessionId, serverHttpBaseUrl: readRequesterRuntimeServerHttpBaseUrl(),
         signal,
@@ -2520,6 +2535,7 @@ export async function startDaemon(
       controlToken,
       daemonWorkSignal,
       stopControlServer,
+      initializeReattachedSessions,
       activateRuntimeAuthRecoveryAfterStatePublication,
       connectedServiceAuthGroupPreTurnSwitchCoordinator,
       connectedServicePredictiveSwitchGuard,
@@ -2622,7 +2638,10 @@ export async function startDaemon(
       credentials,
       readPluginCatalogProjection: () => ({ runtimeId,
         contributionRegistryProjectionRevision: pluginRegistryProjectionInvalidation.readRevision() }),
-      createRequesterSessionRuntimeContext: async (bootstrap, options) => await createRequesterRuntime?.(bootstrap, undefined, options) ?? null,
+      createRequesterSessionRuntimeContext: async (bootstrap, options) => {
+        await whenRequesterRuntimeCreatable(homeTransportCancellation.signal);
+        return await createRequesterRuntime?.(bootstrap, undefined, options) ?? null;
+      },
       resolveRequesterSessionRuntimeContext,
       releaseRequesterSessionRuntimeContext,
       daemonSessionMutationCustody,
@@ -2857,6 +2876,7 @@ export async function startDaemon(
       isShuttingDown: isDaemonQuiescing,
       processEnv: process.env,
     });
+
     requestManagedServiceRecovery = requestManagedServiceRecoveryFromSessionControl;
     machineRpcRouteAttachments.attachMachineReachabilityRoutes(createDaemonMachineReachabilityRoutes({
       getMachineClient: () => apiMachine, target: machineResourceTarget, agentIsolation, adminAccess: machineAdminAccessRoutes, ownerRemainder,
@@ -3466,6 +3486,43 @@ export async function startDaemon(
         resolveServerFeaturesSnapshot: () => serverFeaturesSnapshotStore.getSnapshot(),
         onError: error => logger.debug('[DAEMON RUN] Public-profile refresh deferred', serializeAxiosErrorForLog(error)),
       });
+    createRequesterRuntime = async (bootstrap, signal, options) => {
+      if (bootstrap.serverHttpBaseUrl !== readRequesterRuntimeServerHttpBaseUrl()
+        || !requesterMachineAdmissionBoundary(bootstrap.attribution).isHomeCurrent()) return null;
+      if (options?.bootstrapOwnership !== 'borrowed') bindRequesterSessionRuntimeMachineAdmissionCurrentness({
+        bootstrap, boundary: requesterMachineAdmissionBoundary(bootstrap.attribution),
+      });
+      return await createRequesterSessionRuntimeContext({ bootstrap, signal, ...options,
+        providerAccountUsageStore: resolveProviderAccountUsageStore(bootstrap.attribution),
+        activeServerDir: configuration.activeServerDir, connectedServicesMaterializationBaseDir,
+        resolveQualifiedConnectedAccountV4Support: () => resolveQualifiedConnectedAccountAtomicV4Negotiation(serverFeaturesSnapshotStore.getSnapshot()),
+        coordinatorInput: {
+          machineId, machineIdProvider: () => machineId, runtimeId, happyHomeDir: configuration.happyHomeDir,
+          logger, processEnv: process.env, trackedSessionsByKey, connectedServiceRuntimeRegistry,
+          connectedServiceAuthGroupPreTurnSwitchCoordinator, connectedServicePredictiveSwitchGuard,
+          consumeCommittedAuthGroupGeneration, connectedServiceQuotaFetcherDescriptors,
+          resolveConnectedAccountUsageIdentity,
+          resolveQualifiedConnectedAccountPeerClass: () => resolveQualifiedConnectedAccountPeerClass(
+            serverFeaturesSnapshotStore.getSnapshot(), apiMachineForSessions?.getSessionSyncPendingInputServerContractResult() ?? null),
+          resolveQualifiedConnectedAccountPeerOperationTransport: ({ service, operation }) => resolveQualifiedConnectedAccountPeerOperationTransport({
+            snapshot: serverFeaturesSnapshotStore.getSnapshot(), serverContract: apiMachineForSessions?.getSessionSyncPendingInputServerContractResult() ?? null,
+            service, operation,
+          }),
+          resolveConnectedServiceQualifiedPurposeBindingSnapshot: async ({ agentId, connectedServicesBindingsRaw }) => {
+            const bindings = ConnectedServiceBindingsV2IngressSchema.safeParse(connectedServicesBindingsRaw);
+            if (!bindings.success) return null;
+            const lease = await acquireAuthoritativePluginRuntimeRegistryLease({ happyHomeDir: configuration.happyHomeDir });
+            try { return resolveQualifiedPurposeBindingSnapshotForAgentSpawn({ agentId, bindings: bindings.data,
+              contributions: lease.registry.contributes,
+              catalogEntry: await lease.registry.acquireAgentCatalogEntry?.(agentId) }); }
+            finally { await lease.release(); }
+          },
+        },
+      });
+    };
+    markRequesterRuntimeCreatable();
+    // Retained Sessions recover requester custody through the factory installed above.
+    await initializeReattachedSessions();
     const runtimeBootstrap = await startDaemonRuntimeBootstrap({
       secretSources: daemonSecretSources,
       publicProfileRefresh: nativeAccountRefresh,
@@ -3602,40 +3659,6 @@ export async function startDaemon(
     connectedServiceQuotasCoordinator = runtimeBootstrap.connectedServiceQuotasCoordinator;
     connectedServiceQuotasLoopHandle = runtimeBootstrap.connectedServiceQuotasLoopHandle;
     publicProfileRefreshHandle = runtimeBootstrap.publicProfileRefreshHandle;
-    createRequesterRuntime = async (bootstrap, signal, options) => {
-      if (bootstrap.serverHttpBaseUrl !== readRequesterRuntimeServerHttpBaseUrl()
-        || !requesterMachineAdmissionBoundary(bootstrap.attribution).isHomeCurrent()) return null;
-      if (options?.bootstrapOwnership !== 'borrowed') bindRequesterSessionRuntimeMachineAdmissionCurrentness({
-        bootstrap, boundary: requesterMachineAdmissionBoundary(bootstrap.attribution),
-      });
-      return await createRequesterSessionRuntimeContext({ bootstrap, signal, ...options,
-        providerAccountUsageStore: resolveProviderAccountUsageStore(bootstrap.attribution),
-        activeServerDir: configuration.activeServerDir, connectedServicesMaterializationBaseDir,
-        resolveQualifiedConnectedAccountV4Support: () => resolveQualifiedConnectedAccountAtomicV4Negotiation(serverFeaturesSnapshotStore.getSnapshot()),
-        coordinatorInput: {
-          machineId, machineIdProvider: () => machineId, runtimeId, happyHomeDir: configuration.happyHomeDir,
-          logger, processEnv: process.env, trackedSessionsByKey, connectedServiceRuntimeRegistry,
-          connectedServiceAuthGroupPreTurnSwitchCoordinator, connectedServicePredictiveSwitchGuard,
-          consumeCommittedAuthGroupGeneration, connectedServiceQuotaFetcherDescriptors,
-          resolveConnectedAccountUsageIdentity,
-          resolveQualifiedConnectedAccountPeerClass: () => resolveQualifiedConnectedAccountPeerClass(
-            serverFeaturesSnapshotStore.getSnapshot(), apiMachineForSessions?.getSessionSyncPendingInputServerContractResult() ?? null),
-          resolveQualifiedConnectedAccountPeerOperationTransport: ({ service, operation }) => resolveQualifiedConnectedAccountPeerOperationTransport({
-            snapshot: serverFeaturesSnapshotStore.getSnapshot(), serverContract: apiMachineForSessions?.getSessionSyncPendingInputServerContractResult() ?? null,
-            service, operation,
-          }),
-          resolveConnectedServiceQualifiedPurposeBindingSnapshot: async ({ agentId, connectedServicesBindingsRaw }) => {
-            const bindings = ConnectedServiceBindingsV2IngressSchema.safeParse(connectedServicesBindingsRaw);
-            if (!bindings.success) return null;
-            const lease = await acquireAuthoritativePluginRuntimeRegistryLease({ happyHomeDir: configuration.happyHomeDir });
-            try { return resolveQualifiedPurposeBindingSnapshotForAgentSpawn({ agentId, bindings: bindings.data,
-              contributions: lease.registry.contributes,
-              catalogEntry: await lease.registry.acquireAgentCatalogEntry?.(agentId) }); }
-            finally { await lease.release(); }
-          },
-        },
-      });
-    };
     daemonServerWorkScheduler = runtimeBootstrap.daemonServerWorkScheduler;
     const machineRegistrationRuntime = startDaemonMachineRegistrationRuntime({
       api,

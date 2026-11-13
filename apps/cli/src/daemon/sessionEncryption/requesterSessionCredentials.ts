@@ -152,6 +152,12 @@ export type ResolveRequesterSessionRuntimeContext = (
 export function createRequesterSessionRuntimeContextResolver(input: Readonly<{
   trackedSessions: ReadonlyTrackedSessionMap;
   getCreateRuntime(): ((bootstrap: AdmittedRequesterSessionBootstrap, signal?: AbortSignal) => Promise<RequesterSessionRuntimeContext | null>) | null;
+  /**
+   * Settles once `getCreateRuntime` can answer (the daemon finished starting) or the daemon
+   * stops. Until then a missing factory means "not yet", not "no custody": a Session the
+   * daemon must recover while starting (a host update hands its Sessions over then) waits.
+   */
+  whenRuntimeCreatable?(signal?: AbortSignal): Promise<void>;
   recoverBootstrap(input: Readonly<{ sessionId: string; attribution?: RequesterWorkAttributionV1; tracked: boolean; signal?: AbortSignal;
     onRecoveryRefused?: (refusal: RequesterSessionRecoveryRefusal) => Promise<void> }>): Promise<AdmittedRequesterSessionBootstrap | null>;
 }>): ResolveRequesterSessionRuntimeContext {
@@ -163,7 +169,11 @@ export function createRequesterSessionRuntimeContextResolver(input: Readonly<{
     const tracked = [...trackedSessionsByKey.values()].find(candidate => candidate.happySessionId === sessionId
       && candidate.reportMarkerCustody?.retiring !== true);
     const context = tracked?.requesterSessionRuntimeContext;
-    if (!context && !input.getCreateRuntime()) return null;
+    const readCreateRuntime = async () => {
+      if (!input.getCreateRuntime() && input.whenRuntimeCreatable && !signal?.aborted) await input.whenRuntimeCreatable(signal);
+      return signal?.aborted ? null : input.getCreateRuntime();
+    };
+    if (!context && !await readCreateRuntime()) return null;
     let stamp = tracked?.requesterWorkAttributionV1 ?? tracked?.spawnOptions?.requesterWorkAttributionV1
       ?? context?.bootstrap.attribution ?? attribution;
     if (stamp && attribution && !isDeepStrictEqual(stamp, attribution)) return null;
@@ -192,7 +202,7 @@ export function createRequesterSessionRuntimeContextResolver(input: Readonly<{
       }
     }
     if (signal?.aborted) return null;
-    const createRequesterRuntime = input.getCreateRuntime();
+    const createRequesterRuntime = await readCreateRuntime();
     if (!createRequesterRuntime) return null;
     const bootstrap = context ? await recoverBootstrap() : coldBootstrap;
     if (!bootstrap) return null;

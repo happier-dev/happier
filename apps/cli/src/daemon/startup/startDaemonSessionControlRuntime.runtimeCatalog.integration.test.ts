@@ -4249,6 +4249,7 @@ describe('startDaemonSessionControlRuntime', () => {
         });
 
         try {
+            await runtime.initializeReattachedSessions();
             expect(runtimeRegistry.getByPid(legacyTracked.pid)).toBeNull();
             expect(runtimeRegistry.getByPid(fabricatedRevisionTracked.pid))
                 .toBeNull();
@@ -18324,6 +18325,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 requestShutdown: vi.fn(),
                 processEnv: {},
             });
+            await runtime.initializeReattachedSessions();
 
             await waitForStartupCondition(
                 () => fetchSessionByIdCompatMock.mock.calls.length >= 2,
