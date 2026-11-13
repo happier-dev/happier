@@ -4,7 +4,7 @@ import type { TriggerTargetV1 } from '@happier-dev/protocol/workflows/triggers/t
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
 import type { z } from 'zod/mini';
-import { readApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
+import type { readApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, readDeploymentReceiptEventPendingObservationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
@@ -258,7 +258,7 @@ export function buildGuidedAutomationReadBack(
   params: Parameters<typeof buildGuidedAutomationRequest>[1] & Readonly<{
     deploymentEnvironment?: DeploymentEnvironmentRefV1;
     controller?: GuidedAutomationReadBack['controller'];
-    approvalSettings?: Parameters<typeof readApprovalProfileV1>[0];
+    approval?: GuidedAutomationReadBack['approval'];
   }>,
 ): GuidedAutomationReadBack | null {
   // Reviewing an already configured wake source does not require choosing its future Agent.
@@ -272,8 +272,7 @@ export function buildGuidedAutomationReadBack(
     controller: params.controller ?? null,
     pendingObservation: trigger.kind === 'pluginEvent' && 'sourceConfig' in trigger
       ? readDeploymentReceiptEventPendingObservationV1(trigger.sourceConfig) : null,
-    approval: params.approvalSettings === undefined ? null
-      : readApprovalProfileV1(params.approvalSettings, guidedApprovalProfileId(draft)),
+    approval: params.approval ?? null,
     disclosure: { inbox: true, channelIds: draft.channels },
   };
 }

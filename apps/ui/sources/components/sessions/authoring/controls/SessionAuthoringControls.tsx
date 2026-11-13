@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { ApprovalProfileSelect } from '@/components/approvals/ApprovalProfileSelect';
+import { useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HAPPIER_PAGE_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
@@ -161,6 +163,8 @@ function SessionAuthoringOptionChip(props: Readonly<{
     leading?: React.ReactNode;
     /** Fields only: `row` when its row stacks the field under the label. */
     fieldSpan?: 'content' | 'row';
+    /** Mounted only while the picker is open (the engine picker's readiness read). */
+    openDemand?: React.ReactNode;
     testID: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
@@ -181,6 +185,7 @@ function SessionAuthoringOptionChip(props: Readonly<{
             maxHeightCap={460}
         />
     );
+    const openDemand = open ? props.openDemand : null;
     if (props.presentation === 'chips' && props.changed === true) {
         // A value this subject sets is the canonical bordered chip, the one the header's Where and
         // Triggers chips are, so the header line reads as one set (lab E1). Its chooser stays this
@@ -205,6 +210,7 @@ function SessionAuthoringOptionChip(props: Readonly<{
                     />
                 </View>
                 {picker}
+                {openDemand}
             </>
         );
     }
@@ -258,6 +264,7 @@ function SessionAuthoringOptionChip(props: Readonly<{
                 </HappierPressable>
             </View>
             {picker}
+            {openDemand}
         </>
     );
 }
@@ -448,6 +455,11 @@ export type SessionAuthoringControlsProps = Readonly<{
     /** Renders the current values without allowing a change. */
     disabled?: boolean;
     testIDPrefix?: string;
+    /**
+     * A host choice that leads the engine picker (a background task's Auto). While `selected`, the
+     * engine row reads `valueLabel` and the option is the picker's selection.
+     */
+    engineLeadingOption?: Readonly<{ option: AgentInputChipPickerOption; selected: boolean; valueLabel: string }>;
 }>;
 
 /**
@@ -617,8 +629,11 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
         workflowRoles: props.workflowRoles,
         onChange: (role: string) => { if (!props.disabled) props.onChangeEngine?.({ role }); },
     }, [props.disabled, props.engine, props.onChangeEngine, props.workflowRoles]);
+    const leadingOption = props.engineLeadingOption;
+    const leadingOptions = React.useMemo(() => leadingOption ? [leadingOption.option] : undefined, [leadingOption?.option]);
     const enginePicker = useSessionAuthoringEnginePicker({ values: props.values, facts,
-        disabled: props.disabled, onChangeFields: props.onChangeFields, roleSelection });
+        disabled: props.disabled, onChangeFields: props.onChangeFields, roleSelection, leadingOptions });
+    const leadingSelection = leadingOption?.selected === true ? leadingOption : null;
     const engineField = props.onChangeFields === undefined ? undefined
         : props.fields.find(field => field === 'agentTarget' || field === 'modelSelection');
 
@@ -652,6 +667,10 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
             style={presentation === 'fields' ? styles.fields : styles.root}
         >
             {props.fields.map((field) => {
+                if (field === 'approvalProfileId') return <SessionAuthoringApprovalProfileField key={field}
+                    value={props.values.approvalProfileId} serverId={facts.agentPickerContext?.serverId} presentation={presentation}
+                    onChange={value => props.onChangeField('approvalProfileId', value)} disabled={props.disabled}
+                    titleMeta={props.fieldMeta?.approvalProfileId} testID={`${testIDPrefix}-approvalProfileId`} />;
                 if (presentation === 'fields' && field === 'profileId' && !props.values.profileId) return null;
                 if (engineField !== undefined && (field === 'acpSessionModeId' || field === 'sessionConfigOptionOverrides')) return null;
                 if (engineField !== undefined && (field === 'agentTarget' || field === 'modelSelection')) {
@@ -659,12 +678,13 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                     const rendered = <SessionAuthoringOptionChip
                         controlId="engine" title={t('workflows.page.sections.agentTitle')}
                         options={[]} pickerOptions={enginePicker.options}
-                        selectedOptionId={enginePicker.selectedOptionId ?? ''}
-                        valueLabel={engineSummary}
-                        {...(agentId !== null && hasAgentIconMark(agentId, theme) ? { leading: <AgentIcon agentId={agentId} size={14} /> } : {})}
+                        selectedOptionId={leadingSelection?.option.id ?? enginePicker.selectedOptionId ?? ''}
+                        valueLabel={leadingSelection?.valueLabel ?? engineSummary}
+                        {...(leadingSelection === null && agentId !== null && hasAgentIconMark(agentId, theme) ? { leading: <AgentIcon agentId={agentId} size={14} /> } : {})}
                         disabled={props.disabled} presentation={presentation} fieldSpan="row"
                         changed={isChanged('agentTarget') || isChanged('modelSelection')}
                         onSelect={enginePicker.onSelect} testID={`${testIDPrefix}-${engineField}`}
+                        openDemand={enginePicker.readinessDemand}
                     />;
                     return presentation === 'chips' || props.engineFieldTitle === null ? <React.Fragment key={field}>{rendered}</React.Fragment>
                         : <Item key={field} testID={`${testIDPrefix}-${engineField}-row`}
@@ -726,6 +746,15 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
  * Why a field cannot be chosen here, and what to do about it, where the reader can act. A field with
  * no remedy of its own stays plainly unavailable.
  */
+export function SessionAuthoringApprovalProfileField(props: Readonly<{
+    value: string | null | undefined; serverId?: string | null; testID: string; disabled?: boolean;
+    presentation?: SessionAuthoringControlsPresentation; titleMeta?: React.ReactNode; onChange: (value: string | null | undefined) => void;
+}>) {
+    const source = useApprovalProfiles(props.value, props.serverId ?? undefined);
+    return <ApprovalProfileSelect mode="authoring" value={props.value} source={source}
+        testID={props.testID} disabled={props.disabled} titleMeta={props.titleMeta} presentation={props.presentation} onChange={props.onChange} />;
+}
+
 function sessionAuthoringUnavailableText(field: SessionAuthoringFieldId, reason: SessionAuthoringFieldUnavailableReason): string {
     if (reason === 'loading') return t('common.loading');
     if (reason === 'profile_catalog_unavailable') return t('common.unavailable');

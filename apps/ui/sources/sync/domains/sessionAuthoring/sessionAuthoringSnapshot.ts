@@ -16,6 +16,7 @@ export type SessionAuthoringSnapshot = Readonly<{
     backendTarget: BackendTargetRefV2 | null;
     transcriptStorage: SessionAuthoringValueV1['transcriptStorage'];
     profileId: SessionAuthoringValueV1['profileId'];
+    approvalProfileId?: SessionAuthoringValueV1['approvalProfileId'];
     permissionMode: SessionAuthoringValueV1['permissionMode'];
     permissionModeUpdatedAt: SessionAuthoringValueV1['permissionModeUpdatedAt'];
     modelSelection: SessionAuthoringValueV1['modelSelection'];

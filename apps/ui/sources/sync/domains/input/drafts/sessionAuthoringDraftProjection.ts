@@ -137,6 +137,7 @@ export function projectNewSessionDraftSyncedAuthoringFields(params: Readonly<{
             }),
         ...(draft.transcriptStorage !== undefined ? { transcriptStorage: draft.transcriptStorage } : {}),
         profileId: draft.selectedProfileId,
+        ...(draft.approvalProfileId === undefined ? {} : { approvalProfileId: draft.approvalProfileId }),
         ...(draft.resumeSessionId ? { resumeSessionId: draft.resumeSessionId } : {}),
         permissionMode: draft.permissionMode,
         ...(draft.modelSelection !== undefined ? { modelSelection: draft.modelSelection } : {}),

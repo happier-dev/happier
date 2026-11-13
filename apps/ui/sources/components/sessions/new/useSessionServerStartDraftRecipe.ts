@@ -9,12 +9,8 @@ import { buildSessionConfigOptionOverridesFromServerStart } from '@happier-dev/p
 import { useMachineListStatusByServerId, useActiveMachineFacts, useMachineListByServerId } from '@/sync/domains/state/storage';
 import { useSessionPlacementCandidateRows } from './useSessionPlacementCandidateRows';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { useSessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/useSessionAuthoringControlFacts';
-import type {
-    SessionAuthoringAgentTargetOption,
-    SessionAuthoringFieldId,
-} from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
+import type { SessionAuthoringFieldId } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import { useNewSessionOrganizationPlacement } from '@/components/sessions/new/organization/useNewSessionOrganizationPlacement';
 import {
     buildSessionFolderSelectionOptions,
@@ -38,15 +34,6 @@ import {
     resolveSessionServerStartCandidateSelection,
 } from './serverStartDraftCandidateSelection';
 
-function resolveInitialAgentTarget(params: Readonly<{
-    targets: readonly SessionAuthoringAgentTargetOption[];
-    seedAgentId?: string;
-}>): SessionAuthoringAgentTargetOption | null {
-    return params.targets.find((option) => option.agentId === params.seedAgentId)
-        ?? params.targets.find((option) => option.agentId === DEFAULT_AGENT_ID)
-        ?? params.targets[0]
-        ?? null;
-}
 
 /** The edited recipe as the Session-authoring selection the shared controls read. */
 function selectionFromDraft(draft: SessionServerStartSpawnDraftV1): WorkflowSessionAuthoringSelection {
@@ -54,6 +41,7 @@ function selectionFromDraft(draft: SessionServerStartSpawnDraftV1): WorkflowSess
         agentTarget: draft.agentTarget,
         modelSelection: draft.modelSelection ?? null,
         ...(draft.profileId ? { profileId: draft.profileId } : {}),
+        ...(draft.approvalProfileId === undefined ? {} : { approvalProfileId: draft.approvalProfileId }),
         permissionMode: draft.permissionMode,
         acpSessionModeId: draft.agentModeId ?? null,
         ...(draft.configuration ? { sessionConfigOptionOverrides: buildSessionConfigOptionOverridesFromServerStart(draft.configuration) } : {}),
@@ -132,12 +120,14 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
             : { permissionMode: props.seed.permissionMode ?? 'default', ...(props.seed.profileId ? { profileId: props.seed.profileId } : {}) } as WorkflowSessionAuthoringSelection
     ));
     const [edited, setEdited] = React.useState<ReadonlySet<SessionAuthoringFieldId>>(() => new Set());
-    // A new recipe starts on the seeded Agent (or the default) once this Machine lists its Agents.
+    // A new recipe starts on the seeded Agent, else the one default-Agent owner's
+    // answer for this Machine, once this Machine lists its Agents.
+    const initialAgentTarget = agentTargets.find((option) => option.agentId === props.seed.agentId)?.target
+        ?? facts.contextualDefaultAgentTarget ?? null;
     React.useEffect(() => {
-        if (selection.agentTarget || agentTargets.length === 0) return;
-        const initial = resolveInitialAgentTarget({ targets: agentTargets, seedAgentId: props.seed.agentId });
-        if (initial) setSelection((current) => current.agentTarget ? current : { ...current, agentTarget: initial.target });
-    }, [agentTargets, props.seed.agentId, selection.agentTarget]);
+        if (selection.agentTarget || !initialAgentTarget) return;
+        setSelection((current) => current.agentTarget ? current : { ...current, agentTarget: initialAgentTarget });
+    }, [initialAgentTarget, selection.agentTarget]);
     const changeFields = React.useCallback((fields: Partial<WorkflowSessionAuthoringSelection>) => {
         setError(false);
         setSelection((current) => ({ ...current, ...fields }) as WorkflowSessionAuthoringSelection);
@@ -198,6 +188,7 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
                 agentTarget,
                 transcriptStorage: null,
                 profileId: props.seed.profileId ?? null,
+                approvalProfileId: selection.approvalProfileId,
                 environmentVariables: null,
                 resumeSessionId: null,
                 permissionMode,
@@ -231,6 +222,7 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
                     permissionMode,
                     ...(changed('modelSelection') ? { modelSelection: selection.modelSelection ?? undefined } : {}),
                     ...(changed('profileId') ? { profileId: selection.profileId ?? undefined } : {}),
+                    ...(changed('approvalProfileId') ? { approvalProfileId: selection.approvalProfileId } : {}),
                     ...(changed('acpSessionModeId') ? { agentModeId: selection.acpSessionModeId ?? undefined } : {}),
                     ...(changed('capabilitySelection') ? { capabilitySelection: selection.capabilitySelection ?? undefined } : {}),
                     ...(changed('connectedServices') ? { connectedServices: selection.connectedServices ?? undefined } : {}),

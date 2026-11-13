@@ -533,7 +533,7 @@ export function useCreateNewSession(params: Readonly<{
         settlement: TemporaryComputerCreatorSettlement,
     ) => Promise<void>;
 }>): Readonly<{
-    handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
+    handleCreateSession: (opts?: HandleCreateSessionOptions) => Promise<void>;
     /** What Send does once a backgroundable launch starts; undefined when this launch cannot outlive its screen. */
     newSessionAfterSendMode: NewSessionAfterSendMode | undefined;
     /** Lets the in-flight launch outlive this screen (Send and start another). */
@@ -725,7 +725,7 @@ export function useCreateNewSession(params: Readonly<{
                 enabledAgentIds: [], ...current.daemonMergedProjectionInputs,
             });
             if (agent.cli?.install.manual.kind !== 'vendor_recipe') return true;
-            const definitionId = 'definitionId' in target ? target.definitionId : undefined;
+            const definitionId = typeof target !== 'string' && 'definitionId' in target ? target.definitionId : undefined;
             const knownAgent = knownAgents?.status === 'ready' ? knownAgents.agents.find(row =>
                 row.agentId === agent.agentId && row.definitionId === definitionId) : undefined;
             if (knownAgent && (resolveMachineAgentAcquireIntentV1(knownAgent) === null
@@ -1661,6 +1661,7 @@ export function useCreateNewSession(params: Readonly<{
                 agentTarget,
                 transcriptStorage: current.transcriptStorage ?? null,
                 profileId: profilesActive ? (current.selectedProfileId ?? '') : null,
+                approvalProfileId: current.authoringDraft?.approvalProfileId,
                 environmentVariables: environmentVariables ?? null,
                 resumeSessionId: resumeId ?? null,
                 permissionMode: spawnPermissionMode,

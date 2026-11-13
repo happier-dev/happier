@@ -41,6 +41,7 @@ import {
     writeNewSessionBotFaceToRepository,
 } from './newSessionDraftRepositoryAdapter';
 import { NEW_BOT_SEED, withNewBotDraftFaceSeed } from '@/components/sessions/bots/newBotDraft';
+import { buildNewSessionConfigurationDraft, buildNewSessionTempDataFromSessionConfiguration } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
 
 const scope = { serverId: 'server-a', accountId: 'account-a' } as const;
 const attachment: ComposerAttachmentDraftV1 = {
@@ -87,6 +88,48 @@ function cataloguedNewSessionAuthoring(
 }
 
 describe('newSessionDraftRepositoryAdapter', () => {
+    it.each(['custom:removed', null, undefined])('retains the source approval profile through durable same-setup custody and Session birth (%s)', async (approvalProfileId) => {
+        const draftId = approvalProfileId === undefined ? '00000000-0000-4000-8000-000000001032'
+            : approvalProfileId === null ? '00000000-0000-4000-8000-000000001031'
+                : '00000000-0000-4000-8000-000000001030';
+        const seed = buildNewSessionTempDataFromSessionConfiguration({
+            session: { id: 'source-session', encryptionMode: 'plain', metadata: {
+                path: '/workspace/source', host: 'dev-host', flavor: 'codex',
+                ...(approvalProfileId === undefined ? {} : { approvalProfileId }),
+            } },
+            machineId: 'machine-source',
+        });
+        expect(seedAndOpenNewSession({
+            scope, createDraftId: () => draftId, isCurrent: () => true, navigateToNewSession: () => {},
+            seed: { placement: { kind: 'exactTarget', serverId: scope.serverId, machineId: 'machine-source', directory: seed.directory } },
+            configurationDraft: buildNewSessionConfigurationDraft(seed),
+        }).kind).toBe('opened');
+        // Unauthored opener context is intentionally process-local. The real
+        // Composer's first text edit makes the copied setup a durable draft.
+        writeNewSessionDraft({ scope, draftId, patch: { text: 'Review this workspace' }, materializationIntent: 'userEdit' });
+        await flushSessionDraft({ scope, address: { kind: 'newSession', draftId } });
+        resetSessionDraftRepositoryForTests();
+        const retained = readNewSessionDraftFromRepository({ scope, draftId });
+        if (!retained) throw new Error('Expected retained same-setup draft');
+        const spawn = buildSessionSpawnNewInputV2FromAuthoringDraft({
+            draft: buildNewSessionAuthoringDraftFromPersistedDraft(retained),
+            creationKey: 'manual:same-setup-profile', permissionMode: 'default', configurationUpdatedAtMs: 10,
+        });
+        expect(retained.approvalProfileId).toBe(approvalProfileId);
+        if (approvalProfileId === undefined) expect(spawn).not.toHaveProperty('approvalProfileId');
+        else expect(spawn).toHaveProperty('approvalProfileId', approvalProfileId);
+        writeNewSessionAuthoringDraftToRepository({ scope, draftId, draft: { ...retained, approvalProfileId: undefined } });
+        await flushSessionDraft({ scope, address: { kind: 'newSession', draftId } });
+        resetSessionDraftRepositoryForTests();
+        const cleared = readNewSessionDraftFromRepository({ scope, draftId });
+        expect(cataloguedNewSessionAuthoring(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId }))).not.toHaveProperty('approvalProfileId');
+        if (!cleared) throw new Error('Expected retained draft after clearing the profile');
+        const clearedSpawn = buildSessionSpawnNewInputV2FromAuthoringDraft({
+            draft: buildNewSessionAuthoringDraftFromPersistedDraft(cleared),
+            creationKey: 'manual:same-setup-profile-reset', permissionMode: 'default', configurationUpdatedAtMs: 10,
+        });
+        expect(clearedSpawn).not.toHaveProperty('approvalProfileId');
+    });
     it('carries a New Bot draft face into Session birth: the previewed seed, then reset to the draft seed', () => {
         const requests = vi.spyOn(globalThis, 'fetch');
         onTestFinished(() => { requests.mockRestore(); });

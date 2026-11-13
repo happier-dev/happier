@@ -19,11 +19,12 @@ import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
 import { Text } from '@/components/ui/text/Text';
 import { presentApprovalProfile } from '@/components/approvals/approvalProfilePresentation';
+import { ApprovalProfileSelect } from '@/components/approvals/ApprovalProfileSelect';
 import { useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
 import { formatWorkflowProblemMessage } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { addWorkflowTrigger } from '@/sync/domains/workflows/workflowTriggerActions';
 import { sync } from '@/sync/sync';
-import { useMachine, useSetting, useSettingsReady } from '@/sync/store/hooks';
+import { useMachine } from '@/sync/store/hooks';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { PLUGIN_EVENT_AUTOMATION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { t } from '@/text';
@@ -44,7 +45,6 @@ import {
 import { createDefaultWhen, type TriggerWhenValue } from './sessionTriggerForm';
 import { TriggerPluginEventRows } from './TriggerPluginEventRows';
 import {
-  FieldSelect,
   PromptAgentRows,
   ScheduleRows,
   TRIGGER_POPOVER_WIDTH,
@@ -90,8 +90,7 @@ export function GuidedAutomationSetup(
   const [pending, setPending] = React.useState(false);
   const [failure, setFailure] = React.useState<string | null>(null);
   const channelOptions = useNotifyMeChannelOptions();
-  const approvalSettings = useSetting('actionsSettingsV1');
-  const settingsReady = useSettingsReady();
+  const approvalProfiles = useApprovalProfiles(guidedApprovalProfileId(draft), props.deploymentEnvironment?.serverId);
   const controllerMachineId = resolvePluginEventEditorProjectionMachineId({
     observation: draft.when.kind === 'pluginEvent' ? draft.when.value?.observationTransport ?? null : null,
     authoringMachineId: props.controllerMachineId ?? props.initialProject.machineId,
@@ -113,7 +112,7 @@ export function GuidedAutomationSetup(
     project,
     deploymentEnvironment: props.deploymentEnvironment,
     controller: controllerMachineId ? { machineId: controllerMachineId, online: controllerMachine ? isMachineOnline(controllerMachine) : null } : null,
-    ...(settingsReady ? { approvalSettings } : {}),
+    approval: approvalProfiles.selection,
   });
   const eventCatalog = useDaemonMergedProjectionInputs({
     machineId: controllerMachineId,
@@ -321,7 +320,7 @@ export function GuidedAutomationSetup(
                           onPress={() => change({ mode })}
                         />
                       ))}
-                      <ApprovalProfileSelect
+                      <ApprovalProfileSelect mode="required" source={approvalProfiles}
                         testID={`${testID}-profile`}
                         value={guidedApprovalProfileId(draft)}
                         onChange={(approvalProfileId) => change({ approvalProfileId })}
@@ -475,36 +474,6 @@ function WhenRows(
         />
       ) : null}
     </>
-  );
-}
-
-/** Then's approval profile (D4): the existing Account profiles, built-ins first; the Then picks one until the person does. */
-function ApprovalProfileSelect(
-  props: Readonly<{ testID: string; value: string; onChange: (id: string) => void }>,
-) {
-  const { profiles } = useApprovalProfiles();
-  const items = React.useMemo(
-    () =>
-      profiles.map((profile) => {
-        const presented = presentApprovalProfile(profile);
-        return {
-          id: profile.id,
-          testID: `${props.testID}:${profile.id}`,
-          title: presented.title,
-          ...(presented.subtitle ? { subtitle: presented.subtitle } : {}),
-        };
-      }),
-    [profiles, props.testID],
-  );
-  return (
-    <FieldSelect
-      testID={props.testID}
-      title={t('workflows.triggers.guided.profile.title')}
-      subtitle={t('workflows.triggers.guided.profile.description')}
-      items={items}
-      selectedId={props.value}
-      onSelect={props.onChange}
-    />
   );
 }
 

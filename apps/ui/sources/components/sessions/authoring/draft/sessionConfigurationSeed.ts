@@ -92,6 +92,7 @@ export function buildNewSessionTempDataFromSessionConfiguration(params: Readonly
         agentTarget: snapshot.agentTarget,
         transcriptStorage: snapshot.transcriptStorage,
         profileId: snapshot.profileId,
+        approvalProfileId: snapshot.approvalProfileId,
         environmentVariables: null,
         resumeSessionId: null,
         permissionMode: snapshot.permissionMode,

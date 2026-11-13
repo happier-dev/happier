@@ -167,6 +167,7 @@ function buildExistingSessionAuthoringDraftFromSnapshotData(params: Readonly<{
         agentTarget: params.snapshot.agentTarget,
         transcriptStorage: params.snapshot.transcriptStorage,
         profileId: params.snapshot.profileId,
+        approvalProfileId: params.snapshot.approvalProfileId,
         environmentVariables: null,
         resumeSessionId: null,
         permissionMode: params.snapshot.permissionMode,
@@ -217,6 +218,7 @@ export function mergeExistingSessionAuthoringDraftInheritedFields(
         agentTarget: current.agentTarget ?? fallback.agentTarget,
         transcriptStorage: current.transcriptStorage ?? fallback.transcriptStorage,
         profileId: current.profileId ?? fallback.profileId,
+        approvalProfileId: current.approvalProfileId === undefined ? fallback.approvalProfileId : current.approvalProfileId,
         environmentVariables: current.environmentVariables ?? fallback.environmentVariables,
         resumeSessionId: current.resumeSessionId ?? fallback.resumeSessionId,
         permissionMode: current.permissionMode ?? fallback.permissionMode,
@@ -405,6 +407,7 @@ export function buildNewSessionAuthoringDraft(params: NewSessionAuthoringDraftPa
         agentTarget: params.agentTarget ? AgentExecutionTargetV1Schema.parse(params.agentTarget) : null,
         transcriptStorage: params.transcriptStorage ?? null,
         profileId: params.profileId === '' ? '' : normalizeOptionalString(params.profileId),
+        approvalProfileId: params.approvalProfileId,
         environmentVariables: params.environmentVariables ?? null,
         // Agent-issued and opaque: presence only, bytes preserved.
         resumeSessionId: readNonBlankOpaqueIdentifier(params.resumeSessionId),
@@ -449,6 +452,7 @@ type ResolvedNewSessionAuthoringDraftInputs = Readonly<{
     agentTarget?: SessionAuthoringDraft['agentTarget'];
     transcriptStorage?: SessionAuthoringDraft['transcriptStorage'];
     profileId?: SessionAuthoringDraft['profileId'];
+    approvalProfileId?: SessionAuthoringDraft['approvalProfileId'];
     environmentVariables?: SessionAuthoringDraft['environmentVariables'];
     resumeSessionId?: SessionAuthoringDraft['resumeSessionId'];
     permissionMode?: SessionAuthoringDraft['permissionMode'];
@@ -492,6 +496,7 @@ export function buildNewSessionAuthoringDraftFromResolvedInputs(
         agentTarget: params.agentTarget ?? null,
         transcriptStorage: params.transcriptStorage ?? null,
         profileId: params.profileId ?? null,
+        approvalProfileId: params.approvalProfileId,
         environmentVariables: params.environmentVariables ?? null,
         resumeSessionId: params.resumeSessionId ?? null,
         permissionMode: params.permissionMode ?? null,
@@ -586,6 +591,7 @@ function buildNewSessionAuthoringDraftFromSource(source: NewSessionAuthoringDraf
         agentTarget,
         transcriptStorage: source.source.transcriptStorage ?? null,
         profileId: resolveNewSessionSourceProfileId(source) ?? null,
+        approvalProfileId: source.source.approvalProfileId,
         environmentVariables: null,
         resumeSessionId: source.source.resumeSessionId ?? null,
         permissionMode: source.source.permissionMode ?? null,
@@ -809,6 +815,7 @@ function resolveSharedSessionAuthoringSpawnFields(draft: SessionAuthoringDraft) 
         memoryEnabled: draft.memoryEnabled,
         promptStack: draft.promptStack,
         profileId: typeof draft.profileId === 'string' ? draft.profileId.trim() : '',
+        approvalProfileId: draft.approvalProfileId,
         resumeSessionId: readNonBlankOpaqueIdentifier(draft.resumeSessionId),
         agentModeId: normalizeOptionalString(draft.acpSessionModeId),
         modelSelection: draft.modelSelection ?? null,
@@ -1027,6 +1034,7 @@ export function buildSessionAuthoringDraftFromServerStartSpawnDraftV1(params: Re
                 agentTarget: resolvedAgentTarget.entry.agentTarget,
                 transcriptStorage: spawn.transcriptStorage ?? null,
                 profileId: spawn.profileId ?? null,
+                approvalProfileId: spawn.approvalProfileId,
                 environmentVariables: null,
                 resumeSessionId: spawn.configuration.providerSessionResume?.providerSessionId ?? null,
                 permissionMode: spawn.permissionMode,
@@ -1083,7 +1091,7 @@ export type SessionServerStartSpawnDraftEdits = Readonly<Partial<Pick<
     SessionServerStartSpawnDraftV1,
     | 'executionTarget' | 'directory' | 'agentTarget' | 'permissionMode'
     | 'allowedTools' | 'unlistedTools' | 'organizationPlacement'
-    | 'profileId' | 'modelSelection' | 'capabilitySelection' | 'connectedServices'
+    | 'profileId' | 'approvalProfileId' | 'modelSelection' | 'capabilitySelection' | 'connectedServices'
     | 'agentModeId' | 'configuration'
 >> & {
     sessionConfigOptionOverrides?: SessionAuthoringDraft['sessionConfigOptionOverrides'];
@@ -1173,6 +1181,7 @@ function resolveSessionAuthoringSpawnInput(params: SessionServerStartSpawnDraftF
         agentTarget: params.draft.agentTarget,
         ...(fields.modelSelection ? { modelSelection: fields.modelSelection } : {}),
         ...(fields.profileId ? { profileId: fields.profileId } : {}),
+        ...(fields.approvalProfileId === undefined ? {} : { approvalProfileId: fields.approvalProfileId }),
         permissionMode: params.permissionMode,
         ...(fields.agentModeId ? { agentModeId: fields.agentModeId } : {}),
         configuration: {
@@ -1257,6 +1266,7 @@ export function applyWorkflowSelectionToServerStartSpawnDraftV1(params: Readonly
         agentTarget,
         transcriptStorage: selection.transcriptStorage ?? params.spawn.transcriptStorage ?? null,
         profileId: selection.profileId ?? params.spawn.profileId ?? null,
+        approvalProfileId: selection.approvalProfileId === undefined ? params.spawn.approvalProfileId : selection.approvalProfileId,
         environmentVariables: null,
         resumeSessionId: params.spawn.configuration?.providerSessionResume?.providerSessionId ?? null,
         permissionMode,
@@ -1423,6 +1433,7 @@ export function buildNewSessionTempDataFromAuthoringDraft(params: Readonly<{
         agentTarget: params.draft.agentTarget,
         ...(backendTarget ? { backendTarget } : {}),
         selectedProfileId: params.draft.profileId,
+        approvalProfileId: params.draft.approvalProfileId,
         transcriptStorage: params.draft.transcriptStorage ?? undefined,
         permissionMode: isPermissionMode(params.draft.permissionMode) ? params.draft.permissionMode : undefined,
         modelSelection: params.draft.modelSelection,
@@ -1520,6 +1531,7 @@ export function buildPersistedNewSessionDraftFromAuthoringDraft(params: Readonly
         ...(params.entryIntent ? { entryIntent: params.entryIntent } : {}),
         ...(params.draft.checkoutCreationDraft ? { checkoutCreationDraft: params.draft.checkoutCreationDraft } : {}),
         selectedProfileId: params.draft.profileId ?? null,
+        approvalProfileId: params.draft.approvalProfileId,
         selectedSecretId: params.selectedSecretId,
         ...(params.selectedSecretIdByProfileIdByEnvVarName ? {
             selectedSecretIdByProfileIdByEnvVarName: params.selectedSecretIdByProfileIdByEnvVarName,

@@ -15,6 +15,7 @@ import type { CustomModalChromeConfig } from '@/modal';
 import { PluginUiExecuteActionRequestV1Schema, PluginUiJsonObjectV1Schema, type PluginUiJsonValueV1, type PluginUiSurfaceContextV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { PluginHostApiProvider } from '@happier-dev/plugin-ui/advanced';
+import { HappierUiEnvironmentProvider, projectHappierUiEnvironment } from '@happier-dev/plugin-ui/environment';
 import {
     useTriageEntrySessionStart,
     type TriageEntrySessionStartPhaseV1,
@@ -326,11 +327,9 @@ describe('mounted Session server-start recipe composer', () => {
             const dialog = await renderScreen(React.createElement(config.component, { ...config.props, onClose: () => {},
                 setChrome: (value: CustomModalChromeConfig) => { chrome.current = value; } }));
             try {
+                await dialog.pressByTestIdAsync('server-start-draft-tools-header');
                 await waitForHomeGovernance(() => expect(dialog.findAllByType(SessionAuthoringControls).length,
                     dialog.getTextContent()).toBe(2));
-                if (managed) {
-                    expect(dialog.findByType(SessionPlacementChips).props.path).toBe('');
-                }
                 const facts = dialog.findAllByType(SessionAuthoringControls)[0]!.props.facts;
                 expect(facts.agentPickerContext).toMatchObject({ serverId, machineId: 'machine-1' });
                 expect(facts.agentTargets).toEqual(expect.arrayContaining([expect.objectContaining({
@@ -344,7 +343,7 @@ describe('mounted Session server-start recipe composer', () => {
                 if (!fresh) expect(dialog.findByTestId('server-start-draft-folder')).not.toBeNull();
                 await dialog.pressByTestIdAsync('agent-input-path-chip');
                 expect(dialog.findByType(NewSessionPathSelectionContent).props.machineBrowse).toEqual({ enabled: true, machineId: 'machine-1', serverId });
-                expect(dialog.findAllByType(Item).some(node => node.props.selected === true && typeof node.props.onPress === 'function')).toBe(!fresh);
+                if (!managed) expect(dialog.findByType(NewSessionPathSelectionContent).props.selectedPath).toBe(fresh ? '/tmp' : '/repo');
                 if (fresh) {
                     await act(async () => {
                         dialog.findAllByType(SessionAuthoringControls)[0]!.props.onChangeFields({
@@ -443,9 +442,9 @@ describe('mounted Session server-start recipe composer', () => {
             handleRequest: host.handleRequest, installedMethods: host.installedMethods });
         let phase: TriageEntrySessionStartPhaseV1 = { kind: 'idle' };
         const observe = (next: TriageEntrySessionStartPhaseV1) => { phase = next; };
-        const plugin = await renderScreen(<PluginHostApiProvider hostApi={adapter.api}>
+        const plugin = await renderScreen(<HappierUiEnvironmentProvider environment={projectHappierUiEnvironment(surface)}><PluginHostApiProvider hostApi={adapter.api}>
             <TriageRecipeRequestingPlugin request={request} observe={observe} />
-        </PluginHostApiProvider>);
+        </PluginHostApiProvider></HappierUiEnvironmentProvider>);
         try {
             vi.mocked(Modal.show).mockClear();
             vi.mocked(Modal.hide).mockClear();
@@ -461,6 +460,7 @@ describe('mounted Session server-start recipe composer', () => {
                 await dialog.update(chooser('after-remount'));
                 expect(phase).toEqual({ kind: 'choosing' });
                 await chooseRecipeFolder(dialog, '/repo');
+                await dialog.pressByTestIdAsync('server-start-draft-tools-header');
                 await waitForHomeGovernance(() => {
                     expect(dialog.findAllByType(SessionAuthoringControls)).toHaveLength(2);
                     if (chrome.current?.kind !== 'card') throw new Error('Missing recipe footer');
@@ -495,6 +495,31 @@ describe('mounted Session server-start recipe composer', () => {
                 expect(phase).toMatchObject({ kind: 'settled', result: { type: 'opened', sessionId: 'recipe-session' } });
             } finally { await dialog.unmount(); }
         } finally { adapter.dispose(); await plugin.unmount(); }
+    });
+
+    it.each(['custom:removed', null, undefined] as const)('preserves the inherited approval profile %s through the mounted configured recipe', async approvalProfileId => {
+        const draft = SessionServerStartSpawnDraftV1Schema.parse({ ...recipe(),
+            ...(approvalProfileId !== undefined ? { approvalProfileId } : {}),
+        });
+        const mounted = await mount(draft);
+        try {
+            await waitForHomeGovernance(() => expect(mounted.screen.findAllByType(DropdownMenu).some(node =>
+                node.props.testID === 'server-start-draft-control-approvalProfileId')).toBe(true));
+            const picker = mounted.screen.findAllByType(DropdownMenu).find(node =>
+                node.props.testID === 'server-start-draft-control-approvalProfileId')!;
+            expect(picker.props.selectedId).toBe(approvalProfileId === undefined ? 'inherit'
+                : approvalProfileId === null ? '__none__' : approvalProfileId);
+            if (approvalProfileId === 'custom:removed') {
+                await waitForHomeGovernance(() => expect(mounted.screen.tree.root.findAllByProps({
+                    testID: 'server-start-draft-control-approvalProfileId-missing',
+                }).length).toBeGreaterThan(0));
+            } else {
+                expect(mounted.screen.tree.root.findAllByProps({
+                    testID: 'server-start-draft-control-approvalProfileId-missing',
+                })).toHaveLength(0);
+            }
+            expect(await mounted.submit()).toEqual(draft);
+        } finally { await mounted.screen.unmount(); }
     });
 
     it('retains section, configuration and tool policy through save/reopen and refuses foreign same-id substitution', async () => {

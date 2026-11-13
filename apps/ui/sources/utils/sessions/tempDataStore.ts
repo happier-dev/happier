@@ -71,6 +71,7 @@ export interface NewSessionData {
     agentTarget?: AgentExecutionTargetV1 | null;
     backendTarget?: BackendTargetRefV2;
     selectedProfileId?: string | null;
+    approvalProfileId?: string | null;
     transcriptStorage?: 'persisted' | 'direct';
     permissionMode?: PermissionMode;
     modelSelection?: SessionModelSelectionV1 | null;

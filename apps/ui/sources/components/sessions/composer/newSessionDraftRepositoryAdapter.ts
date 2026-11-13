@@ -20,6 +20,8 @@ import type {
 } from '@/sync/domains/state/persistence';
 import {
     flushSessionDraft,
+    captureSessionDraftCurrentness,
+    clearSessionDraftCurrentnessLocal,
     getSessionDraftSnapshot,
     getSessionComposerDraftSnapshot,
     writeNewSessionDraft,
@@ -180,6 +182,7 @@ export function readNewSessionDraftProjectionFromRepository(input: Readonly<{
             : {}),
         entryIntent: localState?.entryIntent ?? (authoring.automation ? 'automation' : 'session'),
         selectedProfileId: authoring.profileId ?? null,
+        ...(authoring.approvalProfileId === undefined ? {} : { approvalProfileId: authoring.approvalProfileId }),
         selectedSecretId: localState?.selectedSecretId ?? null,
         selectedSecretIdByProfileIdByEnvVarName: localState?.selectedSecretIdByProfileIdByEnvVarName ?? null,
         sessionOnlySecretValueEncByProfileIdByEnvVarName:
@@ -218,6 +221,15 @@ function projectNewSessionDraftAuthoring(draft: NewSessionDraft, scopeServerId: 
     return projectNewSessionDraftSyncedAuthoringFields({ draft, scopeServerId });
 }
 
+/** An explicit Inherit edit removes the authored reference through the repository's existing clear owner. */
+function clearExplicitlyUnsetApprovalProfile(input: Readonly<{ scope: ServerAccountScope; draftId: string; draft: NewSessionDraft }>) {
+    if (!Object.prototype.hasOwnProperty.call(input.draft, 'approvalProfileId') || input.draft.approvalProfileId !== undefined) return;
+    const address = { kind: 'newSession' as const, draftId: input.draftId };
+    const fieldIds = ['target.authoring.approvalProfileId'];
+    const currentness = captureSessionDraftCurrentness({ scope: input.scope, address, fieldIds });
+    clearSessionDraftCurrentnessLocal({ scope: input.scope, address, currentness, fieldIds });
+}
+
 export function writeNewSessionDraftToRepository(input: Readonly<{
     scope: ServerAccountScope;
     draftId: string;
@@ -225,6 +237,7 @@ export function writeNewSessionDraftToRepository(input: Readonly<{
     materializationIntent?: SessionDraftMaterializationIntent;
 }>): void {
     const draft = input.draft;
+    clearExplicitlyUnsetApprovalProfile(input);
     writeNewSessionDraft({
         scope: input.scope,
         draftId: input.draftId,
@@ -276,6 +289,7 @@ export function writeNewSessionAuthoringDraftToRepository(input: Readonly<{
             promptStack: live.promptStack,
         } : {}),
     };
+    clearExplicitlyUnsetApprovalProfile({ ...input, draft });
     writeNewSessionDraft({
         scope: input.scope,
         draftId: input.draftId,

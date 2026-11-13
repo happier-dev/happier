@@ -1,5 +1,7 @@
+import { SessionAuthoringApprovalProfileField } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import { sanitizeNewSessionConfigOverridesForModelSelection } from '@/components/sessions/new/modules/newSessionConfigOptionOverrideSanitization';
 import { normalizeSessionConfigOptionValueId } from '@/sync/domains/sessionControl/configOptionsControl';
 import { agentReceivesUserMcpServersV1 } from '@happier-dev/protocol/plugins/contributions/v2';
@@ -782,7 +784,12 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useCurrentSecretBindingsByProfileIdMutable();
     const sessionDefaultPermissionModeByTargetKey = useSetting('sessionDefaultPermissionModeByTargetKey');
     const memberSessionDefaults = React.useMemo(() => ({
-        permissionModeByAgentTargetKey: sessionDefaultPermissionModeByTargetKey,
+        // Managed defaults carry permission intents; account settings keep provider-native aliases.
+        permissionModeByAgentTargetKey: Object.fromEntries(Object.entries(sessionDefaultPermissionModeByTargetKey)
+            .flatMap(([targetKey, mode]) => {
+                const intent = parseAgentPermissionIntentV1Alias(mode);
+                return intent ? [[targetKey, intent] as const] : [];
+            })),
         modelByAgentTargetKey: providerDefaultModelSelectionsByAgentTargetKeyV1,
     }), [providerDefaultModelSelectionsByAgentTargetKeyV1, sessionDefaultPermissionModeByTargetKey]);
     const homeViewSelectionSettings = useHomeViewSelectionSettings();
@@ -916,6 +923,16 @@ export function useNewSessionScreenModel(input?: Readonly<{
             ? buildNewSessionAuthoringDraftFromPersistedDraft(scopedPersistedDraft)
             : null;
     }, [scopedPersistedDraft]);
+    const approvalProfileDraftKey = JSON.stringify([draftScope?.serverId, draftScope?.accountId, draftId, dataId]);
+    const [approvalProfileEdit, setApprovalProfileEdit] = React.useState<Readonly<{
+        key: string; value: string | null | undefined;
+    }> | null>(null);
+    const approvalProfileId = approvalProfileEdit?.key === approvalProfileDraftKey ? approvalProfileEdit.value
+        : hydratedTempAuthoringDraft?.approvalProfileId !== undefined ? hydratedTempAuthoringDraft.approvalProfileId
+        : hydratedPersistedContentAuthoringDraft?.approvalProfileId;
+    const changeApprovalProfile = React.useCallback((value: string | null | undefined) => {
+        setApprovalProfileEdit({ key: approvalProfileDraftKey, value });
+    }, [approvalProfileDraftKey]);
     const hydratedTempBackendTarget = React.useMemo(
         () => resolveCompatibilityBackendTarget(hydratedTempAuthoringDraft?.agentTarget),
         [hydratedTempAuthoringDraft?.agentTarget],
@@ -2865,6 +2882,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         getInstructionsPromptStack,
         initialSessionFacts: draftInitialSessionFacts,
         memoryEnabled: hydratedTempAuthoringDraft?.memoryEnabled ?? hydratedPersistedAuthoringDraft?.memoryEnabled,
+        approvalProfileId,
         authoringOrigin: persistedDraft?.authoringOrigin,
         automationDraft,
         automationFeatureEnabled,
@@ -4327,7 +4345,11 @@ export function useNewSessionScreenModel(input?: Readonly<{
             getCurrentDraft={buildCurrentPersistedDraft} execute={authoringExecution.executeValue} onProfileSaved={setSelectedProfileId} />
     </> : input?.composerBottomContent, [authoringExecution.executeValue, buildCurrentPersistedDraft, draftId, draftScope, hasActionDefault, input?.composerBottomContent, setSelectedProfileId]);
 
-    const composerTopContent = input?.composerTopContent;
+    const composerTopContent = React.useMemo(() => <>
+        {input?.composerTopContent}
+        <SessionAuthoringApprovalProfileField testID="new-session-approval-profile" presentation="chips"
+            value={approvalProfileId} serverId={targetServerId} onChange={changeApprovalProfile} />
+    </>, [approvalProfileId, changeApprovalProfile, input?.composerTopContent, targetServerId]);
 
     const {
         layout: wizardLayoutProps,

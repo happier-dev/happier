@@ -21,14 +21,14 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 
 /** The recipe fields this composer edits through the Session-owned authoring controls, in reading order. */
 const AGENT_FIELDS: readonly SessionAuthoringFieldId[] = [
-    'agentTarget', 'modelSelection', 'acpSessionModeId', 'sessionConfigOptionOverrides', 'permissionMode', 'profileId',
+    'agentTarget', 'modelSelection', 'acpSessionModeId', 'sessionConfigOptionOverrides', 'permissionMode', 'profileId', 'approvalProfileId',
 ];
 const TOOL_FIELDS: readonly SessionAuthoringFieldId[] = [
     'capabilitySelection', 'connectedServices', 'unlistedTools', 'allowedTools',
 ];
 
 /** What an added agent shows as composer chips (lab dpRev `add`): engine, Runs through, permissions. */
-const CHIP_FIELDS: readonly SessionAuthoringFieldId[] = ['agentTarget', 'connectedServices', 'permissionMode'];
+const CHIP_FIELDS: readonly SessionAuthoringFieldId[] = ['agentTarget', 'connectedServices', 'permissionMode', 'approvalProfileId'];
 
 /**
  * The same Session-owned fields inside an inline editor or its returning sheet. `chips` shows them as

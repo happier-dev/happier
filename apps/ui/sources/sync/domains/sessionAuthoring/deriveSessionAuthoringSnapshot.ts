@@ -64,6 +64,7 @@ export function deriveSessionAuthoringSnapshot(params: Readonly<{
         backendTarget,
         transcriptStorage: normalizeTranscriptStorage((metadata as Record<string, unknown> | null)?.transcriptStorage),
         profileId: normalizeOptionalString(metadata?.profileId),
+        approvalProfileId: metadata?.approvalProfileId,
         permissionMode: permissionOverride?.permissionMode ?? metadataPermissionMode,
         permissionModeUpdatedAt: permissionOverride?.permissionModeUpdatedAt ?? metadataPermissionModeUpdatedAt,
         modelSelection,

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { SessionApprovalProfileSection } from './SessionApprovalProfileSection';
 import { SidePaneInspectorSections } from '@/components/ui/lists/SidePaneInspectorSections';
 import { SessionTemplateSection } from '@/components/sessions/bots/templates/SessionTemplateSection';
 import { View } from 'react-native';
@@ -112,6 +113,7 @@ export const SessionSetupSections = React.memo(function SessionSetupSections(
         testID="session-setup-role-value"
         icon={<Icon name="person" />}
       />
+      <SessionApprovalProfileSection session={session} serverId={serverId} />
       <SessionContextLayersScope session={session} serverId={serverId}>
         <WorkSectionPlacementProvider value="setup">
           <WorkSectionSetupDisclosureProvider value={disclosure}>

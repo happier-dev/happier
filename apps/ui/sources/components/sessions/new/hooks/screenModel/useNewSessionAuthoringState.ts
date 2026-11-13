@@ -37,7 +37,7 @@ import type { ManagedMachineSelectionDraft, ManagedMachineAcquisitionDraft } fro
 import type { NewSessionPlacementForPersistence } from './useNewSessionMachinePathState';
 
 type PersistedDraft = Omit<ReturnType<typeof buildPersistedNewSessionDraftFromAuthoringDraft>, 'executionTarget'> & {
-    executionTarget: SessionAuthoringDraft['executionTarget'] | undefined;
+    executionTarget?: SessionAuthoringDraft['executionTarget'];
 };
 type BuildResolvedInputs = Parameters<typeof buildNewSessionAuthoringDraftFromResolvedInputs>[0];
 type BuildPersistedInputs = Parameters<typeof buildPersistedNewSessionDraftFromAuthoringDraft>[0];
@@ -79,6 +79,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     transcriptStorage: BuildResolvedInputs['transcriptStorage'];
     useProfiles: boolean;
     selectedProfileId: string | null;
+    approvalProfileId?: SessionAuthoringDraft['approvalProfileId'];
     resumeSessionId: string;
     permissionMode: PermissionMode;
     permissionModeForPersistence?: PermissionMode;
@@ -177,6 +178,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         agentTarget: params.agentTarget,
         transcriptStorage: params.transcriptStorage ?? null,
         profileId: params.useProfiles ? (params.selectedProfileId ?? null) : null,
+        approvalProfileId: params.approvalProfileId,
         environmentVariables: null,
         resumeSessionId: params.resumeSessionId,
         permissionMode: params.permissionMode,
@@ -234,6 +236,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         params.teamCredentialBindings,
         params.initialTriggers,
         params.selectedProfileId,
+        params.approvalProfileId,
         params.sessionConfigOptionOverrides,
         promptStore,
         params.settings,

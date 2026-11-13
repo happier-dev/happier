@@ -3,6 +3,7 @@ import type { SessionInitialAccessDraftV1} from '@happier-dev/protocol/sessions/
 import type { SessionSpaceMembershipTargetV1 } from '@happier-dev/protocol/actions';
 import type { SessionAuthoringExecutionTargetV2, TemporaryComputerActivationRefV1 } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
 import { z } from 'zod/mini';
+import { SessionAuthoringValueV1Schema, type SessionAuthoringValueV1 } from '@happier-dev/protocol/sessions/authoring/index';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { array, nullable, optional } from 'zod/mini';
 import type { Settings } from '../settings/settings';
@@ -228,6 +229,7 @@ export interface NewSessionDraft {
     entryIntent?: 'session' | 'automation' | null;
     checkoutCreationDraft?: NewSessionCheckoutCreationDraft | null;
     selectedProfileId: string | null;
+    approvalProfileId?: SessionAuthoringValueV1['approvalProfileId'];
     selectedSecretId: string | null;
     /**
      * Per-profile per-env-var secret selection (saved secret id or '' for "use machine env").
@@ -709,6 +711,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
         const entryIntent = parseDraftEntryIntent((parsed as any).entryIntent);
         const checkoutDraft = readPersistedNewSessionCheckoutDraft(parsed);
         const selectedProfileId = typeof parsed.selectedProfileId === 'string' ? parsed.selectedProfileId : null;
+        const approvalProfile = SessionAuthoringValueV1Schema.shape.approvalProfileId.safeParse(parsed.approvalProfileId);
         const selectedSecretId = typeof parsed.selectedSecretId === 'string' ? parsed.selectedSecretId : null;
         const selectedSecretIdByProfileIdByEnvVarName = parseDraftNestedRecord(
             parsed.selectedSecretIdByProfileIdByEnvVarName,
@@ -882,6 +885,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             ...(entryIntent ? { entryIntent } : {}),
             ...(checkoutDraft.checkoutCreationDraft ? { checkoutCreationDraft: checkoutDraft.checkoutCreationDraft } : {}),
             selectedProfileId,
+            ...(approvalProfile.success && approvalProfile.data !== undefined ? { approvalProfileId: approvalProfile.data } : {}),
             selectedSecretId,
             selectedSecretIdByProfileIdByEnvVarName,
             sessionOnlySecretValueEncByProfileIdByEnvVarName,

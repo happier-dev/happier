@@ -6,9 +6,40 @@ import {
     SESSION_MODE_OVERRIDE_KEY,
 } from '@happier-dev/agents';
 
-import { buildNewSessionTempDataFromSessionConfiguration } from './sessionConfigurationSeed';
+import { buildNewSessionConfigurationDraft, buildNewSessionTempDataFromSessionConfiguration } from './sessionConfigurationSeed';
+import { buildNewSessionAuthoringDraftFromPersistedDraft, buildNewSessionTempDataFromAuthoringDraft } from './sessionAuthoringDraftAdapters';
 
 describe('sessionConfigurationSeed', () => {
+    it.each(['custom:99753341-1e37-47e2-b284-9dc8b9bd1ad7', null, undefined])(
+        'preserves the nullable approval-profile reference through the same-setup and configured-fork draft round trip (%s)',
+        (approvalProfileId) => {
+            const seed = buildNewSessionTempDataFromSessionConfiguration({
+                session: {
+                    id: 'source-session',
+                    encryptionMode: 'plain',
+                    metadata: {
+                        path: '/workspace/source',
+                        host: 'dev-host',
+                        flavor: 'codex',
+                        ...(approvalProfileId === undefined ? {} : { approvalProfileId }),
+                    },
+                },
+                machineId: 'machine-source',
+            });
+            const persisted = buildNewSessionConfigurationDraft(seed);
+            const reopened = buildNewSessionTempDataFromAuthoringDraft({
+                draft: buildNewSessionAuthoringDraftFromPersistedDraft(persisted),
+                machineId: 'machine-source',
+            });
+            for (const value of [seed, persisted, reopened]) {
+                if (approvalProfileId === undefined) {
+                    expect(value.approvalProfileId).toBeUndefined();
+                } else {
+                    expect(value).toHaveProperty('approvalProfileId', approvalProfileId);
+                }
+            }
+        },
+    );
     it('builds a promptless new-session seed from an existing session configuration', () => {
         const tempData = buildNewSessionTempDataFromSessionConfiguration({
             session: {
