@@ -97,15 +97,21 @@ export function resolveNewSessionShouldBottomAnchor(params: Readonly<{
 }
 
 /**
- * A picker's route card height on the web. A content-sized card is centred, so it grew and its top
- * jumped while a picker's rows arrived. Pickers take the route-modal cap as a fixed height, as settings
- * does, so the card is still from the first frame and the rows load inside it.
+ * How a picker's web route card is sized. Nothing may move on arrival, so each route declares which
+ * holds for its rows:
+ * - `fill`: rows arrive late and can grow (Machines, resumable sessions). The card takes the route-modal
+ *   cap as a fixed height, as settings does, and the rows load inside it.
+ * - `content`: every row is known at first paint (Homes). The card fits them, clamped to the same cap
+ *   by the route-modal CSS; it always holds at least the drawn header, so its height is final at once.
  */
+export type NewSessionPickerWebModalSizing = 'fill' | 'content';
+
 export function resolveNewSessionPickerWebModalStyle(params: Readonly<{
     mode: NewSessionPresentationModeV1 | null | undefined;
     platformOs: PlatformOs;
+    sizing: NewSessionPickerWebModalSizing;
 }>): Readonly<{ height: string }> | undefined {
-    if (params.platformOs !== 'web') return undefined;
+    if (params.platformOs !== 'web' || params.sizing === 'content') return undefined;
     return resolveNewSessionPickerRoutePresentation(params) === 'modal'
         ? { height: 'var(--happier-route-modal-max-height)' }
         : undefined;

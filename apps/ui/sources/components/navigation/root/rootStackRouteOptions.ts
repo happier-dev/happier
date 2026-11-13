@@ -49,7 +49,13 @@ export function createRootStackRouteOptions(newSessionPresentationMode: 'auto' |
             newPicker: {
                 ...blankBack,
                 presentation: resolveNewSessionPickerRoutePresentation({ mode: newSessionPresentationMode, platformOs: Platform.OS }),
-                webModalStyle: resolveNewSessionPickerWebModalStyle({ mode: newSessionPresentationMode, platformOs: Platform.OS }),
+                webModalStyle: resolveNewSessionPickerWebModalStyle({ mode: newSessionPresentationMode, platformOs: Platform.OS, sizing: 'fill' }),
+            },
+            // A picker whose rows are all known at first paint fits them instead of filling the card.
+            newPickerContentSized: {
+                ...blankBack,
+                presentation: resolveNewSessionPickerRoutePresentation({ mode: newSessionPresentationMode, platformOs: Platform.OS }),
+                webModalStyle: resolveNewSessionPickerWebModalStyle({ mode: newSessionPresentationMode, platformOs: Platform.OS, sizing: 'content' }),
             },
             settings: {
                 // Nested navigator; per-settings-screen headers are configured in `settings/_layout.tsx`.
@@ -299,7 +305,7 @@ export function createRootStackRouteOptions(newSessionPresentationMode: 'auto' |
         'new/pick/machine': options.newPicker,
         'new/pick/path': options.newPicker,
         'new/pick/profile': options.newPicker,
-        'new/pick/server': options.newPicker,
+        'new/pick/server': options.newPickerContentSized,
         'new/pick/profile-edit': options.newPicker,
         'new/pick/preview-machine': options.newPicker,
         'new/pick/secret': options.newPicker,

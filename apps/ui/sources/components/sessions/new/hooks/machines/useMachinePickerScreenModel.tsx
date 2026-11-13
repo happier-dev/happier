@@ -1,12 +1,11 @@
 import * as React from 'react';
 import { useIsFocused } from '@react-navigation/native';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
-import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { useMachinePickerRouteOptions } from '@/components/sessions/new/navigation/machinePickerRouteOptions';
 
 import { useAllSessionListRenderables, useSetting, useSettingMutable, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { useSettingsValues } from '@/sync/store/settingsReadHooks';
-import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
 import { sync } from '@/sync/sync';
@@ -14,7 +13,6 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { prefetchMachineCapabilities } from '@/hooks/server/useMachineCapabilitiesCache';
 import { invalidateMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
-import { HeaderTitleWithAction } from '@/components/navigation/HeaderTitleWithAction';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
@@ -50,47 +48,9 @@ import { peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStor
 import { useServerCredentialAccountScopeResolution, useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { ManagedMachineDestinationProjection, ManagedMachineSelectionDraft } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
 
-function useMachinePickerScreenOptions(params: Readonly<{
-    title: string;
-    onBack: () => void;
-    onRefresh: () => void;
-    isRefreshing: boolean;
-    theme: { colors: { chrome: { header: { foreground: string } }; text: { secondary: string } } };
-}>) {
-    // K2 picker route chrome: the native title plus Cancel, nothing else above the list.
-    const headerLeft = React.useCallback(() => (
-        <AppHeaderCloseButton
-            testID="new-session-machine-picker-cancel"
-            appearance="text"
-            onPress={params.onBack}
-        />
-    ), [params.onBack]);
-
-    const headerTitle = React.useCallback(({ tintColor }: { children: string; tintColor?: string }) => (
-        <HeaderTitleWithAction
-            title={params.title}
-            tintColor={tintColor ?? params.theme.colors.chrome.header.foreground}
-            actionLabel={t('common.refresh')}
-            actionIconName="arrow-clockwise"
-            actionColor={params.theme.colors.text.secondary}
-            actionDisabled={params.isRefreshing}
-            actionLoading={params.isRefreshing}
-            onActionPress={params.onRefresh}
-        />
-    ), [params.isRefreshing, params.onRefresh, params.theme.colors.chrome.header.foreground, params.theme.colors.text.secondary, params.title]);
-    return React.useMemo(() => ({
-        headerShown: true,
-        title: params.title,
-        headerTitle,
-        headerBackTitle: t('common.back'),
-        headerLeft,
-    }), [headerLeft, headerTitle, params.title]);
-}
-
 export function useMachinePickerScreenModel() {
     const isFocused = useIsFocused();
     const reachabilityRevision = useMachineReachabilityRevision();
-    const { theme } = useUnistyles();
     const router = useRouter();
     const returnToHost = useNewSessionPickerReturnHost();
     const navigation = useNavigation();
@@ -452,12 +412,12 @@ export function useMachinePickerScreenModel() {
         safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
     }, [navigation, pickerFallbackHref, poolSelection.cancelPendingSelection, router]);
 
-    const screenOptions = useMachinePickerScreenOptions({
+    const screenOptions = useMachinePickerRouteOptions({
         title: t('newSession.selectMachineTitle'),
+        cancelTestID: 'new-session-machine-picker-cancel',
         onBack: handleBack,
         onRefresh: handleRefreshPress,
         isRefreshing,
-        theme,
     });
 
     React.useEffect(() => {

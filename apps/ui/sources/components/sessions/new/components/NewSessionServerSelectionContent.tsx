@@ -219,10 +219,12 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
                 containerStyle={styles.listContent}
             >
                 <OrganizationPolicyFieldNotice field="home" />
+                {/* The Homes are the whole picker: rows on its surface, no card inside the card or popover. */}
                 <ItemGroup
                     accessibilityRole="radiogroup"
                     accessibilityLabel={t('server.switchToServer')}
                     selectableItemCountOverride={filteredServers.length}
+                    surface="none"
                 >
                     {filteredServers.map(({ profile, serverId }) => {
                         const isSelected = serverId === selectedServerId;

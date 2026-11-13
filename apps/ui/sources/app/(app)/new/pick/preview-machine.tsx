@@ -2,7 +2,6 @@ import { useLastUsedBackendSelection } from '@/hooks/session/useLastUsedBackendS
 import React from 'react';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
-import { ItemList } from '@/components/ui/lists/ItemList';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { useSettingMutable, useSettingsSelector, useActiveMachineFacts } from '@/sync/domains/state/storage';
@@ -18,7 +17,9 @@ import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSes
 import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 import { NewSessionPickerRouteScreen } from '@/components/sessions/new/navigation/NewSessionPickerRouteScreen';
-import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
+import { useMachinePickerRouteOptions } from '@/components/sessions/new/navigation/machinePickerRouteOptions';
+import { sync } from '@/sync/sync';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export default React.memo(function PreviewMachinePickerScreen() {
     const router = useRouter();
@@ -81,23 +82,27 @@ export default React.memo(function PreviewMachinePickerScreen() {
         remembered.lastUsedBackendTarget,
     ]);
 
-    // K2 picker route chrome: the title plus Cancel, as the other New Session pickers.
-    const headerLeft = React.useCallback(() => (
-        <AppHeaderCloseButton
-            testID="new-session-preview-machine-picker-cancel"
-            appearance="text"
-            onPress={() => safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref })}
-        />
-    ), [navigation, pickerFallbackHref, router]);
-
-    const screenOptions = React.useCallback(() => {
-        return {
-            headerShown: true,
-            title: t('profiles.previewMachine.title'),
-            headerBackTitle: t('common.back'),
-            headerLeft,
-        } as const;
-    }, [headerLeft]);
+    // The Machine picker route chrome (title with Refresh, plus Cancel), as on the Machine route.
+    const [isRefreshing, setIsRefreshing] = React.useState(false);
+    const handleRefresh = React.useCallback(() => {
+        if (isRefreshing) return;
+        setIsRefreshing(true);
+        fireAndForget(
+            sync.refreshMachinesThrottled({ staleMs: 0, force: true }).finally(() => setIsRefreshing(false)),
+            { tag: 'PreviewMachinePickerScreen.refreshMachines' },
+        );
+    }, [isRefreshing]);
+    const handleBack = React.useCallback(
+        () => safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref }),
+        [navigation, pickerFallbackHref, router],
+    );
+    const screenOptions = useMachinePickerRouteOptions({
+        title: t('profiles.previewMachine.title'),
+        cancelTestID: 'new-session-preview-machine-picker-cancel',
+        onBack: handleBack,
+        onRefresh: handleRefresh,
+        isRefreshing,
+    });
 
     const favoriteMachineList = React.useMemo(() => {
         const byId = new Map(machines.map((m) => [m.id, m] as const));
@@ -162,25 +167,23 @@ export default React.memo(function PreviewMachinePickerScreen() {
 
     return (
         <NewSessionPickerRouteScreen options={screenOptions}>
-            <ItemList presentation="grouped">
-                <MachineSelector
-                    machines={machines}
-                    serverId={activeServerId}
-                    selectedMachine={selectedMachine}
-                    favoriteMachines={favoriteMachineList}
-                    showRecent={false}
-                    showFavorites={favoriteMachineList.length > 0}
-                    showSearch
-                    searchPlacement={favoriteMachineList.length > 0 ? 'favorites' : 'all'}
-                    onSelect={(machine) => {
-                        const returnMode = setPreviewMachineIdOnPreviousRoute(machine.id);
-                        if (returnMode === 'dispatch') {
-                            safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
-                        }
-                    }}
-                    onToggleFavorite={(machine) => toggleFavorite(machine.id)}
-                />
-            </ItemList>
+            <MachineSelector
+                machines={machines}
+                serverId={activeServerId}
+                selectedMachine={selectedMachine}
+                favoriteMachines={favoriteMachineList}
+                showRecent={false}
+                showFavorites={favoriteMachineList.length > 0}
+                showSearch
+                searchPlacement={favoriteMachineList.length > 0 ? 'favorites' : 'all'}
+                onSelect={(machine) => {
+                    const returnMode = setPreviewMachineIdOnPreviousRoute(machine.id);
+                    if (returnMode === 'dispatch') {
+                        safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
+                    }
+                }}
+                onToggleFavorite={(machine) => toggleFavorite(machine.id)}
+            />
         </NewSessionPickerRouteScreen>
     );
 });
