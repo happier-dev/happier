@@ -1,5 +1,5 @@
 import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import { ManagedMachineControllerError, createManagedNativeObservationWait, executeManagedMachineDeleteIntent,
+import { ManagedMachineControllerError, createManagedNativeObservationWait, settleManagedMachineDeleteIntent,
     executeManagedMachinePowerIntent, executeManagedMachineResize } from '@happier-dev/cli-common/machines/managed';
 import { ManagedControlAdmissionInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControllerSubmitOutputV1Schema,
     ManagedControllerResizeReportV1Schema, type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -60,30 +60,14 @@ export async function executeUiManagedAccountControl(params: Readonly<{
             expectedIntentRevision: outstanding.intentRevision, controller: outstanding.controller } : client.home.correlation(machine);
         const credential = createUiManagedAccountCredential({ account: params.account, home: client.home, signal: params.signal });
         const native = createUiManagedAccountNative({ ...params, requestId }, admitted, () => machine, () => undefined, credential);
-        const wait = createManagedNativeObservationWait(params.signal);
         if (control.action === 'machines.managed.delete') {
-            for (;;) {
-                params.signal?.throwIfAborted();
-                const deletion = await executeManagedMachineDeleteIntent({ machine, invoke: native.invoke, io: { signal: params.signal } });
-                const nativeFailure = deletion.result.kind === 'refused'
-                    ? new ManagedMachineControllerError(deletion.result.code, undefined,
-                        deletion.result.nativeCause ? { kind: 'managedNative', nativeCause: deletion.result.nativeCause } : undefined) : undefined;
-                try {
-                    machine = await client.home.row('report-intent', { ...correlation, ...deletion }, null);
-                } catch (reportError) {
-                    if (!nativeFailure) throw reportError;
-                    log.log(JSON.stringify(projectActionFailureCauseV1(reportError, control.action)));
-                }
-                if (nativeFailure) throw nativeFailure;
-                if (machine.allocation === 'confirmed-absent' && !machine.submittedNativeEffect) return accepted();
-                if (deletion.result.kind !== 'accepted' && deletion.result.kind !== 'pending') {
-                    return failure(deletion.result.kind === 'confirmed' ? 'native_intent_unconfirmed'
-                        : deletion.result.code ?? 'native_intent_unconfirmed');
-                }
-                // External vendor completion has no push; reuse the existing native observation cadence.
-                await wait();
-            }
+            machine = await settleManagedMachineDeleteIntent({ machine, invoke: native.invoke, io: { signal: params.signal },
+                report: async deletion => machine = await client.home.row('report-intent', { ...correlation, ...deletion }, null),
+                onNativeFailureReportError: error => log.log(JSON.stringify(projectActionFailureCauseV1(error, control.action))),
+            });
+            return accepted();
         }
+        const wait = createManagedNativeObservationWait(params.signal);
         const power = await executeManagedMachinePowerIntent({ machine, invoke: native.invoke,
             guestStartup: { channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(), transport: admitted.provisioner.bootstrapTransport },
             io: { signal: params.signal }, waitForObservation: wait });

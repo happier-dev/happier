@@ -3,6 +3,7 @@ import { MachineProvisionerDestroyResultV1Schema } from '@happier-dev/protocol/p
 import { ProviderObservationV1Schema, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import type { ManagedNativeInvocation, ManagedNativeInvocationIO } from './reconcile.js';
 import { ManagedMachineControllerError } from './controllerErrors.js';
+import { createManagedNativeObservationWait } from './nativeObservationWait.js';
 
 /** A retained cleanup handle owns the attachment closure after the first destroy. */
 export async function executeManagedMachineDeleteIntent(input: Readonly<{
@@ -26,4 +27,35 @@ export async function executeManagedMachineDeleteIntent(input: Readonly<{
         } catch { /* Preserve issued cleanup custody when observation is unavailable. */ }
     }
     return { result };
+}
+
+/** Foreground Account hosts settle the same retained native cleanup through Home's row owner. */
+export async function settleManagedMachineDeleteIntent(input: Readonly<{
+    machine: ManagedMachineV1;
+    invoke: ManagedNativeInvocation;
+    io?: ManagedNativeInvocationIO;
+    report(deletion: Awaited<ReturnType<typeof executeManagedMachineDeleteIntent>>): Promise<ManagedMachineV1>;
+    onNativeFailureReportError(error: unknown): void;
+}>): Promise<ManagedMachineV1> {
+    let machine = input.machine;
+    const wait = createManagedNativeObservationWait(input.io?.signal);
+    for (;;) {
+        input.io?.signal?.throwIfAborted();
+        const deletion = await executeManagedMachineDeleteIntent({ machine, invoke: input.invoke, io: input.io });
+        const nativeFailure = deletion.result.kind === 'refused'
+            ? new ManagedMachineControllerError(deletion.result.code, undefined,
+                deletion.result.nativeCause ? { kind: 'managedNative', nativeCause: deletion.result.nativeCause } : undefined) : undefined;
+        try { machine = await input.report(deletion); }
+        catch (reportError) {
+            if (!nativeFailure) throw reportError;
+            input.onNativeFailureReportError(reportError);
+        }
+        if (nativeFailure) throw nativeFailure;
+        if (machine.allocation === 'confirmed-absent' && !machine.submittedNativeEffect) return machine;
+        if (deletion.result.kind !== 'accepted' && deletion.result.kind !== 'pending') {
+            throw new ManagedMachineControllerError(deletion.result.kind === 'confirmed' ? 'native_intent_unconfirmed'
+                : deletion.result.code ?? 'native_intent_unconfirmed');
+        }
+        await wait();
+    }
 }

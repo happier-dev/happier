@@ -125,7 +125,7 @@ export async function registerAuthoredAccountActionRelease(app: FastifyInstance,
             .filter(pluginId => !input.cursor || pluginId > input.cursor).sort();
         const pageIds = candidates.slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE);
         return PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
-            pluginIds: fixtureIds.filter(pluginId => pageIds.includes(pluginId)),
+            pluginIds: pageIds.filter(pluginId => fixtureIds.includes(pluginId)),
             intentReads: pageIds.map(pluginId => ({ pluginId, response: response(fixtures.find(fixture => fixture.pluginId === pluginId)) })),
             failedPluginIds: [], ...(candidates.length > pageIds.length ? { nextCursor: pageIds.at(-1)! } : {}) });
     });

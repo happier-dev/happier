@@ -17,15 +17,16 @@ export function isMachineSetupCombinedActionIdV1(actionId: string): actionId is 
 }
 export const MACHINE_SETUP_REMOVE_ACTION_ID_V1 = 'machines.setup.remove';
 export const MANAGED_RESIZE_ACTION_ID_V1 = 'machines.managed.resize';
+export const MANAGED_DELETE_ACTION_ID_V1 = 'machines.managed.delete';
 export const MANAGED_CONTROL_ACTION_IDS_V1 = ['machines.managed.power.set', 'machines.managed.rebuild', MANAGED_RESIZE_ACTION_ID_V1,
-  'machines.managed.retention.update', 'machines.managed.delete', 'machines.managed.controller.update', 'machines.managed.retire'] as const;
+  'machines.managed.retention.update', MANAGED_DELETE_ACTION_ID_V1, 'machines.managed.controller.update', 'machines.managed.retire'] as const;
 export type ManagedControlActionIdV1 = typeof MANAGED_CONTROL_ACTION_IDS_V1[number];
 export function isManagedResizeActionIdV1(actionId: string): actionId is typeof MANAGED_RESIZE_ACTION_ID_V1 {
   return actionId === MANAGED_RESIZE_ACTION_ID_V1;
 }
 export function isManagedControlAdmissionActionIdV1(actionId: string): actionId is
-  'machines.managed.power.set' | 'machines.managed.delete' | typeof MANAGED_RESIZE_ACTION_ID_V1 {
-  return actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete' || isManagedResizeActionIdV1(actionId);
+  'machines.managed.power.set' | typeof MANAGED_DELETE_ACTION_ID_V1 | typeof MANAGED_RESIZE_ACTION_ID_V1 {
+  return actionId === 'machines.managed.power.set' || actionId === MANAGED_DELETE_ACTION_ID_V1 || isManagedResizeActionIdV1(actionId);
 }
 
 /** The ordinary spawn reviews these finite setup effects before starting its Agent. */

@@ -32,9 +32,10 @@ import { MachinePoolActionInputSchemasV1, MachinePoolActionOutputSchemasV1, mach
 import { MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { executeCliManagedAccountPower } from '@/machines/managed/accountPower';
+import { executeCliManagedAccountDelete } from '@/machines/managed/accountDelete';
 import { executeCliManagedAccountResize } from '@/machines/managed/accountResize';
 import { executeCliManagedAccountInspect } from '@/machines/managed/accountInspect';
-import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isManagedControlAdmissionActionIdV1, MANAGED_DELETE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readCliManagedAccountGuestDiagnostics } from '@/machines/managed/accountDiagnostics';
 import { executeCliManagedProvisionerList } from '@/machines/managed/provisionerDiscovery';
 import { ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
@@ -951,7 +952,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           }
         }
       }
-      if (actionId === MANAGED_RESIZE_ACTION_ID_V1 || actionId === 'machines.managed.power.set') {
+      if (isManagedControlAdmissionActionIdV1(actionId)) {
         try {
           const execution: Omit<Parameters<typeof executeCliManagedAccountPower>[0], 'body'> = {
             context: actionContext, credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
@@ -959,6 +960,8 @@ export function createAccountServerActionDeps(input: Readonly<{
             post };
           return actionId === MANAGED_RESIZE_ACTION_ID_V1
             ? await executeCliManagedAccountResize({ ...execution, body: ManagedMachineActionInputSchemasV1[MANAGED_RESIZE_ACTION_ID_V1].parse(body) })
+            : actionId === MANAGED_DELETE_ACTION_ID_V1
+            ? await executeCliManagedAccountDelete({ ...execution, body: ManagedMachineActionInputSchemasV1[MANAGED_DELETE_ACTION_ID_V1].parse(body) })
             : await executeCliManagedAccountPower({ ...execution, body: ManagedMachineActionInputSchemasV1['machines.managed.power.set'].parse(body) });
         } catch (error) {
           if (error instanceof ManagedMachineControllerError) return { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
@@ -1455,12 +1458,14 @@ export function createAccountServerActionDeps(input: Readonly<{
             if (!projected || !('url' in projected) || typeof projected.url !== 'string') throw new Error('public_link_publication_unconfirmed');
             try {
               await input.onPublicLinkIssued({ lookupId: localPublication.lookupId, secret: localPublication.secret, shareId: projected.id,
-                url: projected.url });
+                url: projected.url, audience: 'anonymous' });
             } catch {
               // Local publication notification failed after a valid Home
               // acknowledgement; do not misdiagnose it as a schema failure.
               return { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' };
             }
+            return projectSessionPublicLinkCreateActionResultV1(response.data, localPublication,
+              SessionPublicLinkCreateActionInputV1Schema.parse(actionInput).networkOff === true, true);
           }
           return result;
         }

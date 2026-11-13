@@ -1,11 +1,12 @@
 import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fastify from 'fastify';
 import { AccountSettingsSchema, ActionIdSchema, FeaturesResponseSchema, MachineSetupApplyInputV1Schema, normalizeActionsSettingsV1, deriveMachineSetupCombinedRunIdV1, openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, type ActionId } from '@happier-dev/protocol';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { TeamsListInputV1Schema, TeamsPageV1Schema } from '@happier-dev/protocol/teams/projections';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
@@ -47,6 +48,7 @@ import { createHostActionOperationRuntime } from '@/daemon/actionOperations/crea
 import { createWorkflowRunStorageTestkit, type WorkflowRunStorageTestkitOperation } from '@/daemon/workflows/workflowRunStorage.testkit';
 import { WORKFLOW_RUN_STORAGE_HTTP_PATH } from '@/daemon/workflows/workflowRunStorageClient';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { registerAuthoredAccountActionRelease } from '@/plugins/runtime/accountPluginActions.testkit';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { SESSION_FOLLOW_HTTP_PATHS_V1 } from '@happier-dev/protocol/sessions/follow/api';
@@ -144,6 +146,23 @@ describe('managed inventory CLI Home adapter', () => {
     expect(await deps.managedMachineAction!({ actionId: 'machines.managed.power.set', input: actionInput,
       context: { ...context, actionRequestId: 'deferred-power' } })).toEqual({ kind: 'accepted', managedId: machine.id, intentRevision: 2 });
     expect(requests).toEqual([{ action: 'machines.managed.power.set', input: actionInput, requestId: 'deferred-power' }]);
+  });
+
+  it.each(['after-idle', 'now'] as const)('admits Account deletion through retained control instead of the absent Action endpoint (%s)', async when => {
+    const actionInput = when === 'now'
+      ? { homeId: 'srv_home', managedId: machine.id, when, expectedRevision: 1, intent: 'delete' as const, reviewedDependencies: true }
+      : { homeId: 'srv_home', managedId: machine.id, when, intent: 'delete' as const, reviewedDependencies: true };
+    const requests: unknown[] = [];
+    app.post('/v1/machines/managed/controller/admit-control', async request => {
+      requests.push(request.body);
+      return { machine: { ...machine, allocation: when === 'now' ? 'confirmed-absent' : machine.allocation,
+        desired: 'delete', desiredWhen: when, intentRevision: 2 }, replayed: false };
+    });
+    await app.ready();
+    const deps = createAccountServerActionDeps({ token: 'bound', serverId: 'route-home', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'http://home.test' });
+    expect(await deps.managedMachineAction!({ actionId: 'machines.managed.delete', input: actionInput,
+      context: { ...context, actionRequestId: 'retained-delete' } })).toEqual({ kind: 'accepted', managedId: machine.id, intentRevision: 2 });
+    expect(requests).toEqual([{ action: 'machines.managed.delete', input: actionInput, requestId: 'retained-delete' }]);
   });
 
   it('refuses a foreign acquisition Home with a typed failure before dispatch', async () => {
@@ -366,8 +385,12 @@ describe('managed inventory CLI Home adapter', () => {
     expect(roles).toEqual(['exec']);
   });
 
-  it.each([['account', false], ['account', true], ['native', false], ['native', true]] as const)(
-    'executes the admitted Account power intent rather than treating its Home write as native success (%s consumer, refused=%s)', async (entry, refused) => {
+  it.each([['account', false], ['account', true], ['native', false], ['native', true],
+    ['delete', false], ['delete', true], ['delete-refused-report-failed', false], ['delete-factory', false]] as const)(
+    'executes the admitted Account native intent rather than treating its Home write as native success (%s consumer, refused=%s)', async (entry, refused) => {
+    const deleting = entry === 'delete' || entry === 'delete-refused-report-failed' || entry === 'delete-factory';
+    const nativeRefused = entry === 'delete-refused-report-failed';
+    const actionId = deleting ? 'machines.managed.delete' : 'machines.managed.power.set';
     const service = { pluginId: 'acme.accounts', localId: 'cloud' };
     const disclosed: string[] = [];
     const owner = createConnectedAccountPurposeBindingOwner({
@@ -392,18 +415,29 @@ describe('managed inventory CLI Home adapter', () => {
         retentionCapabilities: provisioner.retention, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
       observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' },
     };
-    const powerInput = { homeId: retained.homeId, managedId: retained.id, expectedRevision: 2, when: 'now' as const, intent: 'start' as const };
+    const powerInput = { homeId: retained.homeId, managedId: retained.id, expectedRevision: 2, when: 'now' as const,
+      ...(deleting ? { intent: 'delete' as const, reviewedDependencies: true } : { intent: 'start' as const }) };
     const paths: string[] = [];
     app.addHook('onRequest', async request => { paths.push(request.url); });
     const manifest = normalizePluginManifestV2({ ...base.manifest, contributes: { ...base.manifest.contributes,
       actions: base.manifest.contributes.actions.map(action => ({ ...action,
+        ...(entry === 'delete-factory' ? { hostAccess: undefined } : {}),
         execution: { target: 'account', account: { artifactId: 'native', exportName: 'activate' } } })),
     } });
     const reference = normalizePluginManifestV2({ schemaVersion: 2, id: service.pluginId, version: '1.0.0', displayName: 'Cloud', runtime: { apiVersion: 1 },
       contributes: { connectedAccountDescriptors: [{ id: service.localId, title: 'Cloud', authentication: { defaultModeId: 'token', modes: [{
         id: 'token', kind: 'manual', outcomeReconciliation: 'none', fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: true }],
       }] } }] } });
-    app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], async () => ({
+    if (entry === 'delete-factory') {
+      await registerAuthoredAccountActionRelease(app, 'owner', { primary: { manifest,
+        projectRoot: resolve(import.meta.dirname, '../..'),
+        entryPath: resolve(import.meta.dirname, '../testkit/machines/managedAccountDeleteModule.fixture.ts'),
+        artifactId: 'native', activateExport: 'activate', manifestExport: null },
+        additional: [{ manifest: reference, projectRoot: resolve(import.meta.dirname, '../..'),
+          entryPath: resolve(import.meta.dirname, '../testkit/machines/managedAccountDeleteModule.fixture.ts'),
+          artifactId: 'native', activateExport: 'activate', manifestExport: null }] });
+      app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: {} }, version: 1 }));
+    } else app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], async () => ({
       availabilityCursor: 1, hostingCapability: { enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048 },
       intent: { pluginId: provider.pluginId, desiredVersion: '1.0.0', enabled: true, offlineUiHosting: 'enabled', writableCollections: [], revision: 'intent-1' },
       release: { ref: { pluginId: provider.pluginId, version: '1.0.0' }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
@@ -417,16 +451,19 @@ describe('managed inventory CLI Home adapter', () => {
       ? reply.code(403).send({ code: 'permission_denied' }) : retained);
     app.post('/v1/machines/managed/controller/admit-control', async (_request, reply) => {
       if (refused) return reply.code(403).send({ code: 'managed_power_required' });
-      retained = { ...retained, desired: 'start', intentRevision: 3 };
+      retained = { ...retained, desired: deleting ? 'delete' : 'start', intentRevision: 3 };
       return { machine: retained, replayed: false };
     });
     app.post('/v1/machines/managed/controller/submit-intent', async () => ({ machine: retained, submitted: true }));
-    app.post('/v1/machines/managed/controller/report-intent', async request => {
-      expect(request.body).toMatchObject({ expectedIntentRevision: 3, requestId: 'original-power', result: { kind: 'confirmed' } });
+    app.post('/v1/machines/managed/controller/report-intent', async (request, reply) => {
+      expect(request.body).toMatchObject({ expectedIntentRevision: 3, requestId: 'original-power', result: { kind: nativeRefused ? 'refused' : 'confirmed' } });
+      if (nativeRefused) return reply.code(503).send({ code: 'managed_request_failed' });
+      if (deleting) retained = { ...retained, allocation: 'confirmed-absent', resource: undefined };
       return { machine: retained };
     });
     const native: string[] = [];
-    const nativeResults = { inspect: { observedAt: 2, availability: 'present' as const, power: 'stopped' as 'stopped' | 'running', storage: 'retained' as const } };
+    const nativeResults = { inspect: { observedAt: 2, availability: 'present' as const, power: 'stopped' as 'stopped' | 'running', storage: 'retained' as const },
+      ...(nativeRefused ? { destroy: { kind: 'refused', code: 'fixture_delete_refused' } } : {}) };
     const runtime = managedFixture({ fixtureManifest: manifest, executionRealm: 'account', credentialOwner: owner, referenceManifests: [reference],
       onNativeRole: role => { native.push(role); if (role === 'power') nativeResults.inspect.power = 'running'; },
       onInspect: () => { native.push('inspect'); }, nativeRoleResults: nativeResults });
@@ -439,10 +476,11 @@ describe('managed inventory CLI Home adapter', () => {
       operationAcceptance: { operationId: 'original-operation', accept() {} }, operationOwnerUpdate: { update() {} } };
     // This constructs the consumer's canonical private-port boundary; it is
     // not evidence that production preparation has published the role plan.
-    actionContext.hostReviewedChild = createHostReviewedChildPortV1({ actionId: 'machines.managed.power.set', input: powerInput,
+    const roles = deleting ? ['destroy'] : ['power', 'inspect'];
+    if (entry !== 'delete-factory') actionContext.hostReviewedChild = createHostReviewedChildPortV1({ actionId, input: powerInput,
       context: actionContext, reviewAdmitted: true,
-      plan: { children: ['power', 'inspect'].map(role => ({ action: { pluginId: provider.pluginId, localId: role }, role })) },
-      policies: ['power', 'inspect'].map(role => ({ action: { pluginId: provider.pluginId, localId: role }, role, surface: 'cli' })),
+      plan: { children: roles.map(role => ({ action: { pluginId: provider.pluginId, localId: role }, role })) },
+      policies: roles.map(role => ({ action: { pluginId: provider.pluginId, localId: role }, role, surface: 'cli' })),
       execute: async (body, childContext, actionId) => {
         expect(actionId).toBe('action.invoke');
         if (!body || typeof body !== 'object' || !('action' in body) || !body.action || typeof body.action !== 'object'
@@ -452,9 +490,27 @@ describe('managed inventory CLI Home adapter', () => {
         return invoke({ action: { pluginId: provider.pluginId, localId: body.action.localId }, input: body.input, context: childContext });
       } });
     const deps = createAccountServerActionDeps({ token: 'bound', serverId: 'route-home', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'http://home.test' });
-    const result = entry === 'account'
-      ? await deps.managedMachineAction!({ actionId: 'machines.managed.power.set', input: powerInput, context: actionContext })
-      : await executeCliManagedAccountPower({ body: powerInput, context: actionContext, credentials: { token: 'bound', encryption: null }, serverUrl: 'http://home.test',
+    // The ordinary factory acquires and executes the physically published Account
+    // artifact. Its reviewed child plan and private port are never constructed here.
+    const factoryToken = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1,
+      provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+    if (entry === 'delete-factory') setActiveAccountSettingsSnapshot({ source: 'network', settings: AccountSettingsSchema.parse({ actionsSettingsV1: policy }),
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken(factoryToken) });
+    const factoryResult = entry === 'delete-factory' ? await createCliActionExecutorFromCredentials({
+      credentials: { token: factoryToken, encryption: null, credentialProvenance: 'stored_session' }, serverId: 'route-home', serverIdentityId: 'srv_home',
+      serverApiUrl: 'http://home.test', pluginActionExecutionOwner: 'current_process',
+      actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
+        approvalWaivedSurfaces: { 'machines.managed.delete': ['cli'], 'action.invoke': ['cli'] } }) },
+    }).execute(actionId, powerInput, actionContext) : undefined;
+    if (factoryResult) {
+      expect(factoryResult, factoryResult.ok ? undefined : JSON.stringify({ errorCode: factoryResult.errorCode,
+        error: factoryResult.error, failureCause: factoryResult.failureCause })).toMatchObject({ ok: true });
+      expect(retained.allocation).toBe('confirmed-absent');
+      expect(retained.resource).toBeUndefined();
+    }
+    const result = factoryResult ? factoryResult.ok ? factoryResult.result : factoryResult : entry !== 'native'
+      ? await deps.managedMachineAction!({ actionId, input: powerInput, context: actionContext })
+      : await executeCliManagedAccountPower({ body: ManagedMachineActionInputSchemasV1['machines.managed.power.set'].parse(powerInput), context: actionContext, credentials: { token: 'bound', encryption: null }, serverUrl: 'http://home.test',
         post: async (suffix, request, schema) => {
           const response = await axios.post(`http://home.test/v1/machines/managed/controller/${suffix}`, request,
             { headers: { Authorization: 'Bearer bound' }, validateStatus: () => true });
@@ -465,11 +521,12 @@ describe('managed inventory CLI Home adapter', () => {
           throw error;
         });
     expect(result).toMatchObject(refused ? { ok: false, errorCode: 'managed_power_required' }
+      : nativeRefused ? { ok: false, errorCode: 'fixture_delete_refused' }
       : { kind: 'accepted', managedId: retained.id, intentRevision: 3 });
-    expect(native).toEqual(refused ? [] : ['inspect', 'power', 'inspect']);
+    expect(native).toEqual(refused || entry === 'delete-factory' ? [] : deleting ? ['destroy'] : ['inspect', 'power', 'inspect']);
     // The native power handler materializes the selected token. The fixture's
     // Inspect returns its observed state without acquiring another token.
-    expect(disclosed).toEqual(refused ? [] : ['selected-account']);
+    expect(disclosed).toEqual(refused || nativeRefused || entry === 'delete-factory' ? [] : ['selected-account']);
     expect(paths.filter(path => path.endsWith('/admit-control'))).toHaveLength(1);
     expect(paths.some(path => path.endsWith('/execution-authorization'))).toBe(false);
   });
