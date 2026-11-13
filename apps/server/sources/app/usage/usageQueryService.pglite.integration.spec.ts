@@ -384,6 +384,7 @@ describe('Usage analytics PostgreSQL event transport', () => {
             "inputTokens", "totalTokens", "estimatedCostUsd", "updatedAt")
             SELECT 'scale-' || n::text, ${account.id}, to_timestamp(n) AT TIME ZONE 'UTC', 'codex', 'runtime',
                 'turn_delta', 1, 1, 0.01, now() FROM generate_series(1, 33658) AS n`;
+        await db.$executeRawUnsafe('ANALYZE "UsageEvent"');
         const request = UsageAnalyticsQueryRequestSchema.parse({
             dateRange: { startMs: 26397_000, endMs: 33659_000 },
         });
