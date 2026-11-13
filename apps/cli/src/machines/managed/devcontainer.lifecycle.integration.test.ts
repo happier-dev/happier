@@ -1,6 +1,14 @@
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, open, readdir, stat, writeFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { createManagedNativeBootstrapIO } from '@happier-dev/cli-common/machines/managed';
+import { installRemoteFirstPartyComponentPayload } from '@happier-dev/cli-common/systemTasks';
+import { deliverManagedNativeFile } from './nativeFileDelivery';
+import type { ManagedNativeBootstrapIO } from './enrollment';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -68,7 +76,7 @@ function resource(name: string) {
 /** An external author's native resource simulator. Host admission, catalog,
  * activation, dispatch, correlation and ordinary Machine registration stay real. */
 async function lifecycleFixture(root: string, onTestFinished: (cleanup: () => void | Promise<void>) => void,
-  firstPartyNativeRun?: ExecService['run']) {
+  firstPartyNativeRun?: ExecService['run'], nativeIO?: ManagedNativeBootstrapIO) {
   const effects: string[] = [];
   const pluginId = firstPartyNativeRun ? DEVCONTAINER_PLUGIN.manifest.id : 'examples.child-lifecycle';
   const contributionRef = { pluginId, localId: firstPartyNativeRun ? 'devcontainer' : 'child' };
@@ -98,10 +106,20 @@ async function lifecycleFixture(root: string, onTestFinished: (cleanup: () => vo
         run: async () => MachineProvisionerPowerResultV1Schema.parse({ kind: 'confirmed' }) },
       exec: { title: 'Native exec', surfaces: ['plugin'], dangerLevel: 'safe', execution: { target: 'daemon' },
         inputSchema: schemas.execInput, resultSchema: MachineProvisionerNativeExecResultV1Schema,
-        run: async () => { throw new Error('Default fixture must stop before native installation'); } },
+        run: async input => {
+          if (!nativeIO) throw new Error('Default fixture must stop before native installation');
+          const result = await promisify(execFile)(input.argv[0]!, input.argv.slice(1));
+          return { termination: { requestedBy: { kind: 'none' as const }, observed: { kind: 'exit' as const, exitCode: 0 } },
+            stdoutBase64: Buffer.from(result.stdout).toString('base64'),
+            stderrBase64: Buffer.from(result.stderr).toString('base64'), stdoutTruncated: false, stderrTruncated: false };
+        } },
       'put-file': { title: 'Native file', surfaces: ['plugin'], dangerLevel: 'safe', execution: { target: 'daemon' },
         inputSchema: schemas.putFileInput, resultSchema: MachineProvisionerPutFileResultV1Schema,
-        run: async () => { throw new Error('Default fixture must stop before payload delivery'); } },
+        run: async input => {
+          if (!nativeIO) throw new Error('Default fixture must stop before payload delivery');
+          await nativeIO.putFile({ path: input.guestPath, bytes: Buffer.from(input.bytesBase64, 'base64') });
+          return { kind: 'confirmed' as const };
+        } },
     },
   });
   const manifest = normalizePluginManifestV2(author.manifest);
@@ -259,6 +277,50 @@ async function lifecycleFixture(root: string, onTestFinished: (cleanup: () => vo
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 describe('public-author Devcontainer lifecycle composition', () => {
+  it('delivers a real-size CLI archive through admitted native Actions', async ({ onTestFinished }) => {
+    await withTempDir('happier-large-native-archive-', async root => {
+      const env = createEnvKeyScope(['HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT']);
+      onTestFinished(() => env.restore());
+      const f = await lifecycleFixture(root, onTestFinished, undefined, {
+        exec: async () => { throw new Error('Execution uses the native process boundary'); },
+        putFile: async ({ path, bytes }) => { await writeFile(path, bytes); },
+      });
+      const before = f.readRow();
+      await f.client.submit(before);
+      const acquired = AcquireResultV1Schema.parse(await f.native.invoke('acquire', { managedId: before.id, launch: before.launch.choices }));
+      if (acquired.kind !== 'bound') throw new Error('Guest was not acquired');
+      await f.client.reportIssuedAcquireFact(before, acquired);
+      const native = createManagedNativeBootstrapIO({ resource: acquired.resource }, f.native.invoke);
+      const payload = join(root, 'payload');
+      await mkdir(payload);
+      await writeFile(join(payload, 'happier'), '#!/bin/sh\nexit 0\n');
+      const file = await open(join(payload, 'runtime-data'), 'w');
+      // Match the observed installed payload scale. Repeated random MiB blocks
+      // remain incompressible across gzip's much smaller dictionary window.
+      const block = randomBytes(1024 * 1024);
+      try { for (let written = 0; written < 1_278_760_198; written += block.length) {
+        await file.write(block.subarray(0, Math.min(block.length, 1_278_760_198 - written)));
+      } } finally { await file.close(); }
+      env.patch({ HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: payload });
+      const delivered = join(root, 'delivered.tar.gz');
+      const digest = async (path: string) => {
+        const hash = createHash('sha256');
+        for await (const bytes of createReadStream(path)) hash.update(bytes);
+        return hash.digest('hex');
+      };
+      await installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli' }, {
+        resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+        runRemoteText: async () => ({ status: 0, stdout: '', stderr: '' }),
+        copyLocalDirectoryToRemote: async ({ localPath }) => {
+          const [name] = await readdir(localPath);
+          const archive = join(localPath, name!);
+          await deliverManagedNativeFile({ localPath: archive, guestPath: delivered, resource: acquired.resource.value }, native);
+          expect(await digest(delivered)).toBe(await digest(archive));
+        },
+      });
+      expect((await stat(delivered)).size).toBeGreaterThan(1024 * 1024 * 1024);
+    });
+  }, 180_000);
   it('consumes the first-party native contribution through the managed driver and retains its bound namespace when the signed installer is unavailable', async ({ onTestFinished }) => {
     await withTempDir('happier-first-party-child-lifecycle-', async root => {
       const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_FIRST_PARTY_RELEASE_API_BASE_URL', 'NODE_ENV']);
