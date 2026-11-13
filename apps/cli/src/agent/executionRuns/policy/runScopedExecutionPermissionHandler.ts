@@ -3,6 +3,7 @@ import type { ExecutionRunPermissionInteractionMode } from './executionRunPermis
 import { createExecutionRunPermissionHandler, type ExecutionRunPermissionCallContext, type ExecutionRunPermissionHandler, type ExecutionRunPermissionResponder } from './executionRunPermissionDecision';
 import { parseMcpToolWireNameV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import type { AcpPermissionCallContext } from '@/agent/acp/permissions/acpPermissionHandler';
+import { applyNativePermissionImmediateDecision, resolveNativePermissionImmediateDecision } from '@/agent/permissions/nativePermissionChoice';
 import { isAgentStructuredQuestionRequest, isHostOccurrenceQuestion } from '@/agent/permissions/requestKind';
 import { buildRunScopedExecutionPermissionRequestId, readRunScopedExecutionPermissionRequestIdentity } from '@happier-dev/protocol/execution/runs/runPrimitives';
 
@@ -103,7 +104,7 @@ export function createRunScopedExecutionPermissionHandler(params: Readonly<{
         const requestId = scopedRequestId(toolCallId);
         const question = isAgentStructuredQuestionRequest({ toolName, source: context?.source });
         const immediate = readImmediate(requestId, toolName, input, context);
-        if (immediate) return immediate;
+        if (immediate) return await applyNativePermissionImmediateDecision(immediate, context);
         // Startup questions have no admitted executable turn. Keep their exact
         // Run scope, but let the Session question owner collect the person's answer.
         const interactionMode = isHostOccurrenceQuestion(toolName, context) && params.parentSessionId !== null
@@ -115,8 +116,9 @@ export function createRunScopedExecutionPermissionHandler(params: Readonly<{
             { code: 'execution_run_interaction_unavailable' },
           );
         }
-        if (interactionMode === 'deterministic' || interactionMode === 'fail_closed') {
-          return { decision: 'denied' };
+        if ((interactionMode === 'deterministic' && !context?.nativeChoices) || interactionMode === 'fail_closed') {
+          return await applyNativePermissionImmediateDecision(
+            resolveNativePermissionImmediateDecision({ decision: 'denied' }, context?.nativeChoices)!, context);
         }
         pendingRequestIds.add(requestId);
         try {

@@ -23,7 +23,7 @@ import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime
 import { SessionInputCausalPermissionAuthorityV1Schema, type SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { ProviderEnforcedPermissionHandler, PermissionResult } from '@/agent/permissions/providerEnforced/handler';
 import type { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
-import { observedPermissionResultMatches, resolveNativePermissionChoice, resolveNativePermissionImmediateDecision } from '@/agent/permissions/nativePermissionChoice';
+import { applyNativePermissionImmediateDecision, observedPermissionResultMatches, resolveNativePermissionChoice, resolveNativePermissionImmediateDecision } from '@/agent/permissions/nativePermissionChoice';
 import { isAgentStructuredQuestionRequest, isHostOccurrenceQuestion, resolveStructuredQuestionRequestMetadata } from '@/agent/permissions/requestKind';
 import { normalizePermissionRequestOwner, permissionRequestOwnersEqual } from '@/agent/permissions/permissionRequestOwner';
 import type { ExecutionRunPermissionRequestStoreProvider } from '@/agent/runtime/bridges/executionRun/executionRunPermissionResponseTarget';
@@ -371,7 +371,7 @@ export function createExecutionRunPermissionHandler(args: Readonly<{
         pending.delete(toolCallId);
       }
       const immediate = readImmediate(toolCallId, toolName, input, context);
-      if (immediate) return immediate;
+      if (immediate) return await applyNativePermissionImmediateDecision(immediate, context);
 
       if (!args.publishPendingRequest) {
         const error = Object.assign(

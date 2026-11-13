@@ -15,7 +15,8 @@ describe('automatic native permission decisions', () => {
     it('keeps Ask pending and preserves the mode ceiling', () => {
         const offered = createMcpPermissionChoices('contract', null);
         expect(resolveNativePermissionImmediateDecision(null, offered)).toBeNull();
-        expect(resolveNativePermissionImmediateDecision({ decision: 'denied' }, offered)).toEqual({ decision: 'denied' });
+        expect(resolveNativePermissionImmediateDecision({ decision: 'denied' }, offered)).toEqual({ decision: 'denied',
+            nativeChoice: { requirementId: offered.requirementId, choiceId: 'denied' } });
     });
     it('does not choose between ambiguous native approvals or invent an unavailable scope', () => {
         const offered = createMcpPermissionChoices('contract', null);

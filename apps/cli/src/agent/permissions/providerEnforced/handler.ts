@@ -38,7 +38,7 @@ import { prepareMcpToolCatalog, resolveMcpToolIdentity, type McpToolPolicyContex
 import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import { parseSessionPermissionModeAlias } from '@happier-dev/protocol/sessions/metadata/permission-modes';
 import { resolveEffectivePermissionMode } from '@happier-dev/protocol/actions/permissionPrivilege';
-import { resolveNativePermissionImmediateDecision } from '../nativePermissionChoice';
+import { applyNativePermissionImmediateDecision, resolveNativePermissionImmediateDecision } from '../nativePermissionChoice';
 
 export type { PermissionResult, PendingRequest };
 
@@ -395,7 +395,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
         logger.debug(
           `${this.getLogPrefix()} Applying automatic ${resolvedAutomaticDecision.decision} decision for tool ${toolName} (${toolCallId})`,
         );
-        return resolvedAutomaticDecision;
+        return await applyNativePermissionImmediateDecision(resolvedAutomaticDecision, options);
       }
     }
 

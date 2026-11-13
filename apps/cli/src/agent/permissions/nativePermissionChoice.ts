@@ -51,23 +51,49 @@ export function resolveNativePermissionChoice(offeredValue: unknown, answerValue
     } };
 }
 
-/** Translate simple mediation only when the native offer has one exact decision/scope match. */
+/** Translate a simple decision only when the native offer has one exact decision/scope match. */
 export function resolveMediatedNativePermissionChoice(
     offered: NativePermissionChoicesV1 | undefined,
-    decision: 'allow' | 'deny' | undefined,
+    decision: 'allow' | 'deny' | 'abort' | undefined,
     scope: 'request' | 'session' | undefined,
 ) {
     if (!offered || !decision || !scope) return undefined;
-    const matches = offered.choices.filter(choice => {
-        if (choice.scope !== (scope === 'session' ? 'session' : 'once')) return false;
-        return decision === 'allow'
-            ? choice.decision === 'approved' || choice.decision === 'approved_for_session'
-            : choice.decision === 'denied' || choice.decision === 'abort';
-    });
-    // A simple chat command cannot select between distinct native offers.
+    const inScope = offered.choices.filter(choice => choice.scope === (scope === 'session' ? 'session' : 'once'));
+    const select = (accepts: (candidate: NativePermissionChoicesV1['choices'][number]['decision']) => boolean) =>
+        inScope.filter(choice => accepts(choice.decision));
+    // Deny prefers the offered denial; Stop answers a deny only when no denial is offered.
+    const matches = decision === 'allow'
+        ? select(value => value === 'approved' || value === 'approved_for_session')
+        : decision === 'abort' ? select(value => value === 'abort')
+            : select(value => value === 'denied').length > 0 ? select(value => value === 'denied') : select(value => value === 'abort');
+    // A simple decision cannot select between distinct native offers.
     return matches.length === 1
         ? { requirementId: offered.requirementId, choiceId: matches[0]!.id }
         : undefined;
+}
+
+/**
+ * The public Allow/Deny answer of `session.permission.respond` (CLI, Agent, MCP, voice)
+ * for a native-offer request: the one exactly matching offered choice, or none.
+ * Grants beyond the decision (mode, tool rules, amendments, answers) are never offered natively.
+ */
+export function resolvePlainNativePermissionChoice(
+    offered: NativePermissionChoicesV1 | undefined,
+    response: Readonly<{ approved?: boolean; decision?: PermissionResult['decision']; mode?: unknown;
+        allowedTools?: unknown; allowTools?: unknown; updatedPermissions?: unknown; execPolicyAmendment?: unknown; answers?: unknown }>,
+) {
+    if (response.approved === undefined || response.mode !== undefined || response.allowedTools !== undefined
+        || response.allowTools !== undefined || response.updatedPermissions !== undefined
+        || response.execPolicyAmendment !== undefined || response.answers !== undefined) return undefined;
+    const decision = response.decision ?? (response.approved ? 'approved' : 'denied');
+    if (response.approved !== (decision !== 'denied' && decision !== 'abort')) return undefined;
+    switch (decision) {
+        case 'approved': return resolveMediatedNativePermissionChoice(offered, 'allow', 'request');
+        case 'approved_for_session': return resolveMediatedNativePermissionChoice(offered, 'allow', 'session');
+        case 'denied': return resolveMediatedNativePermissionChoice(offered, 'deny', 'request');
+        case 'abort': return resolveMediatedNativePermissionChoice(offered, 'abort', 'request');
+        default: return undefined;
+    }
 }
 
 /** MCP policy may select an exact offered grant; other native prompts still require a person. */
@@ -76,10 +102,22 @@ export function resolveNativePermissionImmediateDecision<T extends PermissionRes
     nativeChoices: NativePermissionChoicesV1 | undefined,
     mcpTool?: ResolvedMcpToolIdentityV1 | null,
 ): PermissionResult | null {
-    if (!nativeChoices || !decision || decision.decision === 'denied' || decision.decision === 'abort'
-        || decision.nativeChoice) return decision;
+    if (!nativeChoices || !decision || decision.nativeChoice) return decision;
+    if (decision.decision === 'denied' || decision.decision === 'abort') {
+        const answer = resolveMediatedNativePermissionChoice(nativeChoices, decision.decision === 'abort' ? 'abort' : 'deny', 'request');
+        return answer ? resolveNativePermissionChoice(nativeChoices, answer)?.result ?? decision : decision;
+    }
     if (!mcpTool) return null;
     const answer = resolveMediatedNativePermissionChoice(nativeChoices, 'allow',
         decision.decision === 'approved_for_session' ? 'session' : 'request');
     return answer ? resolveNativePermissionChoice(nativeChoices, answer)?.result ?? null : null;
+}
+
+/** Apply an immediate offered answer at the handler, before returning it to SDK waiters. */
+export async function applyNativePermissionImmediateDecision(
+    decision: PermissionResult,
+    context?: Readonly<{ nativeChoices?: NativePermissionChoicesV1; acknowledgeDecisionApplication?: (decision: PermissionResult) => Promise<void> }>,
+): Promise<PermissionResult> {
+    if (context?.nativeChoices && decision.nativeChoice) await context.acknowledgeDecisionApplication?.(decision);
+    return decision;
 }
