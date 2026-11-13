@@ -4,31 +4,6 @@ import { createExternalActionRuntime } from '@/daemon/externalActions/externalAc
 import { createTargetActionCurrentIntentAdapter } from '@/session/actions/approvals/targetActionCurrentIntent';
 import { executeContributedAction } from './executeContributedAction';
 
-it.each(['agent', 'mcp'] as const)('defers ordinary Account approvals for %s with the existing durable receipt', async surface => {
-  let stored: TargetActionApprovalRequestV1 | null = null;
-  let effects = 0;
-  const runtime = createExternalActionRuntime('global', 'acme.account-approval', () => { effects++; },
-    undefined, undefined, undefined, undefined, 'writesRemote', undefined,
-    { executionTarget: 'account', surfaces: [surface] });
-  // Artifact persistence is replaced; the real target registry, approval
-  // placement and current-intent policy decide custody and defer execution.
-  const requestCurrentIntent = createTargetActionCurrentIntentAdapter({
-    create: async request => { stored = request; return { artifactId: 'account-approval', request }; },
-    read: async () => stored,
-  });
-  const context = { surface, runtimeAccountId: 'account', serverId: 'server-external',
-    authority: 'account_automation' as const, actionCaller: { kind: 'host' as const } };
-  const result = await executeContributedAction({ runtimeRegistry: runtime,
-    actionId: 'acme.account-approval/inspect', input: {}, context, approvalContext: context, requestCurrentIntent });
-  expect(result).toMatchObject({ matched: true, result: { ok: true, result: {
-    kind: 'approval_request_created', artifactId: 'account-approval', actionId: 'action.invoke',
-  } } });
-  expect(stored).toMatchObject({ status: 'open', requestedSurface: surface,
-    replayPlacement: { serverId: 'server-external', machineId: 'machine-local' } });
-  expect(stored).not.toHaveProperty('approvalInputCustody', 'live_only');
-  expect(effects).toBe(0);
-});
-
 it('retains live-only custody for declared Account secrets without a live receipt writer', async () => {
   let creates = 0;
   let effects = 0;

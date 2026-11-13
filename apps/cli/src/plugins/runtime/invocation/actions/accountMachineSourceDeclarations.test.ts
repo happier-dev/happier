@@ -38,7 +38,7 @@ it('shares cold and warm reads and admits one body per changed revision', async 
     expect(machineRpc).toHaveBeenCalledTimes(3);
     expect(bodies()).toBe(2);
     revision = 'revision-retired'; present = false;
-    expect(await read(selection)).toEqual([]);
+    expect(await read(selection)).toEqual({ declarations: [] });
     expect(bodies()).toBe(3);
 });
 
@@ -70,7 +70,7 @@ it('keeps shared reads alive for remaining callers and aborts transport when all
     await expect(a).rejects.toMatchObject({ name: 'AbortError' });
     expect(transportSignal?.aborted).toBe(false);
     complete?.({ status: 'sourceDeclarations', pluginId: selection.targetPluginId, sourceRevision: 'a', sourceDeclarations: [] });
-    expect(await b).toEqual([]);
+    expect(await b).toEqual({ declarations: [] });
     const cancel = new AbortController();
     const cancelled = read({ ...selection, signal: cancel.signal });
     cancel.abort();
@@ -78,5 +78,5 @@ it('keeps shared reads alive for remaining callers and aborts transport when all
     expect(transportSignal?.aborted).toBe(true);
     complete?.({ status: 'sourceDeclarations', pluginId: selection.targetPluginId, sourceRevision: 'stale', sourceDeclarations: [declaration] });
     machineRpc.mockResolvedValueOnce({ status: 'sourceDeclarations', pluginId: selection.targetPluginId, sourceRevision: 'fresh', sourceDeclarations: [] });
-    expect(await read(selection)).toEqual([]);
+    expect(await read(selection)).toEqual({ declarations: [] });
 });

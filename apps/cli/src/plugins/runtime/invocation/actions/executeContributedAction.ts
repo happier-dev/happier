@@ -772,10 +772,11 @@ export async function executeContributedAction(params: Readonly<{
     const requestCurrentIntent = params.requestCurrentIntent
       ? async (request: TargetActionCurrentIntentRequest): Promise<TargetActionCurrentIntentResult> => {
           const projectedInput = projectTargetActionApprovalInput(request.action.input, request.action.secretInputPaths ?? []);
-          // Confidential input already belongs to live custody; it must not
-          // acquire durable replay placement before that owner can retain it.
+          // Confidential input and Account hosts without a replay-placement
+          // producer belong to the existing live approval waiter.
           const liveOnly = params.context.approvalInputCustody === 'live_only'
-            || (projectedInput?.confidentialPaths.length ?? 0) > 0;
+            || (projectedInput?.confidentialPaths.length ?? 0) > 0
+            || (accountTarget && !runtimeRegistry.resolveCurrentPluginApprovalReplayPlacement);
           const requestedSurface = request.invocationSurface ?? request.surface;
           const deferredSurface = requestedSurface === 'api' || requestedSurface === 'cli'
             || requestedSurface === 'agent' || requestedSurface === 'mcp' ? requestedSurface : null;
@@ -955,10 +956,16 @@ export async function executeContributedAction(params: Readonly<{
       ...(params.context.operationProgress
         ? { operationProgress: params.context.operationProgress }
         : {}),
-      ...(params.admittedManagedProviderOperation || params.admittedConnectedAccountPurposeBinding || params.context.beforeHandlerInvocation || params.inheritedTargetedOperation
+      ...(params.admittedManagedProviderOperation || params.admittedConnectedAccountPurposeBinding || params.context.beforeHandlerInvocation || params.inheritedTargetedOperation || (accountTarget && runtimeRegistry.revalidateAccountExecution)
         ? { beforeHandlerInvocation: async () => {
             await params.context.beforeHandlerInvocation?.();
             await params.inheritedTargetedOperation?.beforeHandlerInvocation();
+            // Approval may wait while Account availability changes. Admit the
+            // callee after the caller's admission, once, before its handler.
+            if (accountTarget && runtimeRegistry.revalidateAccountExecution
+              && !await runtimeRegistry.revalidateAccountExecution(pluginId, params.context.signal)) {
+              throw new PluginError({ code: 'plugin_action_generation_retired', message: 'The Account target is retired' });
+            }
             if (!await isManagedCustodyCurrent()) {
               throw new PluginError({ code: 'plugin_managed_provider_operation_custody_invalid',
                 message: 'The native provisioner role requires current managed-resource custody' });

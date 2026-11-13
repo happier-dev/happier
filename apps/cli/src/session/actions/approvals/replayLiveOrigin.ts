@@ -15,6 +15,9 @@ export async function replayLiveCliApprovalOrigin(args: Replay, account: Readonl
   const fail = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
   const { request, signal } = args;
   const origin = request.v === 2 || isTargetApproval(request) ? request.executionOriginV1 : undefined;
+  // Rejection and cancellation only settle the retained receipt. The existing
+  // decision writer owns them even after the original live waiter has closed.
+  if (args.decision === 'reject' || args.decision === 'cancel') return null;
   if (args.decision !== 'approve') return fail('approval_origin_unavailable');
   if (signal?.aborted) return fail('cancelled');
   const result = await runWithServerHttpBaseUrl(account.serverUrl, () => callSessionRpc({
