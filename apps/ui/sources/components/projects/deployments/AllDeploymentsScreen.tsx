@@ -18,7 +18,7 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { usePageSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
-import { SelectionListFilterChip } from '@/components/ui/selectionList/SelectionListFilterChips';
+import { SelectionListFilterChips } from '@/components/ui/selectionList/SelectionListFilterChips';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { useDeploymentPresentationDemand } from './useDeploymentPresentationDemand';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -93,8 +93,10 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     .filter((row) => row.status === 'uncovered').map((row) => row.environment.id)), [backups.coverage]);
   // The filter is offered only when it has something to show, and stays while it is on so it can be turned off.
   const filtering = notBackedUpOnly && backups.coverage !== null;
-  const notBackedUpChip = filtering || uncovered.size > 0 ? (
-    <SelectionListFilterChip filter={{
+  // Inline under the header, one press away: a header action would fold into the phone's ⋯ (DEPLOY-REACCEPT-1113 D3).
+  const notBackedUpFilter = filtering || uncovered.size > 0 ? (
+    <ItemGroup surface="none" testID="all-deployments.filters">
+      <SelectionListFilterChips placement="inline" filters={[{
       id: 'all-deployments.notBackedUp',
       testID: 'all-deployments.notBackedUp',
       label: t('projects.deployments.notBackedUp'),
@@ -103,7 +105,8 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
         : t('projects.deployments.notBackedUp'),
       selected: filtering,
       onToggle: toggleNotBackedUp,
-    }} />
+    }]} />
+    </ItemGroup>
   ) : null;
   const header = (
     <PageHeader
@@ -111,7 +114,6 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
       title={t('projects.deployments.allTitle')}
       description={t('projects.deployments.allDescription')}
       alwaysShowTitle
-      actions={notBackedUpChip ?? undefined}
     />
   );
   const retry = React.useCallback(() => {
@@ -174,6 +176,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     {backups.readers}
     <ItemList testID="all-deployments">
       {header}
+      {notBackedUpFilter}
       {snapshot.status === 'unavailable' ? (
         <SurfaceFreshnessLine
           testID="all-deployments.stale"

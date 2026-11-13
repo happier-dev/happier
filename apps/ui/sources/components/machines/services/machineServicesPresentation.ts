@@ -2,6 +2,7 @@ import { machineServiceNativeIdentityKeyV1 } from '@happier-dev/protocol/machine
 import { type DeploymentReviewServiceV1 } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
 import { type MachineServiceDiscoveryCandidateV1, type MachineServiceRowV1 } from '@happier-dev/protocol/actions/specs/machine/services';
 import type { IconName } from '@/components/ui/icons/Icon';
+import { isMachineUnreachableFailureCode, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 
 /**
@@ -301,4 +302,16 @@ export function machineDeploymentRoleSummary<T extends RoleEnvironment>(
     const serving = environments.filter(environment => environment.roles.includes(role));
     return serving.length ? [{ role, environments: serving }] : [];
   });
+}
+
+/**
+ * A failed log read's body: the cause only, beneath the "Couldn't read logs" title and beside Retry, so the state is
+ * said once. An unreachable Machine is named; a cause the failure owner knows is kept; an unknown one adds nothing.
+ */
+export function machineServiceLogReadFailureReason(error: unknown, machine: string): string | undefined {
+  const record = error !== null && typeof error === 'object' ? error as Record<string, unknown> : null;
+  if (isMachineUnreachableFailureCode(record?.code ?? record?.errorCode)) {
+    return t('machineServices.logs.error.machineNotAnswering', { machine });
+  }
+  return resolveActionExecutionErrorMessage(error, '', { safeToRetry: true }) || undefined;
 }

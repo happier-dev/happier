@@ -714,7 +714,7 @@ describe('Environment → Domains', () => {
       ).not.toBeNull();
       const text = screen.getTextContent();
       expect(text).toContain('api.happier.dev');
-      expect(text).toContain('web : 3000');
+      expect(text).toContain('web:3000');
       expect(text).toContain('happier.dev');
       expect(
         screen.findByTestId('project-deployments.environment.domains.empty'),

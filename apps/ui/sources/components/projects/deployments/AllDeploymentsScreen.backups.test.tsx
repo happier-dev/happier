@@ -199,6 +199,9 @@ describe('All deployments → Not backed up', () => {
       ]);
       expect(screen.getTextContent()).toContain('Not backed up · 2');
       expect(rowIds(screen)).toHaveLength(3);
+      // The filter sits inline in the list, one press away, never folded into the header's phone overflow (DEPLOY-REACCEPT-1113 D3).
+      const { PageHeader } = await import('@/components/ui/layout/PageHeader');
+      expect(screen.findAllByType(PageHeader).map((node) => node.props.actions ?? null)).toEqual([null]);
 
       await act(async () => {
         await screen.pressByTestIdAsync('all-deployments.notBackedUp');

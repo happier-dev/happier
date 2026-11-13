@@ -1245,6 +1245,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                 ? { lifetime: props.lifetime, controllerMachineId } : null}
               demand={props.demand}
               phone={props.phone}
+              ownMachineId={machineIds[0] ?? null}
               editing={props.domainActions ? {
                 actions: props.domainActions,
                 environmentRevision: detail.environment.revision,

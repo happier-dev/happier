@@ -86,6 +86,11 @@ export function describeMachineNativeFailureCode(code: unknown, details?: unknow
 
 type FailurePresentationOptions = Readonly<{ safeToRetry?: boolean; notAppliedMessage?: string }>;
 
+/** The Machine itself did not answer: its daemon is offline or its socket is gone. */
+export function isMachineUnreachableFailureCode(code: unknown): boolean {
+    return code === 'machine_unavailable' || code === 'machine_offline' || code === 'machine_socket_unavailable';
+}
+
 /** A refused read needs its prerequisite resolved, rather than another identical attempt. */
 export function describeActionExecutionPrerequisite(code: unknown): Readonly<{
     message: string;
@@ -141,7 +146,7 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
         const causeMessage = readFailureFallbackMessage({ code: cause.errorCode }, options);
         if (causeMessage) return causeMessage;
     }
-    if (code === 'machine_unavailable' || code === 'machine_offline' || code === 'machine_socket_unavailable') {
+    if (isMachineUnreachableFailureCode(code)) {
         return t('errors.daemonUnavailableBody');
     }
     if (code === 'upstream_error' || code === 'service_unavailable') return t('errors.serverError');

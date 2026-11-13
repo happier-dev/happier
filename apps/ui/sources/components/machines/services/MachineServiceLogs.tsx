@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { machineServiceLogReadFailureReason } from './machineServicesPresentation';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { AnsiText } from '@happier-dev/plugin-ui';
@@ -190,9 +191,7 @@ export function MachineServiceLogs(
           kind="error"
           size="line"
           title={t('machineServices.logs.error.title')}
-          reason={resolveActionExecutionErrorMessage(first.error, t('machineServices.logs.error.body', {
-            machine: machineName,
-          }), { safeToRetry: true })}
+          reason={machineServiceLogReadFailureReason(first.error, machineName)}
           diagnosticCode={first.error.code}
           action={describeActionExecutionPrerequisite(first.error.code) ? undefined : {
             label: t('common.retry'),

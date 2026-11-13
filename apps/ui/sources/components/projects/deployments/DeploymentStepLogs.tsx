@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { machineServiceLogReadFailureReason } from '@/components/machines/services/machineServicesPresentation';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { DeploymentReceiptFactsV1 } from '@happier-dev/deployments';
@@ -387,9 +388,7 @@ function StepLogBody(
           kind="error"
           size="line"
           title={t('machineServices.logs.error.title')}
-          reason={t('machineServices.logs.error.body', {
-            machine: machineName,
-          })}
+          reason={machineServiceLogReadFailureReason(first.error, machineName)}
           diagnosticCode={first.error.code}
           action={retry}
         />

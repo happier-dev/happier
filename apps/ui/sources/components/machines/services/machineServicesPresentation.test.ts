@@ -15,7 +15,10 @@ import {
   machineServiceRunFacts,
   machineServiceExpectedStop,
   machineDeploymentRoleSummary,
+  machineServiceLogReadFailureReason,
 } from './machineServicesPresentation';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { t } from '@/text';
 
 type Row = Parameters<typeof compareMachineServices>[0];
 function row(name: string, patch: Partial<Row> = {}): Row {
@@ -224,5 +227,25 @@ describe('Machine services presentation', () => {
     expect(machineDeploymentRoleSummary(environments).map(({ role, environments: serving }) =>
       ({ role, titles: serving.map(environment => environment.title) }))).toEqual([
       { role: 'controller', titles: ['Production'] }, { role: 'build', titles: ['Docs', 'CI'] }, { role: 'edge', titles: ['Docs'] }]);
+  });
+});
+
+describe('machineServiceLogReadFailureReason (DEPLOY-REACCEPT-1113 D4)', () => {
+  it('states an unreachable Machine as the cause, by name', () => {
+    for (const code of ['machine_offline', 'machine_unavailable', 'machine_socket_unavailable']) {
+      expect(machineServiceLogReadFailureReason({ code }, 'build-box'))
+        .toBe(t('machineServices.logs.error.machineNotAnswering', { machine: 'build-box' }));
+    }
+  });
+
+  it('keeps a known cause from the shared failure owner', () => {
+    const error = { code: 'machine_admin_access_required' };
+    expect(machineServiceLogReadFailureReason(error, 'build-box'))
+      .toBe(resolveActionExecutionErrorMessage(error, '', { safeToRetry: true }));
+  });
+
+  it('adds no body when the cause is unknown, so the title and Retry say it once', () => {
+    expect(machineServiceLogReadFailureReason({ code: 'read_failed' }, 'build-box')).toBeUndefined();
+    expect(machineServiceLogReadFailureReason(undefined, 'build-box')).toBeUndefined();
   });
 });

@@ -21,6 +21,7 @@ export const english = {
             saveFailed: "Couldn’t change roles",
             changed: "Roles changed somewhere else. These are the current ones.",
             sessionsOffNote: "Running sessions keep going until they stop. New ones start elsewhere.",
+            pluginParts: ({ parts }: { parts: string }) => `Includes ${parts}.`,
             sessions: { title: "Sessions", description: "Starts and hosts sessions, workflows and delegated runs." },
             broker: { title: "Credential broker", description: "Lends connected provider accounts to your other machines." },
             intake: { title: "Work intake", description: "Runs channels, webhooks and triggers that start work." },
@@ -2154,7 +2155,7 @@ export const english = {
             none: ({ service }: { service: string }) => `${service} has no logs Happier can read.`,
             reading: 'Reading the latest lines…',
             approval: 'Waiting for approval to read these logs.',
-            error: { title: 'Couldn’t read logs', body: ({ machine }: { machine: string }) => `Couldn’t read the logs from ${machine}. Try again.` },
+            error: { title: 'Couldn’t read logs', machineNotAnswering: ({ machine }: { machine: string }) => `${machine} isn’t answering` },
             remedy: {
                 redeployEnvironment: 'Redeploy the Environment to restore secret masking, then read the logs again.',
             },
