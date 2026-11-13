@@ -34,9 +34,13 @@ import {
 } from './sessionById';
 
 const runtimeFetch = vi.hoisted(() => vi.fn());
-vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: unknown[]) => runtimeFetch(...args) ,
+vi.mock('@/utils/system/runtimeFetch', () => {
+    // Named first so the getter's `this` is this object, not vi.mock's Partial<unknown> factory type.
+    const mocked = { runtimeFetch: (...args: unknown[]) => runtimeFetch(...args) ,
     get runtimeFetchManualResponse() { return this.runtimeFetch; },
-}));
+};
+    return mocked;
+});
 
 function capturedSessionHttp(request: (path: string, init: RequestInit) => Promise<Response>) {
   runtimeFetch.mockReset();
@@ -2751,7 +2755,7 @@ it('keeps identical by-ID hydration silent in a thousand-Session store', async (
   const initialState = storage.getState();
   const sessions = Array.from({ length: 1_000 }, (_, index) => createSessionFixture({
     id: `publication-scale-${index}`, serverId: 'server-a', active: false,
-    metadata: { name: `Session ${index}`, machineId: 'machine-1', path: '/fixture', homeDir: '/fixture' },
+    metadata: { name: `Session ${index}`, machineId: 'machine-1', path: '/fixture', host: 'fixture-host', homeDir: '/fixture' },
   }));
   let incoming = sessions[7]!;
   let attempts = 0;
@@ -2783,6 +2787,7 @@ it('keeps identical by-ID hydration silent in a thousand-Session store', async (
     const unchanged = { attempts, sessionPublications, rowPublications,
       retained: storage.getState().sessions[incoming.id] === baseline };
     expect(unchanged).toEqual({ attempts: 20, sessionPublications: 0, rowPublications: 0, retained: true });
+    if (!incoming.metadata) throw new Error('Session fixture must carry metadata');
     incoming = { ...incoming, updatedAt: incoming.updatedAt + 1, metadataVersion: incoming.metadataVersion + 1,
       metadata: { ...incoming.metadata, name: 'Changed title' } };
     expect((await hydrate()).ok).toBe(true);

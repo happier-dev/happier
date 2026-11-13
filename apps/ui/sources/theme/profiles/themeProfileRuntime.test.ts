@@ -448,7 +448,7 @@ describe('theme profile runtime', () => {
         const input = {
             profileId: 'ocean', resolveProfileId: () => target,
             profileMode: 'light' as const, forceAnimate: true, reduceMotion: false,
-            systemTheme: 'light' as const, platform: 'ios',
+            systemTheme: 'light' as const, platform: 'ios' as const,
             loadLocalSettings: () => currentSettings,
             saveLocalSettings: (next: LocalSettings) => { currentSettings = next; },
         };

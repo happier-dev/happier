@@ -24,7 +24,6 @@ const externalTranscriptReadAfterMock = vi.hoisted(() => vi.fn());
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -37,7 +36,10 @@ installDisconnectedServerSocketBoundary((socket) => {
     configureConnectedServerSocketBoundary(socket);
     vi.spyOn(socket, 'emit').mockReturnValue(socket);
     vi.spyOn(socket, 'timeout').mockReturnValue(socket);
-    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (_event: string, payload: SocketRpcRequestPayload) => {
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (_event, payload: unknown) => {
+        if (!payload || typeof payload !== 'object' || !('method' in payload) || !('params' in payload)) {
+            return { ok: false, error: 'Machine method unavailable', errorCode: 'METHOD_NOT_AVAILABLE' };
+        }
         if (payload.method === `machine-1:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE}`) {
             return { ok: true, result: await externalTranscriptPageMock(payload.params) };
         }

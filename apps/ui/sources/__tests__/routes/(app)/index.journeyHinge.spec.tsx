@@ -88,7 +88,9 @@ vi.mock('@/components/onboarding/preAuth/PreAuthOnboardingWizardEntry', async ()
             skipDisabled: false,
             title: 'auth',
             subtitle: null,
+            bodyOwnsHeading: false,
             footerHint: null,
+            homeContext: null,
             body: React.createElement(Text, { testID: 'route-journey-preauth-body' }, 'Pre-auth controller body'),
             goToStep: vi.fn(),
         };

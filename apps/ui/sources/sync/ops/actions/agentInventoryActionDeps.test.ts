@@ -402,7 +402,7 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
     let detail: SessionModelDetailState | undefined;
     const screen = await renderScreen(React.createElement(SessionModelDiscoveryDetail, {
       agentId: 'codex', composerOptionsInput: null,
-      discovery: () => ({ backendTarget: { kind: 'backend', backendId: 'codex' }, selectedMachineId: 'machine-1',
+      discovery: () => ({ backendTarget: { kind: 'backend' as const, backendId: 'codex' }, selectedMachineId: 'machine-1',
         capabilityServerId: serverId, cwd: '/repo', probeContext: { cacheKeySuffixParts: ['account:acct-work'],
           capabilityParams: { connectedServices } } }),
       renderDetail: next => { detail = next; return null; },
@@ -542,7 +542,7 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
       selectedBackendTargetKey: key, setBackendTarget: () => {}, modelMode: 'default', setModelMode: () => {},
       acpSessionModeId: null, setAcpSessionModeId: () => {}, sessionConfigOptionOverrides: null, setSessionConfigOptionOverrides: () => {},
       selectedMachineId: 'machine-1', capabilityServerId: serverId, projectionCurrent: true, selectedPath: '/repo',
-      readSettings: () => storage.getState().settings, selectedConnectedServices: props.binding,
+      selectedConnectedServices: props.binding,
     }), { initialProps: initialPickerProps });
     const readDetail = () => {
       const option = picker.getCurrent().agentPickerOptions?.find(option => option.id === key);

@@ -7,6 +7,7 @@ import { buildSessionListCacheEntryFromRenderable, buildSessionListRenderableFro
 import { SessionListCacheEntryV1Schema } from './warmCachePersistence';
 import { areStoredSessionsEqual } from '@/sync/store/domains/areStoredSessionsEqual';
 import { resolvePendingActivationBanner } from '@/components/sessions/pending/resolvePendingActivationBanner';
+import { presentSessionActivationFailure } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 
 const authorization = { requestId: 'pending-1', requestedAt: 200, status: 'waiting' as const };
 const failureDetails = { reason: 'spawn-rejected' as const, spawnErrorCode: 'SPAWN_VALIDATION_FAILED' as const,
@@ -31,10 +32,12 @@ describe('pending activation Session projection', () => {
             buildSessionListRenderableFromSession(failedSession)));
         const restored = buildSessionListRenderableFromCacheEntry(cacheEntry);
         expect(resolvePendingActivationBanner({ authorization: restored.pendingActivationAuthorization,
-            failureDetails: restored.pendingActivationFailureDetails, activeAt: 100, active: false,
-            machineReachable: true, canWrite: true, pendingMessages: [] })).toMatchObject({
-            kind: 'failed', titleKey: 'connectedServices.diagnostics.title.no_eligible_group_member',
-        });
+            activeAt: 100, active: false, machineReachable: true, canWrite: true, pendingMessages: [] }))
+            .toMatchObject({ kind: 'failed' });
+        // The typed cause is presented by the Session activation-failure owner, not the banner.
+        expect(restored.pendingActivationFailureDetails).toEqual(failureDetails);
+        expect(presentSessionActivationFailure(restored.pendingActivationFailureDetails))
+            .toMatchObject({ recovery: 'choose_account' });
         expect(areStoredSessionsEqual({ ...failedSession, pendingActivationFailureDetails: null }, failedSession)).toBe(false);
         expect(buildPendingChangedSessionPatch({ pendingCount: 1, pendingVersion: 3,
             pendingActivationFailureDetails: null })).toHaveProperty('pendingActivationFailureDetails', null);

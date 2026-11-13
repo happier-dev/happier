@@ -225,7 +225,7 @@ describe('plugin-management Actions in the UI host', () => {
         const administration = await renderHook(() => useAgentAdministrationCatalog({ loadProjection: false }));
         const screen = await renderScreen(React.createElement(React.Fragment, null,
             React.createElement(AgentAddModal, { onClose: () => {}, onAddedStay: onOpenDefinition,
-                params: { onCommand: () => {}, onOpenDefinition, onOpenAgent: () => {}, sourceId: COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1 } }),
+                params: { onOpenDefinition, onOpenAgent: () => {}, sourceId: COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1 } }),
             React.createElement(RegistryAgentReadProbe, { read: registryRead })));
         try {
             const readRow = () => {

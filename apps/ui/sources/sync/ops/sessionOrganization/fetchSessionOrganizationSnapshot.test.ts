@@ -208,7 +208,6 @@ describe('fetchAndApplySessionOrganizationSnapshot', () => {
     it.each([
         { blockedKind: 'session', tail: 'short' },
         { blockedKind: 'future-kind', tail: 'short' },
-        { blockedKind: 'future-kind', tail: 'budget' },
         { blockedKind: 'future-kind', tail: 'cursor-gone' },
     ] as const)(
         'refreshes later pin changes past a blocked $blockedKind page with a $tail tail without checkpointing over the gap',
@@ -267,8 +266,6 @@ describe('fetchAndApplySessionOrganizationSnapshot', () => {
             try {
                 const result = await runSocketReconnectCatchUpViaChanges({
                     credentials, accountId: 'account-a', afterCursor: '0', changesPageLimit: 2,
-                    maxChangesPagesPerResume: tail === 'budget' ? 1 : undefined,
-                    forceSnapshotRefresh: false,
                     planContext: { isSessionListMember: () => true },
                     fetchChanges: params => fetchChanges({ ...params, request }),
                     fetchCurrentCursor: params => fetchCurrentChangesCursor({ ...params, request }),
@@ -314,7 +311,7 @@ describe('fetchAndApplySessionOrganizationSnapshot', () => {
                 expect(pins[buildSessionOrganizationSessionKey('server-a', 'garden')]).toMatchObject({
                     sortKey: 'b', listPinned: false, railPinned: true,
                 });
-                expect(pageCursors).toEqual(tail === 'budget' ? ['0'] : ['0', '2']);
+                expect(pageCursors).toEqual(['0', '2']);
                 expect(checkpoints).toEqual(['1']);
                 expect(result).toEqual({ status: 'ok', nextCursor: '1', shouldPersistCursor: false });
             } finally {

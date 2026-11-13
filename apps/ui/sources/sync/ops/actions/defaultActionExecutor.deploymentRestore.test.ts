@@ -50,8 +50,8 @@ beforeEach(async () => {
         deploymentRestore: async input => {
             effects.push(input);
             return DeploymentActionOutputSchemasV1[actionId].parse(input.mode === 'prepare'
-                ? { kind: 'prepared', operationId: 'prepared-restore', evidence: { backup: input.restoreBackupId } }
-                : { kind: 'restored', verified: true, nextAction: 'none', evidence: { backup: input.restoreBackupId } });
+                ? { kind: 'prepared', operationId: 'prepared-restore', evidence: { backup: input.source } }
+                : { kind: 'restored', verified: true, nextAction: 'none', evidence: { backup: input.source } });
         },
     });
     homes.answer(serverId, `/v1/actions/${actionId}/execution-authorization`, { select: body => {
@@ -87,7 +87,7 @@ afterEach(async () => { account?.dispose(); await homes.reset(); });
 function prepareInput() {
     return DeploymentActionInputSchemasV1[actionId].parse({ mode: 'prepare', serverId,
         environmentId: detail.environment.id, machineId: 'runtime', installationId: 'installed',
-        targetLinkId: 'target', deploymentId: 'capture-receipt', restoreBackupId: 'backup', expectedRevision: 3 });
+        targetLinkId: 'target', deploymentId: 'capture-receipt', source: { kind: 'repository', snapshotId: 'backup' }, expectedRevision: 3 });
 }
 
 describe('restore press through the UI Action front door', () => {

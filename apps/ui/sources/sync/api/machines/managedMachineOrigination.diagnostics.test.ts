@@ -94,12 +94,12 @@ it('reads installed guest diagnostics through the retained Account native Inspec
     replacePluginAccountAvailabilityProjection({ scope: account.accountLifetime.scope,
         snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
     const input = { homeId, managedId: machine.id, includeGuestDiagnostics: true as const };
-    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionRequestId: 'new-recovery-review',
+    const base: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionRequestId: 'new-recovery-review',
         runtimeAccountId: accountId };
     const roles: string[] = [];
     // Native role execution and Home HTTP are external effect boundaries. The
     // reviewed child port, reconciliation and diagnostic reader stay real.
-    context.hostReviewedChild = createHostReviewedChildPortV1({ actionId, input, context,
+    const context: ActionExecutorContext = { ...base, hostReviewedChild: createHostReviewedChildPortV1({ actionId, input, context: base,
         plan: { children: readMachineProvisionerActionRolesV1(provisioner).map(({ action, role }) => ({
             action: { pluginId: provider.pluginId, localId: action }, role })) },
         execute: async body => {
@@ -132,7 +132,7 @@ it('reads installed guest diagnostics through the retained Account native Inspec
                 stdoutTruncated: false, stderrTruncated: false,
                 termination: { requestedBy: { kind: 'none' }, observed: { kind: 'exit', exitCode: 0 } },
             } };
-        } });
+        } }) };
     const result = await executeManagedMachineNativeAction({ account, actionId, input, context });
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: {
         machine: { id: machine.id, observation: { power: 'running' } },

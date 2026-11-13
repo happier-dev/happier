@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { getModelOverrideForSpawn } from './modelOverride';
 import type { Session } from '../state/storageTypes';
 import { SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol/providers/selection/v1';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 
 function buildSession(overrides: Partial<Session> = {}): Session {
     return {
@@ -31,7 +32,7 @@ function buildSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('getModelOverrideForSpawn', () => {
-    it.each([null, 'pc_work'])('omits persisted native default without losing a Provider model named default (connection=%s)', providerConnectionId => {
+    it.each([null, ProviderConnectionIdSchema.parse('pc_work')])('omits persisted native default without losing a Provider model named default (connection=%s)', providerConnectionId => {
         const selection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId, modelId: 'default' };
         const result = getModelOverrideForSpawn(buildSession({
             modelMode: 'default', modelModeUpdatedAt: 20,

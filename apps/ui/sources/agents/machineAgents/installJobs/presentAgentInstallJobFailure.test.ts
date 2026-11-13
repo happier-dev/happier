@@ -24,9 +24,9 @@ describe('agent install failure presentation', () => {
         ]) {
             expect(presentAgentInstallJobRpcFailure(new AgentInstallJobRpcError(code)).body).toBe(body);
         }
-        expect(presentAgentInstallJobFailure({ kind: 'failed', code: 'in_use', stepId: 'cli', message: null }))
+        expect(presentAgentInstallJobFailure({ kind: 'failed', code: 'in_use', stepId: 'cli', message: 'Installer step failed.' }))
             .toMatchObject({ body: 'agentInstallJob.inUseBody machineAgents.failedKept', recovery: { kind: 'retry' } });
-        expect(presentAgentInstallJobFailure({ kind: 'failed', code: 'not_managed', stepId: 'cli', message: null }))
+        expect(presentAgentInstallJobFailure({ kind: 'failed', code: 'not_managed', stepId: 'cli', message: 'Installer step failed.' }))
             .toMatchObject({ body: 'agentInstallJob.notManagedBody machineAgents.failedKept', recovery: { kind: 'chooseAgent' } });
     });
 

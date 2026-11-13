@@ -120,7 +120,7 @@ describe('Send after a person Stop', () => {
         const harness = createPort();
         harness.shouldDelegatePendingActivationToDaemon.mockResolvedValue(true);
         const ensure = vi.fn(async () => ({ type: 'error' as const,
-            errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage: 'The machine refused the session' }));
+            errorCode: 'SPAWN_VALIDATION_FAILED' as const, errorMessage: 'The machine refused the session' }));
         harness.port.ensureSessionRuntimeForPendingInput = ensure;
         expect(await submitSessionUserMessage(harness.port, { ...submitOptions(heldSession()), localId: 'queued-input',
             existingDurablePendingMessage: true, requestedAction: { v: 1, kind: 'send_now' },
@@ -187,8 +187,9 @@ describe('submitSessionUserMessage Pending action ownership', () => {
             metadata: { ...createSession().metadata!, flavor: 'claude' } });
         const harness = createPort();
         const { lifetime } = createAccountLifetime();
+        // A refused managed wake reaches the pending-input port as UNEXPECTED with the refusal as its RPC code.
         harness.port.ensureSessionRuntimeForPendingInput = async () => ({ type: 'error',
-            errorCode: 'forbidden', errorMessage: 'Automatic Session resume refused' });
+            errorCode: 'UNEXPECTED', rpcErrorCode: 'forbidden', errorMessage: 'Automatic Session resume refused' });
         const result = await submitSessionUserMessage(harness.port, {
             ...submitOptions(session), serverId: 'server-1', accountLifetime: lifetime,
             localId: 'accepted-input', existingDurablePendingMessage: true,
@@ -199,7 +200,7 @@ describe('submitSessionUserMessage Pending action ownership', () => {
             serverId: 'server-1', accountLifetime: lifetime,
         });
         expect(result).toMatchObject({ type: 'wake_failed', persistence: 'pending', localId: 'accepted-input',
-            errorCode: 'forbidden', wake: { attempted: true, state: 'failed' } });
+            errorCode: 'UNEXPECTED', wake: { attempted: true, state: 'failed' } });
         expect(harness.enqueuePendingMessage).not.toHaveBeenCalled();
         expect(harness.sendMessage).not.toHaveBeenCalled();
     });

@@ -368,7 +368,9 @@ function createJourneyPreAuthController(): OnboardingWizardController {
         skipDisabled: false,
         title: 'Relay',
         subtitle: null,
+        bodyOwnsHeading: false,
         footerHint: null,
+        homeContext: null,
         body: React.createElement('PreAuthControllerBody'),
         goToStep: vi.fn(),
     };

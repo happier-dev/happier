@@ -74,7 +74,6 @@ it.each(['inventory', 'launcher'] as const)('publishes %s catalog replies only i
         } else {
             release = launcher.subscribeLocalServiceLauncherStore(key, () => {}, {
                 snapshotClient: async () => { cacheReads++; return { ok: true, snapshot: launcherSnapshot }; },
-                inventorySnapshotClient: async () => ({ ok: true, snapshot: inventorySnapshot }),
             });
             readVersion = () => launcher.getLocalServiceLauncherState(key).updatedAt;
         }

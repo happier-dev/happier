@@ -124,13 +124,13 @@ it.each([
         snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
     const input = { homeId, managedId: machine.id,
         ...(actionId === 'machines.managed.bootstrap.retry' ? { expectedIntentRevision: 2 } : {}) };
-    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionRequestId: 'new-recovery-review',
+    const base: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionRequestId: 'new-recovery-review',
         runtimeAccountId: accountId };
     const roles: string[] = [];
     let running = false;
     // Native role execution and Home HTTP are external effect boundaries. The
     // reviewed child port, reconciliation, bootstrap and pairing recipe stay real.
-    context.hostReviewedChild = createHostReviewedChildPortV1({ actionId, input, context,
+    const context: ActionExecutorContext = { ...base, hostReviewedChild: createHostReviewedChildPortV1({ actionId, input, context: base,
         ...(actionId === 'machines.managed.inspect' ? {} : { reviewAdmitted: true as const }),
         plan: { children: readMachineProvisionerActionRolesV1(provisioner).map(({ action, role }) => ({
             action: { pluginId: provider.pluginId, localId: action }, role })) },
@@ -174,7 +174,7 @@ it.each([
                 stdoutTruncated: false, stderrTruncated: false,
                 termination: { requestedBy: { kind: 'none' }, observed: { kind: 'exit', exitCode: 0 } },
             } };
-        } });
+        } }) };
     const result = await executeManagedMachineNativeAction({ account, actionId, input, context,
         installNativePayload: async () => ({ binaryPath: '/guest/happier', installedVersion: '1.0.0' }) });
     expect(result, JSON.stringify(result)).toMatchObject(actionId === 'machines.managed.inspect'

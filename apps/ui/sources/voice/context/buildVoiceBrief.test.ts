@@ -99,7 +99,7 @@ describe('Voice brief from the mounted Inbox', () => {
         const candidates = Array.from({ length: 1000 }, (_, index) => buildSessionActivityAttention({
             session: createSessionFixture({ ...original, id: `brief-${index}`,
                 pendingBlockedCount: index < 8 ? 1 : 0,
-                metadata: { path: '/private/project', summary: { text: index === 0 ? 'Amber' : index === 1 ? 'Silver' : `Work ${index}`, updatedAt: 1 } },
+                metadata: { host: 'test-host', path: '/private/project', summary: { text: index === 0 ? 'Amber' : index === 1 ? 'Silver' : `Work ${index}`, updatedAt: 1 } },
                 viewer: { ...original.viewer!, follow: { follows: false, notificationLevel: null, includeInVoice: false },
                     attention: { needsAttention: true, reasons: [index < 8 ? 'pending_blocked' : 'failed'],
                         primary: index < 8 ? 'pending_blocked' : 'failed', presentation: 'full' } },
@@ -365,11 +365,16 @@ describe('Voice brief from the mounted Inbox', () => {
         }
     });
 
+    // Expected copy is read lazily, after the test locale is active; named readers keep the case table's inference acyclic.
+    const expectRunCommand = (): string => t('voiceMoments.briefWantsTo', { action: t('voiceMoments.briefRunCommand', { command: 'yarn test:e2e' }) });
+    const expectAccessFile = (): string => t('voiceMoments.briefWantsTo', { action: t('voice.readiness.permissionAccessFile', { path: 'src/index.ts' }) });
+    const expectContinueAction = (): string => t('voiceMoments.briefWantsTo', { action: t('voice.readiness.permissionContinueAction') });
+    const expectQuestion = (): string => 'Which branch?';
     it.each([
-        ['permission', { tool: 'Bash', arguments: { command: 'yarn test:e2e' } }, (): string => t('voiceMoments.briefWantsTo', { action: t('voiceMoments.briefRunCommand', { command: 'yarn test:e2e' }) })],
-        ['permission', { tool: 'Edit', arguments: { file_path: 'src/index.ts' } }, (): string => t('voiceMoments.briefWantsTo', { action: t('voice.readiness.permissionAccessFile', { path: 'src/index.ts' }) })],
-        ['permission', { tool: 'WebFetch', arguments: {} }, (): string => t('voiceMoments.briefWantsTo', { action: t('voice.readiness.permissionContinueAction') })],
-        ['user_action', { tool: 'AskUserQuestion', arguments: { questions: [{ question: 'Which branch?', header: 'Branch', options: [], multiSelect: false }] } }, () => 'Which branch?'],
+        ['permission', { tool: 'Bash', arguments: { command: 'yarn test:e2e' } }, expectRunCommand],
+        ['permission', { tool: 'Edit', arguments: { file_path: 'src/index.ts' } }, expectAccessFile],
+        ['permission', { tool: 'WebFetch', arguments: {} }, expectContinueAction],
+        ['user_action', { tool: 'AskUserQuestion', arguments: { questions: [{ question: 'Which branch?', header: 'Branch', options: [], multiSelect: false }] } }, expectQuestion],
     ] as const)('leads with what the %s request asks for (%#)', (kind, request, expected) => {
         const inbox = source();
         const sessionsNeedingAttention = inbox.sessionPresentation.sessionsNeedingAttention.map((entry) => entry.candidate.sessionId === 'needs'

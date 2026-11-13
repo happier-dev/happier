@@ -214,14 +214,15 @@ describe('callback root navigation readiness', () => {
       const [href, setHref] = React.useState<string | null>(null);
       const url = href ? new URL(href, 'https://app.happier.dev') : null;
       const navigation = { push: (next: Parameters<typeof resolveHref>[0]) => setHref(resolveHref(next)), replace: vi.fn(), back: vi.fn() };
-      arrive = navigation.push;
+      // A string Href resolves to itself, so arrival publishes the pushed path directly.
+      arrive = setHref;
       // The app/retained Credentials surface is already mounted. A public callback
       // mounts its real root navigator; the child layout effect runs before onReady.
       return <CallbackErrorBoundary>{url ? <BaseNavigationContainer ref={root}
         initialState={getStateFromPath(`${url.pathname}${url.search}`, config)!}>
         <WorkspaceRootStack><WorkspaceRootStack.Screen name="callback" component={Callback} /></WorkspaceRootStack>
       </BaseNavigationContainer> : <DestinationInstanceHost tabId="credentials" ref={{ kind: 'settings', params: { pageId: 'connected-services' } }}
-        pathname="/settings/connected-services" focused visible navigation={navigation} />}</CallbackErrorBoundary>;
+        pathname="/settings/connected-services" focused visible navigation={navigation}>{null}</DestinationInstanceHost>}</CallbackErrorBoundary>;
     }
     const screen = await renderScreen(<App />);
     await act(async () => { arrive(`${path}${query}`); });

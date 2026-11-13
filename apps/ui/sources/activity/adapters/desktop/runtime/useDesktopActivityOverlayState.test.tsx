@@ -54,7 +54,7 @@ describe('useDesktopActivityOverlayState', () => {
         expect(changed.frame).toBe(previous.frame);
     });
     it('keeps unchanged face identities when a changed Bot moves in the shared order', () => {
-        const face = (sessionId: string) => ({ serverId: 'home', sessionId, face: { seed: sessionId, face: null },
+        const face = (sessionId: string) => ({ serverId: 'home', accountId: 'account', sessionId, face: { seed: sessionId, face: null },
             name: sessionId, activity: 'quiet' as const, currentLine: null, meaningfulActivityAt: 1,
             live: true, agentId: null, machineId: null });
         // Same bare Session id on two Homes must remain two independent identities.

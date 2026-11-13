@@ -94,7 +94,7 @@ it('distinguishes unavailable transport from missing Guard operations across rea
         expect(await guardRpc.keepMachineGuardWorkRunningViaAction({ ...input, terminalKey: 'terminal' }))
             .toMatchObject({ ok: false, reason });
     }
-    const failureCause = { phase: 'dispatch' as const, errorClass: 'RpcError', errorCode: RPC_ERROR_CODES.FORBIDDEN, httpStatus: 403 };
+    const failureCause = { phase: 'dispatch' as const, errorClass: 'RpcError' as const, errorCode: RPC_ERROR_CODES.FORBIDDEN, httpStatus: 403 };
     network.rpc.mockRejectedValue(new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN, failureCause));
     const failure = { ok: false, reason: 'request_failed', errorCode: RPC_ERROR_CODES.FORBIDDEN, failureCause };
     expect(await guardRpc.fetchMachineGuardViewViaAction(input)).toEqual(failure);

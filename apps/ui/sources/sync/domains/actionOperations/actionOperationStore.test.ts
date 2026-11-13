@@ -183,7 +183,8 @@ describe('action operation store', () => {
         expect(selectors.selectInbox(replay.getSnapshot())).toEqual([]);
         expect(selectors.selectById(replay.getSnapshot(), operationAddress(failed.operationId))?.snapshot).toBe(failed);
         const review = operation({ operationId: 'held-review', state: 'running', observation: {
-            kind: 'review_required', code: 'action_review_required',
+            kind: 'review_required', code: 'restore_snapshot_not_confirmed',
+            snapshot: { kind: 'unknown', code: 'provider_unconfirmed' },
         } });
         merge(replay, [review]);
         replay.reconcileMachineProjection({ serverId: SERVER_ID, accountId: 'account-a', machineId: 'machine-a', snapshots: [failed],

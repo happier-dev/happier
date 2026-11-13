@@ -44,9 +44,12 @@ describe('Browser download file handoff', () => {
             accountLifetime: { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
             readState: () => state, applyDispatchResult() {},
             saveDownload: args => saveBrowserDownloadRanges({ download, fileName: args.fileName, signal: args.signal,
-                maxFrameBytes: 2, request: async event => ({ kind: 'download', downloadId: download.downloadId,
-                    name: download.name, offset: event.offset, dataBase64: encodeBase64(bytes.slice(event.offset, event.offset + event.byteLength)),
-                    eof: event.offset + event.byteLength >= bytes.length }) }),
+                maxFrameBytes: 2, request: async event => {
+                    if (event.kind !== 'download') throw new Error(`unexpected browser input ${event.kind}`);
+                    return { kind: 'download', downloadId: download.downloadId,
+                        name: download.name, offset: event.offset, dataBase64: encodeBase64(bytes.slice(event.offset, event.offset + event.byteLength)),
+                        eof: event.offset + event.byteLength >= bytes.length };
+                } }),
         } });
         // A retained host can mirror the same view while its stream is suspended.
         const releaseHidden = registerBrowserRuntimeControlAdapter({ browserSessionId: 'browser', control: {

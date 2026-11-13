@@ -394,7 +394,7 @@ afterEach(async () => {
   await connection?.dispose();
   vi.restoreAllMocks();
 });
-async function restoreAccount(account: Pick<Parameters<typeof restoreServerAccountForTest>[0], 'serverIdentityId' | 'credentials'> = {}) {
+async function restoreAccount(account: Partial<Pick<Parameters<typeof restoreServerAccountForTest>[0], 'serverIdentityId' | 'credentials'>> = {}) {
   unarchiveResponse.mockReset();
   unarchiveResponse.mockImplementation(async () => Response.json({ success: true, archivedAt: null }));
   purposeBindings = { v: 1, bindings: [] };

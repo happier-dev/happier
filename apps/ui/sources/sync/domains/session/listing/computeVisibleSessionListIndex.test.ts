@@ -74,7 +74,9 @@ describe('recording tag privacy', () => {
 
     it('keeps source and row identities and never reads tag assignments without an explicit active preference', () => {
         const source: SessionListIndexItem[] = [{ type: 'session', serverId: 's1', sessionId: 'ordinary' }];
-        const assignments = { get sessionTagIdsBySessionKey() { throw new Error('inactive privacy read organization'); },
+        const assignments = { get sessionTagIdsBySessionKey(): Readonly<Record<string, readonly string[]>> {
+            throw new Error('inactive privacy read organization');
+        },
             orderItemAddressByItemKey: {} };
         const inactive = readRecordingHiddenSessionKeys(false, { s1: ['secret'] }, assignments);
         expect(inactive.size).toBe(0);

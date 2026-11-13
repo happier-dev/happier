@@ -177,7 +177,7 @@ describe('ordinary Session refresh hydrates every personal pin surface', () => {
         const { sync } = await import('./sync');
         if (membership === 'unlisted-batch-unavailable') {
             await expect(sync.refreshSessions({ awaitSessionListHydration: true })).resolves.toBeDefined();
-            expect(storage.getState().concurrentSessionListCacheByServerId[serverId].listObservation?.phase).toBe('ready');
+            expect(storage.getState().concurrentSessionListCacheByServerId[serverId]?.listObservation?.phase).toBe('ready');
             expect(storage.getState().sessions['rail-only']).toBeUndefined();
             fullReadsAvailable = true;
             await sync.refreshSessions({ awaitSessionListHydration: true });
@@ -192,7 +192,7 @@ describe('ordinary Session refresh hydrates every personal pin surface', () => {
             expect(sync.readOrdinarySessionListFrontier()).toMatchObject({ nextCursor: 'next-page', hasNext: true });
             await sync.fetchMoreSessions();
             expect(storage.getState().sessionListRowsByServerId[serverId]['next-page']).toMatchObject({ id: 'next-page' });
-            expect(storage.getState().concurrentSessionListCacheByServerId[serverId].listObservation?.phase).toBe('ready');
+            expect(storage.getState().concurrentSessionListCacheByServerId[serverId]?.listObservation?.phase).toBe('ready');
             fullReadsAvailable = true;
             await sync.refreshSessions({ awaitSessionListHydration: true });
             for (const pin of pins) expect(storage.getState().sessions[pin.sessionId]).toMatchObject({ id: pin.sessionId });

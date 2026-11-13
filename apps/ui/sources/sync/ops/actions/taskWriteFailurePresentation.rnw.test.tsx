@@ -3,7 +3,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { expect, it, vi } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { defineUiSurface } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { TriageTaskWriteResultV1Schema } from '@happier-dev/triage-protocol/v1';
@@ -22,7 +22,7 @@ it('renders authored task refusal and recovery through the real host presenter a
     remediation: { kind: 'retry' }, details: { requestId: 'task-host-request' } });
   Object.assign(error, { actionHandlerInvocation: 'notStarted' });
   const result = TriageTaskWriteResultV1Schema.parse(triageTaskWriteInvocationFailureV1(error));
-  let fixture!: Awaited<ReturnType<typeof createPluginUiTestkit>>;
+  let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({ identity: { instanceId: 'task-real-host', mountNonce: 'refused' },
       authorPlugin: { id: 'happier.triage', version: '0.0.0' },

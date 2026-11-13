@@ -56,7 +56,8 @@ function machine(id: string, overrides: Partial<Machine> = {}): Machine {
         daemonStateVersion: 0,
         revokedAt: null,
         presenceProtocolVersion: 1,
-        operationProtocolCapabilities: { machinePresence: { protocolVersions: [1] } },
+        // Presence follows presenceProtocolVersion; capabilities only distinguish a current daemon from a legacy one.
+        operationProtocolCapabilities: { sessionMessageReply: { protocolVersions: [1] } },
         operationProtocolCapabilitiesRevision: 1,
         ...overrides,
     };

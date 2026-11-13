@@ -220,7 +220,8 @@ it.each(['admitted', 'voice-admitted', 'unreviewed', 'authored'] as const)(
                 ? { externalActionTarget: { kind: 'session' as const, sessionId: 'reviewed-template-session' } } : {}),
             // The parent's marker must never be mistaken for a child confirmation.
             presentUserConfirmation: { actionId: parent.actionId },
-            ...(mode === 'authored' ? { hostReviewedChild: { parent } as ActionExecutorContext['hostReviewedChild'] } : {}) };
+            ...(mode === 'authored' ? { hostReviewedChild: { parent,
+                invoke: async () => { throw new Error('An authored parent marker carries no child invocation'); } } } : {}) };
         const receipt = { operationId: 'setup-operation' };
         const pending = { kind: 'approval_request_created' as const, artifactId: 'setup-card', actionId: 'machines.setup.apply' as const };
         let invocationConfirmation: unknown;

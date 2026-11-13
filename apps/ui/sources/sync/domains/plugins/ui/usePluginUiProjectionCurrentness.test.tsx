@@ -741,7 +741,7 @@ describe('usePluginUiProjectionCurrentness', () => {
         const { useScopedPluginUiProjection } = await import('@/components/plugins/projection/useScopedPluginUiProjection');
         const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         const features = createRootLayoutFeaturesResponse({ features: { plugins: { enabled: true,
-            ui: { enabled: true, reactNativeBundles: { enabled: true } } } },
+            ui: { enabled: true, hostedWeb: { enabled: false }, reactNativeBundles: { enabled: true } } } },
             capabilities: { serverIdentity: { serverIdentityId } } });
         harness.answer(homeId, '/v1/features', { body: features });
         harness.answer(homeId, '/v1/features/authenticated', { body: features });

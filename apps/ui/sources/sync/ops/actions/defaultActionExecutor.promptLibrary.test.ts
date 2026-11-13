@@ -58,6 +58,7 @@ import {
     SessionMetadataInactiveModelIntentOwnerPatchV1Schema, SessionMetadataOwnerPatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema,
 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { MetadataSchema } from '@happier-dev/session-core/state';
+import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -107,7 +108,7 @@ installDisconnectedServerSocketBoundary((socket) => {
     // the fire-and-forget human-presence leave emitted during Account disposal.
     vi.spyOn(socket, 'emit').mockReturnValue(socket);
     vi.spyOn(socket, 'timeout').mockReturnValue(socket);
-    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (_event: string, request: { method: string; params: unknown }) => {
+    socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (_event, request: { method: string; params: unknown }) => {
         const separator = request.method.indexOf(':');
         const targetId = request.method.slice(0, separator);
         const method = request.method.slice(separator + 1);
@@ -234,7 +235,7 @@ function serveSession(session: Session, beforeWrite?: (input: unknown) => void, 
                     sharedMetadata: { version: row.metadataVersion }, agentState: { version: row.agentStateVersion } } };
             }
             row = { ...row, metadata: patch.sharedMetadata.ciphertext, ownerMetadata: patch.ownerMetadata,
-                displayProjectionV1: patch.displayProjectionV1,
+                displayProjectionV1: patch.displayProjectionV1 ?? undefined,
                 metadataVersion: row.metadataVersion + 1, agentState: patch.agentState.ciphertext,
                 agentStateVersion: (row.agentStateVersion ?? 0) + 1, updatedAt: row.updatedAt + 1, seq: row.seq + 1 };
             return { body: SessionMetadataTuplePatchSuccessV1Schema.parse({ success: true, metadataLayoutVersion: 1,
@@ -1382,7 +1383,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         }, { serverId, surface: 'ui' });
         expect(result).toMatchObject({ ok: true, result: { status: 'intent_updated',
             selection: { v: 2, ref: { ...ref, modelId: 'muse-spark-1.3' } } } });
-        expect(remote.readMetadata().modelSelectionIntentV2?.ref).toEqual({ ...ref, modelId: 'muse-spark-1.3' });
+        expect(SessionModelSelectionV2Schema.parse(remote.readMetadata().modelSelectionIntentV2).ref).toEqual({ ...ref, modelId: 'muse-spark-1.3' });
         expect(remote.writes.map(input => SessionTeamCredentialBindingMetadataPatchV1Schema.parse(input)))
             .toEqual([expect.objectContaining({ teamCredentialBindings: [expect.objectContaining({
                 resourceId: ref.resourceId, teamId: ref.teamId, deliveryMode: ref.deliveryMode,
@@ -1407,7 +1408,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
                 ...retainedSelection, modelId: 'muse-spark-1.3' } } : { modelId: 'muse-spark-1.3' }),
         }, { serverId, surface: 'ui' });
         expect(result).toMatchObject({ ok: false, errorCode: 'restart_required' });
-        expect(remote.readMetadata().modelSelectionIntentV2?.ref).toEqual({ ...ref, modelId: 'muse-spark-1.3' });
+        expect(SessionModelSelectionV2Schema.parse(remote.readMetadata().modelSelectionIntentV2).ref).toEqual({ ...ref, modelId: 'muse-spark-1.3' });
         expect(rpc.session).not.toHaveBeenCalled();
     });
 

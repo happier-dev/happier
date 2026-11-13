@@ -247,7 +247,7 @@ describe('snapshotToScmStatus', () => {
 describe('ScmRepositoryService.fetchSnapshotForSession', () => {
     it('delivers Session page demand without poisoning subsequent full reads', async () => {
         setScmState({ sessions: { session_1: createSessionFixture({ id: 'session_1',
-            metadata: { machineId: 'machine-a', path: '/repo' } }) },
+            metadata: { machineId: 'machine-a', path: '/repo', host: 'tester.local' } }) },
             machines: { 'machine-a': createMachineFixture({ id: 'machine-a',
                 operationProtocolCapabilities: { scmStatusSnapshotPaging: { protocolVersions: [1] } } }) } });
         const page = makeScmSnapshot({ entriesPage: { totalFiles: 60221, nextCursor: 1 } });
@@ -828,7 +828,7 @@ describe('ScmRepositoryService.fetchWorktreesEnrichment', () => {
 
 describe('ScmRepositoryService.fetchSnapshotForMachinePath', () => {
     it.each([false, true])('shares identical first-page demand only until settlement (failure: %s)', async fail => {
-        setScmState({ machines: { 'machine-a': createMachineFixture({ id: 'machine-a', metadata: { homeDir: '/Users/tester' },
+        setScmState({ machines: { 'machine-a': createMachineFixture({ id: 'machine-a',
             operationProtocolCapabilities: { scmStatusSnapshotPaging: { protocolVersions: [1] } } }) } });
         const page = makeScmSnapshot({ repo: { rootPath: '/Users/tester/repo' },
             entriesPage: { totalFiles: 60221, nextCursor: 23 } });
@@ -858,7 +858,7 @@ describe('ScmRepositoryService.fetchSnapshotForMachinePath', () => {
     });
 
     it('keeps different pages and full reads independent without retaining pages in the cache', async () => {
-        setScmState({ machines: { 'machine-a': createMachineFixture({ id: 'machine-a', metadata: { homeDir: '/Users/tester' },
+        setScmState({ machines: { 'machine-a': createMachineFixture({ id: 'machine-a',
             operationProtocolCapabilities: { scmStatusSnapshotPaging: { protocolVersions: [1] } } }) } });
         const page = makeScmSnapshot({ projectKey: '', repo: { rootPath: '/Users/tester/repo' },
             entriesPage: { totalFiles: 60221, nextCursor: 1 } });
@@ -883,7 +883,7 @@ describe('ScmRepositoryService.fetchSnapshotForMachinePath', () => {
     });
 
     it('does not retain a standalone page as a complete snapshot', async () => {
-        setScmState({ machines: { 'machine-a': createMachineFixture({ id: 'machine-a', metadata: { homeDir: '/Users/tester' },
+        setScmState({ machines: { 'machine-a': createMachineFixture({ id: 'machine-a',
             operationProtocolCapabilities: { scmStatusSnapshotPaging: { protocolVersions: [1] } } }) } });
         statusRpcMock.mockResolvedValue({ success: true, snapshot: makeScmSnapshot({ repo: { rootPath: '/Users/tester/repo' },
             entriesPage: { totalFiles: 60221, nextCursor: 1 } }) });

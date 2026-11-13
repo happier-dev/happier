@@ -61,7 +61,7 @@ let decisionReceiver: ((input: unknown) => Promise<unknown>) | null = null;
 installDisconnectedServerSocketBoundary((socket) => {
     configureConnectedServerSocketBoundary(socket);
     vi.spyOn(socket, 'timeout').mockReturnValue(socket);
-    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, payload: SocketRpcRequestPayload) => {
+    socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (event, payload: SocketRpcRequestPayload) => {
         // Sync also acknowledges subscriptions; only RPC envelopes are Action effects.
         if (event === SOCKET_RPC_EVENTS.CALL) outgoing.push(payload);
         if (event === SOCKET_RPC_EVENTS.CALL && rpcAcknowledgement instanceof Error) throw rpcAcknowledgement;
@@ -1543,7 +1543,8 @@ describe('createDefaultActionExecutor approvals', () => {
         expect(outgoing).toEqual([]);
         expect(persistedApproval(artifactId)).toMatchObject({ status: 'executed', execution: { ok: true, result: output } });
         const stored = persistedApproval(artifactId);
-        expect(stored.v === 2 && stored.executionOriginV1.externalActionExecutionAuthorization?.binding.actionId)
+        // Stored origins are read as JSON; admit the authorization through its owner schema before reading it.
+        expect(stored.v === 2 && ExternalActionExecutionAuthorizationV1Schema.parse(stored.executionOriginV1.externalActionExecutionAuthorization).binding.actionId)
             .toBe(publicProposal ? 'approval.request.create' : 'account.name.set');
     });
 
@@ -1784,7 +1785,7 @@ describe('createDefaultActionExecutor approvals', () => {
         const actionId = 'paths.list_recent';
         const input = { machineId: 'machine-exact', limit: 10 };
         const origin = original.executionOriginV1;
-        const authorization = original.executionOriginV1.externalActionExecutionAuthorization;
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(original.executionOriginV1.externalActionExecutionAuthorization);
         const target = original.executionOriginV1.target;
         const machineRequest = ApprovalRequestSchema.parse({ ...original, actionId, actionArgs: input,
             executionOriginV1: { ...origin, actionId,

@@ -27,6 +27,7 @@ describe('Session permission offered choices', () => {
         const context = { sessions: { current: { permissions: { requestDecision } } } } as ClaudePermissionContext;
         await createClaudePermissionEngine(context).canCallTool('mcp__docs__mutate', { page: 'draft' }, { requestId: 'live-mcp' });
         const request = requestDecision.mock.calls[0]![0];
+        if (!request.toolName) throw new Error('Expected the requested tool name');
         const mcpTool = { server: 'docs', tool: 'mutate', serverTitle: 'Docs', item: { serverId: 'docs-id' },
             decision: { exposed: true, approval: 'ask' as const, effectClass: 'write' as const, source: 'server_default' as const } };
         const nativeChoices = requestDecision.mock.calls[0]![1]?.buildNativeChoices?.({ mcpTool });

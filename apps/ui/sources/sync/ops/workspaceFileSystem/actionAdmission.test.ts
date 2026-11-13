@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -134,7 +136,8 @@ const operations = [
     { actionId: 'daemon.filesystem.delete' as const, run: (target: Target) => workspaceDeletePath(target, { path: 'a', recursive: false }), after: [] },
 ];
 let serverId: string;
-let target: Target;
+// Every fixture target addresses its Home explicitly, as file search requires.
+let target: Target & WorkspaceScopeBase;
 let accountScope: ServerAccountScope;
 beforeEach(async () => {
     await homes.reset(); await loadSyncSingletonForTests();
@@ -147,9 +150,10 @@ beforeEach(async () => {
         'daemon.filesystem.getDirectoryTree', 'daemon.filesystem.upload', 'daemon.filesystem.download'] as const) {
         const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://filesystem-action.test',
             serverIdentityId: 'srv_filesystem_action', accountId: 'account-a', machineId: 'machine-a', actionId, tokenEpoch: 0,
-            failure: result => result && typeof result === 'object' && 'ok' in result && result.ok === false
-                && 'errorCode' in result && typeof result.errorCode === 'string'
-                && 'error' in result && typeof result.error === 'string' ? result : null,
+            failure: result => {
+                const failure = ActionExecuteFailureSchema.safeParse(result);
+                return failure.success ? failure.data : null;
+            },
             execute: async (input, context) => {
                 expect(context.invocation).toMatchObject({ surface: 'ui', authority: 'present_user', caller: { kind: 'host' } });
                 return await receiveFilesystemRequest({ method: getActionSpec(actionId).bindings!.rpcMethod!,

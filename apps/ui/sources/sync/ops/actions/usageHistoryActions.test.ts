@@ -229,7 +229,7 @@ describe('Usage history through the shared Account Action', () => {
   });
 
   it('routes an agent history request to the Account client while its Session is not viewed', async () => {
-    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-history-agent.test', accountId: 'account-a' }] });
+    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-history-agent.test', accountId: 'account-a' }], route: () => undefined });
     const focused = home.homes.a!;
     publishAppliedActiveServerSnapshot({ serverId: focused.id, serverUrl: focused.serverUrl, generation: 0 });
     const receive = createUiClientActionReverseHandler({ serverId: focused.id, accountId: 'account-a',

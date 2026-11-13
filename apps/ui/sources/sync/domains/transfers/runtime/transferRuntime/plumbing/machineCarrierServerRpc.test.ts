@@ -38,8 +38,12 @@ let respond: (request: SocketRpcRequestPayload) => Promise<unknown>;
 installDisconnectedServerSocketBoundary(socket => {
     configureConnectedServerSocketBoundary(socket);
     vi.spyOn(socket, 'timeout').mockReturnValue(socket);
-    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, request: SocketRpcRequestPayload) => {
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload: unknown) => {
         if (event !== 'rpc-call') return { ok: true };
+        if (!payload || typeof payload !== 'object' || !('method' in payload) || typeof payload.method !== 'string') {
+            throw new Error('Malformed test RPC');
+        }
+        const request: SocketRpcRequestPayload = { method: payload.method, params: 'params' in payload ? payload.params : undefined };
         outgoing.push(request);
         return await respond(request);
     });
@@ -321,7 +325,8 @@ describe('prepared transfer Home RPC carrier', () => {
         const source = createPluginArtifactDaemonSource({ family: artifactFamily, transport: { machineId, serverId } });
         if (expectsFiles) {
             const downloaded = await source.fetch({ artifact, signal: controller.signal });
-            const file = downloaded?.get('panel.js');
+            if (!downloaded || 'artifactGraph' in downloaded) throw new Error('expected the daemon source to return a file set');
+            const file = downloaded.get('panel.js');
             expect(file?.byteLength).toBe(fileBytes.length);
             expect(Buffer.compare(Buffer.from(file!), Buffer.from(fileBytes))).toBe(0);
             expect(payload.length).toBeGreaterThan(5_000_000);

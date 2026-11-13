@@ -12,7 +12,7 @@ const session = { serverId: 'home-a', sessionId: 'session-one' };
 const query = { type: 'list', namespace: 'activity', kind: 'workflow_run.v1' } as const;
 const record = {
     id: 'record-one',
-    address: { owner: 'host', namespace: 'activity', kind: 'workflow_run.v1', localId: 'run-one' },
+    address: { owner: 'host', namespace: 'activity', kind: 'workflow_run.v1', localId: 'run-one' } as const,
     content: { t: 'plain', v: { v: 1 } },
     revision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
     createdAt: '2026-09-05T00:00:00.000Z',

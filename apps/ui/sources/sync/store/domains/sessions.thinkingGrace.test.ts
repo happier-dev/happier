@@ -90,7 +90,7 @@ describe('sessions domain: thinking grace', () => {
             serverId: 'server_1',
             credentials: { token: 'plain-account-token' },
             accountCurrentness: {
-                mode: 'plain', version: 1, signingKeyFingerprint: null,
+                mode: 'plain', signingKeyFingerprint: null,
                 contentKeyFingerprint: null, updatedAt: 1,
             },
             // The production plaintext Account adapter has no client encryption material.

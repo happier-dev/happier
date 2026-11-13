@@ -150,7 +150,7 @@ describe('seedDemoWorld and clearDemoWorld', () => {
         expect(getDemoMachineRead({ serverId, machineId, expectedAccountId: 'real-account' })).toBeNull();
         expect(getDemoMachinePresets(serverId)).toHaveLength(2);
         expect(machineResourceStore.getState({ serverId, machineId, view: 'summary' }).summary?.cpu.busyPct).toBeGreaterThan(0);
-        expect(machineGuardStore.getView({ serverId, machineId }).view?.policy.memoryGuard.enabled).toBe(true);
+        expect(machineGuardStore.getView({ serverId, machineId, expectedAccountId: null }).view?.policy.memoryGuard.enabled).toBe(true);
         expect(machineStorageStore.getState({ serverId, machineId }).summary?.volumes[0]?.freeBytes).toBeGreaterThan(0);
         expect(getDemoSavedSecretMetadata()).toMatchObject([{ name: 'Preview deploy token', capabilities: { use: false } }]);
         const binding = createDemoMachinesWidgetBinding(createMachinesWidgetPresets({ overview: 'Overview', machineHealth: 'Machine health' },

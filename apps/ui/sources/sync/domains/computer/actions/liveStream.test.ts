@@ -97,7 +97,7 @@ describe('Computer viewer source admission through the existing stream mint', ()
 
     it('keeps a source owner refusal visible without minting a grant', async () => {
         const home = await network.addHome('https://computer-stream-refusal.test', 'stream-refused-account');
-        network.setHttpResponder(request => new URL(String(request)).pathname === '/v1/features'
+        network.setHttpResponder(async request => new URL(String(request)).pathname === '/v1/features'
             ? Response.json(createRootLayoutFeaturesResponse({ features: {
                 machines: { enabled: true, liveStream: { enabled: true, directPeer: { enabled: true }, serverRouted: { enabled: true } } },
             } })) : null);

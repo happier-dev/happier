@@ -30,6 +30,6 @@ describe('describeMachineSharedOwnership', () => {
 });
 
 it('merges unresolved custodians into one shared group', () => {
-  const machines = ['a', 'b'].map(accountId => createMachineFixture({ id: accountId, isShared: true, access: { custodian: { accountId, displayName: null }, role: 'use', resourceMode: 'plain', accessState: 'ready' } }));
+  const machines = ['a', 'b'].map(accountId => createMachineFixture({ id: accountId, isShared: true, access: { custodian: { accountId, displayName: '' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } }));
   expect(buildMachineOwnershipGroups(machines).map(group => group.machines.length)).toEqual([2]);
 });

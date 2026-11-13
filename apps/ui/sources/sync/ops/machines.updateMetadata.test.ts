@@ -25,7 +25,7 @@ installDisconnectedServerSocketBoundary((socket) => {
     readySocket = socket;
     configureConnectedServerSocketBoundary(socket);
     vi.spyOn(socket, 'timeout').mockReturnValue(socket);
-    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, request: MachineUpdateMetadataRequest) => {
+    socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (event, request: MachineUpdateMetadataRequest) => {
         if (event !== 'machine-update-metadata') throw new Error('Unexpected metadata socket event: ' + event);
         sent.push(request);
         return await respond(request);

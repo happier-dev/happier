@@ -20,7 +20,9 @@ describe('listDiscussionRequesterApprovals', () => {
         // This is the stored incident shape: no top-level discussionId or requesterConfirmation,
         // and an already-classified empty list-facts header. Do not rewrite it to discover the link.
         expect(artifact.header?.approvalListFacts).toEqual({});
-        expect(JSON.parse(artifact.body!).requesterConfirmation).toBeUndefined();
+        const storedBody = artifact.body;
+        if (typeof storedBody !== 'string') throw new Error('expected the stored approval request body inline');
+        expect(JSON.parse(storedBody).requesterConfirmation).toBeUndefined();
         const approvals = listDiscussionRequesterApprovals([artifact], discussion);
         expect(approvals).toHaveLength(1);
         expect(approvals[0]).toMatchObject({ kind: 'request', subject: null,

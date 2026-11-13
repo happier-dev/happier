@@ -166,7 +166,7 @@ describe('Account KV JSON transport', () => {
         const request: ServerFetch = async (path, init) => {
             if (path.endsWith('/currentness')) return json(account.currentness);
             if (path === '/v1/kv/bulk') return json({ values: [row] });
-            const body = JSON.parse(String(init.body));
+            const body = JSON.parse(String(init?.body));
             expect(body.mutations[0].version).toBe(row.version);
             row = { ...row, value: body.mutations[0].value, version: row.version + 1 };
             return json({ success: true, results: [{ key: row.key, version: row.version }] });

@@ -6,7 +6,7 @@ import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixt
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed, recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
-import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { ConnectedAccountDaemonControlResponse, ConnectedAccountPeerOperationTransport } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 
@@ -17,7 +17,7 @@ installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary(socket => {
     configureConnectedServerSocketBoundary(socket);
     vi.spyOn(socket, 'timeout').mockReturnValue(socket);
-    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, payload: SocketRpcRequestPayload) => {
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload) => {
         if (event !== SOCKET_RPC_EVENTS.CALL) return { v: 1, ok: true, admittedSessionIds: [] };
         return { ok: true, result: await runControlMock(payload) };
     });

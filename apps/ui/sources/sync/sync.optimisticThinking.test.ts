@@ -561,7 +561,7 @@ describe('sync.sendMessage optimistic thinking', () => {
 
         await sync.sendMessage(sessionId, 'hello', undefined, undefined, {
             localId: 'local-visible-id',
-            onLocalPendingProjectionCreated: ({ localId }) => {
+            onLocalPendingProjectionCreated: ({ localId }: Readonly<{ localId: string }>) => {
                 projectionEvents.push({
                     localId,
                     pendingIds: (storage.getState().sessionPending[sessionId]?.messages ?? []).map((message) => message.id),
@@ -3616,11 +3616,11 @@ installDisconnectedServerSocketBoundary((socket) => {
         return socket;
     });
     vi.spyOn(socket, 'timeout').mockReturnValue(socket);
-    vi.spyOn(socket, 'emit').mockImplementation((event: string, ...args: unknown[]) => {
+    vi.spyOn(socket, 'emit').mockImplementation((event, ...args: unknown[]) => {
         accountTransport.emitted(event, ...args);
         return socket;
     });
-    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, payload: unknown) => {
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload: unknown) => {
         if (event === SOCKET_RPC_EVENTS.CALL) return { ok: false, error: 'RPC method not available', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE };
         if (event === SESSION_HUMAN_PRESENCE_VISIBLE_REPLACE_EVENT) {
             const visible = SessionHumanPresenceVisibleReplaceV1Schema.parse(payload);

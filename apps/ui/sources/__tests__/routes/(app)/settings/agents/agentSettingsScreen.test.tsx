@@ -1221,8 +1221,11 @@ describe('PluginAgentSettingsScreen', () => {
         expect(settingsSection.props.isDaemonTargetCurrent(daemonTarget)).toBe(false);
 
         const { AgentContributedSettingsSection } = await import('@/components/settings/agents/AgentSettingsScreen');
+        const routedAgentId = mockProviderId;
+        if (!routedAgentId) throw new Error('Expected the routed Agent id');
         const offlineScreen = await renderScreen(
             <AgentContributedSettingsSection
+                agentId={routedAgentId}
                 pluginSettingsProjection={settingsSection.props.projection}
                 targetSelection={{
                     candidates: [],

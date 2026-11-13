@@ -42,7 +42,7 @@ describe('presented workspace push through Session and Project demand', () => {
     let observation: ((reply: unknown) => void) | undefined;
     let liveSubscriptions = 0;
     let peakSubscriptions = 0;
-    let holdStatus: ((snapshot: typeof initial) => Promise<unknown>) | undefined;
+    let holdStatus: ((snapshot: unknown) => Promise<unknown>) | undefined;
     let watchMethodMissing = false;
     const statusReads = () => rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT).length;
 

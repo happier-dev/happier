@@ -11,9 +11,11 @@ describe('an incompatible start target', () => {
         await preloadTranslations('en');
         const older = SessionSpawnNewResultV1Schema.parse({ type: 'error', code: 'incompatible_target', retryable: false,
             incompatibleTarget: { reason: 'session_spawn_protocol_unavailable' } });
+        if (older.type !== 'error') throw new Error('Expected a Session refusal');
         expect(resolveSessionSpawnNewResultFailureMessage(older)).toBe(t('newSession.actionMethodUnavailable'));
         const unreachable = SessionSpawnNewResultV1Schema.parse({ type: 'error', code: 'incompatible_target', retryable: false,
             incompatibleTarget: { reason: 'daemon_rpc_unavailable' } });
+        if (unreachable.type !== 'error') throw new Error('Expected a Session refusal');
         expect(resolveSessionSpawnNewResultFailureMessage(unreachable)).toBe(t('newSession.daemonRpcUnavailableBody'));
     });
 });

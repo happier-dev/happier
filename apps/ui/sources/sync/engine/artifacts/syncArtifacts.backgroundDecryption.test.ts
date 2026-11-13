@@ -177,9 +177,9 @@ describe('background artifact decryption', () => {
             headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
         const rawError = vi.spyOn(console, 'error').mockImplementation(() => {});
         const applied: DecryptedArtifact[][] = [];
-        const attempts = vi.fn(() => fetchAndApplyArtifactsList({ credentials: { token: 't' }, encryption,
+        const attempts = vi.fn(async () => { await fetchAndApplyArtifactsList({ credentials: { token: 't' }, encryption,
             artifactDataKeys: new Map(), request: async () => Response.json([artifact]),
-            applyArtifacts: artifacts => applied.push(artifacts) }));
+            applyArtifacts: artifacts => applied.push(artifacts) }); });
         const owner = new InvalidateSync(attempts, { backoff: { minDelayMs: 0, maxDelayMs: 0, maxFailureCount: 2 } });
         try { await owner.invalidateAndAwait(); } finally {
             owner.stop();

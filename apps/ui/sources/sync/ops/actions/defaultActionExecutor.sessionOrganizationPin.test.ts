@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -120,10 +121,10 @@ describe('default UI session.organization.pin.set transport', () => {
         const serverId = connection!.home.id;
         const organizationServerId = resolveServerProfileScopeIdForIdentifier(serverId);
         const color = { kind: 'custom', hex: '#123456' } as const;
-        storage.getState().applySettingsLocal({ actionsSettingsV1: { v: 1, actions: {
+        storage.getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
             'session.organization.appearance.set': { approvalRequiredSurfaces: [] },
             'projects.organization.color.set': { approvalRequiredSurfaces: [] },
-        } } });
+        } }) });
         const value = { label: 'Personal title', future: { retained: true } };
         const record = storage.getState().upsertSessionOrganizationLabelOptimistic(organizationServerId, {
             labelKind: 'workspace', scopeKey: 'project-group', display: { t: 'plain', v: value },

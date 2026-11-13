@@ -460,7 +460,7 @@ describe('socket update handling: plaintext update-session', () => {
         const applySessions = (rows: Parameters<ReturnType<typeof storage.getState>['applySessions']>[0]) => storage.getState().applySessions(rows);
         const hydration = fetchAndApplySessionById({
             sessionId: session.id, serverId, credentials: { token: 'test-token' },
-            accountCurrentness: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 },
+            accountCurrentness: { mode: 'plain', signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 },
             encryption: { decryptEncryptionKey: async () => null, initializeSessions: async () => {}, getSessionEncryption: () => null },
             sessionDataKeys: new Map(), includeTurnsProjection: false,
             request: async () => {

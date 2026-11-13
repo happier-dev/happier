@@ -204,7 +204,7 @@ describe('shared Activity summary and pending navigation at a thousand Sessions'
             classified.clear();
             commits.reset();
             const promoted = { ...sessions['scale-42']!, metadataVersion: sessions['scale-42']!.metadataVersion + 1,
-                metadata: { ...sessions['scale-42']!.metadata, bot: { kind: 'bot' as const } } };
+                metadata: { ...sessions['scale-42']!.metadata!, bot: { kind: 'bot' as const } } };
             await act(async () => storage.setState({
                 sessions: { ...storage.getState().sessions, [promoted.id]: promoted },
                 sessionListRowsByServerId: { 'server-a': countRows({ ...storage.getState().sessionListRowsByServerId['server-a'],

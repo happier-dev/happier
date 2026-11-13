@@ -82,6 +82,7 @@ function ordinarySessionRow(origin: string, page: number) {
     const revision = origin === HOME_B_URL && page === 1 ? secondaryHeadRevision : 1;
     const session = createSessionFixture({ id: 'session-page-' + page, active: true, activeAt: sessionActiveAt,
         updatedAt: revision, metadataVersion: revision });
+    if (!session.metadata) throw new Error('Session fixture must carry metadata');
     return { ...createPlainSessionCurrentProjectionRecordFixture({
         id: session.id, active: session.active, activeAt: session.activeAt, updatedAt: session.updatedAt,
         metadataVersion: revision, metadata: { ...session.metadata, name: `Session page ${page} revision ${revision}` },

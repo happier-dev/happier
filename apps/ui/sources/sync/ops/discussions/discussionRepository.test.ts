@@ -203,7 +203,7 @@ it('receives a new message through HTTP change catch-up and the mounted reposito
         head = 2;
         const credentials = { token: 'changes-boundary-token' };
         const result = await runSocketReconnectCatchUpViaChanges({ credentials, accountId: scope.accountId,
-            afterCursor: '1', changesPageLimit: 200, forceSnapshotRefresh: false,
+            afterCursor: '1', changesPageLimit: 200,
             fetchChanges: params => fetchChanges({ ...params, request }),
             applyPlanned: planned => applyPlannedChangeActions({ planned, credentials,
                 isSessionMessagesLoaded: () => false,

@@ -35,7 +35,7 @@ const rpcFailures: unknown[] = [];
 installDisconnectedServerSocketBoundary((socket) => {
     configureConnectedServerSocketBoundary(socket);
     vi.spyOn(socket, 'timeout').mockReturnValue(socket);
-    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (_event: string, payload: SocketRpcRequestPayload) => {
+    socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (_event, payload: SocketRpcRequestPayload) => {
         outgoing.push(payload);
         if (rpcFailures.length) return rpcFailures.shift();
         if (!answers.length) throw new Error('Unexpected connected-account daemon request');

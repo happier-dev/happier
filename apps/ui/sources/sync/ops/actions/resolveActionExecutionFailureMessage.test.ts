@@ -22,7 +22,7 @@ describe('Action failure presentation', () => {
         expect(resolveActionExecutionFailureMessage(failure, 'Parent unavailable')).toBe(expected);
         expect(resolveActionExecutionErrorMessage(new HappyError(child.code, false,
             { code: child.code, details: child }), 'Parent unavailable')).toBe(expected);
-        expect(expected).not.toContain(child.launchError?.message);
+        expect(expected).not.toContain('Private native authentication diagnostic');
         expect(resolveActionExecutionFailureMessage({ ...failure, message: 'Choose another signed-in Agent.' }, 'fallback'))
             .toBe('Choose another signed-in Agent.');
     });

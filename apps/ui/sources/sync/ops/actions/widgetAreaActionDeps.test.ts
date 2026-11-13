@@ -315,7 +315,7 @@ it('opens and edits one explicitly attached owner dashboard through the recipien
         buildHeader: value => buildWidgetSurfaceArtifactHeaderV1(value),
     });
     let boundary = makeBoundary();
-    const connection = await restoreServerAccountForTest({ serverUrl: 'http://shared-dashboard.test', accountId: 'viewer', request: (...args) => boundary.request(...args) });
+    const connection = await restoreServerAccountForTest({ serverUrl: 'http://shared-dashboard.test', accountId: 'viewer', request: boundary.request });
     surface = { ...surface, serverId: connection.home.id }; boundary = makeBoundary();
     boundary.seed({ v: 1, surface, name: 'Notes', items: [{ kind: 'widget', instance: { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'project_about' }, bindings: {} } }] });
     boundary.setCallerAccess('view');

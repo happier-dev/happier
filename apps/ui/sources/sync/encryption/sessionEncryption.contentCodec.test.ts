@@ -37,7 +37,9 @@ describe('SessionMessage content codec boundary', () => {
                 decipher.setAuthTag(message.subarray(-16));
                 opened = Buffer.concat([decipher.update(message.subarray(13, -16)), decipher.final()]);
             } else {
-                opened = sodium.crypto_secretbox_open_easy(message.subarray(24), message.subarray(0, 24), key);
+                const secretbox = sodium.crypto_secretbox_open_easy(message.subarray(24), message.subarray(0, 24), key);
+                if (!secretbox) throw new Error('secretbox content did not open with the Session key');
+                opened = secretbox;
             }
             expect(opened[0]).toBe(1);
             expect(parseSerializedJsonValue(gunzipSync(opened.subarray(1)).toString('utf8'))).toEqual(record);

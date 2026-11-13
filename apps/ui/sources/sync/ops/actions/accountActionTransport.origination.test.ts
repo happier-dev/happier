@@ -16,6 +16,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { createWorkflowActionHttpTransport } from '@/dev/testkit/fixtures/workflowActionHttpTransport';
 import { createWorkflowInvocationIndexFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { WorkflowInvocationGetResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { admitPresentUserConfirmationV1 } from '../../../../../../packages/protocol/src/actions/executor/approvalReview';
@@ -227,7 +228,7 @@ describe('private Account Action origination', () => {
                 return isApprovalExecutionOriginCurrentForAccountContext({ origin,
                     accountServerId: account.serverId, accountId: account.accountId, reportStale });
             },
-        }), { confirmUiDefault: true });
+        }));
         const context = bindPresentUserActionConfirmation(actionId, input, {
             surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: account.serverId,
             serverIdentityId, runtimeAccountId: account.accountId, actionRequestId: 'reviewed-diagnostic',
@@ -319,7 +320,7 @@ describe('private Account Action origination', () => {
                 id => id === machine.id ? machine : null);
             if (!path.startsWith('/v1/actions/')) return http.fetch(url, init);
             const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
-            expect(request.envelope.input).toEqual(input);
+            expect(request.envelope.v === 1 ? request.envelope.input : null).toEqual(input);
             if (path.endsWith('/execution-authorization')) {
                 if (responseKind !== 'admitted') {
                     const refusal = projectExternalActionHttpError(responseKind === 'unauthenticated' ? 'invalid_token' : 'target_unavailable',
@@ -358,7 +359,12 @@ describe('private Account Action origination', () => {
         }
         expect(actionRequests).toBe(1);
         const { createFrontDoorActionExecute } = await import('./frontDoorRuntimeActionExecutor');
-        const frontDoor = createFrontDoorActionExecute(undefined, { workflowAction: args => execute(args) });
+        // The relay returns untyped transport output; admit it through the canonical Workflow result contracts.
+        const frontDoor = createFrontDoorActionExecute(undefined, { workflowAction: async args => {
+            const relayed = await execute(args);
+            const failure = WorkflowActionFailureV1Schema.safeParse(relayed);
+            return failure.success ? failure.data : WorkflowInvocationGetResultV1Schema.parse(relayed);
+        } });
         const frontDoorCall = () => frontDoor(actionId, input, { surface: 'ui', serverId: account.serverId,
             expectedAccountId: account.accountId, externalActionTarget: { kind: 'machine', machineId: machine.id } });
         responseKind = 'admitted';

@@ -320,7 +320,8 @@ describe('accepted managed input native prerequisite', () => {
                     await sync.submitMessage(session.id, 'Original queued input', undefined, undefined, options)
                         .catch(error => { submitError = error; });
                 } else {
-                    await port.enqueuePendingMessage(session.id, 'Original queued input', undefined, undefined, options);
+                    await port.enqueuePendingMessage(session.id, 'Original queued input', undefined, undefined,
+                        { ...options, requestedAction: { v: 1, kind: 'enqueue' } });
                 }
                 expect(admitted, JSON.stringify({ paths, error: submitError instanceof Error ? submitError.message : submitError })).toBe(true);
                 if (power !== 'admitted-context') {

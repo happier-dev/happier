@@ -51,7 +51,7 @@ installRootLayoutRouteCommonModuleMocks({
     }).module,
 });
 
-type RpcObservation = Readonly<{ origin: string; event: string; payload: unknown }>;
+type RpcObservation = Readonly<{ origin: string; event: unknown; payload: unknown }>;
 const rpcObservations: RpcObservation[] = [];
 installDisconnectedServerSocketBoundary((socket, serverUrl) => {
     const origin = new URL(serverUrl ?? 'https://api.happier.dev').origin;
@@ -60,7 +60,7 @@ installDisconnectedServerSocketBoundary((socket, serverUrl) => {
         queueMicrotask(() => { for (const listener of socket.listeners('connect')) listener(); });
         return socket;
     });
-    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, payload: unknown) => {
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload) => {
         rpcObservations.push({ origin, event, payload });
         return { ok: true, result: undefined };
     });

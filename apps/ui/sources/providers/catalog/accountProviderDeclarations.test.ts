@@ -16,7 +16,7 @@ import {
 
 describe('admitted Provider declarations', () => {
     it('requests selected custom-upstream account catalogs only for the exact Agent declarations', () => {
-        const connected = { source: 'connected' as const, profileId: 'selected-account' };
+        const connected = { source: 'connected' as const, selection: 'profile' as const, profileId: 'selected-account' };
         const selected = readAccountAgentCatalogConnectedServices('agent:happier.agent.copilot/copilot', { kind: 'account' }, {
             v: 2, bindingsByServiceId: {
                 'happier.agent.codex/openai-codex': connected,

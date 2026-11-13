@@ -120,9 +120,9 @@ describe('Account native power through the original reviewed role port', () => {
             throw new Error(`Unexpected HTTP path ${path}`);
         });
         onTestFinished(resetRuntimeFetch);
-        const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionRequestId: 'original-power',
+        const base: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionRequestId: 'original-power',
             runtimeAccountId: accountId, operationAcceptance: { operationId: 'original-operation', accept() {} }, operationOwnerUpdate: { update() {} } };
-        context.hostReviewedChild = createHostReviewedChildPortV1({ actionId: 'machines.managed.power.set', input, context,
+        const context: ActionExecutorContext = { ...base, hostReviewedChild: createHostReviewedChildPortV1({ actionId: 'machines.managed.power.set', input, context: base,
             reviewAdmitted: true, plan: { children: ['power', 'inspect'].map(role => ({ action: { pluginId: provider.pluginId, localId: role }, role })) },
             execute: async (body, _context, actionId) => {
                 expect(actionId).toBe('action.invoke');
@@ -152,7 +152,7 @@ describe('Account native power through the original reviewed role port', () => {
                 }
                 return { ok: true, result: outcome === 'unknown'
                     ? { kind: 'unknown', code: 'action_outcome_unknown' } : { kind: 'confirmed' } };
-            } });
+            } }) };
         const account = await captureLazyActionAccountContext(homeId);
         expect(account).not.toBeNull();
         if (!account) throw new Error('Expected Account');

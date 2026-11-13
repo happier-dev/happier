@@ -598,7 +598,7 @@ describe('UI machine Agent inventory Action transport', () => {
                 expect(codec?.material).toMatchObject({ type: 'dataKey', machineKey: expect.any(Uint8Array) });
                 expect(openExternalActionRequesterAccountContextV1({ ...codecTarget,
                     purpose: { kind: 'external_action' } })).toBeNull();
-                calls.push({ actionId, input: request.envelope.input, invocation: codec?.invocation });
+                calls.push({ actionId, input: request.envelope.v === 1 ? request.envelope.input : null, invocation: codec?.invocation });
                 return { body: { v: 1, actionId, requestId: request.envelope.requestId,
                     execution: actionId === 'machines.agents.install.status'
                         ? { ok: true, result: snapshot } : { ok: false, errorCode: 'job_not_found', error: 'No job' } } };

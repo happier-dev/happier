@@ -113,8 +113,8 @@ describe('CustomModal', () => {
             return React.createElement('PageInDialog', props);
         }
         const { CustomModal } = await import('./CustomModal');
-        await renderScreen(React.createElement(NavigationTitleChromeProvider, { showsTitle: true, publisher: { setTitle: vi.fn() } },
-            React.createElement(CustomModal, { config: { id: 'page-dialog', component: PageInDialog, props: {} }, onClose: vi.fn(), visible: true })));
+        await renderScreen(React.createElement(NavigationTitleChromeProvider, { showsTitle: true, publisher: { setTitle: vi.fn() },
+            children: React.createElement(CustomModal, { config: { id: 'page-dialog', type: 'custom', component: PageInDialog, props: {} }, onClose: vi.fn(), visible: true }) }));
         expect(seen.at(-1)).toEqual([false, false]);
     });
 
@@ -158,7 +158,7 @@ describe('CustomModal', () => {
             return React.createElement('SteppedChromeModal', props);
         }
         const screen = await renderCustomModal({
-            component: SteppedChromeModal,
+            type: 'custom', component: SteppedChromeModal,
             props: { label: 'x' },
             chrome: { kind: 'card', title: 'Configured title', dimensions: { size: 'md' } },
         });

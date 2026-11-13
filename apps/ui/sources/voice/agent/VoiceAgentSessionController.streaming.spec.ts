@@ -215,7 +215,7 @@ installDisconnectedServerSocketBoundary((socket) => {
   });
   // This scoped pool can retain a Socket across cases. The external ACK
   // replacement must survive per-case spy restoration, as the SDK owner does.
-  socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (event, ...args) => {
+  socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (event, ...args: unknown[]) => {
     if (event === 'rpc-call') {
       const request = args[0] as { method: string; params: unknown };
       const separator = request.method.indexOf(':');

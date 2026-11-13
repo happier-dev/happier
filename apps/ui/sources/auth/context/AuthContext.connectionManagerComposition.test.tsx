@@ -595,7 +595,8 @@ describe('AuthContext with the production connection manager', () => {
                         await waitForHomeGovernance(() => expect(presentations[index]?.config.type).toBe('confirm'));
                         const presentation = presentations[index];
                         const { describeManagedRemovalResource } = await import('@/components/settings/machines/managed/reviewManagedResourceRemoval');
-                        expect(presentation.config.type === 'confirm' && presentation.config.messageParagraphs)
+                        // `showModal` receives a non-distributive Omit of the modal union, so read the confirm field structurally.
+                        expect(presentation.config.type === 'confirm' && 'messageParagraphs' in presentation.config ? presentation.config.messageParagraphs : undefined)
                             .toContainEqual({ text: describeManagedRemovalResource(resource) });
                         expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id })).toEqual(credentials);
                         Modal.resolveConfirm(presentation.id, entrypoint !== 'delete-resource-cancel');

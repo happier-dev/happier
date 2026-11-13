@@ -163,7 +163,7 @@ describe('/session/[id]/terminal', () => {
         let context!: ReturnType<typeof useAppPaneContext>;
         let selectedScope = '';
         function RegisteredSession() {
-            selectedScope = useRegisterSessionPaneDriver('session-1', runtime.serverIdentityId, undefined, {
+            selectedScope = useRegisterSessionPaneDriver('session-1', runtime.serverIdentityId, {
                 serverId: runtime.serverIdentityId, machineId: null, pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION,
                 pluginBrowserProjection: null, phase: 'current', interactionEnabled: true, platform: 'web', accountLifetime: null,
             });

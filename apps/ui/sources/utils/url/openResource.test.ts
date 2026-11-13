@@ -2,7 +2,8 @@ import { createWorkspaceActionAdapter } from '@/components/appShell/workspace/wo
 import { createWorkspaceNavigationAdapter } from '@/components/appShell/workspace/workspaceNavigationAdapter';
 import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
 import { afterEach, describe, expect, it } from 'vitest';
-import { PLUGIN_MANIFEST } from '@happier-dev/plugins-triage/manifest';
+import { PLUGIN_MANIFEST as AUTHORED_TRIAGE_MANIFEST } from '@happier-dev/plugins-triage/manifest';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 import { projectPluginUiDeclarationEntriesV1, projectPluginReactNativeArtifactEntryV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { createPluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
@@ -12,6 +13,8 @@ import { selectPluginDestinationSurfacePlacements } from '@/sync/domains/plugins
 import { storage } from '@/sync/domains/state/storageStore';
 import { hasInAppResourceHandler, requestOpenResource, requestOpenResourceUrl } from './openResource';
 
+// Normalized like a daemon-admitted manifest, so `contributes.ui` carries its parsed defaults.
+const PLUGIN_MANIFEST = PluginManifestV2Schema.parse(AUTHORED_TRIAGE_MANIFEST);
 const initialSettings = storage.getState().settings;
 afterEach(() => storage.setState({ settings: initialSettings }));
 

@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 const APP_ROOT = resolve(import.meta.dirname, '../..');
 const AUTHORING = resolve(APP_ROOT, '../../packages/plugin-sdk/src/targetedContributionAuthoring.ts');
 
-type Authoring = typeof import('@happier-dev/plugin-sdk');
+type Authoring = typeof import('@happier-dev/plugin-sdk/contributions');
 
 /** Compiles source with this app's own Babel config as Metro does for the web build. */
 function compileForAppWebBuild(source: string, filename: string): string {

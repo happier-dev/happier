@@ -99,8 +99,10 @@ it('retains admitted plain owner continuation facts independently of public list
     expect(readSessionListRenderableOwnerMetadataView(row, { requireAdmitted: { ...admission,
         accountCurrentness: { ...accountCurrentness, updatedAt: accountCurrentness.updatedAt + 1 },
     } })).toBeNull();
+    // A settings-version bump is outside the admission identity: the full current record still admits.
+    const settingsVersionBumped = { ...accountCurrentness, version: accountCurrentness.version + 1 };
     expect(readSessionListRenderableOwnerMetadataView(row, { requireAdmitted: { ...admission,
-        accountCurrentness: { ...accountCurrentness, version: accountCurrentness.version + 1 },
+        accountCurrentness: settingsVersionBumped,
     } })).not.toBeNull();
     for (const withdrawn of [
         { ...row, metadataVersion: row.metadataVersion + 1 },
@@ -254,7 +256,7 @@ it('FLOWBUDGET restores 1000 proved display rows from persisted cache without ba
             nextCursor: end < listedRows.length ? String(end) : null, hasNext: end < listedRows.length });
     });
     const transport = countTransportRequests(boundary, (path, init) =>
-        `${init?.method ?? 'GET'} ${new URL(path, 'https://persisted-compact.test').pathname}`);
+        `${init?.method ?? 'GET'} ${new URL(path instanceof Request ? path.url : path, 'https://persisted-compact.test').pathname}`);
     const refresh = (cachedSessionListEntries?: Record<string, SessionListCacheEntryV1>, scope = { credentials, accountCurrentness }) => fetchAndApplySessionsSource({
         serverId, ...scope, encryption: null, sessionDataKeys: new Map(),
         contentDemand: 'list-projection', sessionListPageSize: 200, sessionListMaxPages: 5,

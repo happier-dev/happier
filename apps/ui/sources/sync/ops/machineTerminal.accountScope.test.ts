@@ -10,7 +10,7 @@ const outgoing: SocketRpcRequestPayload[] = [];
 installDisconnectedServerSocketBoundary((socket) => {
     configureConnectedServerSocketBoundary(socket);
     vi.spyOn(socket, 'timeout').mockReturnValue(socket);
-    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (_event: string, payload: SocketRpcRequestPayload) => {
+    socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (_event, payload: SocketRpcRequestPayload) => {
         outgoing.push(payload);
         throw new Error('Retired terminal intent reached daemon transport');
     });

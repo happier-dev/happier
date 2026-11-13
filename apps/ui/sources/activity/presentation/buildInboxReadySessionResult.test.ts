@@ -15,8 +15,9 @@ const turns: SessionTurnsProjectionV1 = { v: 1, sessionId: 'bot', updatedAt: 10,
 const candidate = buildSessionActivityAttention({ session: createSessionFixture({ id: 'bot', serverId: 'home', latestTurnId: 'first',
     latestTurnStatus: 'completed', latestReadyEventSeq: 5, latestReadyEventAt: 5,
     sessionTurns: turns }), nowMs: 20 });
+const firstAnswer: Extract<Message, { kind: 'agent-text' }> = { kind: 'agent-text', id: 'answer-1', localId: null, seq: 4, createdAt: 4, text: 'First\n  result' };
 const messages: Message[] = [
-    { kind: 'agent-text', id: 'answer-1', localId: null, seq: 4, createdAt: 4, text: 'First\n  result' },
+    firstAnswer,
     { kind: 'agent-text', id: 'answer-2', localId: null, seq: 9, createdAt: 9, text: 'Later result' },
 ];
 
@@ -24,7 +25,7 @@ describe('buildInboxReadySessionResult', () => {
     it('keeps the committed finding and its evidence links intact without treating completion as a diagnosis', () => {
         const text = 'Root cause remains unconfirmed.\n\nEvidence: [masked build log](https://example.test/log).\n\nNext: restore diagnostic access, then continue in this Session.';
         const result = buildInboxReadySessionResult({ candidate, turns,
-            messages: [{ ...messages[0]!, text }] });
+            messages: [{ ...firstAnswer, text }] });
         expect(result.output).toEqual({ text, messageRef: { kind: 'session',
             session: { serverId: 'home', sessionId: 'bot' }, messageId: 'answer-1' } });
         expect(result.completedAt).toBe(5);

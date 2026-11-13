@@ -44,7 +44,7 @@ describe('Files and Editor program bindings', () => {
     for (const command of defaultKeyboardCommands) {
       const metadata = BUILT_IN_SETTINGS_METADATA_V1.find(setting => setting.anchor === `keyboard.${command.id}`);
       // A copied sibling id would redirect shortcut edits to a different command.
-      expect(metadata?.storage, command.id).toMatchObject({
+      expect(metadata && 'storage' in metadata ? metadata.storage : undefined, command.id).toMatchObject({
         scope: 'account', kind: 'owner', owner: 'commandStorage', options: [command.id],
       });
     }

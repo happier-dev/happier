@@ -108,7 +108,7 @@ describe('useDraft retained custody', () => {
         if (!base.metadata) throw new Error('Expected Session fixture metadata');
         const metadata = seed === 'fork'
             ? (await import('@/sync/domains/sessionFork/forkInitialPromptV1')).writeForkInitialPromptV1({ metadata: base.metadata, text: 'Pending seed', createdAtMs: 1 })
-            : { ...base.metadata, sessionInitialPromptV1: { v: 1, text: 'Pending seed', mode: 'append', createdAtMs: 1 } };
+            : { ...base.metadata, sessionInitialPromptV1: { v: 1, text: 'Pending seed', mode: 'append', createdAtMs: 1 } as const };
         const target = { ...base, metadata };
         const previous = owners.createSessionFixture({ id: 'previous-session', serverId: scope.serverId });
         sessions.set(target.id, target);

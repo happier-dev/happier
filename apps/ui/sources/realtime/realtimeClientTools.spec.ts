@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import type { RenderScreenResult } from '@/dev/testkit/render/renderScreen';
-import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -12,12 +11,12 @@ import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolP
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
-const outgoing: SocketRpcRequestPayload[] = [];
+const outgoing: unknown[] = [];
 installDisconnectedServerSocketBoundary((socket) => {
   configureConnectedServerSocketBoundary(socket);
   vi.spyOn(socket, 'emit').mockReturnValue(socket);
   vi.spyOn(socket, 'timeout').mockReturnValue(socket);
-  vi.spyOn(socket, 'emitWithAck').mockImplementation(async (_event: string, payload: SocketRpcRequestPayload) => {
+  vi.spyOn(socket, 'emitWithAck').mockImplementation(async (_event, payload) => {
     outgoing.push(payload);
     return { ok: true, result: undefined };
   });

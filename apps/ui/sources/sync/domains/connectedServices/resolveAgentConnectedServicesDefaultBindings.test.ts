@@ -61,8 +61,13 @@ describe('resolveAgentConnectedServicesDefaultBindings managed defaults', () => 
     });
 
     it('preserves a deliberately saved native choice over Team defaults', () => {
-        const input = { ...base, purposeBindings: { v: 1 as const, bindings: [{ purpose, target: null }] },
-            managedSessionDefaults: teamDefaults('engineering') };
+        // The purpose catalog cannot hold a native target (its writer clears the purpose);
+        // a saved native choice reaches this reader through the released service-keyed carrier.
+        const { purposeBindings: _catalog, ...withoutCatalog } = base;
+        const input = { ...withoutCatalog, managedSessionDefaults: teamDefaults('engineering'),
+            settings: { connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {
+                reviewer: { v: 1, bindingsByServiceId: { [serviceKey]: { source: 'native' } } },
+            } } } };
         expect(resolveAgentConnectedServicesDefaultBindings(input).bindingsByServiceId[serviceKey]).toEqual({ source: 'native' });
     });
 

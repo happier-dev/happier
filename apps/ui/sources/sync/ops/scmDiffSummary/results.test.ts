@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ScmDiffSummaryResultResponseSchema, type ScmDiffSummaryResultResponse } from '@happier-dev/protocol/scm';
 import { SessionDraftRecipientValueV1Schema } from '@happier-dev/protocol/drafts/sessionDrafts';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { createScmDiffSummaryResultOperationsWithTransport as createScmDiffSummaryResultOperations } from '@/dev/testkit/harness/scmActionTransport';
 import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
 import { type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
@@ -26,7 +27,7 @@ describe('saved SCM result client operations', () => {
       if (!scopeLifetime) throw new Error('Expected the fixture Account lifetime');
       const target = { cwd: '/repo', resultId: 'saved', expectedRevision: 0, startNew: true };
       const recipient = SessionDraftRecipientValueV1Schema.parse({ mode: 'scm_diff_summary', recipient: null, target });
-      writeExistingSessionDraft({ scope, sessionId: 'session', patch: { routing: { recipient } } });
+      writeExistingSessionDraft({ scope, sessionId: 'session', patch: { routing: { recipient: StrictJsonValueSchema.parse(recipient) } } });
       let presented = true;
       let calls = 0;
       const observations: unknown[] = [];

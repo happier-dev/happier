@@ -182,7 +182,7 @@ describe('Runner activation custody retirement', () => {
         // signing authority must not turn retained creator custody into an
         // observer, nor re-enable export after the endpoint claimed the package.
         const surface = React.createElement(NewSessionLaunchSurface, {
-            children: React.createElement('View'), overlay: null, onRequestClose: () => undefined,
+            children: React.createElement('View'),
             temporaryComputerLaunch: {
                 input: {
                     client: createRunnerActivationClient(async () => Response.json(projection)),

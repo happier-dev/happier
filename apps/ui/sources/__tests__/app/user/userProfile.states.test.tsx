@@ -72,8 +72,8 @@ describe('UserProfileScreen states', () => {
         const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
         storage.setState({ isDataReady: true, sessions: {
-            private: createSessionFixture({ id: 'private', serverId, owner: 'user-1', metadata: { name: 'Secret launch', path: '/secret' } }),
-            public: createSessionFixture({ id: 'public', serverId, owner: 'user-1', metadata: { name: 'Public plan', path: '/public' } }),
+            private: createSessionFixture({ id: 'private', serverId, owner: 'user-1', metadata: { name: 'Secret launch', path: '/secret', host: 'tester.local' } }),
+            public: createSessionFixture({ id: 'public', serverId, owner: 'user-1', metadata: { name: 'Public plan', path: '/public', host: 'tester.local' } }),
         } });
         const screen = await renderScreen(<UserProfileScreen />);
         await flushHookEffects();

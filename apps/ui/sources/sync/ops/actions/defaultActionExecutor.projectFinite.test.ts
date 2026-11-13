@@ -68,7 +68,7 @@ const rpcResponses = new Map<string, unknown>();
 let workerStatusReply: (() => Promise<unknown>) | undefined;
 const configureRelay: NonNullable<Parameters<typeof installDisconnectedServerSocketBoundary>[0]> = (socket, serverUrl) => {
     socket.connected = true;
-    socket.emit = vi.fn<typeof socket.emit>((event, ...args) => {
+    socket.emit = vi.fn<typeof socket.emit>((event, ...args: unknown[]) => {
         if (event === SOCKET_RPC_EVENTS.CANCEL) cancellations.push(args[0]);
         return socket;
     });

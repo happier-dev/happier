@@ -3,6 +3,7 @@ import { act, renderHook } from '@/dev/testkit';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createRpcCallError, MACHINE_RPC_TIMEOUT_ERROR_CODE } from '@happier-dev/protocol/rpcErrors';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
@@ -52,7 +53,7 @@ beforeEach(async () => {
                     token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
                     serverId: home.id, serverIdentityId, serverHttpBaseUrl: serverUrl,
                     actionsSettingsProvider: { getActionsSettings: () => actionsSettingsV1,
-                        getAccountSettings: () => ({ actionsSettingsV1 }) },
+                        getAccountSettings: () => accountSettingsParse({ actionsSettingsV1 }) },
                     machineActionDirectTargetTransport: { machineId: context.target.machineId,
                         invoke: async (_method, request, options) => await callAdmittedFilesystemActionRpc({
                             actionId, machineId: context.target.machineId, serverId: home.id,

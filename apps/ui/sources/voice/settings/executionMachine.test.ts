@@ -17,8 +17,11 @@ import {
   projectVoiceExecutionMachineReadiness,
 } from './executionMachine';
 
-function machine(id: string, active: boolean, extra: Partial<Machine> = {}) {
-  const row = createMachineFixture({ id, active, activeAt: 0, ...extra });
+type MachineOverrides = Omit<Partial<Machine>, 'metadata'> & Readonly<{ metadata?: Partial<NonNullable<Machine['metadata']>> }>;
+function machine(id: string, active: boolean, { metadata, ...extra }: MachineOverrides = {}) {
+  // Metadata overrides layer onto the fixture's complete daemon metadata.
+  const row = createMachineFixture({ id, active, activeAt: 0, ...extra,
+    ...(metadata ? { metadata: { ...createMachineFixture().metadata!, ...metadata } } : {}) });
   publishMachineActivityForTest([row]);
   return row;
 }

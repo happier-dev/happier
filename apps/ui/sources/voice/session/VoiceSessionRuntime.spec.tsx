@@ -758,7 +758,7 @@ async function prepareMountedOpenAiRuntime(input: Readonly<{ credentialSource?: 
   const { storage } = await import('@/sync/domains/state/storage');
   await sync.resumeSync('manual');
   await waitForTestEvent(storage.subscribe, storage.getState, state => state.isDataReady
-    && state.profileScope?.serverId === environment.accountConnection.home.id && state.profileScope.accountId === 'openai-composed-account');
+    && state.profileScope?.serverId === environment.accountConnection.home.id && state.profileScope?.accountId === 'openai-composed-account');
   expect(storage.getState().profileScope).toEqual({ serverId: environment.accountConnection.home.id, accountId: 'openai-composed-account' });
   expect(storage.getState().isDataReady).toBe(true);
   await environment.configureVoice({ ...storage.getState().settings.voice,

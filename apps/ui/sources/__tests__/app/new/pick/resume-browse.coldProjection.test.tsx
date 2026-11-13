@@ -138,7 +138,7 @@ describe('ResumeBrowsePickerScreen cold projection', () => {
         boundary.homeBoundary.answer(boundary.accountScope.serverId, ACP_CATALOG_ROWS_ROUTE_V1, {
             body: { status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, definitions: [] } } },
         });
-        await act(async () => { await card.props.action.onPress(); });
+        await act(async () => { await card.props.action?.onPress(); });
         expect(screen.findByTestId('external-sessions-browse-route-loading')).not.toBeNull();
         await screen.unmount();
         await act(async () => { projection.resolve({ supported: false, reason: 'not-supported' }); });

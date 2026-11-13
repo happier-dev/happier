@@ -118,6 +118,7 @@ it.each([
         }
         if (!raw || typeof raw !== 'object') throw new Error('Missing birth');
         sessionDataEncryptionKey = typeof Reflect.get(raw, 'dataEncryptionKey') === 'string' ? Reflect.get(raw, 'dataEncryptionKey') : null;
+        if (!http.init) throw new Error('Expected the Session birth request');
         const response = boundary.createSessionFromPost('browser-bot', http.init);
         return { status: response.status, body: await response.json(), headers: Object.fromEntries(response.headers) };
     } });
@@ -158,7 +159,7 @@ it.each([
     } });
     const executor = createDefaultActionExecutor();
     let expectedDisposition: 'created' | 'rejoined' = 'created';
-    const run = () => invokeHostReviewedChildV1({ parent: { actionId: 'template.instantiate', input: projectNativeJsonValueForTransport({ creation: input }) },
+    const run = () => invokeHostReviewedChildV1({ parent: { actionId: 'template.instantiate', input: { creation: projectNativeJsonValueForTransport(input) } },
         context: { surface: 'ui', authority: 'present_user', serverId, runtimeAccountId: 'recipient', actionCaller: { kind: 'host' },
             externalActionTarget: { kind: 'machine', machineId: 'asleep-machine' } },
         child: { action: 'session.spawn_new', role: 'create_bot', input: projectNativeJsonValueForTransport(projectSessionSpawnNewActionInputV2(input)) }, admittedReview: { action: 'session.spawn_new', role: 'create_bot', surface: 'ui' },
@@ -274,6 +275,7 @@ it.each([{ mode: 'plain', requireApproval: false }, { mode: 'plain', requireAppr
             } } } });
         expect(Reflect.has(raw, 'templateRequesterAuthorization')).toBe(false);
         expectBearer(http.init);
+        if (!http.init) throw new Error('Expected the Session birth request');
         const response = boundary.createSessionFromPost('browser-template-bot', http.init);
         return { body: await response.json() };
     } });
@@ -330,7 +332,7 @@ it.each([{ mode: 'plain', requireApproval: false }, { mode: 'plain', requireAppr
         const reader = await captureLazyActionAccountContext(serverId);
         try {
             const stored = await reader.homeHubArtifactTransport.read(approval.artifactId);
-            const settled = ApprovalRequestSchema.parse(JSON.parse(stored?.body ?? 'null'));
+            const settled = ApprovalRequestSchema.parse(JSON.parse(typeof stored?.body === 'string' ? stored.body : 'null'));
             expect(settled.execution, JSON.stringify(settled.execution)).toMatchObject({ ok: true,
                 result: { type: 'success', sessionId: 'browser-template-bot', initialInput: { status: 'accepted' } } });
         } finally { reader.dispose(); }

@@ -33,9 +33,9 @@ it.skipIf(typeof globalThis.gc !== 'function')('releases superseded Inbox cohort
                 expression: 'Array.prototype', objectGroup,
             }, (error, response) => error ? reject(error) : response.result.objectId
                 ? resolve(response.result.objectId) : reject(new Error('Missing Array prototype handle'))));
-            const objects = await new Promise<string>((resolve, reject) => inspector.post('Runtime.queryObjects', {
-                prototypeObjectId: prototype, objectGroup,
-            }, (error, response) => error ? reject(error) : response.objects.objectId
+            // CDP accepts objectGroup here; @types/node omits it, so pass a named value rather than a literal.
+            const queryObjectsParams = { prototypeObjectId: prototype, objectGroup };
+            const objects = await new Promise<string>((resolve, reject) => inspector.post('Runtime.queryObjects', queryObjectsParams, (error, response) => error ? reject(error) : response.objects.objectId
                 ? resolve(response.objects.objectId) : reject(new Error('Missing Array census handle'))));
             // Only lengths leave the inspector, never array elements/content.
             // Include full/last transport pages as well as whole cohorts.

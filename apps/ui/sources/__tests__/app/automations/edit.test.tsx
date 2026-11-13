@@ -246,7 +246,7 @@ describe('retired Automation routes', () => {
         const { WorkflowEditorBody } = await import('@/components/workflows/screens/WorkflowEditorBody');
         const screen = await renderRoute(<WorkflowEditorRoute />);
         const body = (): React.ComponentProps<typeof WorkflowEditorBody> | undefined =>
-            screen.findAllByType(WorkflowEditorBody)[0]?.props;
+            screen.findAllByType<typeof WorkflowEditorBody>(WorkflowEditorBody)[0]?.props;
         await waitForHomeGovernance(() => expect(body()?.draftStore.get().name).toBe('B workflow'));
         await waitForHomeGovernance(() => expect(body()?.projectTarget).toEqual(projectB));
         await act(async () => { body()!.onChange({ ...body()!.draftStore.get(), name: 'B updated' }, 'rename', true); });

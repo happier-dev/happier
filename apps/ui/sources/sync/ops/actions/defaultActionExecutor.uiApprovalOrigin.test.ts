@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { LocalServiceStartApprovalReviewV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { ACCOUNT_ERASURE_HTTP_PATH_V1 } from '@happier-dev/protocol/auth/accountErasure';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
@@ -352,8 +353,8 @@ describe('present-user UI approval origin at the Action host', () => {
         await answerExternalActionAccountForHome(harness, serverId, { machineId, actionId, tokenEpoch: 0,
             requesterInvocation: 'optional',
             failure: result => {
-                if (typeof result !== 'object' || result === null || !('ok' in result) || result.ok !== false) return null;
-                return result as { errorCode: string; error: string; details?: unknown };
+                const failure = ActionExecuteFailureSchema.safeParse(result);
+                return failure.success ? failure.data : null;
             },
             execute: async (received, context) => {
                 const invocation = context.invocation;

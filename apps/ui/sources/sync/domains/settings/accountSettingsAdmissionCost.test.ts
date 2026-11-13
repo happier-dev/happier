@@ -16,7 +16,7 @@ async function countPolicyProjections(run: () => void | Promise<void>): Promise<
     const descriptors = Object.getOwnPropertyDescriptors;
     let count = 0;
     const observer = vi.spyOn(Object, 'getOwnPropertyDescriptors').mockImplementation(value => {
-        if (Object.hasOwn(value, 'pluginId') && Object.hasOwn(value, 'localId')) count++;
+        if (typeof value === 'object' && value !== null && Object.hasOwn(value, 'pluginId') && Object.hasOwn(value, 'localId')) count++;
         return descriptors(value);
     });
     try { await run(); } finally { observer.mockRestore(); }

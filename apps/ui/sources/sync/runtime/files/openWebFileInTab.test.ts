@@ -9,7 +9,10 @@ let next = 0;
 function stubBrowser(openResults: ReadonlyArray<'tab' | 'blocked'>) {
   const tab = { opener: {} as unknown };
   const results = [...openResults];
-  const open = vi.fn(() => (results.shift() === 'tab' ? tab : null));
+  const open = vi.fn((url: string) => {
+    void url;
+    return results.shift() === 'tab' ? tab : null;
+  });
   const createObjectURL = vi.fn((blob: Blob) => {
     void blob;
     return `blob:happier/${++next}`;

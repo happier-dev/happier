@@ -72,7 +72,10 @@ it('carries a linked repair journey through proposal, command evidence, redeploy
             }] };
             if (localId === 'sessions/link-entry-v1') {
                 const link = TriageLinkEntryToSessionInputV1Schema.parse(input);
-                return { v: 1, status: (await relations.write({ ...link, linked: true })).status };
+                // The Action's one-Session target is resolved by the host before the plugin writes the relation.
+                const { sessionId } = link;
+                if (typeof sessionId !== 'string') throw new Error('Expected one resolved Session target');
+                return { v: 1, status: (await relations.write({ ...link, sessionId, linked: true })).status };
             }
             if (id === 'deployments.receipts.get') return { ok: true, deployment: { ...receipt,
                 id: subject.deploymentId, environmentId: subject.environmentId,
@@ -282,7 +285,9 @@ it('carries a linked repair journey through proposal, command evidence, redeploy
         expect(rows[0]?.links[0]).toMatchObject({ kind: 'operation' });
         expect(projectOperationsRunOutcome({ subject, finding: result.finding, produced: result.produced, subjectReceipt: receipt,
             healthServerId: 'home', health: { environmentId: receipt.environmentId, status: 'ready', members: [],
-                aggregate: { environmentId: receipt.environmentId, targetLinkId: receipt.targetLinkId, status: 'up', n: 1, down: 0, degraded: 0 } } }).recovery)
+                aggregate: { v: 1, environmentId: receipt.environmentId, targetLinkId: receipt.targetLinkId, protection: 'nonProduction',
+                    status: 'up', n: 1, down: 0, degraded: 0, unknown: 0, members: [], affectedMachineIds: [],
+                    edgeUnreachable: false, authoritativeRecovery: false } } }).recovery)
             .toMatchObject({ kind: 'observed', health: { status: 'up' } });
         expect(hook.getCurrent()?.result.preview).toMatchObject({ text: report.text });
         const produced = hook.getCurrent()?.produced;

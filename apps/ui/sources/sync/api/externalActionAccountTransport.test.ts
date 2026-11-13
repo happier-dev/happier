@@ -216,7 +216,7 @@ describe('captured Account Action response decoding', () => {
                 machineId: row.id, installationId: row.installationId,
                 custodianAccountId: row.access.custodian.accountId, accountEncryptionMode: 'plain',
                 machineRuntimeDemand: 'required',
-                ...(sync ? { workspaceSyncAdmission: { relationshipId: sync.relationshipId ?? deriveWorkspaceSyncRelationshipId(request.envelope.requestId),
+                ...(sync ? { workspaceSyncAdmission: { relationshipId: sync.relationshipId ?? deriveWorkspaceSyncRelationshipId(binding.requestId),
                     sourceWorkspaceRefId: sync.sourceWorkspaceRefId,
                     source: { actorAccountId: 'owner', custodianAccountId: row.access.custodian.accountId,
                         machineId: sync.sourceMachineId, installationId: row.installationId, role: 'use', encryptionMode: 'plain' } } } : {}),
@@ -388,8 +388,7 @@ describe('captured Account Action response decoding', () => {
         // uses the original-Account HTTP Action. Both stop at their real network edge.
         const socketBoundary = installDisconnectedServerSocketBoundary(socket => {
             configureConnectedServerSocketBoundary(socket);
-            socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (...emission) => {
-                const [event, payload] = emission;
+            socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (event, payload) => {
                 if (event !== SOCKET_RPC_EVENTS.CALL || !payload || typeof payload !== 'object'
                     || !('method' in payload) || payload.method !== `${input.machineId}:${actionId}`
                     || !('params' in payload)) throw new Error('Unexpected Services list Socket.IO request');

@@ -475,7 +475,6 @@ describe('apiSocket inbound machine-scoped reverse RPC (RU2 G1)', () => {
             navigationGeneration: 2,
             captureRequestId: 'capture_1',
             outputPath: '/tmp/recordings/rec.capture_1.native-view.png',
-            maxBytes: 16_000_000,
         };
         const requestHandler = getRegisteredHandler(socket, SOCKET_RPC_EVENTS.REQUEST)!;
         const ack = await invokeMachineRpc(requestHandler, prefixed, request);

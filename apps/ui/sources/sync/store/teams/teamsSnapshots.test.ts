@@ -121,6 +121,7 @@ describe('teamsSnapshots', () => {
             mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered',
             sessionUsePolicy: 'personal_allowed', providerModels: [], connectedServiceSelections: [],
             sourcePresentation: { kind: 'connected_service', service: { pluginId: 'happier.agent.claude', localId: 'anthropic' } },
+            sourceOwnerDisplayName: null,
         }));
         const publish = (rows: readonly TeamCredentialResourceCatalogEntryV1[], observedAt: number) =>
             applyTeamCredentialResourceCatalog({ scope: scopeA, address: groupAddressA, resources: rows, observedAt });
@@ -284,6 +285,7 @@ describe('teamsSnapshots', () => {
                 kind: 'connected_service',
                 service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
             },
+            sourceOwnerDisplayName: null,
         };
         const resource = TeamCredentialResourceSummaryV1Schema.parse({
             id: 'resource-1', teamId: 'team_1', custodianAccountId: 'owner',

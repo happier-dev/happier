@@ -37,7 +37,7 @@ it('shares one persisted settings read across a Home candidate batch and observe
     const settledRenders = renders;
     for (let version = 2; version <= 102; version++) {
         await act(async () => saveAccountSettings(scope, {
-            ...settingsDefaults, uiFontScale: version % 2 ? 1 : 1.1,
+            ...settingsDefaults, useProfiles: version % 2 === 1,
         }, version));
     }
     expect(renders).toBe(settledRenders);

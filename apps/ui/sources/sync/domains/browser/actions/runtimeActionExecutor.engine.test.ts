@@ -29,7 +29,7 @@ describe('portable Browser engine choice', () => {
         const context = { surface, authority: 'account_automation', bypassApprovals: true,
             defaultSessionId: 'machine-session', externalActionTarget: { kind: 'machine', machineId: 'machine' },
             ...(surface === 'plugin' ? { actionCaller: { kind: 'plugin', pluginId: 'com.acme.browser',
-                contributionLocalId: 'engine-choice', sourceCustody: { kind: 'development', registeredRootId: 'browser-fixture' } } } : {}),
+                contributionLocalId: 'engine-choice', sourceCustody: { kind: 'development', registeredRootId: 'browser-fixture' } } } as const : {}),
         } as const;
         const admitted = await execute.execute('browser.view.open', { ...command, engineOverride: 'managed' }, context);
         expect(admitted, JSON.stringify(admitted))

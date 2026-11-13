@@ -43,7 +43,7 @@ it('keeps access refusal and transport failure distinct from a missing predecess
 });
 
 it('carries the typed cause through Action reads and direct parked watches', async () => {
-    const failureCause = { phase: 'dispatch' as const, errorClass: 'RpcError', errorCode: RPC_ERROR_CODES.FORBIDDEN, httpStatus: 403 };
+    const failureCause = { phase: 'dispatch' as const, errorClass: 'RpcError' as const, errorCode: RPC_ERROR_CODES.FORBIDDEN, httpStatus: 403 };
     network.execute.mockRejectedValue(new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN, failureCause));
     const expected = { ok: false, reason: 'request_failed', errorCode: RPC_ERROR_CODES.FORBIDDEN, failureCause };
     expect(await fetchMachineProcessesViaMachineRpc(key)).toEqual(expected);

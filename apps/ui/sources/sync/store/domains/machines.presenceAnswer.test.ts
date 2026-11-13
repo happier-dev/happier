@@ -100,8 +100,8 @@ it('publishes an answered Machine before content replacement reaches presence re
     expect(observations).not.toContain('unknown');
     expect(source.getSnapshot()).toBe('reachable');
     expect(activityPublications).toBe(0);
-    expect(resolveMachineReachability(scope, storage.getState().machinePresenceById[machine.id]!, Date.now())).toBe('reachable');
-    expect(resolveMachineReachability(scope, storage.getState().machinePresenceByServerId[home]![machine.id]!, Date.now())).toBe('reachable');
+    expect(resolveMachineReachability(scope, { ...storage.getState().machinePresenceById[machine.id]!, id: machine.id }, Date.now())).toBe('reachable');
+    expect(resolveMachineReachability(scope, { ...storage.getState().machinePresenceByServerId[home]![machine.id]!, id: machine.id }, Date.now())).toBe('reachable');
 
     storage.getState().applyMachineActivityUpdates([
       { id: machine.id, active: false, activeAt: machine.activeAt },

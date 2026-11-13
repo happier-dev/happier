@@ -200,7 +200,7 @@ describe('Session hydration publication', () => {
         const hydration = Promise.all(ids.map(id => fetchAndApplySessionById({
             serverId, sessionId: id, includeTurnsProjection: false, accessProjectionVersion: 1,
             credentials, readTransport,
-            accountCurrentness: { mode: 'plain', version: 1, updatedAt: 1,
+            accountCurrentness: { mode: 'plain', updatedAt: 1,
                 signingKeyFingerprint: null, contentKeyFingerprint: null },
             encryption: getScopedSessionByIdEncryption(null), sessionDataKeys: new Map(),
             applySessions: storage.getState().applySessions,

@@ -58,7 +58,10 @@ it('composes one exact failed receipt through the public Action, chosen Agent an
             }] };
             if (localId === 'sessions/link-entry-v1') {
                 const link = TriageLinkEntryToSessionInputV1Schema.parse(input);
-                return { v: 1, status: (await relations.write({ ...link, linked: true })).status };
+                // The Action's one-Session target is resolved by the host before the plugin writes the relation.
+                const { sessionId } = link;
+                if (typeof sessionId !== 'string') throw new Error('Expected one resolved Session target');
+                return { v: 1, status: (await relations.write({ ...link, sessionId, linked: true })).status };
             }
             if (id === 'deployments.receipts.get') {
                 reads.push({ id, input });

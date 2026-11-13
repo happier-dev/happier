@@ -157,7 +157,7 @@ describe('RegistrySourcesView through real registry Actions', () => {
             return Object.assign((...invocation: Parameters<typeof execute>) => {
                 if (invocation[0] === 'registries.sources.list' || invocation[0] === 'registries.items.list') reads.push(invocation[0]);
                 return execute(...invocation);
-            }, { prepare: execute.prepare });
+            }, { prepare: execute.prepare, confirmed: execute.confirmed });
         });
         try {
             const view = (enabled: boolean) => <RegistrySourcesView kind="skill" testID="registries" enabled={enabled}

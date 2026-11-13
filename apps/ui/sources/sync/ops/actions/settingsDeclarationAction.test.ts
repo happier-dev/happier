@@ -101,7 +101,7 @@ import { createAtmosphereSettingServices } from './atmosphereSettingServices';
 import { ProjectAccountRowMutationRequestV1Schema, type ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import * as systemTaskRuntimeBoundary from '@/components/systemTasks/systemTasksRuntime';
 import { createManualSystemTaskRunner } from '@/dev/testkit/harness/manualSystemTaskRunner';
-import { createDefaultCollectionSpaceV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
+import { CollectionSpacesV1Schema, createDefaultCollectionSpaceV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { readCollectionSpaceId, selectCollectionSpace } from '@/sync/domains/session/listing/sessionListSpaces';
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
@@ -896,7 +896,7 @@ describe('Collection space settings declarations', () => {
     it.each(['spaces.enabled', 'session.list.spacesEnabled', 'workflow.list.spacesEnabled', 'discussion.list.spacesEnabled'])(
         'shares the default-on Account preference through %s without touching another Account or the catalog', async anchor => {
             const space = { ...createDefaultCollectionSpaceV1('sessionWork'), id: 'saved', name: 'Saved' };
-            const owner = createOwner(undefined, true, true, applySettings(settingsDefaults, { collectionSpacesV1: { v: 1, spaces: [space] } }));
+            const owner = createOwner(undefined, true, true, applySettings(settingsDefaults, { collectionSpacesV1: CollectionSpacesV1Schema.parse({ v: 1, spaces: [space] }) }));
             const peer = createOwner(undefined, true, true, settingsDefaults);
             const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
             const context = { surface: 'ui', authority: 'present_user' } as const;
@@ -913,7 +913,7 @@ describe('Collection space settings declarations', () => {
     it('honors Off, Ask and Allowed for deletion, restores its default approval and keeps reset safe', async () => {
         const space = { ...createDefaultCollectionSpaceV1('sessionWork'), id: 'saved', name: 'Saved' };
         const owner = createOwner(undefined, false, true, applySettings(settingsDefaults, {
-            collectionSpacesV1: { v: 1, spaces: [space] },
+            collectionSpacesV1: CollectionSpacesV1Schema.parse({ v: 1, spaces: [space] }),
         }), undefined, undefined, undefined, undefined, undefined, {});
         const requests = new Map<string, ApprovalRequest>();
         const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1, {
@@ -1019,7 +1019,7 @@ describe('Collection space settings declarations', () => {
         const session = { ...createDefaultCollectionSpaceV1('sessionWork'), id: 'sessions' };
         const workflow = { ...createDefaultCollectionSpaceV1('workflow'), id: 'flows' };
         const owner = createOwner(undefined, false, true, applySettings(settingsDefaults, {
-            collectionSpacesV1: { v: 1, spaces: [session, workflow] },
+            collectionSpacesV1: CollectionSpacesV1Schema.parse({ v: 1, spaces: [session, workflow] }),
         }), undefined, undefined, undefined, undefined, undefined, {});
         const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
         const context = { surface: 'agent', authority: 'account_automation' } as const;
@@ -1961,8 +1961,9 @@ describe('navigation placement Settings Actions', () => {
         expect(await executor.execute('settings.set', { anchor, value }, context))
             .toMatchObject({ ok: true, result: { anchor, value } });
         expect(local().navigationSurfacePlacementsV1).toEqual(value);
-        expect(local().sessionCockpitBarSurfaceIds).toBeNull();
-        expect(local().compactAppDestinationPreferencesV1).toEqual({ orderedDestinationIds: [], hiddenDestinationIds: [] });
+        // Retired placement preferences are never revived by a current write.
+        expect(local()).not.toHaveProperty('sessionCockpitBarSurfaceIds');
+        expect(local()).not.toHaveProperty('compactAppDestinationPreferencesV1');
         const appRail = local().navigationSurfacePlacementsV1.appRail;
         const composerPatch = { composer: { orderedIds: ['goal', 'permission'], placements: { goal: 'hidden', permission: 'hidden' } } };
         expect(await executor.execute('settings.set', { anchor, value: composerPatch }, context))

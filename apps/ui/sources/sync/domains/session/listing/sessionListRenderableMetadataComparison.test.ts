@@ -20,7 +20,7 @@ const canonicalExternalSessionLink = {
 
 describe('sessionListRenderableMetadataComparison', () => {
     it('retains external unread inputs through compact metadata reconciliation', () => {
-        const metadata = { path: '/repo', externalSessionV1: canonicalExternalSessionLink,
+        const metadata = { path: '/repo', host: 'host', externalSessionV1: canonicalExternalSessionLink,
             externalSessionAttentionV1: { v: 1 as const, observedProgressToken: '20:msg-2',
                 viewedProgressToken: '10:msg-1', observedAtMs: 20, viewedAtMs: 10 } };
         const unread = buildSessionListRenderableMetadataComparison(metadata);

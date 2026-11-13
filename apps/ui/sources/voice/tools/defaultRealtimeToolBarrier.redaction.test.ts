@@ -104,7 +104,7 @@ describe('realtime provider output redaction', () => {
       secretInputPaths: ['credential'], sourceCustody: { kind: 'development', registeredRootId: 'root' },
       policyFingerprint: 'a'.repeat(64), subjectFingerprint: 'b'.repeat(64),
     });
-    const output = getActionSpec('approval.request.get')!.outputSchema.parse({
+    const output = getActionSpec('approval.request.get')!.outputSchema!.parse({
       artifactId: 'approval', request: projectApprovalRequestForPublicRead(request),
       queryPlan: { kind: 'approval_artifact_id_lookup', backingStore: 'ArtifactStore',
         boundedBy: 'approval artifact id', hydratedTranscripts: false },
