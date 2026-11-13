@@ -23,7 +23,7 @@ import type { RpcLocalActionContext } from '@/api/rpc/types';
 import { createInstalledFilesystemMachineFixture } from '@/daemon/testkit/installedFilesystemMachineFixture';
 import { createAgentIsolationMemberPreparationBoundary, runAgentIsolationMemberReadinessBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
 import { buildAgentIsolationProvisioningSteps, deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
-import { writeAgentIsolationMemberBinding } from '@/daemon/agentIsolation/memberBindings';
+import { readAgentIsolationMemberBindingForAccount, writeAgentIsolationMemberBinding } from '@/daemon/agentIsolation/memberBindings';
 import { AGENT_LAUNCH_TERMINAL_ACCEPTED, AGENT_LAUNCH_TERMINAL_READY, readAgentLaunchFrame, type AgentLaunchPayload } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { createInstalledProjectFiniteRuntime } from '@/daemon/startup/createInstalledProjectFiniteRuntime';
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
@@ -173,7 +173,7 @@ class NativePty implements PtyProcess {
   waitForSettlement() { return this.settled; }
 }
 
-async function fixture(options: Readonly<{ finite?: true; setup?: true; nativePackageScript?: true; requesterAsk?: true; ownerAgent?: true; accountId?: 'member-a' | 'requester'; isolationEnabled?: boolean; legacy?: true; acceptedWorkspace?: false }> = {}) {
+async function fixture(options: Readonly<{ cold?: true; finite?: true; setup?: true; nativePackageScript?: true; requesterAsk?: true; ownerAgent?: true; accountId?: 'member-a' | 'requester'; isolationEnabled?: boolean; legacy?: true; acceptedWorkspace?: false }> = {}) {
   const accountId = options.accountId ?? 'member-a';
   const isolationEnabled = options.isolationEnabled ?? true;
   const actionId = options.finite ? 'projects.script.run' : 'machines.terminal.open';
@@ -226,7 +226,7 @@ async function fixture(options: Readonly<{ finite?: true; setup?: true; nativePa
   const member = deriveAgentIsolationMemberIdentity(selected);
   preparation = createAgentIsolationMemberPreparationBoundary({ activeServerDir: configuration.activeServerDir,
     requesterIdentity: selected, custodianAccountId: 'requester', encryptionMode: 'plain', uid: 2401 });
-  if (!options.ownerAgent) for (const step of buildAgentIsolationProvisioningSteps({ requesterIdentity: selected, daemonUsername: 'happier', daemonPrimaryGroup: 'happier',
+  if (!options.ownerAgent && !options.cold) for (const step of buildAgentIsolationProvisioningSteps({ requesterIdentity: selected, daemonUsername: 'happier', daemonPrimaryGroup: 'happier',
     binaryPath: agentIsolation.managedHappierBinaryPath })) preparation.installed.add(step.id);
   const backing = join(f.directory, 'native-home'), workspaceBacking = join(f.directory, 'native-workspace');
   await mkdir(backing); await mkdir(workspaceBacking);
@@ -268,7 +268,7 @@ child.on('close', code => { process.exitCode = code ?? 1; });
     }
   }
   nativeOs.home = { path: member.home, workspaceRoot: member.workspaceRoot, backing, workspaceBacking, uid: 2401 };
-  if (!options.ownerAgent) await writeAgentIsolationMemberBinding(configuration.activeServerDir, { ...member, agentUid: 2401, agentGid: 2401 });
+  if (!options.ownerAgent && !options.cold) await writeAgentIsolationMemberBinding(configuration.activeServerDir, { ...member, agentUid: 2401, agentGid: 2401 });
   // Open's canonical Account acceptance assigns the Project anchor; an
   // unenriched legacy Workspace row does not model a newly opened Project.
   const accepted = materializeWorkspaceRefForMachineRoot([], { serverId: f.homeServerIdentityId,
@@ -451,6 +451,32 @@ describe.skipIf(process.platform !== 'linux')('installed host-composed member te
     await expect(f.invokeFinite()).resolves.toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
     expect(f.processes).toEqual([]);
     await expect(access(join(f.workspaceBacking, 'finite-result.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it.each([RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART])('prepares a cold member only at deliberate Shell admission through %s', async method => {
+    const f = await fixture({ cold: true, acceptedWorkspace: false });
+    const listed = await f.invokeInstalledTerminal(RPC_METHODS.DAEMON_TERMINAL_LIST, { machineShell: true });
+    expect(listed).toMatchObject({ ok: true, machineShell: { ok: true, cwd: f.member.workspaceRoot, preparation: 'member_not_prepared' } });
+    expect(await readAgentIsolationMemberBindingForAccount({ activeServerDir: configuration.activeServerDir,
+      homeServerIdentityId: f.member.homeServerIdentityId, ...f.member.requester }, f.accountId)).toBeNull();
+    const opened = await f.invokeInstalledTerminal(method, { terminalKey: 'cold-machine-shell' });
+    expect(opened).toMatchObject({ ok: true, terminalId: expect.any(String) });
+    expect(await readAgentIsolationMemberBindingForAccount({ activeServerDir: configuration.activeServerDir,
+      homeServerIdentityId: f.member.homeServerIdentityId, ...f.member.requester }, f.accountId)).toMatchObject({ uid: 2401 });
+    expect(f.processes[0]?.frames[0]?.cwd).toBe(f.member.workspaceRoot);
+    expect(await f.invokeInstalledTerminal(RPC_METHODS.DAEMON_TERMINAL_LIST, { machineShell: true })).toMatchObject({ ok: true, machineShell: { ok: true, cwd: f.member.workspaceRoot } });
+  });
+
+  it.each(['corrupt', 'foreign'] as const)('refuses a %s member binding through Shell availability and Open', async kind => {
+    const f = await fixture();
+    const path = join(configuration.activeServerDir, 'agent-isolation', 'members', `${f.member.digest}.json`);
+    const binding = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+    await writeFile(path, kind === 'corrupt' ? '{' : JSON.stringify({ ...binding, accountId: 'foreign-account' }));
+    expect(await f.invokeInstalledTerminal(RPC_METHODS.DAEMON_TERMINAL_LIST, { machineShell: true }))
+      .toMatchObject({ ok: true, machineShell: { ok: false } });
+    expect(await f.invokeInstalledTerminal(RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'invalid-binding' }))
+      .toMatchObject({ ok: false });
+    expect(f.processes).toEqual([]);
   });
 
   it.each([false, true])('offers a requester-rooted Machine shell and admits isolated Use without exposing another Account terminal (Agent=%s)', async agent => {

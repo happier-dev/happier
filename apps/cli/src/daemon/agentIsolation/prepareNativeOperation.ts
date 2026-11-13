@@ -1,7 +1,7 @@
 import { execFileWithDeadline } from '@happier-dev/cli-common/process';
 import { encodeAgentLaunchFrame } from './agentLaunchFrame';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import type { AgentIsolationMemberRequester, AgentIsolationDaemonObservation } from './provisioning';
+import { deriveAgentIsolationMemberIdentity, type AgentIsolationMemberRequester, type AgentIsolationDaemonObservation } from './provisioning';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { prepareRequesterOperationMaterial } from '@/daemon/connectedServices/purposeBindings/requesterOperationMaterial';
@@ -20,6 +20,22 @@ export type PreparedRequesterNativeIdentity = Readonly<{
   { kind: 'member'; identity: AgentIsolationMemberNativeIdentity; daemonObservation?: AgentIsolationDaemonObservation | null }
   | { kind: 'sharedAgent'; identity: Pick<AgentIsolationMemberNativeIdentity, 'agentUid' | 'agentGid' | 'home'> }
 )>;
+
+/** Read-only presentation of the native owner's deterministic directories.
+ * Only an absent binding is startable; corrupt or foreign identities still fail. */
+export async function readAgentIsolationMemberDirectories(machine: HostAgentIsolationLaunchContext,
+  input: Parameters<NonNullable<HostAgentIsolationLaunchContext['readMember']>>[0]
+): Promise<Readonly<{ home: string; workspaceRoot: string; preparation?: 'member_not_prepared' }>> {
+  if (!machine.readMember) throw new Error('Member identity reader is unavailable');
+  try {
+    return (await machine.readMember(input)).identity;
+  } catch (error) {
+    input.signal?.throwIfAborted();
+    if (!(error instanceof PluginError) || error.code !== 'member_not_prepared' || !machine.prepareMember) throw error;
+    const identity = deriveAgentIsolationMemberIdentity(input.requesterIdentity);
+    return { home: identity.home, workspaceRoot: identity.workspaceRoot, preparation: 'member_not_prepared' };
+  }
+}
 
 /** Deliberate admission uses the incumbent member provisioner on a cold or
  * broken binding. Read-only inventory never calls this preparation entry. */

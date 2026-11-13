@@ -207,6 +207,22 @@ describe('Project Add machine modal', () => {
         expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toHaveLength(0);
     });
 
+    it('offers Add Machine for a cold destination using the native owner directories', async () => {
+        const incumbent = daemonRpc.getMockImplementation()!;
+        daemonRpc.mockImplementation(request => request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST
+            && (request.payload as { requesterAvailability?: true }).requesterAvailability ? {
+                ...createWorkspaceSyncRelationshipsListFixture([], request.machineId),
+                requesterAvailability: { kind: 'available', homeDir: `/members/${request.machineId}`,
+                    workspaceRoot: `/members/${request.machineId}/workspace`, preparation: 'member_not_prepared' },
+            } : incumbent(request));
+        owner.openWorkspaceSyncAddMachine({ ...source(), rootPath: '/members/machine-a/project' }, vi.fn());
+        const modal = await renderOpenedModal();
+        await chooseTarget(modal.screen, '~/copy');
+        await vi.waitFor(() => expect(modal.screen.findByType(PathSelectionList).props.machineHomeDir).toBe('/members/machine-b'));
+        await vi.waitFor(() => expect(modal.submit().props.disabled).toBe(false));
+        expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toHaveLength(0);
+    });
+
     it('uses requester roots for both endpoints and reads each presented target once despite resource publications', async () => {
         const incumbent = daemonRpc.getMockImplementation()!;
         daemonRpc.mockImplementation(request => {

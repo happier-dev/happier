@@ -1,3 +1,4 @@
+import { readAgentIsolationMemberDirectories } from '@/daemon/agentIsolation/prepareNativeOperation';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
@@ -1995,9 +1996,10 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     if (placement === 'member') {
       if (memberRequester.kind !== 'isolated' || !input.agentIsolation?.readMember) return { kind: 'unavailable', reason: 'agent_isolation_unavailable' };
       try {
-        const member = await input.agentIsolation.readMember({ requesterIdentity: { ...memberRequester,
+        const member = await readAgentIsolationMemberDirectories(input.agentIsolation, { requesterIdentity: { ...memberRequester,
           homeServerIdentityId: semanticServerId }, rpcContext: context, signal: context.signal });
-        return { kind: 'available', homeDir: member.identity.home, workspaceRoot: member.identity.workspaceRoot };
+        return { kind: 'available', homeDir: member.home, workspaceRoot: member.workspaceRoot,
+          ...(member.preparation ? { preparation: member.preparation } : {}) };
       } catch { return { kind: 'unavailable', reason: 'agent_isolation_unavailable' }; }
     }
     if (!isHostRequesterUnrestrictedOwner(identity)) return { kind: 'unavailable', reason: 'agent_isolation_unavailable' };

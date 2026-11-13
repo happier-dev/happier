@@ -2488,6 +2488,14 @@ install admission uses the same native preparation owner as Session launch to
 prepare that requester's member once, then runs the installer under that held
 identity. Subsequent inventory probes that member's installed executables.
 
+Machine Shell and Workspace Sync directory availability also remain read-only.
+For an absent member binding, the native identity owner projects its deterministic
+home/workspace directories with `preparation: member_not_prepared`; the existing
+UI presents these as available to start. Open Shell, Restart and Add Machine use
+the existing native-operation preparation owner at deliberate admission, retaining
+the selected root and requester custody. Corrupt or foreign bindings remain
+unavailable; availability reads never repair or provision them.
+
 The daemon's Session spawn path also prepares the requesting person's native
 identity before creating a checkout or checking the Session folder. It passes
 that held identity into the existing native filesystem worker, which runs the

@@ -1,3 +1,5 @@
+import { configuration } from '@/configuration';
+import { readAgentIsolationMemberBindingForAccount } from '@/daemon/agentIsolation/memberBindings';
 import { join } from 'node:path';
 import { mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { EventEmitter } from 'node:events';
@@ -188,6 +190,35 @@ it.skipIf(process.platform !== 'linux')('lists the requester Account graph befor
   expect(setup.requesterProjectionReads() - before).toBe(1);
   expect(setup.requesterRowRequests.filter(event => event.path.endsWith('/mutate'))).toEqual([]);
   expect(native.phases).toEqual([]);
+});
+
+it.skipIf(process.platform !== 'linux')('offers cold member Sync roots without preparing before Add Machine admission', async () => {
+  executionBoundary.member = true;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'use', cold: true, socketIo });
+  const handlers = new Map<string, RpcHandler>();
+  registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
+    service: setup.fixture.parent.workspaceSync });
+  const list = handlers.get(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST);
+  if (!list) throw new Error('Public Sync list handler is unavailable');
+  // Read-only Account placement is already admitted by this fixture; the
+  // public handler still runs the real requester, projection and native owners.
+  const result = WorkspaceSyncRelationshipsListRpcResultV1Schema.parse(await list({ requesterAvailability: true }, {
+      signal: new AbortController().signal, verifyMachineAdmissionCurrent: async () => setup.installed.isHomeCurrent(), callerAuthority: 'present_user', callerInputAuthorization: setup.account.authorization,
+      machineAdmission: { actorAccountId: 'member-a', custodianAccountId: 'requester', machineId: setup.installed.machineId,
+        installationId: setup.installed.installation.installationId, role: 'use', encryptionMode: 'plain' },
+    }));
+  expect(result).toMatchObject({ requesterAvailability: { kind: 'available', preparation: 'member_not_prepared',
+    homeDir: setup.member.home, workspaceRoot: setup.member.workspaceRoot } });
+  expect(await readAgentIsolationMemberBindingForAccount({ activeServerDir: configuration.activeServerDir,
+      homeServerIdentityId: setup.member.homeServerIdentityId, ...setup.member.requester }, 'member-a')).toBeNull();
+  // The sibling warm journey asserts completed linking. This regression owns
+  // cold admission: native preparation must run even if a later target phase refuses.
+  await setup.rpc.handleRequest({ method: `${setup.installed.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE}`,
+    params: setup.request, callerAuthority: 'present_user', callerInputAuthorization: setup.authorization,
+    machineAdmission: { actorAccountId: 'member-a', custodianAccountId: 'requester', machineId: setup.installed.machineId,
+      installationId: setup.installed.installation.installationId, role: 'use', encryptionMode: 'plain' } });
+  expect(await readAgentIsolationMemberBindingForAccount({ activeServerDir: configuration.activeServerDir,
+      homeServerIdentityId: setup.member.homeServerIdentityId, ...setup.member.requester }, 'member-a')).toMatchObject({ uid: 2401 });
 });
 
 it.skipIf(process.platform !== 'linux').each(['use', 'manage'] as const)('materializes an empty accepted target for %s Sync through requester Account rows and filesystem authority', async role => {

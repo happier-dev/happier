@@ -1080,7 +1080,8 @@ export type WorkspaceSyncRelationshipsListRpcRequestV1 = z.infer<typeof Workspac
 /** The receiving Machine's native placement owner supplies requester directories. */
 export const WorkspaceSyncRequesterAvailabilityV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('available'),
-    homeDir: z.string().check(z.minLength(1)), workspaceRoot: z.nullable(z.string().check(z.minLength(1))) }),
+    homeDir: z.string().check(z.minLength(1)), workspaceRoot: z.nullable(z.string().check(z.minLength(1))),
+    preparation: z.optional(z.literal('member_not_prepared')) }),
   z.strictObject({ kind: z.literal('unavailable'),
     reason: z.enum(['requester_authority_unavailable', 'agent_isolation_unavailable']) }),
 ]));

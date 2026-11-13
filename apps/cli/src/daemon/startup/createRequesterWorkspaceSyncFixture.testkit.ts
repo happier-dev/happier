@@ -90,6 +90,7 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 
 /** Real Sync receiver/native/controller composition; callers install OS boundaries only. */
 export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
+  cold?: true;
   role: 'use' | 'manage';
   sourceCustodianAccountId?: string;
   installedCredentials?: StoredCredentials;
@@ -163,7 +164,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
   workspaceRoot = member.workspaceRoot;
   preparation = createAgentIsolationMemberPreparationBoundary({ activeServerDir: configuration.activeServerDir,
     requesterIdentity: identity, custodianAccountId: sourceCustodianAccountId, encryptionMode: 'plain', uid: 2401 });
-  for (const step of buildAgentIsolationProvisioningSteps({ requesterIdentity: identity, daemonUsername: 'happier',
+  if (!options.cold) for (const step of buildAgentIsolationProvisioningSteps({ requesterIdentity: identity, daemonUsername: 'happier',
     daemonPrimaryGroup: 'happier', binaryPath: agentIsolation.managedHappierBinaryPath! })) preparation.installed.add(step.id);
   const backing = join(installed.directory, 'member-home'), workspaceBacking = join(installed.directory, 'member-workspace');
   await mkdir(backing); await mkdir(workspaceBacking);
@@ -175,7 +176,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     `${member.username}:x:2401:2401:${member.ownershipMarker}:${member.home}:/usr/sbin/nologin\n`);
   native.accountLookups.set(JSON.stringify(['--service=files', 'group', member.username]), `${member.username}:x:2401:\n`);
   native.accountLookups.set(JSON.stringify(['--service=files', 'group', 'happier']), 'happier:x:1001:\n');
-  await writeAgentIsolationMemberBinding(configuration.activeServerDir, { ...member, agentUid: 2401, agentGid: 2401 });
+  if (!options.cold) await writeAgentIsolationMemberBinding(configuration.activeServerDir, { ...member, agentUid: 2401, agentGid: 2401 });
   native.launch = async (input, output) => {
     native.phases.push('native_frame_read_started');
     const frame = await readAgentLaunchFrame(input);

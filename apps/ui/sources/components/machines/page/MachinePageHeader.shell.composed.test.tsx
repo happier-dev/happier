@@ -55,7 +55,7 @@ it.each([
         actionId: 'machines.terminal.list', tokenEpoch: 0, requesterInvocation: 'credentials', execute: input => {
             availabilityReads.push({ input });
             return refusal ? { ok: false, errorCode: refusal, error: refusal }
-                : pendingAvailability ?? { ok: true, terminals: [], machineShell: { ok: true, cwd } };
+                : pendingAvailability ?? { ok: true, terminals: [], machineShell: { ok: true, cwd, ...(role === 'use' ? { preparation: 'member_not_prepared' } : {}) } };
         }, failure: () => refusal ? { errorCode: refusal, error: refusal } : null });
     const openBoundary = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId, accountId: 'bob',
         custodian: { accountId: 'alice', displayName: 'Alice' }, machineId: machine.id,

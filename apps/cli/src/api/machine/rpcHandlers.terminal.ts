@@ -1,3 +1,4 @@
+import { readAgentIsolationMemberDirectories } from '@/daemon/agentIsolation/prepareNativeOperation';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { DaemonTerminalCloseRequestSchema, DaemonTerminalEnsureRequestSchema, DaemonTerminalListRequestV1Schema, DaemonTerminalListResponseV1Schema, DaemonTerminalInputRequestSchema, DaemonTerminalResizeRequestSchema, DaemonTerminalRestartRequestSchema, DaemonTerminalStreamReadRequestSchema } from '@happier-dev/protocol/daemon/terminal';
 import { TerminalStreamAckRequestSchema, TerminalStreamAckResponseSchema, TerminalStreamReadRequestSchema, TerminalStreamReadResponseSchema } from '@happier-dev/protocol/terminal/stream';
@@ -255,11 +256,12 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     if (placement === 'member' && (admission.actorAccountId !== admission.custodianAccountId || admission.role !== 'manage')) {
       if (memberRequester.kind !== 'isolated' || !params.deps?.agentIsolation?.readMember) return unavailableIdentityTransport();
       try {
-        const member = await params.deps.agentIsolation.readMember({
+        const member = await readAgentIsolationMemberDirectories(params.deps.agentIsolation, {
           requesterIdentity: { ...memberRequester, homeServerIdentityId: memberRequester.requester.serverId },
           rpcContext: context, signal: context.signal,
         });
-        return resolveCwd(member.identity.workspaceRoot);
+        const cwd = resolveCwd(member.workspaceRoot);
+        return cwd.ok ? { ...cwd, ...(member.preparation ? { preparation: member.preparation } : {}) } : cwd;
       } catch { return unavailableIdentityTransport(); }
     }
     return resolveCwd(undefined);

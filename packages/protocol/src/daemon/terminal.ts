@@ -53,7 +53,8 @@ export type DaemonTerminalListEntryV1 = z.infer<typeof DaemonTerminalListEntryV1
 
 /** Requester default for the existing Machine Shell admission, never Machine metadata. */
 export const DaemonTerminalShellAvailabilityV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ ok: z.literal(true), cwd: z.string().check(z.minLength(1), z.maxLength(10_000)) }),
+  z.strictObject({ ok: z.literal(true), cwd: z.string().check(z.minLength(1), z.maxLength(10_000)),
+    preparation: z.optional(z.literal('member_not_prepared')) }),
   DaemonTerminalErrorSchema,
 ]));
 export type DaemonTerminalShellAvailabilityV1 = z.infer<typeof DaemonTerminalShellAvailabilityV1Schema>;
