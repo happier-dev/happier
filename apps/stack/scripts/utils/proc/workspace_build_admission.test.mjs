@@ -1311,11 +1311,43 @@ test('typecheck declaration phase cannot wait while retaining an inherited packa
   }, { lockPath: owned, signal: t.signal });
 });
 
-test('development startup production runs locally without joining validation capacity admission including nested compilers', { skip: process.platform !== 'linux', timeout: 10000 }, async t => {
+test('a startup producer waiting for admission leaves its publication lease available', { skip: process.platform !== 'linux', timeout: 20000 }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-startup-producer-convoy-' });
+  const native = await installWorkspaceAdmissionProcessFixture(t, fixture.root);
+  writeFakeBin({ root: fixture.root, binDirName: 'native-owner/node_modules/.bin', name: 'awk', content: '#!/bin/sh\ncase \"$*\" in */proc/meminfo*) printf \"1 73400320\\n\" ;; *) exec /usr/bin/awk \"$@\" ;; esac\n' });
+  const lockPath = fixture.path('build-producer.lock');
+  const cancellation = new AbortController();
+  const holder = await holdNativeAdmissionFixtureMemory(t, native, { totalKiB: 73400320, availableKiB: 1 });
+  let pending;
+  try {
+    pending = runWorkspaceBuildAdmission({ command: '/bin/sh',
+      args: [native.launcher, '--heavyweight-admission', '--class=source-bundle', '--machine=local',
+        '--', process.execPath, '-e', 'process.stdout.write("published")'],
+      locks: [{ path: lockPath }], launcherPath: native.launcher, cwd: fixture.root,
+      env: buildNativeAdmissionFixtureEnv(native.env), devStartup: true, admissionClass: 'source-bundle',
+      stdio: ['ignore', 'pipe', 'pipe'], signal: cancellation.signal });
+    await Promise.race([waitForBrokerState(native, state => state.waitingCount === 1, t.signal),
+      pending.then(result => assert.fail(`producer exited before capacity wait: ${result.status}: ${result.stderr.split("\n").filter(line => !/token|secret|password|credential|bearer|:\/\//i.test(line)).join("\n")}`))]);
+    assert.equal(await withWorkspaceBundleLock(() => 'second-producer-entered', {
+      lockPath, wait: false, signal: t.signal,
+    }), 'second-producer-entered', 'capacity wait must not retain the producer lease');
+    await holder.release(() => writeFile(native.memoryOverridePath, JSON.stringify({ availableMemoryKiB: 73400320, totalMemoryKiB: 73400320 })));
+    const result = await pending;
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, 'published');
+    await assertBrokerIdle(native);
+  } finally {
+    cancellation.abort();
+    await holder.release();
+    await pending;
+  }
+});
+
+test('development startup production admits locally before publication including nested compilers', { skip: process.platform !== 'linux', timeout: 10000 }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-dev-startup-admission-' });
   const native = await installNativeAdmissionFixture({ root: fixture.root });
   const { launcher, admissionRoot } = native;
-  writeFakeBin({ root: fixture.root, name: 'awk', content: '#!/bin/sh\ncase "$*" in */proc/meminfo*) printf "1 73400320\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n' });
+  writeFakeBin({ root: fixture.root, name: 'awk', content: '#!/bin/sh\ncase "$*" in */proc/meminfo*) printf "73400320 73400320\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n' });
   const env = { ...buildNativeAdmissionFixtureEnv(), PATH: `${fixture.path('bin')}:/usr/bin:/bin`, HAPPIER_DEV_TARGET_EXECUTION: '',
     HAPPIER_HSTACK_EXECUTION: '1', HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN: '', HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT: '',
     HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: '', HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES: '[]' };
@@ -1339,7 +1371,7 @@ test('development startup production runs locally without joining validation cap
     onStderr: value => { if (String(value).includes('waiting for heavyweight admission')) queued('queued'); } });
   try {
     const outcome = await Promise.race([run, waiting]);
-    assert.notEqual(outcome, 'queued', 'Stack startup must not wait behind the validation capacity queue');
+    assert.notEqual(outcome, 'queued', 'startup with available capacity must complete');
     assert.equal(outcome.status, 0, outcome.stderr);
     assert.equal(outcome.stdout, 'started');
     await assertBrokerIdle(native);

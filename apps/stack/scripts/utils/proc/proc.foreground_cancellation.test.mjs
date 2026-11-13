@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
+import { installWorkspaceAdmissionProcessFixture } from '../../testkit/core/native_admission_fixture.mjs';
 
 const owner = new URL('./proc.mjs', import.meta.url).href;
 const admissionOwner = new URL('./workspace_build_admission.mjs', import.meta.url).href;
@@ -33,6 +34,8 @@ for (const cancellation of ['SIGINT', 'SIGTERM', 'abort', 'child default', 'chil
     skip: process.platform === 'win32',
   }, async t => {
     const fixture = await createTempFixture(t, { prefix: 'happier-foreground-cancel-' });
+    const admission = entry === 'workspace worker'
+      ? await installWorkspaceAdmissionProcessFixture(t, fixture.root) : null;
     const ready = fixture.path('ready.json');
     const settled = fixture.path('settled.json');
     const descendant = `process.on('SIGINT', () => {}); process.on('SIGTERM', () => {}); process.send(process.pid); setInterval(() => {}, 1000);`;
@@ -66,7 +69,7 @@ for (const cancellation of ['SIGINT', 'SIGTERM', 'abort', 'child default', 'chil
       if (child && child.kill(0) !== false) throw new Error('closed owned child probe succeeded');
     ` : `
       import { runWorkspaceBuildAdmissionWorker } from ${JSON.stringify(admissionOwner)};
-      await runWorkspaceBuildAdmissionWorker(['--dev-startup', '[]', '', 'package-dist', '--', process.execPath, '-e', ${JSON.stringify(command)}]);
+      await runWorkspaceBuildAdmissionWorker(['--dev-startup', '[]', ${JSON.stringify(admission?.launcher ?? '')}, 'package-dist', '--', process.execPath, '-e', ${JSON.stringify(command)}]);
       const result = { status: process.exitCode };
     `;
     await writeFile(wrapperPath, `
@@ -76,7 +79,7 @@ for (const cancellation of ['SIGINT', 'SIGTERM', 'abort', 'child default', 'chil
       process.disconnect();
     `);
     const wrapperArgs = entry === 'heartbeat' ? [heartbeat, '--', process.execPath, '-e', command] : [wrapperPath];
-    const wrapper = spawn(process.execPath, wrapperArgs, { detached: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+    const wrapper = spawn(process.execPath, wrapperArgs, { ...(admission ? { env: admission.env } : {}), detached: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
     let entryResult;
     wrapper.once('close', (status, signal) => { entryResult = { status, signal }; });
     let stderr = '';

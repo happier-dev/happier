@@ -91,9 +91,8 @@ export function resolveWorkspaceBuildAdmissionInvocation({ command, args = [], l
     return { command: process.execPath, args: workerArgs };
   }
   if (isWorkspaceBuildStartup({ env, devStartup })) {
-    // Stack's own source construction is startup-critical, with private
-    // outputs. Reuse protected local jobs placement and resource custody,
-    // without joining validation's capacity queue.
+    // Keep startup on its selected host. The worker coordinates Linux
+    // capacity and publication custody before it starts the producer.
     const workerArgs = [workerPath, '--dev-startup', JSON.stringify(locks), launcherPath, admissionClass, '--', command, ...args];
     return process.platform === 'win32'
       ? { command: process.execPath, args: workerArgs }
@@ -324,7 +323,11 @@ export async function runWorkspaceBuildAdmissionWorker(argv) {
   try {
     const run = async env => {
       cancellation.signal.throwIfAborted();
-      const invocation = mode === '--inherited-resources' && process.platform === 'linux'
+      const invocation = mode === '--dev-startup' && process.platform === 'linux'
+        ? { command: '/bin/sh', args: [launcherPath, '--heavyweight-admission', '--class=' + admissionClass,
+          '--machine=' + (env.HAPPIER_DEV_TARGET_EXECUTION === '1' ? 'worker' : 'local'),
+          '--workspace-locks=' + JSON.stringify(locks), '--', command, ...args] }
+        : mode === '--inherited-resources' && process.platform === 'linux'
         ? { command: '/bin/sh', args: [launcherPath, '--heavyweight-admission', '--require-inherited', '--class=' + admissionClass,
           '--machine=' + (env.HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE || 'local'), '--', command, ...args] }
         : process.platform === 'win32'
@@ -339,7 +342,9 @@ export async function runWorkspaceBuildAdmissionWorker(argv) {
       });
       process.exitCode = result.signal ? 128 + (constants.signals[result.signal] ?? 0) : result.status ?? 1;
     };
-    if (mode === '--inherited-resources') await run(process.env);
+    // Native admission releases resource attempts while capacity is pending.
+    // Never wrap its wait in a startup worker's publication lease.
+    if (mode === '--inherited-resources' || (mode === '--dev-startup' && process.platform === 'linux')) await run(process.env);
     else await withWorkspaceBuildResources({ locks, env: process.env, signal: cancellation.signal }, run);
   } catch (error) {
     if (!cancellation.signal.aborted) throw error;
