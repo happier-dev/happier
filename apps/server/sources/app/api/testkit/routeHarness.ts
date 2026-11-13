@@ -195,6 +195,8 @@ export function createReplyStub() {
             reply.headers[name] = value;
             return reply;
         }),
+        // This harness exposes application payloads; Fastify owns wire serialization.
+        serializer: vi.fn((_serializer: (payload: unknown) => string) => reply),
     };
     return reply;
 }

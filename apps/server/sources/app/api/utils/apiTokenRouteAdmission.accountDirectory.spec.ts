@@ -32,7 +32,7 @@ const SERVER_SOURCE_ROOT = resolve(
 const DIRECT_BEARER_CONSUMER_DISPOSITIONS = [
     {
         path: "app/api/socket.ts",
-        verifies: ["auth.verifyTokenForRoute", "auth.verifyTokenForRoute"],
+        verifies: ["auth.verifyTokenForRoute"],
         disposition: "Socket.IO rejects Directory provenance and admits restricted PATs only through the canonical Session-viewer scope, origin, capability and final currentness boundary.",
     },
     {
@@ -50,19 +50,14 @@ const DIRECT_BEARER_CONSUMER_DISPOSITIONS = [
         verifies: ["auth.verifyTokenDisposition"],
         disposition: "Canonical optional-public bearer verification; restricted Directory/PAT bearers remain anonymous-compatible while verified Runner bearers are rejected by every consumer.",
     },
-    {
-        path: "app/api/socket/socketCredentialCurrentness.ts",
-        verifies: ["auth.verifyTokenForRoute"],
-        disposition: "Canonical socket-operation credential currentness reuses the route verifier, including the access-key handler's final secret-disclosure check; admitted PAT viewers receive their freshly verified grant before an operation, while Directory and unadmitted restricted credentials remain forbidden.",
-    },
 ] as const satisfies readonly DirectBearerConsumerDisposition[];
 
 function listProductionTypeScriptFiles(directory: string): string[] {
     return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
         const absolutePath = join(directory, entry.name);
-        if (entry.isDirectory()) return listProductionTypeScriptFiles(absolutePath);
+        if (entry.isDirectory()) return entry.name === "testkit" ? [] : listProductionTypeScriptFiles(absolutePath);
         if (!entry.isFile() || !entry.name.endsWith(".ts")) return [];
-        if (/\.(?:spec|test)\.ts$/.test(entry.name)) return [];
+        if (/\.(?:spec|test|testkit)\.ts$/.test(entry.name)) return [];
         return [absolutePath];
     });
 }

@@ -1,15 +1,27 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
-import { createInTxHarness } from '@/app/api/testkit/txHarness';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import type { Tx } from '@/storage/inTx';
 
 let transaction: Tx;
-vi.mock('@/storage/inTx', () => createInTxHarness(() => transaction));
+const transactions = await vi.hoisted(async () => {
+    const { createDbTransactionMock, inTxPostgresControlStatementMock } = await import('@/app/api/testkit/dbMocks');
+    return createDbTransactionMock(() => ({ ...inTxPostgresControlStatementMock, ...transaction }));
+});
+// The inventory now uses inReadSnapshot; keep that owner real and replace only database connections.
+vi.mock('@/storage/db', () => ({ db: transactions.wrapDb({}) }));
+vi.mock('@/storage/prisma', async importOriginal => ({
+    ...await importOriginal<typeof import('@/storage/prisma')>(),
+    withSqliteReadSnapshot: transactions.readSnapshot,
+}));
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 
 describe('Account Artifact transition inventory HTTP', () => {
-    beforeEach(() => { process.env.HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_ARTIFACTS_AT_REST = 'none'; });
+    beforeEach(() => {
+        vi.stubEnv('HAPPIER_DB_PROVIDER', 'postgres');
+        vi.stubEnv('HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_ARTIFACTS_AT_REST', 'none');
+    });
+    afterEach(() => vi.unstubAllEnvs());
     const row = (id: string) => ({ id, accountId: 'owner', header: Buffer.from(encodePlainArtifactStoredContent({ title: 'Document' }), 'base64'),
         headerVersion: 0, body: Buffer.from(encodePlainArtifactStoredContent({ body: 'Content' }), 'base64'), bodyVersion: 2,
         dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64'), seq: 0, currentBlobId: null,

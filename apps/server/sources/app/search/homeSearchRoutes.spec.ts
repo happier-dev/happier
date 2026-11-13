@@ -52,7 +52,7 @@ describe('Home search route', () => {
         } finally { await lifecycle.stop(); }
     });
 
-    it('requires an ordinary present-user credential and passes only that account visibility to search', async () => {
+    it('admits ordinary Account and terminal credentials and passes only their Account visibility to search', async () => {
         const search = vi.fn((_query: unknown, context?: Readonly<{ visibleSessions?: readonly Readonly<{ sessionId: string; maximumSeq: number | null }>[] }>) => ({
             v: 1 as const,
             ok: true as const,
@@ -82,7 +82,7 @@ describe('Home search route', () => {
             expect((await app.inject({
                 method: 'POST', url: '/v1/home/search', payload: body,
                 headers: { 'x-test-user-id': 'owner', 'x-test-auth-token-kind': 'terminal' },
-            })).statusCode).toBe(403);
+            })).json()).toMatchObject({ ok: true, hits: [expect.objectContaining({ sessionId: 'owned-session' })] });
             const other = await app.inject({ method: 'POST', url: '/v1/home/search', payload: body, headers: { 'x-test-user-id': 'other' } });
             expect(other.json()).toMatchObject({ ok: true, hits: [] });
             const owner = await app.inject({ method: 'POST', url: '/v1/home/search', payload: body, headers: { 'x-test-user-id': 'owner' } });

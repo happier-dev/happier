@@ -13,7 +13,8 @@ const boundary = vi.hoisted(() => ({
 vi.mock("@/storage/db", async () => {
     const { createDbTransactionMock, inTxPostgresControlStatementMock } = await import("@/app/api/testkit/dbMocks");
     // Replace database IO only; token crypto, transactions and HTTP error handling remain real.
-    return { db: createDbTransactionMock(() => ({ ...inTxPostgresControlStatementMock, ...homeConfigSnapshotPostgresQueryMock, ...boundary })).wrapDb(boundary) };
+    const tables = { ...inTxPostgresControlStatementMock, ...homeConfigSnapshotPostgresQueryMock, ...boundary };
+    return { db: createDbTransactionMock(() => tables).wrapDb(tables) };
 });
 
 describe("authentication infrastructure failures", () => {
@@ -48,6 +49,7 @@ describe("authentication infrastructure failures", () => {
         const { enableAuthentication } = await import("./enableAuthentication");
         const { enableErrorHandlers } = await import("./enableErrorHandlers");
         const { readOptionalPublicAuthDisposition } = await import("./optionalPublicAuth");
+        const { readRequestHomeEnv } = await import("@/app/home/settings/requestHomeEnv");
         await auth.init();
         const token = await auth.createToken("u1", undefined, { kind: "account", authority: "present_user" });
         const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
@@ -57,6 +59,10 @@ describe("authentication infrastructure failures", () => {
             preHandler: app.authenticate,
         }, async () => ({ ok: true }));
         app.get("/public", async (request) => readOptionalPublicAuthDisposition(request.headers.authorization));
+        app.get("/configured", { preHandler: app.authenticate }, async request => {
+            await readRequestHomeEnv(request);
+            return { ok: true };
+        });
         return { app, token };
     }
 
@@ -71,7 +77,7 @@ describe("authentication infrastructure failures", () => {
                 injectedFailureReached = true;
                 throw failure;
             });
-            const url = phase === "optional" ? "/public" : "/private";
+            const url = phase === "optional" ? "/public" : phase === "configuration" ? "/configured" : "/private";
             try {
                 const failed = await app.inject({ method: "GET", url, headers: { authorization: `Bearer ${token}` } });
                 expect(injectedFailureReached).toBe(true);

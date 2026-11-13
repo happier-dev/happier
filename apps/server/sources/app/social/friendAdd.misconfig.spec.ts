@@ -1,54 +1,33 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { installPrismaModuleMock } from "../api/testkit/dbMocks";
-import { createInTxWithAccountLookup, createSocialAccount } from "./socialTestHarness";
 
-vi.mock("./resolveFriendsPolicyFromServerFeatures", () => ({
-    resolveFriendsPolicyFromServerFeatures: () => ({
-        enabled: true,
-        allowUsername: false,
-        requiredIdentityProviderId: null,
-    }),
-}));
+import { Context } from "@/context";
+import { createDbTransactionMock, installDbModuleMock, inTxPostgresControlStatementMock } from "../api/testkit/dbMocks";
+import { homeConfigSnapshotPostgresQueryMock } from "../home/settings/homeConfigSnapshot.testkit";
 
-vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged: vi.fn(async () => 1) }));
-vi.mock("./relationshipGet", () => ({ relationshipGet: vi.fn(async () => "none") }));
-vi.mock("./relationshipSet", () => ({ relationshipSet: vi.fn(async () => {}) }));
-vi.mock("./friendNotification", () => ({
-    sendFriendRequestNotification: vi.fn(async () => {}),
-    sendFriendshipEstablishedNotification: vi.fn(async () => {}),
-}));
-vi.mock("./type", () => ({
-    buildUserProfile: (user: any, status: any) => ({ id: user.id, status }),
-}));
-installPrismaModuleMock({
-    // No stored Home settings or governance policy row: the friends policy decides from the deployment env.
-    db: { homeSettings: { findUnique: async () => null }, homeGovernancePolicy: { findUnique: async () => null } },
-    RelationshipStatus: {
-        none: "none",
-        requested: "requested",
-        pending: "pending",
-        friend: "friend",
-        rejected: "rejected",
-    },
-});
-
-let txAccountFindUnique: any;
-const setAccountLookup = (accountsById: Record<string, any>) => {
-    txAccountFindUnique = vi.fn(async (args: any) => accountsById[args.where.id] ?? null);
+// The persistent database is the boundary; Home policy and transaction execution stay real.
+const tx = {
+    ...inTxPostgresControlStatementMock,
+    ...homeConfigSnapshotPostgresQueryMock,
+    homeSettings: { findUnique: async () => null },
+    homeGovernancePolicy: { findUnique: async () => null },
 };
-vi.mock("@/storage/inTx", () => ({
-    inTx: createInTxWithAccountLookup((...args: any[]) => txAccountFindUnique(...args)).inTx,
-}));
+const database = createDbTransactionMock(() => tx).wrapDb(tx);
+installDbModuleMock({ db: database });
 
-describe("friendAdd", () => {
-    it("throws a clear error when friends policy is misconfigured", async () => {
-        setAccountLookup({
-            u1: createSocialAccount("u1"),
-            u2: createSocialAccount("u2"),
-        });
+afterEach(() => vi.unstubAllEnvs());
 
-        const { friendAdd } = await import("./friendAdd");
-        await expect(friendAdd({ uid: "u1" } as any, "u2")).rejects.toThrow(/misconfigured/i);
+describe("friendAdd policy admission", () => {
+    it("refuses a provider policy with no configured identity provider", async () => {
+        vi.stubEnv("HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED", "1");
+        vi.stubEnv("HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME", "0");
+        vi.stubEnv("HAPPIER_FEATURE_SOCIAL_FRIENDS__IDENTITY_PROVIDER", "");
+        const { friendAdd, FriendsDisabledError } = await import("./friendAdd");
+        await expect(friendAdd(Context.create("u1"), "u2")).rejects.toBeInstanceOf(FriendsDisabledError);
+    });
+    it("refuses a friend request when the Home disables friends", async () => {
+        vi.stubEnv("HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED", "0");
+        const { friendAdd, FriendsDisabledError } = await import("./friendAdd");
+        await expect(friendAdd(Context.create("u1"), "u2")).rejects.toBeInstanceOf(FriendsDisabledError);
     });
 });

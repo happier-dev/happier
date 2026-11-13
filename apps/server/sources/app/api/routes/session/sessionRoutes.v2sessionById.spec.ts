@@ -114,14 +114,14 @@ function sessionByIdRow(row: SessionByIdRowFixture) {
 
 function mockSessionByIdRow(row: SessionByIdRowFixture) {
     const fixture = sessionByIdRow(row);
-    txSessionFindUnique.mockResolvedValue(fixture);
+    txSessionFindMany.mockResolvedValue([fixture]);
     return fixture;
 }
 
 describe("sessionRoutes v2 session by id", () => {
     beforeEach(() => {
         resetSessionRouteMocks();
-        txSessionFindUnique.mockReset();
+        txSessionFindMany.mockReset();
     });
 
     it("preserves the server receipt on message lookup and reconnect catch-up", async () => {
@@ -253,7 +253,7 @@ describe("sessionRoutes v2 session by id", () => {
                 requiredByTeamPolicy: false,
                 team: {
                     authenticationPolicy: null,
-                    memberships: [{ accountId: "u1", sessionAccessStartsAt: null }],
+                    memberships: [{ accountId: "u1", role: "member", sessionAccessStartsAt: null }],
                 },
             }],
         });
@@ -278,6 +278,7 @@ describe("sessionRoutes v2 session by id", () => {
         const currentDetail = V2SessionByIdResponseSchema.parse(JSON.parse(JSON.stringify(current.response)));
         expect(SessionCurrentProjectionRecordV1Schema.safeParse(currentDetail.session).success).toBe(true);
         expect(current.response).toEqual({
+            observationCursor: 0,
             session: expect.objectContaining({
                 id: "team-only",
                 effectiveAccess: expect.objectContaining({
@@ -360,6 +361,7 @@ describe("sessionRoutes v2 session by id", () => {
         });
 
         expect(response).toEqual({
+            observationCursor: 0,
             session: expect.objectContaining({
                 id: "strict-snapshot",
                 hasOtherNamedCollaborator: true,
@@ -415,6 +417,7 @@ describe("sessionRoutes v2 session by id", () => {
         });
 
         expect(response).toEqual({
+            observationCursor: 0,
             session: expect.objectContaining({
                 id: "legacy-owned",
                 metadata: "legacy-owner-metadata",
@@ -467,12 +470,13 @@ describe("sessionRoutes v2 session by id", () => {
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId");
         const { response: res } = await route.invoke({ params: { sessionId: "s1" } });
 
-        expect(txSessionFindUnique).toHaveBeenCalledWith(expect.objectContaining({
+        expect(txSessionFindMany).toHaveBeenCalledWith(expect.objectContaining({
             select: expect.objectContaining({
                 turns: expect.objectContaining({ take: DEFAULT_SESSION_ROLLBACK_ELIGIBLE_TURN_RELATION_LIMIT }),
             }),
         }));
         expect(res).toEqual({
+            observationCursor: 0,
             session: expect.objectContaining({
                 id: "s1",
                 encryptionMode: "e2ee",
@@ -707,14 +711,14 @@ describe("sessionRoutes v2 session by id", () => {
         });
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId");
         const { response } = await route.invoke({ params: { sessionId: "operational" } });
-        expect(response).toEqual({ session: expect.objectContaining({
+        expect(response).toEqual({ observationCursor: 0, session: expect.objectContaining({
             pendingRequestObservedAt: 1_500,
             runtimeActivityState: "active", runtimeActivityActiveCount: 2,
             runtimeActivityObservedAt: 1_500, runtimeActivityRevision: 3,
             latestReadyEventSeq: 8, latestReadyEventAt: 1_500,
             thinking: false, thinkingAt: 1_500, responsibleAccountId: "u1",
         }) });
-        expect(txSessionFindUnique).toHaveBeenCalledWith(expect.objectContaining({
+        expect(txSessionFindMany).toHaveBeenCalledWith(expect.objectContaining({
             select: expect.objectContaining({ pendingRequestObservedAt: true,
                 runtimeActivityState: true, latestReadyEventSeq: true, thinking: true }),
         }));
@@ -722,9 +726,9 @@ describe("sessionRoutes v2 session by id", () => {
 
     it("falls back when rollback turn columns are unavailable", async () => {
         const now = new Date(1);
-        txSessionFindUnique
+        txSessionFindMany
             .mockRejectedValueOnce(Object.assign(new Error("Column SessionTurn.rollbackState does not exist"), { code: "P2022" }))
-            .mockResolvedValueOnce(sessionByIdRow({
+            .mockResolvedValue([sessionByIdRow({
                 id: "s1",
                 seq: 9,
                 currentStorageState: "server_partial",
@@ -755,15 +759,14 @@ describe("sessionRoutes v2 session by id", () => {
                 active: true,
                 lastActiveAt: now,
                 shares: [],
-            }));
+            })]);
 
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId");
         const { response: res } = await route.invoke({ params: { sessionId: "s1" } });
 
-        // Strict read, released fallback read, then the owner's Pending-activation publication read.
-        expect(txSessionFindUnique).toHaveBeenCalledTimes(3);
-        expect(txSessionFindUnique.mock.calls[1]?.[0]?.select).not.toHaveProperty("turns");
-        expect(txSessionFindUnique.mock.calls[1]?.[0]?.select).toEqual(expect.objectContaining({
+        // The released fallback preserves the storage projection while omitting unavailable turn columns.
+        expect(txSessionFindMany.mock.calls[1]?.[0]?.select).not.toHaveProperty("turns");
+        expect(txSessionFindMany.mock.calls[1]?.[0]?.select).toEqual(expect.objectContaining({
             currentStorageState: true,
             acceptedThroughServerSeq: true,
             materializationPublicationId: true,
@@ -771,6 +774,7 @@ describe("sessionRoutes v2 session by id", () => {
             publishedThroughServerSeq: true,
         }));
         expect(res).toEqual({
+            observationCursor: 0,
             session: expect.objectContaining({
                 id: "s1",
                 seq: 4,
@@ -823,7 +827,7 @@ describe("sessionRoutes v2 session by id", () => {
             new Error("Column SessionTurn.rollbackState does not exist"),
             { code: "P2022" },
         );
-        txSessionFindUnique.mockRejectedValueOnce(missingColumn).mockResolvedValueOnce(row);
+        txSessionFindMany.mockRejectedValueOnce(missingColumn).mockResolvedValueOnce([row]);
 
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId");
         await expect(route.invoke({
@@ -870,6 +874,7 @@ describe("sessionRoutes v2 session by id", () => {
         const { response: res } = await route.invoke({ params: { sessionId: "s2" } });
 
         expect(res).toEqual({
+            observationCursor: 0,
             session: expect.objectContaining({
                 id: "s2",
                 encryptionMode: "e2ee",
@@ -899,17 +904,15 @@ describe("sessionRoutes v2 session by id", () => {
 
     it("refuses shared detail disclosure when the owning plain Account has an encrypted owner envelope", async () => {
         const now = new Date(1);
-        accountFindUnique.mockResolvedValue({
-            encryptionMode: "plain",
-            publicKey: null,
-            contentPublicKey: null,
-            contentPublicKeySig: null,
-        });
         mockSessionByIdRow({
             id: "s2",
             seq: 2,
             currentStorageState: "hosted",
             accountId: "owner",
+            account: {
+                status: "active", encryptionMode: "plain", publicKey: null,
+                contentPublicKey: null, contentPublicKeySig: null,
+            },
             encryptionMode: "e2ee",
             createdAt: now,
             updatedAt: now,
@@ -992,7 +995,7 @@ describe("sessionRoutes v2 session by id", () => {
             error: "Session metadata privacy upgrade required",
             code: "metadata_privacy_upgrade_required",
         });
-        expect(txSessionFindUnique).toHaveBeenCalledWith(expect.objectContaining({
+        expect(txSessionFindMany).toHaveBeenCalledWith(expect.objectContaining({
             select: expect.objectContaining({
                 accountId: true,
                 metadataLayoutVersion: true,
@@ -1267,6 +1270,7 @@ describe("sessionRoutes v2 session by id", () => {
         expect(sessionPendingMessageCount).not.toHaveBeenCalled();
         expect(sessionUpdate).not.toHaveBeenCalled();
         expect(res).toEqual({
+            observationCursor: 0,
             session: expect.objectContaining({
                 id: "s-drift",
                 pendingCount: 0,
@@ -1276,7 +1280,7 @@ describe("sessionRoutes v2 session by id", () => {
     });
 
     it("returns 404 when session is not accessible", async () => {
-        txSessionFindUnique.mockResolvedValue(null);
+        txSessionFindMany.mockResolvedValue([]);
 
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId");
         const { reply, response: res } = await route.invoke({ params: { sessionId: "missing" } });

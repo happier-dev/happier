@@ -5,6 +5,7 @@ import {
     FEATURE_IDS,
     getFeatureRepresentation,
     readServerEnabledBit,
+    resolveServerEnabledBitPath,
     type FeatureId,
 } from '@happier-dev/protocol';
 import type { FeaturesPayloadDelta } from './types';
@@ -21,14 +22,12 @@ import {
 } from '@/app/session/systemRecords/sessionSystemRecordProtocolContract';
 
 function readProducedEnabledBit(delta: FeaturesPayloadDelta, featureId: FeatureId): boolean | undefined {
-    let current: unknown = delta.features;
-    for (const segment of featureId.split('.')) {
+    let current: unknown = delta;
+    for (const segment of resolveServerEnabledBitPath(featureId)) {
         if (!current || typeof current !== 'object' || Array.isArray(current)) return undefined;
         current = (current as Record<string, unknown>)[segment];
     }
-    if (!current || typeof current !== 'object' || Array.isArray(current)) return undefined;
-    const enabled = (current as Record<string, unknown>).enabled;
-    return typeof enabled === 'boolean' ? enabled : undefined;
+    return typeof current === 'boolean' ? current : undefined;
 }
 
 describe('features/serverFeatureRegistry', () => {

@@ -24,11 +24,14 @@ const databaseBoundary = vi.hoisted(() => {
     return { executeRaw, transaction };
 });
 
-vi.mock("@/storage/db", () => ({
-    db: {
-        $transaction: databaseBoundary.transaction,
-    },
-}));
+vi.mock("@/storage/db", async () => {
+    const { inTxPostgresControlStatementMock } = await import("@/app/api/testkit/dbMocks");
+    databaseBoundary.transaction.mockImplementation(async callback => callback({
+        ...inTxPostgresControlStatementMock,
+        $executeRaw: databaseBoundary.executeRaw,
+    }));
+    return { db: { $transaction: databaseBoundary.transaction } };
+});
 
 import {
     createSqlPluginPermissionGrantStore,

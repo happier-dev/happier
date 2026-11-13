@@ -42,7 +42,8 @@ export function createRouteTestBuilder(options: RouteTestBuilderOptions) {
             ? createAuthenticatedRouteRequest(merged)
             : createRouteRequest(merged);
         const reply = createReplyStub();
-        const response = await handler(request, reply);
+        const returned = await handler(request, reply);
+        const response = reply.sent ? reply.send.mock.calls[0]?.[0] : returned;
         return { request, reply, response };
     };
 

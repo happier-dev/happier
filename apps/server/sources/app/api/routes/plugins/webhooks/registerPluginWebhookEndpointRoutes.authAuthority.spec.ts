@@ -1,105 +1,79 @@
 import Fastify from "fastify";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
 import { PluginWebhookActionHttpPathsV1 } from "@happier-dev/protocol";
+import { AUTHORITY_CEILING_HEADER_V1 } from "@happier-dev/protocol/actions/invocationAuthority";
 
-const accountFindUnique = vi.hoisted(() => vi.fn(async () => ({
-    id: "account-1",
-    tokenEpoch: 0,
-    status: "active",
-})));
-const repeatKeyFindUnique = vi.hoisted(() => vi.fn(async () => null));
-
-vi.mock("@/storage/db", () => ({
-    db: {
-        account: { findUnique: accountFindUnique },
-        repeatKey: { findUnique: repeatKeyFindUnique },
-    },
-}));
-
+import type { Fastify as AppFastify } from "@/app/api/types";
 import { auth } from "@/app/auth/auth";
+import { db } from "@/storage/db";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { decryptPluginWebhookCredentialSecretV1 } from "@/app/plugins/webhooks/credentialCipher";
 import { enableAuthentication } from "../../../utils/enableAuthentication";
 import { registerPluginWebhookEndpointRoutes } from "./registerPluginWebhookEndpointRoutes";
 
-describe("plugin webhook HTTP auth authority", () => {
+const ACCOUNT_ID = "webhook-route-account";
+const TERMINAL_ENDPOINT = "wh_ep_AAECAwQFBgcICQoLDA0ODw";
+const ACCOUNT_ENDPOINT = "wh_ep_EAECAwQFBgcICQoLDA0ODw";
+
+describe("plugin webhook HTTP credential admission", () => {
+    let harness: LightSqliteHarness;
+
     beforeAll(async () => {
-        vi.stubEnv("HANDY_MASTER_SECRET", "webhook-route-real-token-authority");
-        vi.stubEnv("AUTH_REQUIRED_LOGIN_PROVIDERS", "");
-        vi.stubEnv("AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS", "0");
-        await auth.init();
-    });
+        harness = await createLightSqliteHarness({ tempDirPrefix: "happier-webhook-route-auth-", initAuth: true, initEncrypt: true,
+            env: { AUTH_REQUIRED_LOGIN_PROVIDERS: "", AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS: "0" } });
+        await db.account.create({ data: { id: ACCOUNT_ID, publicKey: null, encryptionMode: "plain" } });
+    }, 120_000);
+    afterAll(async () => await harness.close());
 
-    afterAll(() => vi.unstubAllEnvs());
+    async function seedEndpoint(endpointId: string) {
+        const route = await db.pluginWebhookRoute.create({ data: { opaqueRouteId: `opaque-${endpointId}`,
+            verifierKind: "github_hmac_sha256_v1", routingKind: "accountEndpoint" } });
+        await db.pluginWebhookEndpoint.create({ data: { id: endpointId, accountId: ACCOUNT_ID, pluginId: "acme.github",
+            webhookContributionId: "github-events", handlerActionId: "handle-webhook", sourceInstanceId: endpointId,
+            setupKind: "accountEndpointV1", routeId: route.id, routingKind: "accountEndpoint", targetMachineId: "machine-1",
+            targetMachineInstallationId: "installation-1", targetMaterializationId: "materialization-1", targetPluginVersion: "1.0.0" } });
+        await db.pluginWebhookRoute.update({ where: { id: route.id }, data: { accountEndpointId: endpointId } });
+        return route.id;
+    }
 
-    it("rejects a real terminal token before mutation or secret disclosure and admits a present-user token", async () => {
-        const configureCredential = vi.fn(async () => ({
-            kind: "configured" as const,
-            webhookEndpointId: "wh_ep_AAECAwQFBgcICQoLDA0ODw",
-            revision: 2,
-            credentialVersionId: "credential-1",
-            oneTimeGeneratedSecret: "present-user-secret",
-        }));
+    it("refuses Directory mutation and secret disclosure and configures real credentials for Account and terminal callers", async () => {
+        const terminalRouteId = await seedEndpoint(TERMINAL_ENDPOINT);
+        const accountRouteId = await seedEndpoint(ACCOUNT_ENDPOINT);
         const app = Fastify({ logger: false });
         app.setValidatorCompiler(validatorCompiler);
         app.setSerializerCompiler(serializerCompiler);
-        const typed = app.withTypeProvider<ZodTypeProvider>() as any;
+        const typed = app.withTypeProvider<ZodTypeProvider>() as unknown as AppFastify;
         enableAuthentication(typed);
-        registerPluginWebhookEndpointRoutes(typed, {
-            ensure: vi.fn(),
-            read: vi.fn(),
-            revoke: vi.fn(),
-            retarget: vi.fn(),
-            movePending: vi.fn(),
-            configureCredential,
-            rotateCredential: vi.fn(),
-            finishCredentialRotation: vi.fn(),
-        }, { HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENABLED: "1" });
-        await app.ready();
-
+        registerPluginWebhookEndpointRoutes(typed, undefined, { HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENABLED: "1" });
+        const url = PluginWebhookActionHttpPathsV1["plugin.webhook.endpoint.credential.configure"];
         try {
-            const [presentUserToken, terminalToken] = await Promise.all([
-                auth.createToken("account-1", undefined, {
-                    kind: "account",
-                    authority: "present_user",
-                }),
-                auth.createToken("account-1", { session: "terminal-automation" }, {
-                    kind: "terminal",
-                    authority: "account_automation",
-                }),
-            ]);
-            const url = PluginWebhookActionHttpPathsV1[
-                "plugin.webhook.endpoint.credential.configure"
-            ];
-            const payload = {
-                webhookEndpointId: "wh_ep_AAECAwQFBgcICQoLDA0ODw",
-                expectedRevision: 1,
-            };
+            const directory = await auth.createToken(ACCOUNT_ID, undefined, { kind: "account_directory", authority: "present_user" });
+            const refused = await app.inject({ method: "POST", url, headers: { authorization: `Bearer ${directory}` },
+                payload: { webhookEndpointId: TERMINAL_ENDPOINT, expectedRevision: 1 } });
+            expect(refused.statusCode).toBe(403);
+            expect(refused.json()).toEqual({ error: "present_user_required" });
+            expect(refused.json()).not.toHaveProperty("oneTimeGeneratedSecret");
+            expect(await db.pluginWebhookCredential.count()).toBe(0);
+            expect(await db.pluginWebhookEndpoint.findUniqueOrThrow({ where: { id: TERMINAL_ENDPOINT } })).toMatchObject({ revision: 1 });
 
-            const terminalResponse = await app.inject({
-                method: "POST",
-                url,
-                headers: { authorization: `Bearer ${terminalToken}` },
-                payload,
-            });
-            expect(terminalResponse.statusCode).toBe(403);
-            expect(terminalResponse.json()).toEqual({ error: "present_user_required" });
-            expect(terminalResponse.json()).not.toHaveProperty("oneTimeGeneratedSecret");
-            expect(configureCredential).not.toHaveBeenCalled();
-
-            const presentUserResponse = await app.inject({
-                method: "POST",
-                url,
-                headers: { authorization: `Bearer ${presentUserToken}` },
-                payload,
-            });
-            expect(presentUserResponse.statusCode).toBe(200);
-            expect(presentUserResponse.json()).toMatchObject({
-                kind: "configured",
-                oneTimeGeneratedSecret: "present-user-secret",
-            });
-            expect(configureCredential).toHaveBeenCalledTimes(1);
-        } finally {
-            await app.close();
-        }
+            for (const [kind, endpointId, routeId] of [
+                ["terminal", TERMINAL_ENDPOINT, terminalRouteId], ["account", ACCOUNT_ENDPOINT, accountRouteId],
+            ] as const) {
+                const token = await auth.createToken(ACCOUNT_ID, undefined, { kind, authority: kind === "terminal" ? "account_automation" : "present_user" });
+                const response = await app.inject({ method: "POST", url, headers: { authorization: `Bearer ${token}`,
+                    ...(kind === "terminal" ? { [AUTHORITY_CEILING_HEADER_V1]: "account_automation" } : {}) },
+                    payload: { webhookEndpointId: endpointId, expectedRevision: 1 } });
+                expect(response.statusCode).toBe(200);
+                expect(response.json()).toMatchObject({ kind: "configured", webhookEndpointId: endpointId, revision: 2,
+                    oneTimeGeneratedSecret: expect.any(String) });
+                const credential = await db.pluginWebhookCredential.findFirstOrThrow({ where: { routeId } });
+                expect(decryptPluginWebhookCredentialSecretV1({ routeId, verifierKind: "github_hmac_sha256_v1",
+                    credentialVersionId: credential.credentialVersionId, encryptedSecret: new Uint8Array(credential.encryptedSecret) }))
+                    .toBe(response.json().oneTimeGeneratedSecret);
+                expect(await db.pluginWebhookEndpoint.findUniqueOrThrow({ where: { id: endpointId } })).toMatchObject({ revision: 2 });
+            }
+            expect(await db.pluginWebhookCredential.count()).toBe(2);
+        } finally { await app.close(); }
     });
 });

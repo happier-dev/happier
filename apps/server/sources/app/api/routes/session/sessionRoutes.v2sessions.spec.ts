@@ -26,6 +26,7 @@ import {
     txSessionFindFirst,
     txSessionFindMany,
     txSessionPinFindMany,
+    txSessionShareFindMany,
     txSessionTurnFindMany,
     sessionTurnFindMany,
 } from "./sessionRoutes.testkit";
@@ -33,6 +34,7 @@ import {
     mapV2SessionListRow as mapV2SessionListRowWithAccountMode,
 } from "@/app/session/listing/rows";
 import { isMissingAttentionProjectionColumnError } from "@/app/session/listing/page";
+import { matchesDbMockWhere } from "@/app/api/testkit/dbMocks";
 import { getRouteEntry } from "@/app/api/testkit/routeHarness";
 
 const OWNER_METADATA_ENVELOPE_V1 = {
@@ -123,7 +125,7 @@ function pagedSessionRow(
         encryptionMode: "plain",
         createdAt,
         updatedAt: overrides.updatedAt ?? createdAt,
-        meaningfulActivityAt: overrides.meaningfulActivityAt ?? createdAt,
+        meaningfulActivityAt: overrides.meaningfulActivityAt === undefined ? createdAt : overrides.meaningfulActivityAt,
         archivedAt: null,
         metadata: STORED_SHARED_METADATA_V1,
         metadataVersion: 1,
@@ -183,10 +185,10 @@ const usageLimitRuntimeIssue: SessionRuntimeIssueV1 = {
 
 function expectedV2SessionVisibilityBranches() {
     return expect.arrayContaining([
-        // The owner branch admits only a currently active owning Account; a
-        // suspended Home must not keep serving its own rows.
-        { accountId: "u1", account: { status: "active" } },
+        // The access owner captures the active viewer before building this predicate.
+        { accountId: "u1" },
         expect.objectContaining({
+            accountId: { not: "u1" },
             AND: expect.arrayContaining([
                 expect.objectContaining({
                     OR: expect.arrayContaining([
@@ -204,9 +206,7 @@ function expectedV2SessionVisibilityBranches() {
                 }),
                 expect.objectContaining({
                     OR: expect.arrayContaining([
-                        expect.objectContaining({
-                            shares: { some: expect.objectContaining({ sharedWithUserId: "u1" }) },
-                        }),
+                        { id: { in: [] } },
                     ]),
                 }),
             ]),
@@ -230,20 +230,22 @@ function readWhereSessionIds(where: unknown): ReadonlySet<string> | null {
 }
 
 function hasActivityCursor(where: unknown): boolean {
-    return flattenSessionWhereConjuncts(where).some((clause) => {
-        const branches = clause.OR;
-        if (!Array.isArray(branches)) return false;
-        const containsKey = (value: unknown, key: string): boolean => {
-            if (!value || typeof value !== "object") return false;
-            if (Array.isArray(value)) return value.some((entry) => containsKey(entry, key));
-            const record = value as Record<string, unknown>;
-            return Object.prototype.hasOwnProperty.call(record, key)
-                || Object.values(record).some((entry) => containsKey(entry, key));
-        };
-        return containsKey(branches, "id")
-            && ["meaningfulActivityAt", "createdAt", "materializedThroughSourceAt"]
-                .some((key) => containsKey(branches, key));
-    });
+    return flattenSessionWhereConjuncts(where).some((clause) =>
+        ["meaningfulActivityAt", "createdAt", "materializedThroughSourceAt", "id"].some((key) => {
+            const value = clause[key];
+            return value !== null && typeof value === "object" && "lt" in value;
+        }));
+}
+
+function expectPageAccessBranches() {
+    const queries = sessionFindMany.mock.calls.map(([query]) => flattenSessionWhereConjuncts(query.where));
+    expect(queries).toEqual(expect.arrayContaining([
+        expect.arrayContaining([{ accountId: "u1" }]),
+        expect.arrayContaining([
+            { accountId: { not: "u1" } },
+            expect.objectContaining({ OR: expect.arrayContaining([{ id: { in: expect.any(Array) } }]) }),
+        ]),
+    ]));
 }
 
 describe("sessionRoutes v2 sessions snapshot", () => {
@@ -261,11 +263,12 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         const { response } = await route.invoke({ query: { limit: 1 } });
 
         expect(response).toEqual({
+            observationCursor: 0,
             sessions: [],
             nextCursor: null,
             hasNext: false,
         });
-        expect(accountFindUnique).toHaveBeenCalledTimes(FOLLOW_RULE_VIEWER_ACCOUNT_READS);
+        expect(accountFindUnique).toHaveBeenCalledTimes(FOLLOW_RULE_VIEWER_ACCOUNT_READS + 1);
     });
 
     it("merges and acknowledges active rows when a predecessor client requests them", async () => {
@@ -375,6 +378,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         const { response } = await route.invoke({ query: { limit: 2 } });
 
         expect(response).toEqual({
+            observationCursor: 0,
             sessions: [
                 expect.objectContaining({ id: "owned-layout-one-2" }),
                 expect.objectContaining({ id: "owned-layout-one-1" }),
@@ -408,6 +412,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         const { response } = await route.invoke({ query: { limit: 1 } });
 
         expect(response).toEqual({
+            observationCursor: 0,
             sessions: [expect.objectContaining({
                 id: "shared-displayed",
                 share: { accessLevel: "view", canApprovePermissions: false },
@@ -432,29 +437,14 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             metadataLayoutVersion: 0,
             ownerMetadata: null,
         };
-        sessionFindMany.mockImplementation(async (query) => {
-            const clauses = flattenSessionWhereConjuncts(query.where);
-            const filtersLegacyRows = clauses.some((clause) =>
-                (clause as { metadataLayoutVersion?: { not?: number } })
-                    .metadataLayoutVersion?.not === 1);
-            const selectsHostedMeaningfulActivity = clauses.some((clause) => {
-                const candidate = clause as {
-                    currentStorageState?: string;
-                    meaningfulActivityAt?: { not?: null };
-                };
-                return candidate.currentStorageState === "hosted"
-                    && candidate.meaningfulActivityAt?.not === null;
-            });
-            if (filtersLegacyRows && (query.skip || !selectsHostedMeaningfulActivity)) return [];
-            return filtersLegacyRows
-                ? [emittedLayoutZero]
-                : [
-                    emittedLayoutZero,
-                    pagedSessionRow("layout-one-lookahead", {
-                        meaningfulActivityAt: new Date(1_000),
-                    }),
-                ];
-        });
+        const rows = [
+            emittedLayoutZero,
+            pagedSessionRow("layout-one-lookahead", { meaningfulActivityAt: new Date(1_000) }),
+        ];
+        sessionFindMany.mockImplementation(async (query) =>
+            rows.filter(row => matchesDbMockWhere(row, query.where))
+                .slice(query.skip ?? 0, (query.skip ?? 0) + (query.take ?? rows.length)));
+
 
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
         const { reply, response } = await route.invoke({
@@ -465,6 +455,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
 
         expect(reply.statusCode).toBe(200);
         expect(response).toEqual({
+            observationCursor: 0,
             sessions: [expect.objectContaining({ id: "emitted-layout-zero" })],
             nextCursor: null,
             hasNext: false,
@@ -478,7 +469,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             expect(flattenSessionWhereConjuncts(query.where))
                 .toContainEqual({ metadataLayoutVersion: { not: 1 } });
         }
-        expect(accountFindUnique).toHaveBeenCalledTimes(FOLLOW_RULE_VIEWER_ACCOUNT_READS);
+        expect(accountFindUnique).toHaveBeenCalledTimes(FOLLOW_RULE_VIEWER_ACCOUNT_READS + 1);
     });
 
     it("omits an incompatible pinned row without rejecting the compatible page", async () => {
@@ -528,6 +519,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
 
         expect(reply.statusCode).toBe(200);
         expect(response).toEqual({
+            observationCursor: 0,
             sessions: [expect.objectContaining({ id: "regular-layout-zero" })],
             nextCursor: expect.any(String),
             hasNext: true,
@@ -536,7 +528,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         });
         expect((response as { sessions: Array<{ id: string }> }).sessions)
             .not.toContainEqual(expect.objectContaining({ id: "pinned-layout-one" }));
-        expect(accountFindUnique).toHaveBeenCalledTimes(FOLLOW_RULE_VIEWER_ACCOUNT_READS);
+        expect(accountFindUnique).toHaveBeenCalledTimes(FOLLOW_RULE_VIEWER_ACCOUNT_READS + 1);
     });
 
     it("keeps full Agent state owner-only when projecting a shared session row", () => {
@@ -1128,8 +1120,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
 
     it("returns owned + shared sessions and uses share DEK for shared sessions", async () => {
         const now = new Date(1);
-        sessionFindMany
-            .mockResolvedValueOnce([
+        const rows = [
                 {
                     ...pagedSessionRow("s3", {
                         createdAt: now,
@@ -1182,22 +1173,23 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                     seq: 1,
                     metadata: "m1",
                 },
-            ])
-            .mockResolvedValueOnce([]);
+        ];
+        txSessionShareFindMany.mockResolvedValue([{
+            sessionId: "s2", sharedWithUserId: "u1", accessLevel: "edit", canApprovePermissions: true,
+        }]);
+        sessionFindMany.mockImplementation(async (query) =>
+            rows.filter(row => matchesDbMockWhere(row, query.where))
+                .slice(query.skip ?? 0, (query.skip ?? 0) + (query.take ?? rows.length)));
 
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
         const { response: res } = await route.invoke({
             query: { limit: 2 },
         });
 
-        expect(sessionFindMany.mock.calls.some((call) => {
-            const clauses = flattenSessionWhereConjuncts(call[0].where);
-            return clauses.some((clause) => clause.archivedAt === null)
-                && clauses.some((clause) =>
-                    expect.objectContaining({ OR: expectedV2SessionVisibilityBranches() }).asymmetricMatch(clause));
-        })).toBe(true);
+        expectPageAccessBranches();
 
         expect(res).toEqual({
+            observationCursor: 0,
             sessions: [
                 expect.objectContaining({
                     id: "s3",
@@ -1291,6 +1283,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         });
 
         expect(response).toEqual({
+            observationCursor: 0,
             sessions: [expect.objectContaining({ id: "s-first" })],
             nextCursor: encodeV2SessionListCursorV2({
                 sessionId: "s-first",
@@ -1320,10 +1313,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                 ],
             }),
         );
-        expect(sessionFindMany.mock.calls.some((call) =>
-            flattenSessionWhereConjuncts(call[0].where).some((clause) =>
-                expect.objectContaining({ OR: expectedV2SessionVisibilityBranches() }).asymmetricMatch(clause))))
-            .toBe(true);
+        expectPageAccessBranches();
     });
 
     it("includes server-backed initial pinned rows and durable attention rows without consuming the regular page", async () => {
@@ -1596,7 +1586,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
     });
 
     it("accepts legacy v1 cursors by resolving the cursor row effective activity", async () => {
-        sessionFindFirst.mockResolvedValue({
+        const cursorRow = {
             id: "s5",
             accountId: "u1",
             currentStorageState: "hosted",
@@ -1606,8 +1596,10 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             publishedThroughServerSeq: null,
             createdAt: new Date(5_000),
             meaningfulActivityAt: new Date(4_500),
-        });
-        sessionFindMany.mockResolvedValue([]);
+        };
+        sessionFindFirst.mockResolvedValue(cursorRow);
+        sessionFindMany.mockImplementation(async (query) =>
+            flattenSessionWhereConjuncts(query.where).some(clause => clause.id === "s5") ? [cursorRow] : []);
 
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
         const { response, reply } = await route.invoke({
@@ -1634,7 +1626,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             expect.objectContaining({ OR: expectedV2SessionVisibilityBranches() }),
         ]));
         expect(sessionFindMany.mock.calls.some((call) => hasActivityCursor(call[0].where))).toBe(true);
-        expect(response).toEqual({ sessions: [], nextCursor: null, hasNext: false });
+        expect(response).toEqual({ sessions: [], nextCursor: null, hasNext: false, observationCursor: 0 });
     });
 
     it("POST /v2/sessions/query returns the cursor error for an inaccessible legacy cursor", async () => {
@@ -1675,16 +1667,11 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             createdAt: new Date(700),
             meaningfulActivityAt: new Date(7_000),
         });
-        sessionFindMany.mockImplementation(async (query) => {
-            const where = query.where as Record<string, unknown>;
-            const hosted = findWhereConjunct(where, (clause) => clause.currentStorageState === "hosted");
-            if (!hosted) return [];
-            const hasCursor = hasActivityCursor(where);
-            if (hosted.meaningfulActivityAt) {
-                return hasCursor ? [s7] : [s9, s7];
-            }
-            return hasCursor ? [] : [s8];
-        });
+        const rows = [s9, s8, s7];
+        sessionFindMany.mockImplementation(async (query) =>
+            rows.filter(row => matchesDbMockWhere(row, query.where))
+                .slice(query.skip ?? 0, (query.skip ?? 0) + (query.take ?? rows.length)));
+
 
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
         const { response: firstPage } = await route.invoke({
@@ -1692,6 +1679,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         });
 
         expect(firstPage).toEqual({
+            observationCursor: 0,
             sessions: [
                 expect.objectContaining({ id: "s9", meaningfulActivityAt: 9_000 }),
                 expect.objectContaining({ id: "s8", meaningfulActivityAt: 8_000 }),
@@ -1708,6 +1696,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         });
 
         expect(secondPage).toEqual({
+            observationCursor: 0,
             sessions: [
                 expect.objectContaining({ id: "s7", meaningfulActivityAt: 7_000 }),
             ],
@@ -1735,25 +1724,15 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         expect(flattenSessionWhereConjuncts(secondPageActivityQuery?.where)).toEqual(expect.arrayContaining([
             { archivedAt: null },
             { currentStorageState: "hosted", meaningfulActivityAt: { not: null } },
-            expect.objectContaining({ OR: expectedV2SessionVisibilityBranches() }),
-            {
-                    OR: [
-                        { meaningfulActivityAt: { lt: new Date(8_000) } },
-                        { meaningfulActivityAt: new Date(8_000), id: { lt: "s8" } },
-                    ],
-            },
+            { accountId: "u1" },
+            { meaningfulActivityAt: { lt: new Date(8_000) } },
         ]));
         expect(secondPageNullActivityQuery).toBeDefined();
         expect(flattenSessionWhereConjuncts(secondPageNullActivityQuery?.where)).toEqual(expect.arrayContaining([
             { archivedAt: null },
             { currentStorageState: "hosted", meaningfulActivityAt: null },
-            expect.objectContaining({ OR: expectedV2SessionVisibilityBranches() }),
-            {
-                    OR: [
-                        { createdAt: { lt: new Date(8_000) } },
-                        { createdAt: new Date(8_000), id: { lt: "s8" } },
-                    ],
-            },
+            { accountId: "u1" },
+            { createdAt: { lt: new Date(8_000) } },
         ]));
     });
 

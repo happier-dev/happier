@@ -1,19 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createDbMocks, createDbTransactionMock, installDbModuleMock } from "../../testkit/dbMocks";
+import { createDbMocks, createDbTransactionMock, installDbModuleMock, inTxPostgresControlStatementMock } from "../../testkit/dbMocks";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 
 const dbMocks = createDbMocks({
     accessKey: ["findUnique", "create"],
     session: ["findFirst"],
-    machine: ["findFirst", "findUnique"],
+    machine: ["findUnique"],
 } as const);
 
 const isPrismaErrorCode = vi.fn((error: unknown, code: string) => {
     return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === code;
 });
 
-const transactions = createDbTransactionMock(() => dbMocks.db);
+const transactions = createDbTransactionMock(() => ({
+    ...inTxPostgresControlStatementMock,
+    ...dbMocks.db,
+    $queryRawUnsafe: vi.fn(async () => [{ id: "u1" }]),
+}));
 installDbModuleMock({
     db: transactions.wrapDb(dbMocks.db),
     isPrismaErrorCode,
@@ -21,20 +25,22 @@ installDbModuleMock({
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
+const { accessKeysRoutes } = await import("./accessKeysRoutes");
+
 describe("accessKeysRoutes POST /v1/access-keys/:sessionId/:machineId", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         dbMocks.reset();
-        dbMocks.db.machine.findUnique.mockResolvedValue({ accountId: "u1", installationId: null });
         isPrismaErrorCode.mockClear();
-        dbMocks.db.machine.findFirst.mockResolvedValue({
+        dbMocks.db.machine.findUnique.mockResolvedValue({
+            accountId: "u1", installationId: null,
             revokedAt: null,
             replacedByMachineId: null,
         });
     });
 
-    it("returns the winner row when access-key creation loses a unique race", async () => {
-        dbMocks.db.session.findFirst.mockResolvedValueOnce({ id: "s1", accountId: "u1" });
+    it("reports the existing binding after replaying a unique creation race", async () => {
+        dbMocks.db.session.findFirst.mockResolvedValue({ accountId: "u1", originKind: "user", originRunId: null });
         dbMocks.db.accessKey.findUnique
             .mockResolvedValueOnce(null)
             .mockResolvedValueOnce({
@@ -45,7 +51,6 @@ describe("accessKeysRoutes POST /v1/access-keys/:sessionId/:machineId", () => {
             });
         dbMocks.db.accessKey.create.mockRejectedValueOnce({ code: "P2002" });
 
-        const { accessKeysRoutes } = await import("./accessKeysRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/access-keys/:sessionId/:machineId",
@@ -60,26 +65,19 @@ describe("accessKeysRoutes POST /v1/access-keys/:sessionId/:machineId", () => {
             body: { data: "created" },
         });
 
-        expect(reply.statusCode).toBe(200);
-        expect(res).toEqual({
-            success: true,
-            accessKey: {
-                data: "winner",
-                dataVersion: 1,
-                createdAt: new Date("2026-04-19T00:00:00.000Z").getTime(),
-                updatedAt: new Date("2026-04-19T00:00:00.000Z").getTime(),
-            },
-        });
+        expect(reply.statusCode).toBe(409);
+        expect(res).toEqual({ error: "Access key already exists" });
+
     });
 
     it("does not create an access key for a replaced machine", async () => {
-        dbMocks.db.session.findFirst.mockResolvedValueOnce({ id: "s1" });
-        dbMocks.db.machine.findFirst.mockResolvedValueOnce({
+        dbMocks.db.session.findFirst.mockResolvedValueOnce({ accountId: "u1", originKind: "user", originRunId: null });
+        dbMocks.db.machine.findUnique.mockResolvedValue({
+            accountId: "u1", installationId: null,
             revokedAt: null,
             replacedByMachineId: "m2",
         });
 
-        const { accessKeysRoutes } = await import("./accessKeysRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/access-keys/:sessionId/:machineId",

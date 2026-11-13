@@ -103,6 +103,16 @@ describe("artifactWriteService", () => {
         });
         // Persistent queries return the owner/grant joins required by the real
         // access and audience owners; no internal domain service is mocked.
+        const readArtifact = async (...args: unknown[]) => {
+            const row = await txFixture.artifact.findFirst(...args);
+            if (!row) return row;
+            const accountId = row.accountId ?? "u1";
+            return { ...row, accountId,
+                account: row.account ?? await txFixture.account.findUnique({ where: { id: accountId } }),
+                accountGrants: row.accountGrants ?? [], teamGrants: row.teamGrants ?? [], groupGrants: row.groupGrants ?? [],
+                keyEnvelopes: row.keyEnvelopes ?? [],
+            };
+        };
         currentTx = {
             ...txFixture,
             __afterTxCallbacks: [],
@@ -112,15 +122,10 @@ describe("artifactWriteService", () => {
                     || typeof accountId !== "string") throw new Error("Unexpected SQLite admission query");
                 return 1;
             },
-            artifact: { ...txFixture.artifact, findFirst: async (...args: unknown[]) => {
-                const row = await txFixture.artifact.findFirst(...args);
-                if (!row) return row;
-                const accountId = row.accountId ?? "u1";
-                return { ...row, accountId,
-                    account: row.account ?? await txFixture.account.findUnique({ where: { id: accountId } }),
-                    accountGrants: row.accountGrants ?? [], teamGrants: row.teamGrants ?? [], groupGrants: row.groupGrants ?? [],
-                    keyEnvelopes: row.keyEnvelopes ?? [],
-                };
+            artifact: { ...txFixture.artifact, findFirst: readArtifact, findMany: async (...args: unknown[]) => {
+                // The access owner now reads a set with the same persisted joins.
+                const row = await readArtifact(...args);
+                return row ? [row] : [];
             } },
         } as unknown as Tx;
     });
@@ -554,12 +559,12 @@ describe("artifactWriteService", () => {
                 body: artifactBytes(encodePlainArtifactStoredContent({ body: "before" })), bodyVersion: 20,
                 dataEncryptionKey: artifactBytes(ARTIFACT_PLAIN_DATA_KEY_MARKER),
             };
-            txFixture.artifact.findFirst
-                .mockResolvedValueOnce(initial) // authorized cleanup admission
-                .mockResolvedValueOnce(initial) // live owner/grant lookup
-                .mockResolvedValueOnce(initial) // pre-CAS content read
-                .mockResolvedValueOnce({ ...initial, headerVersion: 11, bodyVersion: 21 });
-            txFixture.artifact.updateMany.mockResolvedValue({ count: 0 });
+            let persisted = initial;
+            txFixture.artifact.findFirst.mockImplementation(async () => persisted);
+            txFixture.artifact.updateMany.mockImplementation(async () => {
+                persisted = { ...initial, headerVersion: 11, bodyVersion: 21 };
+                return { count: 0 };
+            });
             const rejected = await updateArtifact({
                 actorUserId: "u1",
                 artifactId: "a1",

@@ -16,7 +16,7 @@ import {
     createSessionMessage,
     sessionFindUnique,
     emitUpdate,
-    markAccountChanged,
+    accountChanges,
     resetSessionRouteMocks,
     txSessionFindFirst,
     txSessionFindUnique,
@@ -28,6 +28,10 @@ import {
 
 // Prisma is the system boundary; protocol-activation fixtures expose only its audited findMany operation.
 type ProtocolActivationDatabase = Parameters<typeof initializeSessionSystemRecordsProtocolV1Activation>[0];
+
+function recordSession(overrides: Record<string, unknown>) {
+    return { ...createSessionAccessProjectionRelations(), id: "s1", accountId: "u1", currentStorageState: "hosted", ...overrides };
+}
 
 function synopsisPayload(overrides: Record<string, unknown> = {}) {
     return {
@@ -77,7 +81,6 @@ function activeOwnerSessionWhere(sessionId: string, accountId: string) {
                     OR: expect.arrayContaining([
                         expect.objectContaining({
                             accountId,
-                            account: { status: "active" },
                         }),
                     ]),
                 }),
@@ -380,7 +383,7 @@ describe("sessionRoutes system records", () => {
     });
 
     it("continues accepting genuine released legacy GET list and read shapes without a protocol header", async () => {
-        txSessionFindUnique.mockResolvedValue({ id: "s1", encryptionMode: "plain", accountId: "u1", currentStorageState: "hosted", shares: [] });
+        txSessionFindUnique.mockResolvedValue(recordSession({ id: "s1", encryptionMode: "plain", accountId: "u1", currentStorageState: "hosted", shares: [] }));
         txSessionSystemRecordFindMany.mockResolvedValue([]);
         txSessionSystemRecordFindFirst.mockResolvedValue(null);
 
@@ -468,7 +471,7 @@ describe("sessionRoutes system records", () => {
             namespace: address.namespace,
             localId: address.localId,
         });
-        txSessionFindUnique.mockResolvedValue({ id: "s1", encryptionMode: "plain", accountId: "session-owner", currentStorageState: "hosted", shares: [{ id: "view-share", accessLevel: "view", canApprovePermissions: false }] });
+        txSessionFindUnique.mockResolvedValue(recordSession({ id: "s1", encryptionMode: "plain", accountId: "session-owner", currentStorageState: "hosted", shares: [{ id: "view-share", sharedWithUserId: "u1", accessLevel: "view", canApprovePermissions: false }] }));
         txSessionSystemRecordFindFirst.mockResolvedValue(null);
         txSessionSystemRecordCreate.mockResolvedValue({
             id: "plugin-record-1",
@@ -525,7 +528,7 @@ describe("sessionRoutes system records", () => {
 
     it("upserts an accessible plain memory record without transcript side effects", async () => {
         const createdAt = new Date("2026-05-19T10:00:00.000Z");
-        txSessionFindUnique.mockResolvedValue({ encryptionMode: "plain" });
+        txSessionFindUnique.mockResolvedValue(recordSession({ encryptionMode: "plain" }));
         txSessionSystemRecordCreate.mockResolvedValue({
             id: "rec-1",
             accountId: "u1",
@@ -573,7 +576,14 @@ describe("sessionRoutes system records", () => {
         });
         expect(createSessionMessage).not.toHaveBeenCalled();
         expect(emitUpdate).not.toHaveBeenCalled();
-        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(accountChanges).toMatchObject([{
+            accountId: "u1",
+            kind: "account",
+            entityId: "session-record:rec-1",
+            hint: { sessionRecords: { sessionId: "s1", address: {
+                owner: "host", namespace: "memory", kind: "synopsis.v1", localId: "memory:synopsis:v1:2",
+            } } },
+        }]);
         expect(res).toEqual({
             didCreate: true,
             didUpdate: false,
@@ -594,7 +604,7 @@ describe("sessionRoutes system records", () => {
         const createdAt = new Date("2026-05-19T10:00:00.000Z");
         const paddedLocalId = "  memory:synopsis:v1:padded  ";
         const trimmedLocalId = paddedLocalId.trim();
-        txSessionFindUnique.mockResolvedValue({ id: "s1", encryptionMode: "plain", accountId: "u1", currentStorageState: "hosted", shares: [] });
+        txSessionFindUnique.mockResolvedValue(recordSession({ id: "s1", encryptionMode: "plain", accountId: "u1", currentStorageState: "hosted", shares: [] }));
         txSessionSystemRecordCreate.mockResolvedValue({
             id: "rec-padded",
             accountId: "u1",
@@ -644,7 +654,7 @@ describe("sessionRoutes system records", () => {
     });
 
     it("rejects plain system-record content for e2ee sessions", async () => {
-        txSessionFindUnique.mockResolvedValue({ encryptionMode: "e2ee" });
+        txSessionFindUnique.mockResolvedValue(recordSession({ encryptionMode: "e2ee" }));
 
         const route = await createSessionRouteTestBuilder("PUT", "/v2/sessions/:sessionId/system-records");
         const { reply, response: res } = await route.invoke({
@@ -663,7 +673,7 @@ describe("sessionRoutes system records", () => {
     });
 
     it("rejects reusing a localId for a different kind", async () => {
-        txSessionFindUnique.mockResolvedValue({ encryptionMode: "plain" });
+        txSessionFindUnique.mockResolvedValue(recordSession({ encryptionMode: "plain" }));
         txSessionSystemRecordFindFirst.mockResolvedValue({
             id: "rec-existing",
             accountId: "u1",
@@ -696,7 +706,7 @@ describe("sessionRoutes system records", () => {
 
     it("lists records with namespace kind and localId filtering", async () => {
         const createdAt = new Date("2026-05-19T10:00:00.000Z");
-        txSessionFindUnique.mockResolvedValue({ encryptionMode: "plain" });
+        txSessionFindUnique.mockResolvedValue(recordSession({ encryptionMode: "plain" }));
         txSessionSystemRecordFindMany.mockResolvedValue([
             {
                 id: "rec-1",
@@ -757,7 +767,7 @@ describe("sessionRoutes system records", () => {
 
     it("looks up a record by namespace and localId", async () => {
         const createdAt = new Date("2026-05-19T10:00:00.000Z");
-        txSessionFindUnique.mockResolvedValue({ encryptionMode: "plain" });
+        txSessionFindUnique.mockResolvedValue(recordSession({ encryptionMode: "plain" }));
         txSessionSystemRecordFindFirst.mockResolvedValue({
             id: "rec-1",
             accountId: "u1",
@@ -796,7 +806,7 @@ describe("sessionRoutes system records", () => {
     it("decodes a canonical stored row whose local id predates the author-v1 bound", async () => {
         const createdAt = new Date("2026-05-19T10:00:00.000Z");
         const longLocalId = `legacy:${"x".repeat(300)}`;
-        txSessionFindUnique.mockResolvedValue({ id: "s1", encryptionMode: "plain", accountId: "u1", currentStorageState: "hosted", shares: [] });
+        txSessionFindUnique.mockResolvedValue(recordSession({ id: "s1", encryptionMode: "plain", accountId: "u1", currentStorageState: "hosted", shares: [] }));
         txSessionSystemRecordFindFirst.mockResolvedValueOnce({
             id: "rec-long",
             accountId: "u1",
@@ -835,7 +845,7 @@ describe("sessionRoutes system records", () => {
 
     it("fetches the latest record by namespace and kind", async () => {
         const createdAt = new Date("2026-05-19T10:00:00.000Z");
-        txSessionFindUnique.mockResolvedValue({ encryptionMode: "plain" });
+        txSessionFindUnique.mockResolvedValue(recordSession({ encryptionMode: "plain" }));
         txSessionSystemRecordFindFirst.mockResolvedValue({
             id: "rec-1",
             accountId: "u1",

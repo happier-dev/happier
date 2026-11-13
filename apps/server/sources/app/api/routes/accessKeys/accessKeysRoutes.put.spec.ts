@@ -1,26 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createDbMocks, createDbTransactionMock, installDbModuleMock } from "../../testkit/dbMocks";
+import { createDbMocks, createDbTransactionMock, installDbModuleMock, inTxPostgresControlStatementMock } from "../../testkit/dbMocks";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 
 const dbMocks = createDbMocks({
     accessKey: ["findUnique", "updateMany", "create"],
     session: ["findFirst"],
-    machine: ["findFirst", "findUnique"],
+    machine: ["findUnique"],
 } as const);
 
-const transactions = createDbTransactionMock(() => dbMocks.db);
+const transactions = createDbTransactionMock(() => ({
+    ...inTxPostgresControlStatementMock,
+    ...dbMocks.db,
+    $queryRawUnsafe: vi.fn(async () => [{ id: "u1" }]),
+}));
 installDbModuleMock({ db: transactions.wrapDb(dbMocks.db) });
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
+
+const { accessKeysRoutes } = await import("./accessKeysRoutes");
 
 describe("accessKeysRoutes PUT /v1/access-keys/:sessionId/:machineId", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         dbMocks.reset();
-        dbMocks.db.session.findFirst.mockResolvedValue({ id: "s1" });
-        dbMocks.db.machine.findUnique.mockResolvedValue({ accountId: "u1", installationId: null });
-        dbMocks.db.machine.findFirst.mockResolvedValue({
+        dbMocks.db.session.findFirst.mockResolvedValue({ accountId: "u1", originKind: "user", originRunId: null });
+        dbMocks.db.machine.findUnique.mockResolvedValue({
+            accountId: "u1", installationId: null,
             revokedAt: null,
             replacedByMachineId: null,
         });
@@ -30,7 +36,6 @@ describe("accessKeysRoutes PUT /v1/access-keys/:sessionId/:machineId", () => {
         dbMocks.db.accessKey.findUnique.mockResolvedValueOnce({ dataVersion: 2, data: "d2" });
         dbMocks.db.accessKey.updateMany.mockResolvedValueOnce({ count: 1 });
 
-        const { accessKeysRoutes } = await import("./accessKeysRoutes");
         const route = createRouteTestBuilder({
             method: "PUT",
             path: "/v1/access-keys/:sessionId/:machineId",
@@ -64,7 +69,6 @@ describe("accessKeysRoutes PUT /v1/access-keys/:sessionId/:machineId", () => {
     it("returns version-mismatch when expectedVersion differs from current", async () => {
         dbMocks.db.accessKey.findUnique.mockResolvedValueOnce({ dataVersion: 7, data: "d7" });
 
-        const { accessKeysRoutes } = await import("./accessKeysRoutes");
         const route = createRouteTestBuilder({
             method: "PUT",
             path: "/v1/access-keys/:sessionId/:machineId",
@@ -88,7 +92,6 @@ describe("accessKeysRoutes PUT /v1/access-keys/:sessionId/:machineId", () => {
             .mockResolvedValueOnce({ dataVersion: 9, data: "d9" });
         dbMocks.db.accessKey.updateMany.mockResolvedValueOnce({ count: 0 });
 
-        const { accessKeysRoutes } = await import("./accessKeysRoutes");
         const route = createRouteTestBuilder({
             method: "PUT",
             path: "/v1/access-keys/:sessionId/:machineId",
@@ -109,7 +112,6 @@ describe("accessKeysRoutes PUT /v1/access-keys/:sessionId/:machineId", () => {
         dbMocks.db.accessKey.findUnique.mockResolvedValueOnce({ dataVersion: 2, data: "d2" }).mockResolvedValueOnce(null);
         dbMocks.db.accessKey.updateMany.mockResolvedValueOnce({ count: 0 });
 
-        const { accessKeysRoutes } = await import("./accessKeysRoutes");
         const route = createRouteTestBuilder({
             method: "PUT",
             path: "/v1/access-keys/:sessionId/:machineId",
@@ -127,12 +129,12 @@ describe("accessKeysRoutes PUT /v1/access-keys/:sessionId/:machineId", () => {
     });
 
     it("does not update an access key for a replaced machine", async () => {
-        dbMocks.db.machine.findFirst.mockResolvedValueOnce({
+        dbMocks.db.machine.findUnique.mockResolvedValue({
+            accountId: "u1", installationId: null,
             revokedAt: null,
             replacedByMachineId: "m2",
         });
 
-        const { accessKeysRoutes } = await import("./accessKeysRoutes");
         const route = createRouteTestBuilder({
             method: "PUT",
             path: "/v1/access-keys/:sessionId/:machineId",

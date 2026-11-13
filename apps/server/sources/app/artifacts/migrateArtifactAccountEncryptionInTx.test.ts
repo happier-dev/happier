@@ -1,27 +1,51 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from 'node:crypto';
 import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
     encodePlainArtifactStoredContent,
     type AccountEncryptionMigrateArtifactsDirective,
 } from "@happier-dev/protocol";
+import { inTx, type Tx } from "@/storage/inTx";
+import { createPrismaTransactionBoundary } from "@/app/api/testkit/txHarness";
 
 import {
     matchArtifactAccountEncryptionMigrationPostStateInTx,
     migrateArtifactAccountEncryptionInTx,
 } from "./artifactWriteService";
 
-const markAccountChanged = vi.hoisted(() => vi.fn(async () => 9));
-vi.mock("@/app/changes/markAccountChanged", () => ({
-    markAccountChanged,
+let currentTx: Tx;
+vi.mock("@/storage/db", async importOriginal => ({
+    ...await importOriginal<typeof import("@/storage/db")>(),
+    // The real transaction and publication owners run above the Prisma boundary.
+    db: new Proxy({}, {
+        get(_target, property) {
+            if (property === "$transaction") return createPrismaTransactionBoundary(() => currentTx);
+            return Reflect.get(currentTx, property);
+        },
+    }),
 }));
+
+// Prisma returns the owner's persisted Account mode and the actual empty grant
+// relations alongside these unshared Artifact rows.
+function artifactAccessRow(encryptionMode: "plain" | "e2ee") {
+    return { accountId: "account-1", account: { encryptionMode }, kind: null,
+        accountGrants: [], teamGrants: [], groupGrants: [] };
+}
+
+const accountChangeUpsert = vi.fn(async () => ({}));
+function publicationStorage() {
+    return { account: { update: vi.fn(async () => ({ seq: 9 })) },
+        $executeRawUnsafe: vi.fn(async () => 1),
+        accountChange: { findUnique: vi.fn(async () => null), upsert: accountChangeUpsert } };
+}
 
 describe("migrateArtifactAccountEncryptionInTx", () => {
     beforeEach(() => {
-        process.env.HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_ARTIFACTS_AT_REST =
-            "none";
-        markAccountChanged.mockClear();
+        vi.stubEnv("HAPPIER_DB_PROVIDER", "sqlite");
+        vi.stubEnv("HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_ARTIFACTS_AT_REST", "none");
+        accountChangeUpsert.mockClear();
     });
+    afterEach(() => vi.unstubAllEnvs());
 
     it('atomically replaces head and retained private blobs and rejects changed source custody before writes', async () => {
         const artifactId = '00000000-0000-4000-8000-000000000001';
@@ -33,7 +57,7 @@ describe("migrateArtifactAccountEncryptionInTx", () => {
         const target = { accountId: 'account-1', row: { ...source, storageKey: `artifacts/${artifactId}/${blobId}/${uploadId}`,
             encryptionMode: 'plain', storedSizeBytes: 40n }, contentSha256: digest, sizeBytes: bytes.byteLength, candidate: true };
         const body = encodePlainArtifactStoredContent({ body: { blobId, mime: 'application/octet-stream', sizeBytes: 3, sha256: digest } });
-        const row = { id: artifactId, headerVersion: 1, bodyVersion: 2, seq: 2, currentBlobId: blobId,
+        const row = { ...artifactAccessRow("e2ee"), id: artifactId, headerVersion: 1, bodyVersion: 2, seq: 2, currentBlobId: blobId,
             header: Buffer.from([2, 1]), body: Buffer.from([2, 2]), dataEncryptionKey: Buffer.from([3, 4]),
             revisions: [{ bodyVersion: 1, body: Buffer.from([2, 3]), blobId }], blobs: [source] };
         const item = { artifactId, expectedHeaderVersion: 1, expectedBodyVersion: 2,
@@ -63,7 +87,7 @@ describe("migrateArtifactAccountEncryptionInTx", () => {
     it("rewrites every retained body with the head and rejects changed history before writes", async () => {
         const artifactId = "00000000-0000-4000-8000-000000000001";
         const retained = { bodyVersion: 1, body: Buffer.from([2, 9, 10]) };
-        const row = { id: artifactId, headerVersion: 1, bodyVersion: 3, seq: 3,
+        const row = { ...artifactAccessRow("e2ee"), id: artifactId, headerVersion: 1, bodyVersion: 3, seq: 3,
             header: Buffer.from([2, 1, 2]), body: Buffer.from([2, 3, 4]),
             dataEncryptionKey: Buffer.from([3, 4, 5]), revisions: [retained], blobs: [] };
         const replacement = encodePlainArtifactStoredContent({ body: "Retained body" });
@@ -131,6 +155,7 @@ describe("migrateArtifactAccountEncryptionInTx", () => {
             tx: {
                 artifact: {
                     findMany: vi.fn(async () => [{
+                        ...artifactAccessRow("plain"),
                         id: artifactId,
                         headerVersion: 1,
                         bodyVersion: 2,
@@ -194,10 +219,11 @@ describe("migrateArtifactAccountEncryptionInTx", () => {
         const artifactId = "00000000-0000-4000-8000-000000000002";
         const updateMany = vi.fn(async () => ({ count: 1 }));
 
-        await expect(migrateArtifactAccountEncryptionInTx({
-            tx: {
+        const tx = {
+                ...publicationStorage(),
                 artifact: {
-                    findMany: vi.fn(async () => [{
+                    findMany: vi.fn(async (input: { where: { pluginUiArtifact?: unknown } }) => input.where.pluginUiArtifact ? [] : [{
+                        ...artifactAccessRow("plain"),
                         id: artifactId,
                         headerVersion: 1,
                         bodyVersion: 2,
@@ -219,7 +245,10 @@ describe("migrateArtifactAccountEncryptionInTx", () => {
                 },
                 artifactKeyEnvelope: { deleteMany: vi.fn(async () => ({ count: 0 })) },
                 artifactRevision: { count: vi.fn(async () => 0) },
-            } as any,
+            } as unknown as Tx;
+        currentTx = tx;
+        await expect(inTx(tx => migrateArtifactAccountEncryptionInTx({
+            tx,
             accountId: "account-1",
             fromMode: "plain",
             toMode: "plain",
@@ -237,10 +266,10 @@ describe("migrateArtifactAccountEncryptionInTx", () => {
                     dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
                 }],
             },
-        })).resolves.toEqual({ status: "applied" });
+        }))).resolves.toEqual({ status: "applied" });
 
         expect(updateMany).toHaveBeenCalledOnce();
-        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), {
+        expect(accountChangeUpsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({
             accountId: "account-1",
             kind: "pluginDomain",
             entityId: "pluginDomain/com.acme.fixture/availability",
@@ -248,17 +277,18 @@ describe("migrateArtifactAccountEncryptionInTx", () => {
                 pluginDomain: "availability",
                 pluginId: "com.acme.fixture",
             },
-        });
+        }) }));
     });
 
     it("projects a classified package-asset transition through the same Availability change owner", async () => {
         const artifactId = "00000000-0000-4000-8000-000000000003";
         const updateMany = vi.fn(async () => ({ count: 1 }));
 
-        await expect(migrateArtifactAccountEncryptionInTx({
-            tx: {
+        const tx = {
+                ...publicationStorage(),
                 artifact: {
-                    findMany: vi.fn(async () => [{
+                    findMany: vi.fn(async (input: { where: { packageAssetRelease?: unknown } }) => input.where.packageAssetRelease ? [] : [{
+                        ...artifactAccessRow("plain"),
                         id: artifactId,
                         headerVersion: 1,
                         bodyVersion: 2,
@@ -278,7 +308,10 @@ describe("migrateArtifactAccountEncryptionInTx", () => {
                 },
                 artifactKeyEnvelope: { deleteMany: vi.fn(async () => ({ count: 0 })) },
                 artifactRevision: { count: vi.fn(async () => 0) },
-            } as any,
+            } as unknown as Tx;
+        currentTx = tx;
+        await expect(inTx(tx => migrateArtifactAccountEncryptionInTx({
+            tx,
             accountId: "account-1",
             fromMode: "plain",
             toMode: "plain",
@@ -296,10 +329,10 @@ describe("migrateArtifactAccountEncryptionInTx", () => {
                     dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
                 }],
             },
-        })).resolves.toEqual({ status: "applied" });
+        }))).resolves.toEqual({ status: "applied" });
 
         expect(updateMany).toHaveBeenCalledOnce();
-        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), {
+        expect(accountChangeUpsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({
             accountId: "account-1",
             kind: "pluginDomain",
             entityId: "pluginDomain/com.acme.assets/availability",
@@ -307,7 +340,7 @@ describe("migrateArtifactAccountEncryptionInTx", () => {
                 pluginDomain: "availability",
                 pluginId: "com.acme.assets",
             },
-        });
+        }) }));
     });
 
     it("matches exact opened Artifact post-state and rejects byte/version drift read-only", async () => {

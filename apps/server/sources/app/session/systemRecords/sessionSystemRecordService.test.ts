@@ -27,10 +27,22 @@ import {
     writePermissionMediationRecord,
 } from "./sessionSystemRecordService";
 
-const logError = vi.hoisted(() => vi.fn());
-const log = vi.hoisted(() => vi.fn());
-// Capture only log output; access, protocol and transaction owners remain real.
-vi.mock("@/utils/logging/log", () => ({ error: logError, log }));
+const diagnosticOutput = vi.hoisted(() => [] as string[]);
+// Capture the logging I/O boundary while keeping log projection and Pino serialization real.
+vi.mock("pino", async (importOriginal) => {
+    const original = await importOriginal<typeof import("pino")>();
+    const capturedPino = Object.assign(
+        (options: import("pino").LoggerOptions) => original.default(options, {
+            write(chunk: string) { diagnosticOutput.push(chunk); },
+        }),
+        original.default,
+    );
+    return { ...original, default: capturedPino };
+});
+
+function diagnosticEntries(): unknown[] {
+    return diagnosticOutput.map(line => JSON.parse(line)).filter(entry => entry.module === "session-system-record-service");
+}
 
 const authentication = createPresentUserSessionAccessAuthentication();
 import { deriveSessionSystemRecordAddressKeys } from "./sessionSystemRecordAddressKeys";
@@ -49,6 +61,7 @@ import { inTx } from '@/storage/inTx';
 type ProtocolActivationDatabase = Parameters<typeof initializeSessionSystemRecordsProtocolV1Activation>[0];
 
 type TxMock = {
+    account: { findUnique: ReturnType<typeof vi.fn> };
     sessionShare: { findMany: ReturnType<typeof vi.fn> };
     sessionTeamGrant: { findMany: ReturnType<typeof vi.fn> };
     sessionGroupGrant: { findMany: ReturnType<typeof vi.fn> };
@@ -84,6 +97,8 @@ vi.mock("@/storage/db", async () => {
     const client = new PrismaClient();
     return {
         db: {
+            // PostgreSQL captures empty Home settings and governance in one joined statement.
+            $queryRawUnsafe: async () => [{ revision: null, values: null, encryptedSecrets: null, authenticationPolicy: null }],
             session: { findUnique: testState.readAccessSession, fields: client.session.fields },
             // No stored Home rows: feature bits come from the (stubbed) deployment env.
             homeSettings: { findUnique: async () => null },
@@ -96,6 +111,9 @@ vi.mock("@/storage/db", async () => {
                     ...inTxPostgresControlStatementMock,
                     // Account admission locks the Account rows it is given; the fixture has no contention.
                     $queryRawUnsafe: async (query: string, ...values: unknown[]) => {
+                        if (query.includes('LEFT JOIN "HomeSettings"')) {
+                            return [{ revision: null, values: null, encryptedSecrets: null, authenticationPolicy: null }];
+                        }
                         if (query.includes('INSERT INTO "AccountChange"')) {
                             const [accountId, kind, entityId, , hint] = values;
                             if (typeof accountId !== 'string' || typeof kind !== 'string' || typeof entityId !== 'string'
@@ -241,6 +259,7 @@ describe("sessionSystemRecordService account scoping", () => {
         storagePolicyEnv.set("HAPPIER_FEATURE_SESSIONS_BOARD__ENABLED", "1");
         storagePolicyEnv.set("HAPPIER_DB_PROVIDER", "postgres");
         vi.clearAllMocks();
+        diagnosticOutput.length = 0;
         eventRouter.setIo({ to: () => ({ emit: vi.fn(), disconnectSockets: vi.fn() }) });
         testState.publications.length = 0;
         resetSessionSystemRecordsProtocolV1ActivationForTests();
@@ -256,6 +275,7 @@ describe("sessionSystemRecordService account scoping", () => {
             accessSessionRow("edit", query.select.shares.where.sharedWithUserId.in[0]),
         );
         testState.currentTx = {
+            account: { findUnique: vi.fn().mockResolvedValue({ status: "active" }) },
             sessionShare: { findMany: vi.fn().mockResolvedValue([]) },
             sessionTeamGrant: { findMany: vi.fn().mockResolvedValue([]) },
             sessionGroupGrant: { findMany: vi.fn().mockResolvedValue([]) },
@@ -369,7 +389,7 @@ describe("sessionSystemRecordService account scoping", () => {
             actorUserId: 'owner-account', sessionId: 's1', mutation: { operation: 'update_layout', expectedLayoutRevision: revision,
                 layoutContent: { t: 'plain', v: { v: 1, tabs: [{ id: 'main', title, items: [] }] } } } });
         const result = await write(null, 'First');
-        expect(log).not.toHaveBeenCalled();
+        expect(diagnosticOutput).toEqual([]);
         expect(result).toMatchObject({ ok: true, result: { outcome: 'created' } });
         if (!result.ok || result.result.operation !== 'update_layout') throw new Error('Expected created layout');
         const audience = currentStorageState === 'machine_only' ? ['owner-account'] : ['owner-account', 'viewer'];
@@ -430,11 +450,10 @@ describe("sessionSystemRecordService account scoping", () => {
 
         const result = await run();
         expect(result.ok).toBe(false);
-        expect(logError.mock.calls).toEqual([[
+        expect(diagnosticEntries()).toMatchObject([
             { module: "session-system-record-service", operation, reason: "exception", prismaCode: "P2021", errorType: "PrismaClientKnownRequestError" },
-            expect.any(String),
-        ]]);
-        expect(JSON.stringify(logError.mock.calls)).not.toContain("private-");
+        ]);
+        expect(diagnosticOutput.join("")).not.toContain("private-");
     });
 
     it.each([
@@ -451,11 +470,10 @@ describe("sessionSystemRecordService account scoping", () => {
         currentTx.sessionSystemRecord.findMany.mockResolvedValue([row]);
 
         expect(await run()).toEqual({ ok: false, error: "internal" });
-        expect(logError.mock.calls).toEqual([[
+        expect(diagnosticEntries()).toMatchObject([
             { module: "session-system-record-service", operation, reason: "internal-result", prismaCode: null, errorType: null },
-            expect.any(String),
-        ]]);
-        expect(JSON.stringify(logError.mock.calls)).not.toContain("private-");
+        ]);
+        expect(diagnosticOutput.join("")).not.toContain("private-");
     });
 
     it.each([false, true])("reports a unique-race winner that is missing or invalid (%s)", async (missing) => {
@@ -476,11 +494,10 @@ describe("sessionSystemRecordService account scoping", () => {
 
         expect(await upsertSessionSystemRecordV1({ ...diagnosticV1Params, expectedRevision: null }))
             .toEqual({ ok: false, code: "plugin_session_record_internal" });
-        expect(logError.mock.calls).toEqual([[
+        expect(diagnosticEntries()).toMatchObject([
             { module: "session-system-record-service", operation: "v1-upsert-settlement", reason: "internal-result", prismaCode: null, errorType: null },
-            expect.any(String),
-        ]]);
-        expect(JSON.stringify(logError.mock.calls)).not.toContain("private-");
+        ]);
+        expect(diagnosticOutput.join("")).not.toContain("private-");
     });
 
     it("rejects direct v1 service calls before access or persistence while CONTRACT remains inactive", async () => {
@@ -2406,6 +2423,10 @@ describe("sessionSystemRecordService account scoping", () => {
         });
 
         expect(result).toMatchObject({ ok: true, didCreate: false, didUpdate: true });
+        expect(currentTx.account.findUnique).toHaveBeenCalledWith({
+            where: { id: "shared-editor" },
+            select: { status: true },
+        });
         expect(currentTx.sessionSystemRecord.findFirst).toHaveBeenCalledTimes(2);
         expect(currentTx.sessionSystemRecord.updateMany).toHaveBeenCalledWith({
             where: expect.objectContaining({
@@ -2419,7 +2440,6 @@ describe("sessionSystemRecordService account scoping", () => {
                                 OR: expect.arrayContaining([
                                     expect.objectContaining({
                                         accountId: "shared-editor",
-                                        account: { status: "active" },
                                     }),
                                     expect.objectContaining({ AND: expect.any(Array) }),
                                 ]),

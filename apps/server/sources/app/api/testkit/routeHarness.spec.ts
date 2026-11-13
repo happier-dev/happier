@@ -3,8 +3,28 @@ import { describe, expect, it } from "vitest";
 import { createFakeRouteApp, createReplyStub, getRouteEntry, getRouteHandler, type FakeRouteApp } from "./routeHarness";
 import { createRouteRequest } from "./requestFixtures";
 import { withAuthenticatedTestApp } from "./sqliteFastify";
+import { createRouteTestBuilder } from "./routeTestBuilder";
 
 describe("routeHarness", () => {
+    it("supports Fastify's fluent serializer while exposing the application payload", async () => {
+        const payload = { success: true };
+        const registerRoutes = (app: Pick<FakeRouteApp, "get">) => {
+            app.get("/v1/serialized", async (_request, reply) =>
+                reply.serializer(JSON.stringify).code(202).send(payload));
+        };
+        await withAuthenticatedTestApp(registerRoutes, async app => {
+            const response = await app.inject({ method: "GET", url: "/v1/serialized" });
+            expect(response.statusCode).toBe(202);
+            expect(response.json()).toEqual(payload);
+        });
+
+        const route = createRouteTestBuilder({ method: "GET", path: "/v1/serialized", registerRoutes });
+        const result = await route.invoke();
+
+        expect(result.reply.statusCode).toBe(202);
+        expect(result.response).toEqual(payload);
+    });
+
     it("returns the registered route entry for opts-driven assertions", () => {
         const app = createFakeRouteApp();
         const handler = async () => ({ ok: true });

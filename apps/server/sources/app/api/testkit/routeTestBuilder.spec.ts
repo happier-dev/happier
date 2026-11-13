@@ -3,6 +3,24 @@ import { describe, expect, it } from "vitest";
 import { createRouteTestBuilder } from "./routeTestBuilder";
 
 describe("routeTestBuilder", () => {
+    it.each(["reply", "undefined"] as const)("reports the sent payload when a handler returns %s", async (returned) => {
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/sent",
+            registerRoutes(app) {
+                app.post("/v1/sent", async (_request, reply) => {
+                    reply.code(201).send({ success: true });
+                    return returned === "reply" ? reply : undefined;
+                });
+            },
+        });
+
+        const result = await route.invoke();
+
+        expect(result.response).toEqual({ success: true });
+        expect(result.reply.statusCode).toBe(201);
+    });
+
     it("registers a route once and invokes it with merged request defaults", async () => {
         const route = createRouteTestBuilder({
             method: "POST",

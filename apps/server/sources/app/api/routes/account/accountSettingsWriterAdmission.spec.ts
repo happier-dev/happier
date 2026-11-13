@@ -6,16 +6,24 @@ import {
     getRouteHandler,
 } from "../../testkit/routeHarness";
 import { evaluateAccountStoredContentCompatibility } from "@/app/clientCompatibility/accountStoredContentCompatibility";
+import { inTxPostgresControlStatementMock } from "../../testkit/dbMocks";
+import { homeConfigSnapshotPostgresQueryMock } from "@/app/home/settings/homeConfigSnapshot.testkit";
 
 const state = vi.hoisted(() => ({
-    tx: undefined as any,
+    tx: undefined as ReturnType<typeof createTx> | undefined,
 }));
 
-vi.mock("@/storage/inTx", () => ({
-    inTx: async (callback: (tx: any) => Promise<unknown>) =>
-        await callback(state.tx),
-    afterTx: vi.fn(),
-}));
+function currentTx() {
+    if (!state.tx) throw new Error("Settings transaction fixture is not initialized");
+    return state.tx;
+}
+
+vi.mock("@/storage/db", async () => {
+    const { createDbTransactionMock } = await import("../../testkit/dbMocks");
+    return { db: createDbTransactionMock(currentTx).wrapDb({
+        $queryRawUnsafe: (query: string, ...values: unknown[]) => currentTx().$queryRawUnsafe(query, ...values),
+    }) };
+});
 
 import { registerAccountSettingsHistoryRoutes } from "./registerAccountSettingsHistoryRoutes";
 import { registerAccountSettingsRoutes } from "./registerAccountSettingsRoutes";
@@ -31,8 +39,18 @@ function createTx() {
         settingsVersion: 1,
     };
     return {
-        $executeRawUnsafe: vi.fn(async () => 1),
-        $queryRawUnsafe: vi.fn(async () => [{ id: "account-1" }]),
+        ...inTxPostgresControlStatementMock,
+        $executeRawUnsafe: vi.fn(inTxPostgresControlStatementMock.$executeRawUnsafe),
+        $queryRawUnsafe: vi.fn(async (query: string, ...values: unknown[]) => {
+            if (query.includes('FROM (SELECT 1) AS singleton')) {
+                return homeConfigSnapshotPostgresQueryMock.$queryRawUnsafe.call({
+                    homeSettings: { findUnique: async () => null },
+                    homeGovernancePolicy: { findUnique: async () => null },
+                }, query, values[0]);
+            }
+            if (query.startsWith('SELECT "id" FROM "Account"')) return [{ id: "account-1" }];
+            throw new Error("Unexpected Settings fixture SQL");
+        }),
         account: {
             findUnique: vi.fn(async (_input: Readonly<{
                 select?: Readonly<{ settings?: boolean }>;
@@ -47,14 +65,13 @@ function createTx() {
                 encryptionMode: "plain" as const,
             })),
         },
+        userKVStore: { findUnique: vi.fn(async () => null) },
     };
 }
 
 function admissionCallOrder(tx: ReturnType<typeof createTx>): number {
-    const calls = [
-        ...tx.$executeRawUnsafe.mock.invocationCallOrder,
-        ...tx.$queryRawUnsafe.mock.invocationCallOrder,
-    ];
+    const calls = tx.$queryRawUnsafe.mock.calls.flatMap(([query], index) =>
+        query.startsWith('SELECT "id" FROM "Account"') ? [tx.$queryRawUnsafe.mock.invocationCallOrder[index]!] : []);
     expect(calls).toHaveLength(1);
     return calls[0]!;
 }
@@ -91,9 +108,7 @@ describe("Account Settings writer admission", () => {
 
         await write({
             userId: "account-1",
-            // Both Settings writers run behind `requirePresentUser`. Without the
-            // authority an ordinary Account token carries, the preHandler answers
-            // 403 and the fence-ordering assertions below never reach the handler.
+            // Use the ordinary Account credential provenance both writers admit.
             authAuthority: "present_user",
             authTokenKind: "account",
             accountStoredContentCompatibility: storedContentCompatibility(4),
@@ -101,8 +116,8 @@ describe("Account Settings writer admission", () => {
         }, reply);
 
         expect(reply.statusCode).toBe(400);
-        expect(admissionCallOrder(state.tx)).toBeLessThan(
-            settingsPayloadReadOrder(state.tx),
+        expect(admissionCallOrder(currentTx())).toBeLessThan(
+            settingsPayloadReadOrder(currentTx()),
         );
     });
 
@@ -121,8 +136,8 @@ describe("Account Settings writer admission", () => {
         }, reply);
 
         expect(reply.statusCode).toBe(200);
-        expect(admissionCallOrder(state.tx)).toBeLessThan(
-            settingsPayloadReadOrder(state.tx),
+        expect(admissionCallOrder(currentTx())).toBeLessThan(
+            settingsPayloadReadOrder(currentTx()),
         );
     });
 
@@ -170,8 +185,7 @@ describe("Account Settings writer admission", () => {
                     minimumProtocolVersion: 4,
                 },
             });
-            expect(state.tx.$executeRawUnsafe, route.path).not.toHaveBeenCalled();
-            expect(state.tx.$queryRawUnsafe, route.path).not.toHaveBeenCalled();
+            expect(state.tx.$queryRawUnsafe.mock.calls.some(([query]) => query.includes('FROM "Account"')), route.path).toBe(false);
             expect(state.tx.account.findUnique, route.path).not.toHaveBeenCalled();
             expect(state.tx.account.updateMany, route.path).not.toHaveBeenCalled();
         }
@@ -194,8 +208,8 @@ describe("Account Settings writer admission", () => {
         }, reply);
 
         expect(reply.statusCode).toBe(426);
-        expect(state.tx.$executeRawUnsafe).not.toHaveBeenCalled();
-        expect(state.tx.$queryRawUnsafe).not.toHaveBeenCalled();
-        expect(state.tx.accountSettingsSnapshot.findUnique).not.toHaveBeenCalled();
+        expect(currentTx().$executeRawUnsafe).not.toHaveBeenCalled();
+        expect(currentTx().$queryRawUnsafe).not.toHaveBeenCalled();
+        expect(currentTx().accountSettingsSnapshot.findUnique).not.toHaveBeenCalled();
     });
 });

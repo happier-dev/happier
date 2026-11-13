@@ -6,7 +6,7 @@ import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 const dbMocks = createDbMocks({
     accessKey: ["findUnique"],
     session: ["findFirst"],
-    machine: ["findFirst", "findUnique"],
+    machine: ["findUnique"],
 } as const);
 
 const transactions = createDbTransactionMock(() => ({ ...inTxPostgresControlStatementMock, ...dbMocks.db }));
@@ -20,15 +20,15 @@ describe("accessKeysRoutes GET /v1/access-keys/:sessionId/:machineId", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         dbMocks.reset();
-        dbMocks.db.machine.findUnique.mockResolvedValue({ accountId: "u1", installationId: null });
-        dbMocks.db.machine.findFirst.mockResolvedValue({
+        dbMocks.db.machine.findUnique.mockResolvedValue({
+            accountId: "u1", installationId: null,
             revokedAt: null,
             replacedByMachineId: null,
         });
     });
 
-    it("checks ownership without loading unrelated session or machine fields", async () => {
-        dbMocks.db.session.findFirst.mockResolvedValueOnce({ id: "s1" });
+    it("checks ownership without loading Session content", async () => {
+        dbMocks.db.session.findFirst.mockResolvedValueOnce({ accountId: "u1", originKind: "user", originRunId: null });
         dbMocks.db.accessKey.findUnique.mockResolvedValueOnce({
             data: "encrypted-key",
             dataVersion: 3,
@@ -49,14 +49,13 @@ describe("accessKeysRoutes GET /v1/access-keys/:sessionId/:machineId", () => {
             params: { sessionId: "s1", machineId: "m1" },
         });
 
-        expect(dbMocks.db.session.findFirst).toHaveBeenCalledWith({
+        expect(dbMocks.db.session.findFirst).toHaveBeenCalledWith(expect.objectContaining({
             where: { id: "s1", accountId: "u1" },
-            select: { id: true },
-        });
-        expect(dbMocks.db.machine.findFirst).toHaveBeenCalledWith({
-            where: { id: "m1", accountId: "u1" },
-            select: { revokedAt: true, replacedByMachineId: true },
-        });
+        }));
+        expect(dbMocks.db.machine.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "m1" } }));
+        const sessionSelect = dbMocks.db.session.findFirst.mock.calls[0]?.[0].select;
+        expect(sessionSelect).not.toHaveProperty("metadata");
+        expect(sessionSelect).not.toHaveProperty("dataEncryptionKey");
         expect(reply.statusCode).toBe(200);
         expect(response).toEqual({
             accessKey: {
@@ -69,8 +68,9 @@ describe("accessKeysRoutes GET /v1/access-keys/:sessionId/:machineId", () => {
     });
 
     it("does not expose an access key for a replaced machine", async () => {
-        dbMocks.db.session.findFirst.mockResolvedValueOnce({ id: "s1" });
-        dbMocks.db.machine.findFirst.mockResolvedValueOnce({
+        dbMocks.db.session.findFirst.mockResolvedValueOnce({ accountId: "u1", originKind: "user", originRunId: null });
+        dbMocks.db.machine.findUnique.mockResolvedValueOnce({
+            accountId: "u1", installationId: null,
             revokedAt: null,
             replacedByMachineId: "m2",
         });

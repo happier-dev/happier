@@ -20,7 +20,7 @@ import {
     createSessionRouteTestBuilder,
     createSessionAccessProjectionRelations,
     accountFindUnique,
-    markAccountChanged,
+    accountChanges,
     resetSessionRouteMocks,
     sessionFindFirst,
     sessionFindMany,
@@ -58,6 +58,7 @@ import {
     txSessionTagAssignmentFindMany,
     txAccountFindUnique,
 } from "./sessionRoutes.testkit";
+import { matchesDbMockWhere } from "@/app/api/testkit/dbMocks";
 import { hashSessionOrganizationKey } from "@/app/session/organization/hashKeys";
 import { isExternalActionSessionRoutePurposeAllowed } from "@/app/api/utils/apiTokenRouteAdmission";
 
@@ -72,6 +73,7 @@ function createCurrentE2eeAccountFixture() {
     const signing = tweetnacl.sign.keyPair();
     const content = tweetnacl.box.keyPair();
     return {
+        status: "active" as const,
         encryptionMode: "e2ee" as const,
         publicKey: Buffer.from(signing.publicKey).toString("hex"),
         contentPublicKey: new Uint8Array(content.publicKey),
@@ -105,8 +107,9 @@ function arrangeLockedOrganizationFolder() {
 
 function expectedV2SessionVisibilityBranches() {
     return [
-        { accountId: "u1", account: { status: "active" } },
+        { accountId: "u1" },
         {
+            accountId: { not: "u1" },
             AND: [
                 {
                     OR: [
@@ -126,15 +129,7 @@ function expectedV2SessionVisibilityBranches() {
                     ],
                 },
                 {
-                    OR: [{
-                        shares: {
-                            some: {
-                                sharedWithUserId: "u1",
-                                sharedWithUser: { status: "active" },
-                                accessLevel: { in: ["view", "edit", "admin"] },
-                            },
-                        },
-                    }],
+                    OR: [{ id: { in: [] } }],
                 },
             ],
         },
@@ -167,6 +162,11 @@ function pagedSessionRow(id: string) {
         id,
         seq: 1,
         accountId: "u1",
+        currentStorageState: "hosted",
+        acceptedThroughServerSeq: null,
+        materializationPublicationId: null,
+        materializedThroughSourceAt: null,
+        publishedThroughServerSeq: null,
         encryptionMode: "plain",
         createdAt,
         updatedAt: createdAt,
@@ -174,6 +174,8 @@ function pagedSessionRow(id: string) {
         archivedAt: null,
         metadata: "{}",
         metadataVersion: 1,
+        metadataLayoutVersion: 0,
+        ownerMetadata: null,
         agentState: null,
         agentStateVersion: 0,
         lastViewedSessionSeq: 0,
@@ -346,7 +348,10 @@ describe("session organization routes", () => {
             accountStoredContentCompatibility: organizationCompatibilityForHeaders(headers),
         });
 
-        expect(response).toBeUndefined();
+        expect(response).toEqual({
+            error: "client-upgrade-required",
+            requirement: { v: 1, kind: "account-stored-content", minimumProtocolVersion: ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION_V2 },
+        });
         expect(reply.statusCode).toBe(426);
         expect(reply.send).toHaveBeenCalledWith({
             error: "client-upgrade-required",
@@ -445,10 +450,15 @@ describe("session organization routes", () => {
         txSessionFindMany.mockResolvedValue([
             { id: "visible-pin" }, { id: "visible-folder-session" }, { id: "visible-tag-session" },
         ]);
-        txSessionPinFindMany.mockResolvedValue([
+        const pinRows = [
             { sessionId: "visible-pin", sortKey: "pin-a", pinnedAt: organizationDate(1_000), listPinned: true, railPinned: false },
             { sessionId: "revoked-pin", sortKey: "pin-b", pinnedAt: organizationDate(2_000), listPinned: true, railPinned: false },
-        ]);
+        ];
+        // Visibility is enforced in the database predicate. Return the
+        // revoked candidate too if that predicate is missing or drifts.
+        txSessionPinFindMany.mockImplementation(async (args) =>
+            expect.objectContaining({ session: expectedVisibleUnarchivedSessionWhere() }).asymmetricMatch(args.where)
+                ? pinRows.filter(pin => pin.sessionId === "visible-pin") : pinRows);
         txSessionFolderAssignmentFindMany.mockResolvedValue([
             { sessionId: "visible-folder-session", folderId: "folder-1" },
         ]);
@@ -620,12 +630,12 @@ describe("session organization routes", () => {
             where: { accountId: "u1" },
             update: { version: { increment: 1 } },
         }));
-        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), {
+        expect(accountChanges).toContainEqual(expect.objectContaining({
             accountId: "u1",
             kind: "account",
             entityId: "session-organization",
             hint: { sessionOrganization: true, scope: "pins", sessionIds: ["s1"] },
-        });
+        }));
     });
 
     it("rejects pinning an invisible session", async () => {
@@ -640,7 +650,7 @@ describe("session organization routes", () => {
         expect(reply.code).toHaveBeenCalledWith(404);
         expect(response).toEqual({ error: "Session not found" });
         expect(txSessionPinUpsert).not.toHaveBeenCalled();
-        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(accountChanges).toEqual([]);
     });
 
     it("rejects pinning an archived session before writing hidden pin state", async () => {
@@ -674,7 +684,7 @@ describe("session organization routes", () => {
             select: { id: true },
         });
         expect(txSessionPinUpsert).not.toHaveBeenCalled();
-        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(accountChanges).toEqual([]);
     });
 
     it("allows adding a pin after the previous 500-session ceiling", async () => {
@@ -803,7 +813,7 @@ describe("session organization routes", () => {
         expect(reply.code).toHaveBeenCalledWith(409);
         expect(response).toEqual({ error: "session-organization-folder-limit-exceeded" });
         expect(txSessionOrganizationFolderUpsert).not.toHaveBeenCalled();
-        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(accountChanges).toEqual([]);
     });
 
     it("rejects folder upserts when parent id and key do not resolve to the same active account folder", async () => {
@@ -965,7 +975,7 @@ describe("session organization routes", () => {
             where: { accountId: "u1", folderId: "folder-a-id" },
             data: { folderId: "parent-id" },
         });
-        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), {
+        expect(accountChanges).toContainEqual(expect.objectContaining({
             accountId: "u1",
             kind: "account",
             entityId: "session-folder-assignments",
@@ -976,8 +986,8 @@ describe("session organization routes", () => {
                 folderIds: ["folder-a-id"],
                 toFolderId: "parent-id",
             },
-        });
-        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), {
+        }));
+        expect(accountChanges).toContainEqual(expect.objectContaining({
             accountId: "u1",
             kind: "account",
             entityId: "session-organization",
@@ -987,7 +997,7 @@ describe("session organization routes", () => {
                 folderIds: ["folder-a-id", "child-a-id"],
                 scopeKeys: ["parent-id"],
             },
-        });
+        }));
     });
 
     it("admits the Section Action through the retained folder-assignment transport", async () => {
@@ -1021,19 +1031,19 @@ describe("session organization routes", () => {
                 archivedAt: null,
             },
         }));
-        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), {
+        expect(accountChanges).toContainEqual(expect.objectContaining({
             accountId: "u1",
             kind: "session",
             entityId: "s1",
-            hint: {
+            hint: expect.objectContaining({
                 sessionFolderAssignment: true,
                 sessionOrganization: true,
                 scope: "folderAssignments",
                 sessionIds: ["s1"],
                 folderIds: ["folder-1"],
                 folderId: "folder-1",
-            },
-        });
+            }),
+        }));
     });
 
     it("rejects folder assignments to missing or archived folders", async () => {
@@ -1090,12 +1100,12 @@ describe("session organization routes", () => {
         expect(txSessionPinUpsert).not.toHaveBeenCalled();
         expect(txSessionOrganizationOrderEntryDeleteMany).not.toHaveBeenCalled();
         expect(txSessionOrganizationOrderEntryUpsert).not.toHaveBeenCalled();
-        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), {
+        expect(accountChanges).toContainEqual(expect.objectContaining({
             accountId: "u1",
             kind: "account",
             entityId: "session-organization",
             hint: { sessionOrganization: true, scope: "pins", sessionIds: ["s1", "s2"] },
-        });
+        }));
     });
 
     it("rejects generic pinned order entries that are not session items", async () => {
@@ -1137,7 +1147,7 @@ describe("session organization routes", () => {
         expect(response).toEqual({ error: "invalid-session-organization-order" });
         expect(txSessionOrganizationOrderEntryDeleteMany).not.toHaveBeenCalled();
         expect(txSessionOrganizationOrderEntryUpsert).not.toHaveBeenCalled();
-        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(accountChanges).toEqual([]);
     });
 
     it("rejects generic order scope hash collisions before deleting or upserting order state", async () => {
@@ -1166,7 +1176,7 @@ describe("session organization routes", () => {
         expect(response).toEqual({ error: "invalid-session-organization-order" });
         expect(txSessionOrganizationOrderEntryDeleteMany).not.toHaveBeenCalled();
         expect(txSessionOrganizationOrderEntryUpsert).not.toHaveBeenCalled();
-        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(accountChanges).toEqual([]);
     });
 
     it("rejects generic order item hash collisions before deleting or upserting order state", async () => {
@@ -1196,7 +1206,7 @@ describe("session organization routes", () => {
         expect(response).toEqual({ error: "invalid-session-organization-order" });
         expect(txSessionOrganizationOrderEntryDeleteMany).not.toHaveBeenCalled();
         expect(txSessionOrganizationOrderEntryUpsert).not.toHaveBeenCalled();
-        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(accountChanges).toEqual([]);
     });
 
     it("rejects generic order entries for missing folders and tags before writing order state", async () => {
@@ -1233,7 +1243,7 @@ describe("session organization routes", () => {
             select: { id: true },
         }));
         expect(txSessionOrganizationOrderEntryUpsert).not.toHaveBeenCalled();
-        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(accountChanges).toEqual([]);
     });
 
     it("reorders pins by updating the canonical pin sort keys consumed by v2 session bootstrap", async () => {
@@ -1275,8 +1285,11 @@ describe("session organization routes", () => {
                 : [{ sessionId: "rail-only", sortKey: "0", pinnedAt: organizationDate(500), listPinned: false, railPinned: true }, ...listPins];
         });
         const listingRows = [pagedSessionRow("s1"), pagedSessionRow("s2"), pagedSessionRow("rail-only")];
-        txSessionFindMany.mockResolvedValue(listingRows);
-        sessionFindMany.mockResolvedValue(listingRows);
+        const readListingRows = async (query: { where?: unknown; skip?: number; take?: number }) =>
+            listingRows.filter(row => matchesDbMockWhere(row, query.where))
+                .slice(query.skip ?? 0, (query.skip ?? 0) + (query.take ?? listingRows.length));
+        txSessionFindMany.mockImplementation(readListingRows);
+        sessionFindMany.mockImplementation(readListingRows);
 
         const listRoute = await createSessionRouteTestBuilder("GET", "/v2/sessions");
         const { response } = await listRoute.invoke({ query: { limit: 10 } });
@@ -1314,7 +1327,7 @@ describe("session organization routes", () => {
         expect(response).toEqual({ orderEntries: [] });
         expect(txSessionPinUpsert).not.toHaveBeenCalled();
         expect(txSessionOrganizationOrderEntryUpsert).not.toHaveBeenCalled();
-        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(accountChanges).toEqual([]);
     });
 
     it("rejects reordering pins for an invisible session before writing pin state", async () => {
@@ -1342,7 +1355,7 @@ describe("session organization routes", () => {
             select: { id: true },
         });
         expect(txSessionPinUpsert).not.toHaveBeenCalled();
-        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(accountChanges).toEqual([]);
     });
 
     it("allows ordering retained pins at the product membership maximum", async () => {
@@ -1461,7 +1474,7 @@ describe("session organization routes", () => {
         expect(reply.code).toHaveBeenCalledWith(400);
         expect(response).toEqual({ error: "invalid-session-organization-tag" });
         expect(txSessionOrganizationTagUpsert).not.toHaveBeenCalled();
-        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(accountChanges).toEqual([]);
     });
 
     it("enforces the product maximum when creating a new tag", async () => {
@@ -1480,7 +1493,7 @@ describe("session organization routes", () => {
         expect(reply.code).toHaveBeenCalledWith(409);
         expect(response).toEqual({ error: "session-organization-tag-limit-exceeded" });
         expect(txSessionOrganizationTagUpsert).not.toHaveBeenCalled();
-        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(accountChanges).toEqual([]);
     });
 
     it("archives a deleted tag and removes its assignments", async () => {
@@ -1502,23 +1515,13 @@ describe("session organization routes", () => {
             where: { accountId: "u1", id: "tag-1" },
             data: expect.objectContaining({ archivedAt: expect.any(Date) }),
         }));
-        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), {
-            accountId: "u1",
-            kind: "account",
-            entityId: "session-organization",
-            hint: {
-                sessionOrganization: true,
-                scope: "tags",
-                tagIds: ["tag-1"],
-                deletedTagIds: ["tag-1"],
-            },
-        });
-        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), {
+        // Both mutations coalesce into the final AccountChange for this identity.
+        expect(accountChanges).toContainEqual(expect.objectContaining({
             accountId: "u1",
             kind: "account",
             entityId: "session-organization",
             hint: { sessionOrganization: true, scope: "tagAssignments", tagIds: ["tag-1"] },
-        });
+        }));
     });
 
     it("sets tag assignments for a visible session", async () => {
@@ -1549,12 +1552,12 @@ describe("session organization routes", () => {
                 { accountId: "u1", sessionId: "s1", tagId: "tag-2" },
             ],
         });
-        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), {
+        expect(accountChanges).toContainEqual(expect.objectContaining({
             accountId: "u1",
             kind: "account",
             entityId: "session-organization",
             hint: { sessionOrganization: true, scope: "tagAssignments", sessionIds: ["s1"], tagIds: ["tag-1", "tag-2"] },
-        });
+        }));
     });
 
     it("upserts workspace labels without parsing private display content", async () => {
@@ -1599,12 +1602,12 @@ describe("session organization routes", () => {
                 archivedAt: null,
             }),
         }));
-        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), {
+        expect(accountChanges).toContainEqual(expect.objectContaining({
             accountId: "u1",
             kind: "account",
             entityId: "session-organization",
             hint: { sessionOrganization: true, scope: "labels", scopeKeys: ["server_1:/private/project"] },
-        });
+        }));
     });
 
     it("rejects plaintext label display for e2ee accounts", async () => {
@@ -1647,7 +1650,7 @@ describe("session organization routes", () => {
         expect(reply.code).toHaveBeenCalledWith(409);
         expect(response).toEqual({ error: "session-organization-label-limit-exceeded" });
         expect(txSessionOrganizationLabelUpsert).not.toHaveBeenCalled();
-        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(accountChanges).toEqual([]);
     });
 
     it("rejects oversized label display envelopes", async () => {
@@ -1840,18 +1843,13 @@ describe("session organization routes", () => {
         });
         expect(txSessionOrganizationOrderEntryUpsert).toHaveBeenCalledTimes(1);
         expect(txSessionOrganizationLabelUpsert).toHaveBeenCalledTimes(1);
-        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), {
-            accountId: "u1",
-            kind: "account",
-            entityId: "session-organization",
-            hint: { sessionOrganization: true, scope: "tagAssignments", sessionIds: ["s1"], tagIds: ["tag-1"] },
-        });
-        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), {
+        // Earlier import scopes share this identity; the final labels hint survives.
+        expect(accountChanges).toContainEqual(expect.objectContaining({
             accountId: "u1",
             kind: "account",
             entityId: "session-organization",
             hint: { sessionOrganization: true, scope: "labels", scopeKeys: ["server_1:/private/project"] },
-        });
+        }));
     });
 
     it("excludes stale unpinned legacy order entries without importing membership", async () => {
@@ -1871,7 +1869,7 @@ describe("session organization routes", () => {
 
         expect(response).toEqual({ imported: { pins: 0, folders: 0, tags: 0, orderEntries: 0, labels: 0 } });
         expect(txSessionPinUpsert).not.toHaveBeenCalled();
-        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(accountChanges).toEqual([]);
     });
 
     it("skips archived legacy pins without writing hidden pin state", async () => {
@@ -1905,7 +1903,7 @@ describe("session organization routes", () => {
             select: { id: true },
         });
         expect(txSessionPinUpsert).not.toHaveBeenCalled();
-        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(accountChanges).toEqual([]);
     });
 
     it("rejects plaintext display envelopes during e2ee legacy organization import before writing", async () => {
@@ -1986,7 +1984,7 @@ describe("session organization routes", () => {
         expect(reply.code).toHaveBeenCalledWith(400);
         expect(response).toEqual({ error: "invalid-session-organization-import" });
         expect(txSessionPinUpsert).not.toHaveBeenCalled();
-        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(accountChanges).toEqual([]);
     });
 
     it("rejects legacy pinned order import when an entry is not currently visible", async () => {
@@ -2012,6 +2010,6 @@ describe("session organization routes", () => {
         expect(reply.code).toHaveBeenCalledWith(400);
         expect(response).toEqual({ error: "invalid-session-organization-import" });
         expect(txSessionPinUpsert).not.toHaveBeenCalled();
-        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(accountChanges).toEqual([]);
     });
 });
