@@ -512,7 +512,14 @@ export async function verifyWorkflowExternalActionRequesterAuthorization(input: 
     preparationAdmission?: ExternalActionExecutionAuthorizationBindingV1['deploymentPreparationAdmission'];
 }>): Promise<WorkflowExternalActionAdmission | null> {
     const binding = await auth.verifyExternalActionExecutionAuthorization(input.authorization.token);
-    const combinedActionId = input.origin.reviewedChild?.actionId ?? binding?.actionId;
+    const reviewedChild = input.origin.reviewedChild;
+    const combinedActionId = reviewedChild?.actionId ?? binding?.actionId;
+    // The Run is the root's own Run, or a reviewed child's Run. A root's own Run
+    // may carry the live Run's exact leaf proof for the receiver; it never names the Run.
+    const isAdmittedRun = (actionId: typeof combinedActionId, child?: typeof reviewedChild) => !!binding && !!actionId
+        && isMachineSetupCombinedActionIdV1(actionId) && deriveMachineSetupCombinedRunIdV1({ actionId,
+            homeId: binding.serverIdentityId, accountId: binding.accountId, requestId: binding.requestId,
+            ...(child ? { reviewedChild: child } : {}) }) === input.origin.runId;
     if (!binding || !matchesExternalActionAuthorizationBinding(binding, input.authorization.binding)
         || binding.serverIdentityId !== await initializeServerIdentityCache()
         || binding.custodianAccountId !== input.publisherCustodianAccountId
@@ -521,9 +528,8 @@ export async function verifyWorkflowExternalActionRequesterAuthorization(input: 
         || binding.installationId !== input.publisherInstallationId
         || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId
         || binding.admittedMachineRole !== 'manage'
-        || !combinedActionId || !isMachineSetupCombinedActionIdV1(combinedActionId)
-        || deriveMachineSetupCombinedRunIdV1({ actionId: combinedActionId, homeId: binding.serverIdentityId, accountId: binding.accountId,
-            requestId: binding.requestId, reviewedChild: input.origin.reviewedChild }) !== input.origin.runId) return null;
+        || !isAdmittedRun(combinedActionId, reviewedChild)
+            && !(reviewedChild?.actionId === binding.actionId && isAdmittedRun(binding.actionId))) return null;
     // A spawn-reviewed Setup parent admitted only its own Machine; its reviewed child digest pins the plan.
     const spawnSetupScope: Extract<NonNullable<ExternalActionExecutionAuthorizationBindingV1['deploymentPreparationAdmission']>,
         { operation: 'setup' }> | undefined = binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
@@ -1298,6 +1304,11 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         || isMachineSetupCombinedActionIdV1(effectActionId) || isMachineSetupNativeCodecActionIdV1(effectActionId);
     const reviewedSessionAgentReadinessChild = readGrantedSessionAgentReadinessChild(binding, proof.reviewedChild) === effectActionId;
     const prepareSession = readDeploymentPrepareSessionHttpPurpose(binding, effectActionId, target, proof);
+    // A reviewed provider child spends its admitted root's finite workspace
+    // preparation purpose. The native owner still decides the exact selection.
+    const deploymentWorkspaceRead = proof.reviewedChild?.actionId === effectActionId
+        && proof.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`
+        && isDeploymentNativeHttpPurpose({ binding, effectActionId: binding.actionId }, proof);
     const reviewedMachineSetupChild = binding.admittedMachineRole === 'manage'
         && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
         && machineSetupEffect
@@ -1331,7 +1342,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         && isDeploymentBackupConfigureNativeAdmissionV1(binding.deploymentNativeAdmission);
     const crossesEffectFamily = configureBindings || setupPreparationRead || createPreparationEffect || movePreparationEffect || Boolean(targetRetentionPurpose)
         || reviewedMachineSetupChild || reviewedSessionAgentReadinessChild || linkReviewedSetupRead || reviewedDomainEffect
-        || teardownDomainContinuation || membershipDomainContinuation || prepareSession !== null;
+        || teardownDomainContinuation || membershipDomainContinuation || prepareSession !== null || deploymentWorkspaceRead;
     const effectFamilyAdmitted = (hasMatchingExecutionEffectFamily(binding.actionId, effectActionId) || crossesEffectFamily)
         && (binding.actionId === effectActionId || !binding.handoffContinuation && !binding.handoffPreflight
             && (isContributedActionRoot(binding.actionId)
@@ -1339,11 +1350,11 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
                 || Object.values(sibling).some(Boolean) || crossesEffectFamily || templateDeployEffect));
     const usesRootCredential = sibling.docDecision || templateDeployEffect || sibling.deploymentRead || movePreparationEffect
         || linkReviewedSetupRead || sibling.registryRead || sibling.secondOpinion || sibling.memory
-        || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSession !== null;
+        || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSession !== null || deploymentWorkspaceRead;
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
     return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential,
         createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild, reviewedSessionAgentReadinessChild,
-        linkReviewedSetupRead, candidatePublication, preparationRead, prepareSession, sibling,
+        linkReviewedSetupRead, candidatePublication, preparationRead, prepareSession, deploymentWorkspaceRead, sibling,
         nativeTransition: readDeploymentNativeTransition(binding, effectActionId, proof),
         domainPurpose };
 }
@@ -1619,7 +1630,8 @@ async function verifyCommon(
         && await readAcceptedDeploymentReceiptInTx(db, binding, deploymentContinuation, {
             // A declared read spends the job principal only while its job runs.
             ...(platformMaterial ? { cancelRequestedAt: null, state: { in: deploymentInProgressStates() } }
-                : acceptedPreparationRead || !deploymentContinuation && isDeclaredReadActionId(effectActionId.data)
+                : acceptedPreparationRead || signedChildPurpose.deploymentWorkspaceRead
+                    || !deploymentContinuation && isDeclaredReadActionId(effectActionId.data)
                     ? { state: { in: deploymentInProgressStates() } } : {}),
             ...(acceptedPreparationRead?.environmentId ? { environmentId: acceptedPreparationRead.environmentId }
                 : acceptedPreparationRead?.deploymentId ? { environment: { deployments: { some: {
@@ -3401,6 +3413,7 @@ export async function verifyExternalActionDomainExecutionRequest(
     } else if (verified.createPreparationAdmission || verified.deploymentPreparationSourceRead
         || verified.deploymentTargetRetentionAdmission || verified.deploymentLinkReviewedSetupRead
         || verified.acceptedDeploymentReceipt?.read || verified.acceptedDeploymentReceipt?.platformMaterial
+        || verified.acceptedDeploymentReceipt && verified.signedChildPurpose.deploymentWorkspaceRead
         || verified.actionMaterialAdmission || verified.actionBrokerAdmission) {
         // verifyCommon already consumed the one purpose + admitted-job result.
     } else if (domainPreparation === true) {
@@ -3842,7 +3855,9 @@ export async function verifyExternalActionDomainExecutionRequest(
         : verified.signedChildPurpose.usesPublicRootCredential ? PublicActionIdSchema.safeParse(verified.binding.actionId)
         : verified.binding.handoffContinuation
             ? PublicActionIdSchema.safeParse(readExternalActionCredentialActionId(verified.binding)) : effect;
-    if (!effect.success || !credentialAction.success || !resolveCredentialActionAdmissionV1({
+    // The purpose owner selected the credential ceiling. A qualified reviewed
+    // child need not also exist in the built-in Action catalog to spend it.
+    if (!credentialAction.success || !resolveCredentialActionAdmissionV1({
         spec: getActionSpec(credentialAction.data),
         authority: verified.effectiveAuthority, grant: 'grant' in verified.binding ? verified.binding.grant : null,
         // Codec preparation retains the admitted Session proposal; it cannot

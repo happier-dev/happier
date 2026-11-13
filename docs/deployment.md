@@ -20,6 +20,12 @@ Host, Session and Workflow callers use that same owner. Ordinary Session birth,
 access and input owners retain their decisions; no additional permission or
 Account encryption-mode decision is made by Prepare.
 
+Reviewed provider children also retain the admitted deployment root's finite
+workspace census purpose. Home's native preparation owner selects workspace
+references on that Home; the Project-row route keeps Account isolation. This
+read spends the existing active deployment receipt, without provider-specific
+permission rules or a new admission.
+
 The Prepare read composes reported Session work state, structured SCM Action
 results and the Session's linked pull requests. Forge owns PR status and checks,
 including closed and merged PRs; an open-PR-only checkout summary is insufficient.
@@ -218,7 +224,7 @@ Provider tenants, permissions, stream framing and retention remain release check
 
 Platform deployment targets expose their declared Git integration and Upload methods through the shared target chooser. The selected method goes to inspection and the existing `deployments.deploy` intent; choosing Upload does not grant provider Git access or permit arbitrary local-folder publishing. Both methods retain the repository Source and reviewed immutable commit. Vercel uploads source for a remote provider build. Cloudflare Workers and Pages prepare output on the controller through their shared pinned container/toolchain owner, without attaching the platform's variable bindings to local Exec.
 
-Create and inspection retain the authored `sourceMethod` in the TargetLink's existing protected provider content. Reopening the Environment reads that selected runtime link with the Environment's Artifact batch. UI and daemon use one resolution rule: an explicit invocation method overrides the recorded link method; links without the optional field retain the legacy Git default. Compact retries retain their already admitted method. Previously created links whose choice was lost are not inferred or backfilled: choose Upload explicitly or link the target again.
+Provider Create, Inspect and Link Actions return the authored `sourceMethod` in the TargetLink's existing protected provider content; UI, CLI and agent callers consume that returned choice. Reopening the Environment reads that selected runtime link with the Environment's Artifact batch. UI and daemon use one resolution rule: an explicit invocation method overrides the recorded link method; links without the optional field retain the legacy Git default. Compact retries retain their already admitted method. Previously created links whose choice was lost are not inferred or backfilled: choose Upload explicitly or link the target again.
 
 The existing `DeploymentTargetRoleResultV1` carries optional `uploadProvenance`: the exact source manifest and a provider build location, or the controller container image, toolchain name/version and prepared-output manifest fingerprint. This evidence lives in the existing receipt's platform observation, displayed by the receipt and its Build logs through one shared presenter. The canonical observation writer preserves the original evidence when subsequent status reads return lifecycle state alone; it creates no upload store or additional receipt. Provider preparation's existing `reviewNotice` discloses the upload build location and Cloudflare pins before execution.
 

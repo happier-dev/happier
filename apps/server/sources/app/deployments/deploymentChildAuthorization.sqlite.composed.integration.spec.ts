@@ -34,6 +34,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import axios, { AxiosHeaders } from 'axios';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { readDeploymentSourceIntentForHost } from '../../../../cli/src/deployments/readDeploymentSourceIntentForHost';
+import { readProjectAccountRowsObservation } from '../../../../cli/src/workspaces/projectAccountRows';
+import { runWithServerHttpBaseUrl } from '../../../../cli/src/api/client/serverHttpBaseUrl';
 import { symbols, type DestinationStream } from 'pino';
 import { logger } from '@/utils/logging/log';
 import nacl from 'tweetnacl';
@@ -1220,6 +1222,83 @@ describe('deployment children retain their controller Action authority', () => {
             expect(responses[1].status).toBeGreaterThanOrEqual(400);
             expect(responses[1].body).not.toHaveProperty('source');
             expect(selected).toMatchObject({ sourceIntent });
+        }, { authentication: 'real' });
+    });
+
+    it.each([
+        { platformTarget: 'vercel' as const, pluginId: 'happier.deploy.vercel', localId: 'deploy-upload-v1' },
+        { platformTarget: 'workers' as const, pluginId: 'happier.deploy.cloudflare', localId: 'pages-upload' },
+    ])('retains the admitted workspace census inside $pluginId Upload', async ({ platformTarget, pluginId, localId }) => {
+        const f = await fixture('account', 'account', { platformTarget });
+        const target = f.authorization.binding.target;
+        const token = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const credentials = { token, encryption: null };
+        const action = { pluginId, localId };
+        const effectActionId = `${pluginId}/actions/${localId}`;
+        const path = '/v1/account/project-rows/list';
+        const selection = { kinds: ['workspace-ref' as const], serverId };
+        const exchanges: Array<{ path: string; status: number }> = [];
+        await withAuthenticatedTestApp(app => {
+            registerProjectAccountRowRoutes(app);
+            registerAccountProfileRoute(app);
+            registerAccountSettingsRoutes(app);
+            registerAccountEncryptionRoutes(app);
+            changesRoutes(app);
+            app.addHook('onResponse', async (request, reply) => {
+                exchanges.push({ path: request.url.split('?')[0]!, status: reply.statusCode });
+            });
+        }, async app => {
+            const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+            await withConfiguredDaemonTestHome({ prefix: 'upload-workspace-purpose-',
+                env: { HAPPIER_SERVER_URL: origin, HAPPIER_ACTIVE_SERVER_ID: serverId } }, async () => {
+                const profile = await addServerProfile({ name: 'upload-workspace', serverUrl: origin, webappUrl: origin });
+                await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: profile.id, observation: 'exact',
+                    descriptor: { v: 1, homeServerIdentityId: serverId, canonicalServerUrl: origin,
+                        revision: 1, endpoints: [{ kind: 'https', url: origin }] } });
+                const channel = await createRequesterCurrentnessSocketHarness();
+                let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> = null;
+                try {
+                    requester = await admitRequesterAccountActionContext({ authorization: f.authorization, credentials,
+                        serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin, isCurrent: async () => true });
+                    if (!requester) throw new Error(`Expected admitted requester Account custody: ${JSON.stringify({
+                        mode: f.authorization.binding.accountEncryptionMode, exchanges })}`);
+                    const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: requester.authorization,
+                        serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin, target,
+                        installationId: f.controller.installationId, privateKey: f.controller.keys.secretKey, rootAdmitted: true });
+                    if (!authorization) throw new Error('Expected admitted root HTTP projection');
+                    const read = (authz: typeof authorization, effect: string) => runWithServerHttpBaseUrl(origin,
+                        () => readProjectAccountRowsObservation({ authorization: authz, effectActionId: effect, serverId, selection }));
+                    // This is the first native read that already works on #150.
+                    expect((await read(authorization, 'deployments.deploy')).snapshot.workspaceRefs).toEqual([]);
+                    const unreviewed = createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId, target,
+                        installationId: f.controller.installationId, privateKey: f.controller.keys.secretKey,
+                        method: 'POST', path, body: selection });
+                    expect((await app.inject({ method: 'POST', url: path, payload: selection, headers: unreviewed })).statusCode).toBe(401);
+                    const result = await invokeHostReviewedChildV1({ parent: { actionId: 'deployments.deploy', input: f.input },
+                        context: { runtimeAccountId: f.account.id, externalActionTarget: target,
+                            externalActionExecutionAuthorization: authorization, surface: 'cli' },
+                        child: { action, role: 'deploy', input: { environmentId: f.environment.id } },
+                        admittedReview: { action, role: 'deploy', surface: 'cli' }, environmentId: f.environment.id,
+                        execute: async (_input, context) => {
+                            const childAuthorization = context.externalActionExecutionAuthorization;
+                            if (!childAuthorization?.requesterHttpProjection) throw new Error('Expected reviewed child projection');
+                            const observation = await read(childAuthorization, effectActionId);
+                            for (const body of [{ ...selection, serverId: 'another-home' }, {},
+                                { ...selection, kinds: ['workspace-ref', 'relationship-graph'] }]) {
+                                const headers = await childAuthorization.requesterHttpProjection.createRequestHeaders({
+                                    effectActionId, method: 'POST', path, body });
+                                expect(headers).not.toBeNull();
+                                expect((await app.inject({ method: 'POST', url: path, payload: body, headers: headers! })).statusCode).toBe(401);
+                            }
+                            await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded' } });
+                            await expect(read(childAuthorization, effectActionId)).rejects.toMatchObject({
+                                code: 'project_account_rows_unavailable', response: { status: 401 } });
+                            return observation.snapshot.workspaceRefs;
+                        },
+                    });
+                    expect(result).toEqual([]);
+                } finally { await requester?.dispose(); await channel.close(); }
+            });
         }, { authentication: 'real' });
     });
 
