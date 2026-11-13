@@ -8394,6 +8394,20 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 `deployments.receipts.get` adds optional input
+`projection: investigation` and optional result `investigation`. UI and daemon
+Account hosts strip the projection before reading server metadata, open the exact
+receipt through the Account encryption owner, and project source revision identity
+and structural failure facts. The source and failure objects remain closed; no
+Compose document, selectors, logs or credentials enter this result. Omitted
+projection preserves the ordinary read path, and an absent result projection
+means those facts are unavailable. Matching strict Protocol, SDK, UI, daemon and
+Triage source reload together under the unpublished 0.3 direct cut; older strict
+readers reject the added fields. This changes no persisted format, epoch,
+capability or generic Artifact policy. The scoped 0.2 frontier
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no deployment Action contract at
+`packages/protocol/src/deployments/deploymentActionsV1.ts`.
+
 Unreleased 0.3 in-process `AgentSessionOpenRequest` adds optional
 `promptProfile: 'conversation'`. Local Voice selects it for its retained carrier;
 the Codex adapter omits native project instructions and automatic skill
@@ -10391,6 +10405,14 @@ The approved SDK r0.31 direct cut does not make current `dev` → `../0.2`
 rollback a supported direction. Do not add predecessor readers, dual writers,
 aliases, writer-floor waits, or rollback-only gates for unpublished author
 contracts; forward migration and current-version integrity still apply.
+
+The unreleased machine-recipe `packageSource` executable union distinguishes
+APT and DNF by `manager`. Both source objects, their enclosing executable and
+conditional declarations, and their nested operands remain closed. The existing
+APT shape is unchanged; DNF adds its repository id and RPM architecture names.
+Matching Protocol, SDK DTO projections, recipe manifests, review clients and the
+native interpreter load together. Earlier 0.3 strict readers reject DNF; this
+unpublished direct cut adds no predecessor adapter, alias, writer floor or gate.
 
 The development Action-operation V2 domain reference for runtime target linking
 retains its Home, Environment and original request key, with the producer identifying

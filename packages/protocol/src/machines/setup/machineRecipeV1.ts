@@ -188,12 +188,19 @@ export const MachineRecipePackageStepV1Schema =
             if (message) context.addIssue({ code: 'custom', path: ['packages', index], message });
         });
     });
-export const MachineRecipePackageSourceStepV1Schema =
-    z.object({ ...Step, kind: z.literal('packageSource'), manager: z.literal('apt'), path: Path, keyPath: Path,
-        url: z.url().startsWith('https://'), suite: z.string().regex(/^[a-z0-9][a-z0-9.-]*$/),
-        components: z.array(z.string().regex(/^[a-z0-9-]+$/)).min(1), architectures: z.array(z.string().regex(/^[a-z0-9-]+$/)).min(1),
-        keyUrl: z.url().startsWith('https://'), keyFingerprint: z.string().regex(/^[A-F0-9]{40}$/),
-    }).strict();
+const PackageSource = { ...Step, kind: z.literal('packageSource'), path: Path, keyPath: Path,
+    url: z.url().startsWith('https://'), keyUrl: z.url().startsWith('https://'),
+    keyFingerprint: z.string().regex(/^[A-F0-9]{40}$/),
+};
+const AptPackageSource = z.object({ ...PackageSource, manager: z.literal('apt'),
+    suite: z.string().regex(/^[a-z0-9][a-z0-9.-]*$/), components: z.array(z.string().regex(/^[a-z0-9-]+$/)).min(1),
+    architectures: z.array(z.string().regex(/^[a-z0-9-]+$/)).min(1),
+}).strict();
+const DnfPackageSource = z.object({ ...PackageSource, manager: z.literal('dnf'),
+    repositoryId: z.string().regex(/^[a-zA-Z0-9._:-]+$/),
+    architectures: z.array(z.string().regex(/^[a-zA-Z0-9_]+$/)).min(1),
+}).strict();
+export const MachineRecipePackageSourceStepV1Schema = z.discriminatedUnion('manager', [AptPackageSource, DnfPackageSource]);
 export const MachineRecipeServiceUnitStepV1Schema =
     z.object({ ...Step, kind: z.literal('serviceUnit'), unit: ServiceUnitName, enabled: z.boolean().optional(), running: z.boolean() }).strict();
 export const MachineRecipeFirewallStepV1Schema =
@@ -345,7 +352,8 @@ export const MachineRecipeStepDeclarationV1Schema = z.discriminatedUnion('kind',
     DirectoryDeclaration.safeExtend({ when: When }), MachineRecipeWorkspaceAccessStepV1Schema.safeExtend({ when: When }),
     MachineRecipePathTraversalStepV1Schema.safeExtend({ when: When }), FileDeclaration.safeExtend({ when: When }),
     CommandDeclaration.safeExtend({ when: When }), MachineRecipeScriptStepV1Schema.safeExtend({ when: When }), PackageDeclaration.safeExtend({ when: When }),
-    MachineRecipePackageSourceStepV1Schema.safeExtend({ when: When }), ServiceDeclaration.safeExtend({ when: When }),
+    z.discriminatedUnion('manager', [AptPackageSource.safeExtend({ when: When }), DnfPackageSource.safeExtend({ when: When })]),
+    ServiceDeclaration.safeExtend({ when: When }),
     FirewallDeclaration.safeExtend({ when: When }),
 ]);
 export type MachineRecipeStepDeclarationV1 = z.infer<typeof MachineRecipeStepDeclarationV1Schema>;

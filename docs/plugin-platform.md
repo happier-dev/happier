@@ -735,6 +735,19 @@ declared removal. Windows reports POSIX script steps unsupported. The matching
 Protocol, daemon, managed CLI, review client and bundled recipes must load
 together; older strict readers reject this new union arm.
 
+Signed `packageSource` declarations use the same native installer for APT and
+DNF. APT declares its suite, components and allowed Debian architectures; DNF
+declares a repository id, allowed RPM architectures and an HTTPS repository URL
+whose `$basearch` is rendered from the observed RPM architecture. Both declare
+an HTTPS signing-key URL and full primary fingerprint. The native owner verifies
+that fingerprint before publishing the source and key; DNF also imports the
+verified key into RPM's trust database. Existing foreign sources or a different
+key refuse. DNF package transactions retain the package owner's DNF4 support.
+APT deb822 sources may retain vendor comments, display metadata and a supported
+native-only architecture without replaying the source effect. Chrome installs
+its key tools before the source, shares the existing manager selection and
+removes only the browser package, retaining the repository and signing trust.
+
 The host owns checking, effect review, admission, elevation, execution and
 observation. Bootstrap enrollment remains a host-owned flow behind the existing
 system-task runners; a generic serialized bootstrap recipe language is retired.
@@ -2108,7 +2121,11 @@ typed unknown outcome. The same input-sensitive `readOnly` declaration decides
 this policy; hosts and the SDK testkit pass that declaration to the invoker
 without a provider or role opt-in. Cancellation before handler entry still
 prevents dispatch. Read-only Actions and Resource observations retain their
-abort-wins lifecycle.
+abort-wins lifecycle. A cancelled read settles as `plugin_action_aborted` without
+waiting for its handler; CLI failures retain the invocation's Request ID. Hosts
+preserve that terminal code instead of reclassifying a started read as an unknown
+mutation. Handler IO must consume `context.signal` (or use host HTTP services,
+which link it into the request) to close its in-flight provider request too.
 
 `options.observeAction(ref, input, invalidate, { signal })` installs dependencies
 without running the read handler. The target registers `observeRead` beside
@@ -2611,6 +2628,30 @@ built-in role (`sessions`, `broker`, `intake`, `deployments`, `workspaces`, `rel
   it is a new role qualified as `<pluginId>/<localId>`, off unless `defaultActive` and subject to
   `requires`. Channels declare `partOf: 'intake'`, Machine services `partOf: 'deployments'`, and
   CLIProxyAPI `partOf: 'broker'`.
+- **Plugin admission (Channels → Work intake is the first consumer):** the bundled admission owner
+  ([`builtIn/machineRoles.ts`](../apps/cli/src/plugins/projection/registry/builtIn/machineRoles.ts), applied by
+  `getResolvedContributionRegistry`) resolves every admitted `machineRoles` declaration with
+  `resolveActiveMachineRolesV1` against the daemon's applied role set and records the plugin's roles that are
+  off as `inactiveMachineRoleIds` on its enablement fact. The plugin stays admitted and keeps serving demanded
+  work (Actions, notifications). `collectActivationTargets` turns the fact into the target's
+  `inactiveRoleBackgroundServiceIds`; the activation owner then (a) never starts those services, (b) does not count
+  them as a reason for startup activation (`shouldActivateTargetAtStartup`, also used by readiness), and (c) skips
+  configuration activation when every background service the plugin declares is off
+  (`isConfigurationActivationSuppressedByMachineRoles`). So with Work intake off, the Channels, Discord and Slack
+  daemon entries do not load on their own and no supervisor runs, but an Action or an alert loads the entry on
+  demand and delivers. Only the daemon binds the role set (`bindMachineRoleAdmission` in `startDaemon.ts`).
+- **Toggling without a restart:** a real change of the active set calls
+  `pluginRuntimeOwner.refreshMachineRoleAdmission()`, which republishes only the plugins whose role fact
+  changed through the existing admission refresh (`stateStore.refreshRuntime`, the Account-enablement path).
+  Turning the role off retires the plugin's occurrence (background services abort and settle); turning it on
+  admits a fresh occurrence, which activates through its normal trigger (for Channels, configuration demand).
+- **Listing:** the daemon publishes the admitted plugin role declarations in daemon state `machineRoles.plugins`
+  (`projectPublishedMachineRolesV1`, once per real change and per Machine connection). `machines.roles.list`
+  reads them with `readPublishedPluginMachineRolesV1` beside the synced `rolesV1`, so the list works offline.
+  A `partOf` entry has no switch of its own; it follows its built-in role.
+- Channels, Discord and Slack declare `partOf: 'intake'` with their ingress, outward delivery, gateway and Socket Mode
+  supervisors. Telegram and Email have no background service of their own (their polling is driven by the Channels
+  supervisor). Alerts and Actions of every channel plugin keep working with Work intake off.
 
 ### Background-service placement (unreleased 0.3)
 

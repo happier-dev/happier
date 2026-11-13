@@ -107,7 +107,7 @@ function visitMachineSetupTargetChanges(target: MachineSetupReviewChangeTarget,
                     break;
                 case 'packageSource':
                     // Where packages come from, listed with them but not one to install.
-                    add('packages', line(`${step.manager} · ${step.url} ${step.suite}`), 0);
+                    add('packages', line(`${step.manager} · ${step.url}${step.manager === 'apt' ? ` ${step.suite}` : ''}`), 0);
                     break;
                 case 'file':
                     add('files', line(step.path));

@@ -418,3 +418,23 @@ describe('machine recipe executable declarations', () => {
         expect(MachineRecipeStepV1Schema.safeParse({ ...file, state: 'absent', expectedContentDigest: 'c'.repeat(64) }).success).toBe(false);
     });
 });
+
+
+it('admits DNF signed sources through the executable and conditional recipe boundary while rejecting mixed-manager fields', () => {
+    const source = { id: 'chrome-source', kind: 'packageSource', manager: 'dnf',
+        path: '/etc/yum.repos.d/google-chrome.repo', keyPath: '/etc/pki/rpm-gpg/google-chrome.asc',
+        repositoryId: 'google-chrome', url: 'https://dl.google.com/linux/chrome/rpm/stable/$basearch',
+        architectures: ['x86_64', 'aarch64'], keyUrl: 'https://dl.google.com/linux/linux_signing_key.pub',
+        keyFingerprint: 'EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796' };
+    expect(MachineRecipeStepV1Schema.safeParse(source).success).toBe(true);
+    for (const repositoryId of ['copr:vendor:chrome', '.vendor']) {
+        expect(MachineRecipeStepV1Schema.safeParse({ ...source, repositoryId }).success).toBe(true);
+    }
+    const declared = MachineRecipeStepDeclarationV1Schema.parse({ ...source,
+        when: [{ checkId: 'manager-dnf', status: ['satisfied', 'drifted'] }] });
+    expect(resolveMachineRecipeStepInputsV1(declared, {})).toMatchObject(source);
+    for (const invalid of [{ ...source, suite: 'stable' }, { ...source, components: ['main'] },
+        { ...source, repositoryId: 'google]\nenabled=0' }, { ...source, unknown: true }]) {
+        expect(MachineRecipeStepV1Schema.safeParse(invalid).success).toBe(false);
+    }
+});

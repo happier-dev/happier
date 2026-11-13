@@ -89,3 +89,22 @@ describe('Machine setup review changes', () => {
         }]);
     });
 });
+
+
+it('discloses signed package repositories using each manager dialect without counting another package', () => {
+    const common = { id: 'source', kind: 'packageSource' as const,
+        keyPath: '/etc/pki/rpm-gpg/vendor.asc', keyUrl: 'https://vendor.example/key.asc', keyFingerprint: 'A'.repeat(40) };
+    const sources: MachineRecipeStepV1[] = [
+        { ...common, id: 'apt-source', manager: 'apt', path: '/etc/apt/sources.list.d/vendor.sources',
+            url: 'https://vendor.example/deb', suite: 'stable', components: ['main'], architectures: ['amd64'] },
+        { ...common, id: 'dnf-source', manager: 'dnf', path: '/etc/yum.repos.d/vendor.repo',
+            repositoryId: 'vendor', url: 'https://vendor.example/rpm/$basearch', architectures: ['x86_64'] },
+    ];
+    const plan = target({ recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan: effects(sources) }] });
+    expect(groupMachineSetupChanges([plan])).toEqual([{
+        kind: 'packages', added: 0, removed: 0, lines: [
+            { machineIds: ['machine'], operand: 'apt · https://vendor.example/deb stable', removes: false },
+            { machineIds: ['machine'], operand: 'dnf · https://vendor.example/rpm/$basearch', removes: false },
+        ],
+    }]);
+});

@@ -78,6 +78,5 @@ it('declares exact native removals, including formula/cask and source/scope, wit
     { id: 'packages-winget', kind: 'package', manager: 'winget', state: 'absent', packages: inputs.winget },
   ]);
   const chrome = MachineRecipeV1Schema.parse({ id: 'google-chrome', ...googleChrome });
-  expect(chrome.steps.every(step => step.kind === 'package')).toBe(true);
   expect(chrome.removeSteps?.every(step => step.kind === 'package' && step.state === 'absent')).toBe(true);
 });

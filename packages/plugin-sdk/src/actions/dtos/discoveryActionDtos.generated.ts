@@ -792,59 +792,6 @@ export type DiscoveryActionResultById = {
                         input: InputPredicate;
                     })[] | undefined;
                 } | {
-                    kind: 'packageSource';
-                    manager: 'apt';
-                    path: string;
-                    keyPath: string;
-                    url: string;
-                    suite: string;
-                    components: string[];
-                    architectures: string[];
-                    keyUrl: string;
-                    keyFingerprint: string;
-                    id: string;
-                    requiredFacts?: ({
-                        kind: 'administrator';
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'init';
-                        system: 'launchd' | 'systemd' | 'windowsScm';
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
-                    } | {
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | undefined;
-                    } | {
-                        kind: 'packageManager';
-                        manager: string;
-                    } | {
-                        kind: 'path';
-                        path: string;
-                    })[] | undefined;
-                    review?: undefined | {
-                        title: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, number | string> | undefined;
-                        };
-                        description?: string | undefined | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, number | string> | undefined;
-                        };
-                    };
-                    when?: ({
-                        checkId: string;
-                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
-                        ifInput?: InputPredicate | undefined;
-                    } | {
-                        input: InputPredicate;
-                    })[] | undefined;
-                } | {
                     kind: 'pathTraversal';
                     path: string;
                     agentUsername: string;
@@ -949,6 +896,111 @@ export type DiscoveryActionResultById = {
                     path: string;
                     group: string;
                     agentUsername: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    when?: ({
+                        checkId: string;
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    manager: 'apt';
+                    suite: string;
+                    components: string[];
+                    architectures: string[];
+                    kind: 'packageSource';
+                    path: string;
+                    keyPath: string;
+                    url: string;
+                    keyUrl: string;
+                    keyFingerprint: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    when?: ({
+                        checkId: string;
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    manager: 'dnf';
+                    repositoryId: string;
+                    architectures: string[];
+                    kind: 'packageSource';
+                    path: string;
+                    keyPath: string;
+                    url: string;
+                    keyUrl: string;
+                    keyFingerprint: string;
                     id: string;
                     requiredFacts?: ({
                         kind: 'administrator';
@@ -2707,59 +2759,6 @@ export type DiscoveryActionResultById = {
                         input: InputPredicate;
                     })[] | undefined;
                 } | {
-                    kind: 'packageSource';
-                    manager: 'apt';
-                    path: string;
-                    keyPath: string;
-                    url: string;
-                    suite: string;
-                    components: string[];
-                    architectures: string[];
-                    keyUrl: string;
-                    keyFingerprint: string;
-                    id: string;
-                    requiredFacts?: ({
-                        kind: 'administrator';
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'init';
-                        system: 'launchd' | 'systemd' | 'windowsScm';
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
-                    } | {
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | undefined;
-                    } | {
-                        kind: 'packageManager';
-                        manager: string;
-                    } | {
-                        kind: 'path';
-                        path: string;
-                    })[] | undefined;
-                    review?: undefined | {
-                        title: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, number | string> | undefined;
-                        };
-                        description?: string | undefined | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, number | string> | undefined;
-                        };
-                    };
-                    when?: ({
-                        checkId: string;
-                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
-                        ifInput?: InputPredicate | undefined;
-                    } | {
-                        input: InputPredicate;
-                    })[] | undefined;
-                } | {
                     kind: 'pathTraversal';
                     path: string;
                     agentUsername: string;
@@ -2864,6 +2863,111 @@ export type DiscoveryActionResultById = {
                     path: string;
                     group: string;
                     agentUsername: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    when?: ({
+                        checkId: string;
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    manager: 'apt';
+                    suite: string;
+                    components: string[];
+                    architectures: string[];
+                    kind: 'packageSource';
+                    path: string;
+                    keyPath: string;
+                    url: string;
+                    keyUrl: string;
+                    keyFingerprint: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    when?: ({
+                        checkId: string;
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    manager: 'dnf';
+                    repositoryId: string;
+                    architectures: string[];
+                    kind: 'packageSource';
+                    path: string;
+                    keyPath: string;
+                    url: string;
+                    keyUrl: string;
+                    keyFingerprint: string;
                     id: string;
                     requiredFacts?: ({
                         kind: 'administrator';

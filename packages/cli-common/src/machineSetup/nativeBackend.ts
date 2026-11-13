@@ -1,11 +1,11 @@
 import { chmod, chown, lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { establishNativeAdministrator } from './nativeAdministrator.js';
 import { execFileWithDeadline, ExecFileTerminationError, type ExecFileWithDeadlineOptions } from '../process/execFileWithDeadline.js';
 import { MachineSetupEffectError, type MachineRecipeStepV1, type MachineSetupBackend, type MachineSetupStepObservationV1 } from './index.js';
-import { createNativeSystemBackend, mutateApt, readLocalAccount } from './nativeSystemBackend.js';
+import { createNativeSystemBackend, readLocalAccount } from './nativeSystemBackend.js';
 import { createWorkspaceAccessBackend } from './workspaceAccess.js';
+import { createNativePackageSourceBackend } from './nativePackageSourceBackend.js';
 import { observeNativeBinfmt } from './nativeBinfmt.js';
 import { observeNativeJournalReadGroup } from './nativeJournal.js';
 import { observeNativeUserManagerGroups } from './nativeUserManager.js';
@@ -26,7 +26,6 @@ export type MachineSetupSecretGrantMaterial = Readonly<{
 }>;
 type FileStep = Extract<MachineRecipeStepV1, { kind: 'file' }>;
 type DirectoryStep = Extract<MachineRecipeStepV1, { kind: 'directory' }>;
-type SourceStep = Extract<MachineRecipeStepV1, { kind: 'packageSource' }>;
 type Identity = Readonly<{ uid: number; gid: number }> | Readonly<{ missingIdentity: string[] }>;
 
 function assertPortableFileTarget(path: string) {
@@ -180,7 +179,7 @@ export function createMachineSetupNativeBackend(options: Readonly<{
         if ('missingIdentity' in owner) throw new MachineSetupEffectError('required_fact_unavailable');
         return owner;
     };
-    const inspectFile = async (step: FileStep): Promise<MachineSetupStepObservationV1> => {
+    const inspectFile = async (step: FileStep, equivalentContent?: (actual: Uint8Array, desired: Uint8Array) => boolean): Promise<MachineSetupStepObservationV1> => {
         assertPortableFileTarget(step.path);
         if (step.content?.kind === 'secretGrant') {
             // This materializer accepts only connectorToken subjects. Their
@@ -232,10 +231,11 @@ export function createMachineSetupNativeBackend(options: Readonly<{
             return { stepId: step.id, status: safe ? 'drifted' : 'unavailable', ...(!safe ? { reason: 'foreign_effect_conflict' } : {}), facts: facts(state) };
         }
         const bytes = desiredBytes(step, state);
-        const known = state.kind === 'absent' || state.digest === hash(bytes) || step.content?.kind === 'jsonMerge'
+        const equalContent = state.kind === 'file' && (state.digest === hash(bytes) || equivalentContent?.(state.bytes!, bytes) === true);
+        const known = state.kind === 'absent' || equalContent || step.content?.kind === 'jsonMerge'
             || step.content?.kind === 'iniKeys' || state.digest === step.expectedContentDigest;
         if (!known) return { stepId: step.id, status: 'unavailable', reason: 'foreign_effect_conflict', facts: facts(state) };
-        const matched = state.kind === 'file' && state.digest === hash(bytes) && state.uid === owner.uid && state.gid === owner.gid && state.mode === step.mode;
+        const matched = state.kind === 'file' && equalContent && state.uid === owner.uid && state.gid === owner.gid && state.mode === step.mode;
         if (matched && step.probe?.kind === 'sshd') {
             const observed = await probeNativeSshFile(step.probe, run);
             return { stepId: step.id, status: observed.satisfied ? 'satisfied' : 'drifted',
@@ -252,51 +252,7 @@ export function createMachineSetupNativeBackend(options: Readonly<{
         await activateNativeFile({ path, bytes, mode, owner, previous, validate, secret, signal: options.signal,
             ...(secret ? { protectedTarget: true as const } : {}) });
     };
-    const sourceFile = (step: SourceStep): FileStep => ({ id: step.id, kind: 'file', path: step.path, owner: 'root', group: 'root', mode: 0o644,
-        content: { kind: 'literal', value: step.path.endsWith('.sources')
-            ? `Types: deb\nURIs: ${step.url}\nSuites: ${step.suite}\nComponents: ${step.components.join(' ')}\nArchitectures: ${step.architectures.join(' ')}\nSigned-By: ${step.keyPath}\n`
-            : `deb [arch=${step.architectures.join(',')} signed-by=${step.keyPath}] ${step.url} ${step.suite} ${step.components.join(' ')}\n` } });
-    const fingerprint = async (path: string) => {
-        // Isolate GnuPG's scratch key database; a check never touches root's or
-        // the daemon user's existing keyrings/configuration.
-        const home = await mkdtemp(join(tmpdir(), 'happier-setup-key-'));
-        try {
-            const result = await run('gpg', ['--batch', '--no-options', '--homedir', home, '--with-colons', '--show-keys', '--', path], { LC_ALL: 'C' });
-            if (result.errorCode === 'ENOENT') throw new MachineSetupEffectError('required_fact_unavailable');
-            if (result.code !== 0) throw new MachineSetupEffectError('validation_failed');
-            const primary: string[] = [];
-            let pending = false;
-            for (const line of result.stdout.split('\n')) {
-                const fields = line.split(':');
-                if (fields[0] === 'pub') {
-                    if (['e', 'r'].includes(fields[1] ?? '')) throw new MachineSetupEffectError('validation_failed');
-                    pending = true;
-                } else if (fields[0] === 'sub') pending = false;
-                else if (fields[0] === 'fpr' && pending) { primary.push(fields[9] ?? ''); pending = false; }
-            }
-            if (primary.length !== 1 || !/^[A-F0-9]{40}$/.test(primary[0]!)) throw new MachineSetupEffectError('validation_failed');
-            return primary[0]!;
-        } finally { await rm(home, { recursive: true, force: true }); }
-    };
-    const inspectSource = async (step: SourceStep): Promise<MachineSetupStepObservationV1> => {
-        if (!/\.(?:list|sources)$/.test(step.path) || !/\.(?:asc|gpg)$/.test(step.keyPath) || step.path === step.keyPath || /[\s\[\]#]/.test(step.keyPath) || /[\s#]/.test(step.url)) return { stepId: step.id, status: 'unsupported', reason: 'required_fact_unavailable', facts: { requiredFact: 'aptSourceFormat' } };
-        const source = await inspectFile(sourceFile(step));
-        if (source.status === 'unavailable') return source;
-        const key = await inspectPath(step.keyPath);
-        if (key.kind !== 'absent' && key.kind !== 'file') return { stepId: step.id, status: 'unavailable', reason: 'foreign_effect_conflict', facts: {} };
-        const architecture = await run('dpkg', ['--print-architecture'], { LC_ALL: 'C' });
-        const manager = await run('apt-get', ['--version'], { LC_ALL: 'C' });
-        if (manager.errorCode === 'ENOENT' || architecture.errorCode === 'ENOENT') return { stepId: step.id, status: 'unsupported', reason: 'required_fact_unavailable', facts: { requiredFact: 'packageManager' } };
-        if (manager.code !== 0 || architecture.code !== 0) return { stepId: step.id, status: 'unavailable', reason: 'required_fact_unavailable', facts: { requiredFact: 'packageManager' } };
-        if (!step.architectures.includes(architecture.stdout.trim())) return { stepId: step.id, status: 'unsupported', reason: 'required_fact_unavailable', facts: { requiredFact: 'packageArchitecture' } };
-        const owner = await identity(sourceFile(step));
-        if ('missingIdentity' in owner) return { stepId: step.id, status: 'unavailable', reason: 'required_fact_unavailable', facts: { missingIdentity: owner.missingIdentity } };
-        if (key.kind === 'file' && await fingerprint(step.keyPath) !== step.keyFingerprint) return { stepId: step.id, status: 'unavailable', reason: 'foreign_effect_conflict', facts: {} };
-        const armored = key.kind === 'file' && key.bytes!.toString('ascii').startsWith('-----BEGIN PGP PUBLIC KEY BLOCK-----');
-        if (key.kind === 'file' && step.keyPath.endsWith('.asc') && !armored) return { stepId: step.id, status: 'unavailable', reason: 'validation_failed', facts: {} };
-        return { stepId: step.id, status: source.status === 'satisfied' && key.kind === 'file' && (step.keyPath.endsWith('.asc') || !armored) && key.uid === owner.uid && key.gid === owner.gid && key.mode === 0o644 ? 'satisfied' : 'drifted',
-            facts: { source: source.facts, key: facts(key), keyFingerprint: key.kind === 'file' ? step.keyFingerprint : null } };
-    };
+    const sources = createNativePackageSourceBackend({ run, identity, inspectFile, activate });
     return {
         readTargetFacts: facts => readNativeSecurityTargetFacts(run, options.platform, facts),
         async onChange(service, action) {
@@ -335,7 +291,7 @@ export function createMachineSetupNativeBackend(options: Readonly<{
                 if (step.kind === 'command') return await inspectCommand(step);
                 if (step.kind === 'workspaceAccess' || step.kind === 'pathTraversal') return await workspace.observe(step);
                 if (step.kind === 'file') return await inspectFile(step);
-                if (step.kind === 'packageSource') return await inspectSource(step);
+                if (step.kind === 'packageSource') return await sources.observe(step);
                 if (step.kind === 'directory') {
                     const state = await inspectPath(step.path, false, step.protectedAncestors), owner = await identity(step);
                     if (state.kind !== 'absent' && state.kind !== 'directory') return { stepId: step.id, status: 'unavailable', reason: 'foreign_effect_conflict', facts: facts(state) };
@@ -416,47 +372,7 @@ export function createMachineSetupNativeBackend(options: Readonly<{
                 await chown(step.path, owner.uid, owner.gid); await chmod(step.path, step.mode);
                 return;
             }
-            if (step.kind === 'packageSource') {
-                const checked = await inspectSource(step);
-                if (checked.status === 'satisfied') return;
-                if (checked.status !== 'drifted') throw new MachineSetupEffectError(checked.reason === 'foreign_effect_conflict' ? 'foreign_effect_conflict' : 'required_fact_unavailable');
-                const source = sourceFile(step), previousSource = await inspectPath(step.path), previousKey = await inspectPath(step.keyPath);
-                const owner = await requireIdentity(source);
-                await inspectAncestors(step.keyPath);
-                for (const parent of new Set([dirname(step.path), dirname(step.keyPath)])) {
-                    try {
-                        const stat = await lstat(parent);
-                        if (!stat.isDirectory() || stat.isSymbolicLink()) throw new MachineSetupEffectError('foreign_effect_conflict');
-                    } catch (error) { if (isMissing(error)) throw new MachineSetupEffectError('required_fact_unavailable'); throw error; }
-                }
-                const staging = await mkdtemp(join(dirname(step.keyPath), '.happier-setup-key-'));
-                try {
-                    const downloaded = join(staging, 'downloaded');
-                    let bytes: Buffer;
-                    if (previousKey.kind === 'file') bytes = previousKey.bytes!;
-                    else {
-                        const download = await run('curl', ['--fail', '--location', '--silent', '--show-error', '--proto', '=https', '--proto-redir', '=https', '--output', downloaded, '--', step.keyUrl]);
-                        if (download.code !== 0) throw new MachineSetupEffectError(download.errorCode === 'ENOENT' ? 'required_fact_unavailable' : 'native_effect_failed');
-                        if (await fingerprint(downloaded) !== step.keyFingerprint) throw new MachineSetupEffectError('validation_failed');
-                        bytes = await readFile(downloaded);
-                    }
-                    const armored = bytes.toString('ascii').startsWith('-----BEGIN PGP PUBLIC KEY BLOCK-----');
-                    if (step.keyPath.endsWith('.asc') && !armored) throw new MachineSetupEffectError('validation_failed');
-                    if (step.keyPath.endsWith('.gpg') && armored) {
-                        if (previousKey.kind === 'file') await writeFile(downloaded, bytes, { flag: 'wx', mode: 0o600 });
-                        const binary = join(staging, 'key.gpg');
-                        if ((await run('gpg', ['--batch', '--no-options', '--homedir', staging, '--dearmor', '--output', binary, '--', downloaded])).code !== 0) throw new MachineSetupEffectError('validation_failed');
-                        bytes = await readFile(binary);
-                    }
-                    // Validate both outputs before publishing either. On partial
-                    // native failure a new check observes the completed effects.
-                    if (JSON.stringify(facts(await inspectPath(step.path))) !== JSON.stringify(facts(previousSource))) throw new MachineSetupEffectError('foreign_effect_conflict');
-                    await activate(step.keyPath, bytes, 0o644, owner, previousKey);
-                    await activate(step.path, desiredBytes(source, previousSource), source.mode, owner, previousSource);
-                    await mutateApt(run, ['update']);
-                } finally { await rm(staging, { recursive: true, force: true }); }
-                return;
-            }
+            if (step.kind === 'packageSource') return sources.apply(step);
             if (step.kind !== 'file') return await system.apply(step);
             if (step.content?.kind === 'secretGrant') {
                 assertPortableFileTarget(step.path);
