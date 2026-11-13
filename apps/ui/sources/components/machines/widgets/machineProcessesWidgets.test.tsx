@@ -11,10 +11,12 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import {
+  createAccountTokenForTests,
   createHomeGovernanceHarness,
   installHomeGovernanceBoundaries,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
 import {
@@ -49,7 +51,8 @@ vi.mock('@/modal', async () => {
 });
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
-const { Modal, ModalProvider } = await import('@/modal');
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+const { ModalProvider } = await import('@/modal');
 const { AuthProvider } = await import('@/auth/context/AuthContext');
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { machineProcessesStore } =
@@ -123,12 +126,16 @@ async function mount(
     waitFor?: string;
     workingSession?: boolean;
     askBeforeStop?: boolean;
+    restoreAccount?: boolean;
+    active?: boolean;
   }>,
 ) {
-  const serverId = await home.addHome({
+  const serverUrl = `https://process-widgets-${Math.random().toString(36).slice(2)}.test`;
+  let serverId = await home.addHome({
     name: 'Widgets Home',
-    serverUrl: `https://process-widgets-${Math.random().toString(36).slice(2)}.test`,
+    serverUrl,
     accountId: 'owner',
+    active: options.active,
   });
   // The person's own approval setting for Stop on this device (R41); nothing in the widget decides it.
   home.answer(serverId, '/v2/account/settings', {
@@ -146,13 +153,19 @@ async function mount(
       version: 1,
     },
   });
+  if (options.restoreAccount) {
+    connection = await restoreServerAccountForTest({ serverUrl, accountId: 'owner',
+      credentials: { token: createAccountTokenForTests('owner', { currentAccount: true }) }, request: home.request });
+    serverId = connection.serverId;
+  }
   storage.setState({
     sessions: options.workingSession ? { refactor: createSessionFixture({ id: 'refactor', serverId,
       active: true, activeAt: Date.now(), thinking: true, thinkingAt: Date.now() }) } : {},
     machines: {},
-    machineListByServerId: { [serverId]: [machine(options.machine)] },
-    machineListStatusByServerId: { [serverId]: 'idle' },
+    machineListByServerId: {},
+    machineListStatusByServerId: {},
   });
+  await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine(options.machine)]);
   const answer = options.answer ?? createProcessesAnswer();
   transport.rpc.mockImplementation(async (rpc: Rpc) => {
     const reply = options.reply?.(rpc);
@@ -208,6 +221,8 @@ beforeEach(async () => {
 afterEach(async () => {
   standardCleanup();
   machineProcessesStore.reset();
+  await connection?.dispose();
+  connection = null;
   await home.reset();
 });
 
@@ -279,34 +294,37 @@ describe('Using the most widget', () => {
       (rpc as Rpc).method === RPC_METHODS.MACHINES_PROCESSES_LIST && (rpc as Rpc).payload?.view === 'tree')).toHaveLength(0);
   });
 
-  it('keeps a working session running until its explicit Ask-first Stop is approved', async () => {
+  it('keeps a working session running until its native Ask-first Stop confirmation is accepted', async () => {
     const calls: Rpc[] = [];
-    const { screen, serverId } = await mount({ Body: MachineTopConsumersWidget, workingSession: true, askBeforeStop: true,
+    const { screen } = await mount({ Body: MachineTopConsumersWidget, workingSession: true, askBeforeStop: true, restoreAccount: true,
       waitFor: 'widget.stop-o:session:refactor', reply: rpc => {
         if (rpc.method !== RPC_METHODS.MACHINES_PROCESSES_STOP) return undefined;
         calls.push(rpc);
         return { status: 'ended', outcomes: [{ ref: 'runner', outcome: 'ended' }] };
       } });
-    const { decideApprovalAsInbox } = await import('@/dev/testkit/harness/approvalInbox');
-    const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
-    const approvals = home.artifacts(serverId);
-    vi.mocked(Modal.confirm).mockClear();
     await act(async () => { await screen.pressByTestIdAsync('widget.stop-o:session:refactor'); });
-    await vi.waitFor(() => expect(approvals.list()).toHaveLength(1));
-    const first = approvals.list()[0]!;
-    const request = () => ApprovalRequestV2Schema.parse(JSON.parse(approvals.readPlainBody(first.id)!));
-    expect(request()).toMatchObject({ status: 'open', actionId: 'machines.processes.stop',
-      actionArgs: { targets: [{ ref: 'runner', expect: { owner: { kind: 'session', sessionId: 'refactor' } } }] } });
+    await vi.waitFor(() => expect(screen.findByTestId('widget.confirm')).not.toBeNull());
     expect(calls).toHaveLength(0);
+    await act(async () => { await screen.pressByTestIdAsync('widget.confirm-cancel'); });
+    await flushHookEffects();
     expect(screen.findByTestId('widget.confirm')).toBeNull();
-    expect((await decideApprovalAsInbox(serverId, first.id, 'cancel')).ok).toBe(true);
-    expect(request().status).toBe('canceled');
     expect(calls).toHaveLength(0);
     expect(screen.findByTestId('widget.stop-o:session:refactor')).not.toBeNull();
+    expect(screen.findByTestId('widget.stopped')).toBeNull();
     await act(async () => { await screen.pressByTestIdAsync('widget.stop-o:session:refactor'); });
-    await vi.waitFor(() => expect(approvals.list()).toHaveLength(2));
+    await vi.waitFor(() => expect(screen.findByTestId('widget.confirm')).not.toBeNull());
     expect(calls).toHaveLength(0);
-    expect(Modal.confirm).not.toHaveBeenCalled();
+    await act(async () => { await screen.pressByTestIdAsync('widget.confirm-stop'); });
+    await vi.waitFor(async () => {
+      await flushHookEffects();
+      expect(calls).toHaveLength(1);
+      expect(screen.findByTestId('widget.stopped')).not.toBeNull();
+    });
+    expect(calls[0]).toMatchObject({ method: RPC_METHODS.MACHINES_PROCESSES_STOP,
+      payload: { targets: [{ ref: 'runner', expect: {
+        level: 'proven', owner: { kind: 'session', sessionId: 'refactor' },
+      } }] } });
+    expect(screen.findByTestId('widget.confirm')).toBeNull();
   });
 
   it('lets Allowed stop a working session without an inline second approval', async () => {
@@ -407,6 +425,7 @@ describe('Using the most widget', () => {
     const offline = await mount({
       Body: MachineTopConsumersWidget,
       machine: { active: false, activeAt: 1_000 },
+      active: false,
       waitFor: 'widget.offline',
     });
     expect(offline.screen.getTextContent()).toContain('Last seen');
@@ -439,7 +458,7 @@ describe('Left behind widget', () => {
     expect(routerMock.spies.push).toHaveBeenCalledWith(expect.stringContaining('filter=leftBehind'));
     expect(
       transport.rpc.mock.calls.some(([rpc]) =>
-        String((rpc as Rpc).method).startsWith('machines.processes.leftBehind'),
+        (rpc as Rpc).method === RPC_METHODS.MACHINES_PROCESSES_STOP,
       ),
     ).toBe(false);
   });

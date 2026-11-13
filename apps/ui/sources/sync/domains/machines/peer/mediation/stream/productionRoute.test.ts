@@ -446,6 +446,7 @@ describe('production peer mediation live-stream route adapter', () => {
     // different tab (a divergent `viewerSocketId`) must not produce a usable start request.
     it('rejects a minted grant whose viewerSocketId diverges from the relay request', async () => {
         const relayAuthorization = createRelayAuthorization();
+        let mintedViewerSocketId = 'viewer-socket-1';
         const fetchSpy = vi.fn(async (url: RequestInfo | URL) => {
             const parsed = new URL(String(url));
             if (parsed.pathname === '/v1/machines/peer/mediation/route-grants') {
@@ -454,7 +455,7 @@ describe('production peer mediation live-stream route adapter', () => {
                     receipt: PEER_MEDIATION_RECEIPTS.routeGrantMinted,
                     relayAuthorization: {
                         ...relayAuthorization,
-                        payload: { ...relayAuthorization.payload, viewerSocketId: 'viewer-socket-OTHER' },
+                        payload: { ...relayAuthorization.payload, viewerSocketId: mintedViewerSocketId },
                     },
                 });
             }
@@ -465,7 +466,7 @@ describe('production peer mediation live-stream route adapter', () => {
         const module = await importProductionRoute();
         if ('importError' in module) throw module.importError;
 
-        await expect(module.startProductionMachineLiveStream({
+        const startStream = () => module.startProductionMachineLiveStream({
             serverId: 'server-a',
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
@@ -480,6 +481,18 @@ describe('production peer mediation live-stream route adapter', () => {
                 maxDurationMs: 60_000,
                 maxTotalBytes: 128_000,
             },
-        })).rejects.toThrow();
+        });
+        await expect(startStream()).resolves.toMatchObject({
+            ok: true,
+            startRequest: { viewerSocketId: 'viewer-socket-1' },
+        });
+
+        mintedViewerSocketId = 'viewer-socket-OTHER';
+        await expect(startStream()).rejects.toMatchObject({
+            issues: expect.arrayContaining([expect.objectContaining({
+                code: 'custom',
+                path: ['authorization', 'payload', 'viewerSocketId'],
+            })]),
+        });
     });
 });

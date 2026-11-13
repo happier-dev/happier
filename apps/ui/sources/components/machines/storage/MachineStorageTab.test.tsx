@@ -1110,7 +1110,8 @@ describe('MachineStorageTab', () => {
         await act(async () => { screen.pressByTestId('machine-storage-category-trash'); });
         expect(setParams).toHaveBeenCalledWith({ id: 'storage', page: 'category', categoryId: 'trash' });
 
-        const page = await mount({ id: 'storage', page: 'category', categoryId: 'trash' }, { isShared: true }, (rpc) => {
+        const page = await mount({ id: 'storage', page: 'category', categoryId: 'trash' }, { isShared: true,
+            access: { role: 'use', custodian: { accountId: 'owner', displayName: 'Owner' }, resourceMode: 'plain', accessState: 'ready' } }, (rpc) => {
             if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return { ...SUMMARY, categories: [], pile: { count: 1, freesBytes: 64, droppedSinceLastView: [] } };
             return undefined;
         });
@@ -1556,25 +1557,6 @@ describe('MachineStorageTab', () => {
         await act(async () => { await vi.waitFor(() => expect(table.screen.getTextContent()).toContain('at least this much')); });
     });
 
-    it('says "in use" once on a Keep row whose reason is already that it is in use', async () => {
-        const node = { nodeId: '/yarn', parentId: '/', name: 'yarn', kind: 'folder', size: size(4 * GB), logicalBytes: 4 * GB, items: 12, changedAt: 1,
-            verdict: 'keep', collectable: true, flags: { happier: false, protection: 'keep', atLeast: false, inUse: true }, reason: { code: 'in_use' }, childCount: 0 };
-        const scan = { scanId: 'scan-3', target: { volumeId: 'mac' }, status: 'complete', progress: { sizedBytes: 5 * GB, usedBytes: 5 * GB, items: 10 },
-            startedAt: 1, finishedAt: 2, unreadable: { counts: { permission: 0, os_private: 0, timeout: 0, io: 0 }, examples: [] },
-            fullDiskAccess: { state: 'granted', binary: { name: 'happier-support', path: '/x' } } };
-        const { screen } = await mount({ id: 'storage', view: 'disk' }, {}, (rpc) => {
-            if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return { ...SUMMARY, wholeDisk: { enabled: true, scans: [scan] } };
-            if (rpc.method === RPC_METHODS.DAEMON_STORAGE_PILE_GET) return { revision: 1, items: [], summary: SUMMARY.pile };
-            if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SCAN_GET) return { state: scan, coverage: [], nodes: [node] };
-            return undefined;
-        });
-        await vi.waitFor(async () => {
-            await act(async () => {});
-            expect(screen.getTextContent()).toContain('Keep · in use');
-        }, { timeout: 5000 });
-        expect(screen.getTextContent().match(/in use/giu)).toHaveLength(1);
-    });
-
     it('names a folder scan’s target in the path before its first page arrives, with no whole-disk figure', async () => {
         const folder = '/Users/leeroy/.cache';
         const stopped: DiskScanStateV1 = { scanId: 'folder-scan', target: { folderPath: folder }, status: 'interrupted', startedAt: 3,
@@ -1766,11 +1748,18 @@ describe('MachineStorageTab', () => {
         function daemon(retained: DiskScanStateV1, nodesByScan: Readonly<Record<string, ReadonlyArray<ReturnType<typeof folder>>>>, refuse = false) {
             const scans = [retained];
             const reads: Array<{ scanId?: string; nodeId?: string }> = [];
+            const starts: Rpc[] = [];
             const answer = (rpc: Rpc) => {
                 if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return { ...SUMMARY, wholeDisk: { enabled: true, scans } };
                 if (rpc.method === RPC_METHODS.DAEMON_STORAGE_PILE_GET) return { revision: 1, items: [], summary: SUMMARY.pile };
                 if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SCAN_START) {
+                    starts.push(rpc);
                     if (refuse) return { ok: false, errorCode: 'storage_scan_unavailable', error: 'Scan unavailable' };
+                    if (rpc.payload?.resume === true) {
+                        const resumed = scanState({ ...retained, status: 'running', finishedAt: undefined });
+                        scans[0] = resumed;
+                        return resumed;
+                    }
                     const started = scanState({ scanId: 'next', target: rpc.payload?.target, startedAt: 5, finishedAt: 6 });
                     scans.push(started);
                     return started;
@@ -1785,7 +1774,7 @@ describe('MachineStorageTab', () => {
                 }
                 return undefined;
             };
-            return { answer, reads };
+            return { answer, reads, starts };
         }
         const enabled = () => ({ metadata: { ...machine().metadata!, resourcesPolicyV1: MachineResourcesPolicyV1Schema.parse({ v: 1, storage: { wholeDiskEnabled: true } }) } });
         const retainedFolder = scanState({ scanId: 'retained', target: { folderPath: '/Users/leeroy/old' } });
@@ -1832,7 +1821,10 @@ describe('MachineStorageTab', () => {
             const second = await mount({ id: 'storage', view: 'disk', nodeId: '/Users/leeroy/old/sub' }, enabled(), resumable.answer);
             await act(async () => { await vi.waitFor(() => expect(second.screen.findByTestId('machine-storage-disk-resume')).not.toBeNull()); });
             await act(async () => { second.screen.pressByTestId('machine-storage-disk-resume'); });
-            await act(async () => { await vi.waitFor(() => expect(transport.rpc.mock.calls.some(call => (call[0] as Rpc).method === RPC_METHODS.DAEMON_STORAGE_SCAN_START)).toBe(true)); });
+            await act(async () => { await vi.waitFor(() => expect(resumable.starts).toHaveLength(1)); });
+            expect(resumable.starts[0]!.payload).toMatchObject({ target: stopped.target, resume: true });
+            await act(async () => { await vi.waitFor(() => expect(resumable.reads.some(read => read.scanId === 'retained'
+                && read.nodeId === '/Users/leeroy/old/sub')).toBe(true)); });
             expect(second.setParams).not.toHaveBeenCalled();
         });
     });

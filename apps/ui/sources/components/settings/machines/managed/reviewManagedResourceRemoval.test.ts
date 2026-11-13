@@ -1,22 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ManagedResourceDependencyV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
+import { ManagedResourceDependencyV1Schema, type ManagedResourceDependencyV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 
 import type { IModal } from '@/modal';
 import { t } from '@/text';
 
 import { describeManagedRemovalResource, reviewManagedResourceRemoval } from './reviewManagedResourceRemoval';
 
-const canceledHetzner: ManagedResourceDependencyV1 = {
+const canceledHetzner = ManagedResourceDependencyV1Schema.parse({
   managedId: 'cmw0pjiad007vmc0nsrva3cr7',
   homeId: 'srv_home',
   custodianAccountId: 'acct_c',
   intentRevision: 1,
-  controller: null,
   provider: { pluginId: 'happier.machine.hetzner', localId: 'hetzner' },
   allocation: 'may-exist',
   recovery: { reference: 'cmw0pjiad007vmc0nsrva3cr7', reason: 'native_acquisition_unconfirmed' },
   cleanup: { disposition: 'pending', reason: 'creation_canceled' },
-} as unknown as ManagedResourceDependencyV1;
+});
 
 function recordingModal(answer: boolean) {
   const calls: Array<{

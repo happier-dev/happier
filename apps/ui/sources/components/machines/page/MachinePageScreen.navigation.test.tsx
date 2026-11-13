@@ -4,6 +4,7 @@ import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from 'vitest';
 import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installReactDomPortalBoundaryForTests } from '@/dev/testkit/mocks/reactDom';
@@ -28,6 +29,7 @@ const { MachinePageScreen } = await import('./MachinePageScreen');
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { invokeScopeAction } = await import('@/sync/ops/actions/scopeActionFamily');
 const { AuthProvider } = await import('@/auth/context/AuthContext');
+const { PresentedDetailNavigationProvider } = await import('@/components/appShell/rightSidebar/usePresentedDetailNavigation');
 const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { Modal } = await import('@/modal');
@@ -41,10 +43,12 @@ it('detail-navigation.Machine: lists core pages without mounting siblings and se
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://machine-navigation.example.test', serverIdentityId: serverId });
     onTestFinished(() => connection.dispose());
     const machine = createMachineFixture({ id: 'navigation-machine', active: false, activeAt: 0, storageMode: 'plain', isShared: false });
-    storage.setState({ isDataReady: true, isSessionDraftsReady: true, machines: { [machine.id]: machine },
-        machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    storage.setState({ isDataReady: true, isSessionDraftsReady: true });
+    await publishMachineInventoryForTest({ serverId: connection.serverId, accountId: 'account-a' }, [machine]);
     probe.rpc.mockImplementation(() => new Promise(() => {}));
-    const screen = await renderScreen(<AuthProvider initialCredentials={connection.credentials}><MachinePageScreen /></AuthProvider>);
+    const screen = await renderScreen(<AuthProvider initialCredentials={connection.credentials}>
+        <PresentedDetailNavigationProvider><MachinePageScreen /></PresentedDetailNavigationProvider>
+    </AuthProvider>);
     onTestFinished(() => screen.unmount());
     const listed = await invokeScopeAction('shell.column.get', { column: 'main' });
     expect(listed).toMatchObject({ available: true, activeTab: 'overview', tabs: ['overview', 'services', 'processes', 'storage', 'guard', 'setup', 'security'] });
@@ -71,4 +75,8 @@ it('detail-navigation.Machine: lists core pages without mounting siblings and se
     expect(screen.findByTestId('machine-page-tab-body.storage')).toBeNull();
     // A stopped Machine is navigable; describing/selecting chrome must not start it.
     expect(probe.rpc.mock.calls.some(([call]) => /wake|power|start/i.test(String(call.method)))).toBe(false);
+    await screen.unmount();
+    expect(await invokeScopeAction('shell.column.get', { column: 'main' })).toEqual({
+        ok: false, errorCode: 'client_surface_unavailable', error: 'client_surface_unavailable',
+    });
 });

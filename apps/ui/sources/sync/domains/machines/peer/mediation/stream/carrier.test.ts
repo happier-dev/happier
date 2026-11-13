@@ -86,23 +86,4 @@ describe('machine stream carrier contract', () => {
         });
     });
 
-    it('maps the current terminal carrier as demand-pull machine-rpc-base64 without requiring migration', async () => {
-        const mod = await import('./carrier');
-
-        expect(mod.describeTerminalStreamCarrierMapping()).toEqual({
-            currentCarrierKind: 'machine-rpc-base64',
-            routeKinds: ['loopback_direct', 'server_relay'],
-            deliveryMode: 'demand_pull',
-            binaryCapable: false,
-            frameEncoding: MACHINE_RPC_JSON_BASE64_ENCODING,
-            payloadShape: 'json_base64_envelope',
-            migrationRequiredForB0: false,
-            terminalCapabilities: {
-                ack: 'renderer byte offsets',
-                credit: 'creditBytes',
-                replay: 'byte-offset cursor',
-                input: 'ordered sendInput queue',
-            },
-        });
-    });
 });

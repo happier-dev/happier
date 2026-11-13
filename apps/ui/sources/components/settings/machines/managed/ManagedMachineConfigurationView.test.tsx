@@ -50,6 +50,7 @@ import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { MachinePresetItemV1Schema, MachineSetupV1Schema, type MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { MachinePresetEditContinuation, MachinePresetEditDraft } from './machinePresetEditDraft';
+import { PluginAccountAvailabilityIntentReadResponseV1Schema, readDeclaredPackageAssetsV1, type PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 
 const route = vi.hoisted(() => ({
   replace: vi.fn(),
@@ -138,6 +139,9 @@ beforeEach(async () => {
   route.getState.mockReset();
   route.params = {};
   nativeBoundary.rpc.mockReset();
+  const { storage } = await import('@/sync/domains/state/storage');
+  storage.setState({ machines: {}, machineDisplayById: {}, machinePresenceById: {}, machinePresenceByServerId: {},
+    machineListByServerId: {}, machineRecordsByServerId: {}, machineListStatusByServerId: {} });
   clearDaemonMergedProjectionCacheForTests();
   resetMachineProjectionReadsForTests();
   const action = PluginProjectedActionV2Schema.parse({
@@ -235,6 +239,18 @@ const provisioner: MachineProvisionersListResultV1['provisioners'][number] = {
   },
 };
 
+function createEnabledMachinePluginIntentRead(manifest: PluginPortableReleaseManifestV1) {
+  return PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
+    availabilityCursor: 1,
+    hostingCapability: { enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048 },
+    intent: { pluginId: manifest.id, desiredVersion: manifest.version, enabled: true, offlineUiHosting: 'enabled', writableCollections: [], revision: 'fixture-1' },
+    release: { ref: { pluginId: manifest.id, version: manifest.version }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`, normalizedManifest: manifest,
+      collectionContracts: [], uiSlots: [], packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`,
+        resources: (readDeclaredPackageAssetsV1(manifest) ?? []).map(resource => ({ ...resource, byteSize: 1, digestSha256: `sha256:${'c'.repeat(64)}` })) } },
+    packageAssets: [], uiArtifacts: [],
+  });
+}
+
 describe('mounted managed configurator', () => {
   it('projects the pool owner answer before Use without deciding availability again', async () => {
     const { isManagedPoolUnavailableAtReview } = await import('./ManagedMachineConfigurationView');
@@ -277,7 +293,8 @@ describe('mounted managed configurator', () => {
       await import('@/sync/domains/plugins/availability/projection');
     onTestFinished(clearPluginAccountAvailabilityProjection);
     const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' };
-    replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+    replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1,
+      intentReads: [{ pluginId: manifest.id, response: createEnabledMachinePluginIntentRead(manifest) }], materializations: [], snapshots: [] } });
     const declarations = await readPluginAccountAvailability(scope).ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' });
     if (declarations.kind !== 'available') throw new Error('Expected the bundled provisioner declaration');
     const { projectAccountManagedProvisioners } = await import('@happier-dev/cli-common/machines/managed/provisioners');
@@ -383,7 +400,7 @@ describe('mounted managed configurator', () => {
     onTestFinished(clearPluginAccountAvailabilityProjection);
     const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' };
     replacePluginAccountAvailabilityProjection({ scope,
-      snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+      snapshot: { availabilityCursor: 1, intentReads: [{ pluginId: manifest.id, response: createEnabledMachinePluginIntentRead(manifest) }], materializations: [], snapshots: [] } });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
       id: defaultController.machineId, installationId: defaultController.installationId,
     })]);
@@ -857,7 +874,8 @@ describe('mounted managed configurator', () => {
     const { useManagedProvisionerPresentation } = await import('./useManagedProvisionerPresentation');
     const { projectAccountManagedProvisioners } = await import('@happier-dev/cli-common/machines/managed/provisioners');
     const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' };
-    replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+    replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1,
+      intentReads: [{ pluginId: manifest.id, response: createEnabledMachinePluginIntentRead(manifest) }], materializations: [], snapshots: [] } });
     const declarations = await readPluginAccountAvailability(scope).ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' });
     if (declarations.kind !== 'available') throw new Error('Expected the Account declaration producer');
     const selected = projectAccountManagedProvisioners(declarations.declarations).find(row => row.contribution.pluginId === 'happier.machine.vercel');
@@ -938,7 +956,8 @@ describe('mounted managed configurator', () => {
     onTestFinished(clearPluginAccountAvailabilityProjection);
     const { projectAccountManagedProvisioners } = await import('@happier-dev/cli-common/machines/managed/provisioners');
     const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' };
-    replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+    replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1,
+      intentReads: [{ pluginId: manifest.id, response: createEnabledMachinePluginIntentRead(manifest) }], materializations: [], snapshots: [] } });
     const declarations = await readPluginAccountAvailability(scope).ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' });
     if (declarations.kind !== 'available') throw new Error('Expected the Account declaration producer');
     const selected = projectAccountManagedProvisioners(declarations.declarations).find(row => row.contribution.pluginId === 'happier.machine.vercel');
@@ -3745,6 +3764,12 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const scopeId = resolveServerProfileScopeIdForIdentifier(serverId) || serverId;
+    // This is an intentionally incomplete list-read fixture. Clear retained global rows and
+    // publish a null scoped list so the resolver cannot treat an older Home's row as a verdict.
+    storage.setState({ machines: {}, machineListByServerId: { [scopeId]: null }, machineRecordsByServerId: { [scopeId]: {} },
+      machineListStatusByServerId: { [scopeId]: 'loading' } });
     const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
     const { ManagedMachineConfigurationView } =
       await import('./ManagedMachineConfigurationView');
@@ -3785,7 +3810,7 @@ describe('mounted managed configurator', () => {
       currentAccount: true,
     });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
-          createMachineFixture({ id: 'host', installationId: 'installation' }),
+          createMachineFixture({ id: defaultController.machineId, installationId: defaultController.installationId }),
         ]);
     harness.answer(serverId, '/v1/actions/machines.provisioners.list', {
       status: 503,
@@ -4937,7 +4962,7 @@ describe('mounted managed configurator', () => {
     ).toHaveLength(0);
     await screen.unmount();
   });
-  it('keeps the actual Modal timeout as one editable field inside Ends and revalidates its exact native launch', async () => {
+  it('keeps the actual Modal timeout as one editable field inside Ends without rereading the preset options', async () => {
     const viewport = vi
       .spyOn(Dimensions, 'get')
       .mockReturnValue({ width: 1280, height: 844, scale: 1, fontScale: 1 });
@@ -5141,20 +5166,17 @@ describe('mounted managed configurator', () => {
         initialController={controller}
       />,
     );
+    const timeoutField = 'managed-config.field:timeoutMs';
     await waitForHomeGovernance(() =>
-      expect(
-        screen.tree.findAll(
-          (node) => node.props.nativeDuration?.choices?.length > 0,
-        ).length,
-      ).toBeGreaterThan(0),
+      expect(screen.findByTestId(timeoutField)).not.toBeNull(),
     );
     const keep = screen.tree.findAll(
       (node) =>
-        node.props.finiteOnly && node.props.nativeDuration?.choices?.length > 0,
+        node.props.finiteOnly && node.props.nativeDuration,
     )[0];
     expect(keep?.props.nativeDuration).toMatchObject({
-      value: String(launch.timeoutMs),
-      choices: [{ id: String(launch.timeoutMs) }],
+      value: null,
+      choices: [],
     });
     expect(
       screen.findByTestId('managed-config.receipt:keep:retention'),
@@ -5165,7 +5187,6 @@ describe('mounted managed configurator', () => {
     expect(
       screen.findByTestId('managed-config.field:resources.cpu'),
     ).not.toBeNull();
-    const timeoutField = 'managed-config.field:timeoutMs';
     expect(
       findAllHostTestInstances(
         screen.tree,
@@ -5192,21 +5213,17 @@ describe('mounted managed configurator', () => {
     await act(async () =>
       screen.changeTextByTestId(timeoutField, String(updated.timeoutMs)),
     );
-    await waitForHomeGovernance(() =>
-      expect(capturedSelectors).toContainEqual(updated),
-    );
-    await waitForHomeGovernance(() =>
-      expect(
-        screen.tree.findAll(
-          (node) =>
-            node.props.finiteOnly &&
-            node.props.nativeDuration?.choices?.some(
-              (choice: { id: string }) =>
-                choice.id === String(updated.timeoutMs),
-            ),
-        ).length,
-      ).toBeGreaterThan(0),
-    );
+    // A preset-only editor owns the saved launch declaration. Its local edit does not
+    // re-run the creation-time options Action or replace the exact native facts.
+    expect(capturedSelectors).toHaveLength(0);
+    expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(0);
+    expect(
+      screen.tree.findAll(
+        (node) =>
+          node.props.finiteOnly &&
+          node.props.nativeDuration?.choices?.length > 0,
+      ),
+    ).toHaveLength(0);
     expect(screen.findByTestId(timeoutField)?.props.value).toBe(
       String(updated.timeoutMs),
     );
@@ -5949,7 +5966,7 @@ describe('mounted managed configurator', () => {
       });
       expect(onUse).toHaveBeenCalledTimes(1);
       expect(
-        harness.requestsFor('/v1/actions/machines.presets.create'),
+        harness.requestsFor('/v1/machines/presets/create'),
       ).toHaveLength(0);
       await screen.unmount();
     },
@@ -6271,8 +6288,8 @@ describe('mounted managed configurator', () => {
       ).length,
     ).toBeGreaterThan(0);
     expect(
-      harness.requests.some((request) => request.path.endsWith('/acquire')),
-    ).toBe(false);
+      harness.requestsFor('/v1/actions/machines.managed.acquire'),
+    ).toHaveLength(0);
     await screen.unmount();
   });
   it('describes a local machine\u2019s location as where it runs, not as a distance to the person', async () => {
@@ -6513,8 +6530,8 @@ describe('mounted managed configurator', () => {
       ).length,
     ).toBeGreaterThan(0);
     expect(
-      harness.requests.some((request) => request.path.endsWith('/acquire')),
-    ).toBe(false);
+      harness.requestsFor('/v1/actions/machines.managed.acquire'),
+    ).toHaveLength(0);
     await screen.unmount();
   });
   it('reviews a one-off deadline, omits it from a saved preset, and preserves it after failed Create', async () => {
@@ -6586,8 +6603,8 @@ describe('mounted managed configurator', () => {
     );
     await act(async () => screen.pressByTestId('managed-config.sizes:small'));
     expect(
-      harness.requests.some((request) => request.path.endsWith('/acquire')),
-    ).toBe(false);
+      harness.requestsFor('/v1/actions/machines.managed.acquire'),
+    ).toHaveLength(0);
     // A one-off machine has no audience or running limit: those belong to the preset editor.
     expect(screen.findByTestId('managed-config.audience')).toBeNull();
     expect(screen.findByTestId('managed-config.limit')).toBeNull();
@@ -6649,8 +6666,8 @@ describe('mounted managed configurator', () => {
       harness.requestsFor('/v1/machines/presets/create')[0]?.input,
     ).not.toHaveProperty('retention');
     expect(
-      harness.requests.some((request) => request.path.endsWith('/acquire')),
-    ).toBe(false);
+      harness.requestsFor('/v1/actions/machines.managed.acquire'),
+    ).toHaveLength(0);
     harness.answer(serverId, '/v1/actions/machines.managed.acquire', {
       status: 403,
       body: { code: 'permission_denied' },

@@ -354,6 +354,9 @@ describe('preset collection and history through Actions', () => {
             const before = harness.requestsFor(path).length;
             presented = false;
             await hook.rerender();
+            const updated = { ...preset, revision: preset.revision + 1, name: 'Updated while hidden' };
+            harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [updated] } });
+            harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: updated } });
             for (let index = 0; index < 20; index += 1) {
                 await act(async () => publishHomeAccountChange(serverId, kind === 'collection' ? [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1] : undefined));
             }
@@ -363,6 +366,10 @@ describe('preset collection and history through Actions', () => {
             presented = true;
             await hook.rerender();
             await waitForHomeGovernance(() => expect(harness.requestsFor(path)).toHaveLength(before + 1));
+            await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({
+                loading: false, error: null,
+                value: kind === 'collection' ? [updated] : { preset: updated, machines: [resource] },
+            }));
         } finally { await hook.unmount(); }
     });
 

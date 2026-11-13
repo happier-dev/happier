@@ -3,12 +3,13 @@ import * as React from 'react';
 import 'fake-indexeddb/auto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { MachineReadBatchRequestV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { PluginProjectionV2Schema, DaemonPluginUiArtifactBytesReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { normalizePluginUiDestinationBindingV1, computePluginUiArtifactFileSetSha256DigestV1,
     computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui';
 import { createMachineFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
-import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineReadBatchResponseFixture, createPlainSharedMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -45,6 +46,9 @@ const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/ma
 const { createPluginArtifactTransferBoundary } = await import('@/dev/testkit/harness/pluginArtifactTransferBoundary');
 const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
 const { PluginSurfaceFallback } = await import('@/components/sessions/panes/PluginSurfaceFallback');
+const { readMachineRows } = await import('@/sync/api/machines/machineRowsApi');
+const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+const { sync } = await import('@/sync/sync');
 
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 afterEach(async () => {
@@ -65,6 +69,11 @@ it('opens the addressed owner installed materialization Machine page for a Use v
         isShared: true, access: { role: 'use', custodian: { accountId: 'owner-a', displayName: 'Owner A' },
             resourceMode: 'plain', accessState: 'ready' }, daemonState: pluginArtifactTransferDaemonState });
     const other = createMachineFixture({ id: 'unopened-machine', active: true, activeAt: Date.now(), storageMode: 'plain', daemonState: pluginArtifactTransferDaemonState });
+    const machineRows = new Map([
+        [machine.id, createPlainSharedMachineRowFixture({ id: machine.id, custodianAccountId: 'owner-a', role: 'use', machine })],
+        [other.id, createPlainSharedMachineRowFixture({ id: other.id, custodianAccountId: 'owner-a', role: 'use', machine: other })],
+    ]);
+    const machineRowReads: Array<Readonly<{ machineIds: readonly string[]; usesViewerCredentials: boolean }>> = [];
     connection = await restoreServerAccountForTest({ serverUrl: 'https://machine-plugin-use.example.test', serverIdentityId, accountId: 'viewer-b',
         request: async (url, init) => {
             const path = new URL(String(url)).pathname;
@@ -74,15 +83,34 @@ it('opens the addressed owner installed materialization Machine page for a Use v
                 features: { machines: { enabled: true, transfer: { enabled: true, directPeer: { enabled: false }, serverRouted: { enabled: false } } },
                     plugins: { enabled: true, ui: { enabled: true, reactNativeBundles: { enabled: true } } } },
             }));
-            if (path === '/v1/machines') return Response.json([machine, other].map(row => createPlainMachineRowFixture({ id: row.id, accountId: 'owner-a', machine: row })));
+            if (path === '/v1/machines' && (init?.method ?? 'GET') === 'GET') return Response.json([...machineRows.values()]);
+            if (path === '/v1/machines/read-batch' && init?.method === 'POST') {
+                const input = MachineReadBatchRequestV1Schema.parse(JSON.parse(String(init.body)));
+                machineRowReads.push({ machineIds: input.machineIds,
+                    usesViewerCredentials: connection !== undefined && new Headers(init.headers).get('Authorization') === `Bearer ${connection.credentials.token}` });
+                return createMachineReadBatchResponseFixture(input, id => machineRows.get(id) ?? null);
+            }
             return createEmptyAccountBootstrapHttpResponse(path, init) ?? Response.json({}, { status: 404 });
         } });
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Expected viewer Account lifetime');
     const serverId = lifetime.scope.serverId;
-    storage.setState({ isDataReady: true, isSessionDraftsReady: true, profileScope: lifetime.scope, settingsScope: lifetime.scope,
-        machines: { [machine.id]: machine, [other.id]: other }, machineListByServerId: { [serverId]: [machine, other] },
-        machineListStatusByServerId: { [serverId]: 'idle' } });
+    const account = await captureLazyActionAccountContext(serverId);
+    try {
+        expect(account.accountId).toBe('viewer-b');
+        if (!account.readTransport) throw new Error('Expected captured viewer Machine read transport');
+        const machineIds = [machine.id, other.id, 'unknown-machine'];
+        const rows = await readMachineRows({ readTransport: account.readTransport, machineIds, fresh: true });
+        expect(rows.get(machine.id)).toMatchObject({ id: machine.id,
+            access: { role: 'use', custodian: { accountId: 'owner-a' } } });
+        expect(rows.get(other.id)).toMatchObject({ id: other.id, access: { custodian: { accountId: 'owner-a' } } });
+        expect(rows.get('unknown-machine')).toBeNull();
+        expect(machineRowReads).toContainEqual({ machineIds, usesViewerCredentials: true });
+    } finally { account.dispose(); }
+    await sync.refreshMachines();
+    storage.setState({ isDataReady: true, isSessionDraftsReady: true, profileScope: lifetime.scope, settingsScope: lifetime.scope });
+    expect(storage.getState().machines[machine.id]).toMatchObject({ id: machine.id, storageMode: 'plain', isShared: true,
+        access: { role: 'use', custodian: { accountId: 'owner-a' } } });
     observeMachinePresenceForTest({ serverId, accountId: lifetime.scope.accountId }, [machine.id, other.id]);
     const sourceCustody = { kind: 'development' as const, registeredRootId: 'owner-plugin-root' };
     const origin: PluginMachineExecutionOriginV1 = { serverIdentityId,

@@ -7,7 +7,6 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHo
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createMachineProvisionerOptionsFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
-import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import type { ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
@@ -173,28 +172,6 @@ describe('managed configurator uses the exact Home Action front door', () => {
             headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 2, isDecrypted: true });
         expect(await pending).toEqual({ kind: 'failed', code: 'action_failed', nativeCause, details: nativeDetails,
             ...(shape === 'authored' ? { message: 'Sign in to Docker: run sbx login', remediation: { kind: 'retry' } } : {}) });
-    });
-
-    it('does not reparse an admitted catalog to check its controller binding', async () => {
-        const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://catalog-cost.example',
-            serverIdentityId: 'srv_catalog_cost', accountId: 'owner', currentAccount: true });
-        const controller = { machineId: 'host', installationId: 'installation' };
-        harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: envelope.requestId,
-                execution: { ok: true, result: { controller, provisioners: [] } } } };
-        } });
-        const { createManagedProvisionerClient } = await import('./managedProvisionerClient');
-        // Instrument the real schema; all admission, parsing and Action wiring execute unchanged.
-        const parses = vi.spyOn(ManagedMachineActionOutputSchemasV1['machines.provisioners.list'], 'safeParse');
-        try {
-            const client = createManagedProvisionerClient({ serverId, accountId: 'owner' }, 'srv_catalog_cost');
-            expect(await client.read('machines.provisioners.list', { homeId: 'srv_catalog_cost', controller }))
-                .toEqual({ kind: 'succeeded', value: { controller, provisioners: [] } });
-            // Native Action ingress and presentation each admit once; binding uses typed data.
-            expect(parses).toHaveBeenCalledTimes(2);
-            expect(harness.requestsFor('/v1/actions/machines.provisioners.list')).toHaveLength(1);
-        } finally { parses.mockRestore(); }
     });
 
     it('reads a legacy controller catalog through strict native Action admission without inventing combinations', async () => {

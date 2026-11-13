@@ -631,6 +631,8 @@ describe('provisioner picker demand', () => {
     await act(async () => reportPopoverContentLayout(screen.tree, { width: 400, height: 500 }));
     const orderedOptions = () => screen.root.findAll(node => typeof node.type === 'string'
       && /^presence\.scope\.picker-option:/.test(String(node.props.testID ?? ''))).map(node => node.props.testID);
+    expect(orderedOptions()).toEqual(['a', 'z'].map(id => `presence.scope.picker-option:${id}`));
+    await screen.pressByTestIdAsync('presence.scope.picker-list:machine-root:option:offline:all');
     await waitForHomeGovernance(() => {
       const sleeping = screen.findHostByTestId('presence.scope.picker-option:sleeping');
       expect(sleeping?.props.accessibilityLabel ?? sleeping?.props['aria-label']).toContain(t('managedPower.asleep'));
@@ -1878,7 +1880,7 @@ describe('provisioner picker demand', () => {
       serverIdentityId: 'srv_signed_out',
       accountId: null,
     });
-    await harness.addHome({
+    const other = await harness.addHome({
       name: 'Other',
       serverUrl: 'https://other.example',
       serverIdentityId: 'srv_other',
@@ -1899,11 +1901,9 @@ describe('provisioner picker demand', () => {
     const failure = screen.tree.findAll(node => node.props.testID === 'managed-picker.unavailable' && 'diagnosticCode' in node.props)[0];
     expect(failure?.props.diagnosticDetail).toBeTruthy();
     expect(failure?.props.diagnosticDetail).not.toBe(failure?.props.diagnosticCode);
-    expect(
-      harness.requestsFor(
-        '/v1/machines/managed/actions/machines.provisioners.list',
-      ),
-    ).toHaveLength(0);
+    const provisionerRequests = harness.requestsFor('/v1/actions/machines.provisioners.list');
+    expect(provisionerRequests.filter(request => request.serverId === signedOut)).toEqual([]);
+    expect(provisionerRequests.filter(request => request.serverId === other)).toEqual([]);
     await screen.unmount();
   });
 });

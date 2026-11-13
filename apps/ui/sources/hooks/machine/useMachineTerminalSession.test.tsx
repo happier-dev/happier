@@ -192,7 +192,10 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
             }
             const response = responses.get(request.method);
             if (!response) throw new Error(`Unexpected terminal RPC: ${request.method}`);
-            return response(request.machineId, request.payload, { serverId: request.serverId, ...(request.accountId ? { accountId: request.accountId } : {}) });
+            return response(request.machineId, request.payload, {
+                serverId: request.serverId, ...(request.accountId ? { accountId: request.accountId } : {}),
+                ...(request.method === RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES && request.signal ? { signal: request.signal } : {}),
+            });
         },
     };
 });
@@ -2043,10 +2046,16 @@ describe('useMachineTerminalSession', () => {
         const output = { ok: true, terminalId: 'term-held-clear', nextByteOffset: 3, availableByteOffset: 3, droppedBeforeByteOffset: 0, done: false,
             frames: [{ t: 'bytes' as const, terminalId: 'term-held-clear', seq: 1, byteOffset: 0, byteLength: 3, encoding: 'base64' as const, data: 'QUJD' }] };
         let deliverHeldOutput: () => void = () => {};
+        let heldReadSignal: AbortSignal | undefined;
+        let heldReadAborted = false;
         terminalOps.streamReadBytes
             .mockImplementationOnce(async (_machineId: string, _request: unknown, options?: Readonly<{ signal?: AbortSignal }>) => await new Promise((resolve, reject) => {
+                heldReadSignal = options?.signal;
                 deliverHeldOutput = () => resolve(output);
-                options?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+                heldReadSignal?.addEventListener('abort', () => {
+                    heldReadAborted = true;
+                    reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+                }, { once: true });
             }))
             // A daemon answers by cursor: a read past the output has nothing to replay.
             .mockImplementation(async (_machineId: string, request: Readonly<{ byteOffset: number }>) => request.byteOffset === 0 ? output
@@ -2056,14 +2065,24 @@ describe('useMachineTerminalSession', () => {
         const { useMachineTerminalSession } = await import('./useMachineTerminalSession');
         const hook = await renderHook(() => useMachineTerminalSession({ machineId: 'machine-1', cwd: '/repo',
             terminalKey: 'session:s-held-clear:terminal', terminalRef }), { flushOptions: { cycles: 1, turns: 1 } });
-        await act(async () => { hook.getCurrent().onReady(80, 24); });
-        await flushHookEffects({ cycles: 4, turns: 2, runOnlyPendingTimers: true });
-        expect(terminalOps.streamReadBytes).toHaveBeenCalledTimes(1);
-        await act(async () => { hook.getCurrent().clearTerminal(); });
-        deliverHeldOutput();
-        await flushHookEffects({ cycles: 4, turns: 2, runOnlyPendingTimers: true });
-        expect(writeBytes).toHaveBeenCalledWith(expect.objectContaining({ terminalId: 'term-held-clear', byteOffset: 0 }));
-        await hook.unmount();
+        try {
+            await act(async () => { hook.getCurrent().onReady(80, 24); });
+            await flushHookEffects({ cycles: 4, turns: 2, runOnlyPendingTimers: true });
+            expect(terminalOps.streamReadBytes).toHaveBeenCalledTimes(1);
+            expect(heldReadSignal?.aborted).toBe(false);
+            await act(async () => { hook.getCurrent().clearTerminal(); });
+            expect(heldReadAborted).toBe(true);
+            expect(heldReadSignal?.aborted).toBe(true);
+            deliverHeldOutput();
+            await flushHookEffects({ cycles: 4, turns: 2, runOnlyPendingTimers: true });
+            expect(terminalOps.streamReadBytes.mock.calls[1]?.[1]).toMatchObject({ byteOffset: 0 });
+            expect(writeBytes).toHaveBeenCalledWith(expect.objectContaining({
+                terminalId: 'term-held-clear', byteOffset: 0, bytes: new Uint8Array([65, 66, 67]),
+            }));
+        } finally {
+            deliverHeldOutput();
+            await hook.unmount();
+        }
     });
 
     it('releases a rejected queued native write and retries its original bytes without ACK credit', async () => {

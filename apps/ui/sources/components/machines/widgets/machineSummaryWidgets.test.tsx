@@ -1316,13 +1316,21 @@ describe('Machines widget presentation', () => {
 
 describe('Metric widget configuration', () => {
   it('gives the chart the room at Wide and Medium and keeps per-core and the minute maximum for the sizes that have space', async () => {
+    const { MachineVitalsHistoryV1Schema } = await import('@happier-dev/protocol/machines/vitals/machineVitalsHistoryV1');
     const sampledAt = Date.now();
-    seed(createMachineFixture({ id: 'm1', activeAt: sampledAt, daemonState: { resources } }));
-    const points = Array.from({ length: 6 }, (_, index) => ({ t: sampledAt - (6 - index) * 60_000, cpuPct: 10 + index, cpuPctMax: 30 + index }));
+    seed(createMachineFixture({ id: 'm1', active: true, activeAt: sampledAt, daemonState: { resources } }));
+    const minute = Math.floor(sampledAt / 60_000) * 60_000;
+    const history = MachineVitalsHistoryV1Schema.parse({
+      range: '1h', bucketMs: 60_000,
+      points: Array.from({ length: 6 }, (_, index) => ({
+        t: minute - (6 - index) * 60_000, cpu: 10 + index, cpuMax: 30 + index,
+        mem: 57e9, memMax: 60e9, lvl: 'calm', swp: null, rx: null, tx: null,
+      })),
+      today: { rxBytes: 0, txBytes: 0 },
+    });
     boundary.rpc.mockImplementation(async ({ method }) => {
       if (method === 'daemon.vitals.watch') return new Promise(() => {});
-      if (method === 'machines.vitals.history.get')
-        return { range: '1h', bucketMs: 60000, points, today: { rxBytes: 0, txBytes: 0 } };
+      if (method === 'machines.vitals.history.get') return history;
       return { state: 'reporting', sample: sample(sampledAt), series5m: { cpu: [], memory: [], networkRx: [], networkTx: [] },
         attention: { level: 'calm', reasons: [] } };
     });
@@ -1333,18 +1341,29 @@ describe('Metric widget configuration', () => {
         </WidgetPresentationProvider>
       </MetaHost>
     );
-    const charts = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
-      screen.root.findAll((node) => node.props.testID === 'machine-vitals-cpu-chart' && Array.isArray(node.props.series));
     const screen = await renderScreen(draw('tall'));
-    await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-vitals-per-core-toggle')).not.toBeNull()); });
-    for (const size of ['wide', 'medium'] as const) {
+    for (const size of ['tall', 'wide', 'medium', 'large'] as const) {
       await screen.update(draw(size));
       await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-vitals-cpu')).not.toBeNull()); });
-      expect(screen.findByTestId('machine-vitals-per-core-toggle')).toBeNull();
+      await act(async () => {
+        screen.findByTestId('machine-vitals-cpu-chart')!.props.onLayout({
+          nativeEvent: { layout: { width: 400, height: 180, x: 0, y: 0 } },
+        });
+      });
+      // Read a stored minute, not the current sample: rejected history cannot satisfy this.
+      const bucketId = `machine-vitals-cpu-chart-plot-bucket-${minute - 5 * 60_000}`;
+      await vi.waitFor(() => expect(screen.findHostByTestId(bucketId)).not.toBeNull());
+      const bucket = screen.findHostByTestId(bucketId)!;
+      const reading = bucket.props.accessibilityLabel ?? bucket.props['aria-label'];
+      expect(reading).toContain('machineVitals.history.mean 11%');
+      if (size === 'tall' || size === 'large') {
+        expect(reading).toContain('machineVitals.history.maximum 31%');
+        expect(screen.findByTestId('machine-vitals-per-core-toggle')).not.toBeNull();
+      } else {
+        expect(reading).not.toContain('machineVitals.history.maximum');
+        expect(screen.findByTestId('machine-vitals-per-core-toggle')).toBeNull();
+      }
     }
-    await screen.update(draw('large'));
-    await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-vitals-per-core-toggle')).not.toBeNull()); });
-    expect(charts(screen).length).toBeGreaterThan(0);
   });
 
   it('names its frame by the metric it shows, with that metric\'s mark, and draws no second label (lab rw M)', async () => {

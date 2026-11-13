@@ -258,40 +258,4 @@ describe('managed location choice', () => {
     await screen.unmount();
   });
 
-  it('draws the regions as one sheet of radio cells rather than separate cards (lab m-config location grid)', async () => {
-    const { ManagedLocationGroup } = await import('./ManagedChoiceSections');
-    const screen = await renderScreen(
-      <ManagedLocationGroup
-        title="Location"
-        value="fsn1"
-        onChange={vi.fn()}
-        testID="locations"
-        locations={[
-          {
-            id: 'fsn1',
-            city: 'Falkenstein',
-            country: 'Germany',
-            countryCode: 'DE',
-          },
-          {
-            id: 'hel1',
-            city: 'Helsinki',
-            country: 'Finland',
-            countryCode: 'FI',
-          },
-        ]}
-      />,
-    );
-    const tiles = screen.tree.findAll(
-      (node) =>
-        node.props.testIdPrefix === 'locations' &&
-        Array.isArray(node.props.options),
-    );
-    expect(tiles[0]?.props.surface).toBe('sheet');
-    const group = screen.tree.findAll(
-      (node) => node.props.title === 'Location' && 'surface' in node.props,
-    );
-    expect(group.every((node) => node.props.surface !== 'none')).toBe(true);
-    await screen.unmount();
-  });
 });

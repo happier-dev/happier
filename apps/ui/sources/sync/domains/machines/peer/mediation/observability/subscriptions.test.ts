@@ -167,34 +167,42 @@ describe('peer mediation observability subscriptions', () => {
         expect(mod.createPeerMediationObservabilitySubscription).toBeTypeOf('function');
         if (!mod.resolvePeerMediationObservabilitySubscriptionState || !mod.createPeerMediationObservabilitySubscription) return;
 
-        expect(mod.resolvePeerMediationObservabilitySubscriptionState({
-            serverFeatures: featuresResponse(false, true),
-        })).toEqual({
-            status: 'unavailable',
-            reasonCode: 'observability_unavailable',
-        });
-
-        const emitted: Array<{ eventName: string; payload: unknown }> = [];
-        const unavailableReasons: string[] = [];
-        const subscription = mod.createPeerMediationObservabilitySubscription({
-            scope: machineScope,
-            source: 'server',
-            serverFeatures: featuresResponse(false, true),
-            transport: {
-                emit: (eventName, payload) => emitted.push({ eventName, payload }),
-                on: () => () => undefined,
+        const missingBitFeatures = FeaturesResponseSchema.parse({
+            features: {
+                machines: { enabled: true, peerMediation: { enabled: true } },
             },
-            onSnapshot: () => undefined,
-            onDelta: () => undefined,
-            onUnavailable: (reasonCode) => unavailableReasons.push(reasonCode),
+            capabilities: featuresResponse(true, true).capabilities,
         });
+        for (const serverFeatures of [featuresResponse(false, true), missingBitFeatures]) {
+            expect(mod.resolvePeerMediationObservabilitySubscriptionState({
+                serverFeatures,
+            })).toEqual({
+                status: 'unavailable',
+                reasonCode: 'observability_unavailable',
+            });
 
-        expect(subscription.state).toEqual({
-            status: 'unavailable',
-            reasonCode: 'observability_unavailable',
-        });
-        expect(emitted).toEqual([]);
-        expect(unavailableReasons).toEqual(['observability_unavailable']);
+            const emitted: Array<{ eventName: string; payload: unknown }> = [];
+            const unavailableReasons: string[] = [];
+            const subscription = mod.createPeerMediationObservabilitySubscription({
+                scope: machineScope,
+                source: 'server',
+                serverFeatures,
+                transport: {
+                    emit: (eventName, payload) => emitted.push({ eventName, payload }),
+                    on: () => () => undefined,
+                },
+                onSnapshot: () => undefined,
+                onDelta: () => undefined,
+                onUnavailable: (reasonCode) => unavailableReasons.push(reasonCode),
+            });
+
+            expect(subscription.state).toEqual({
+                status: 'unavailable',
+                reasonCode: 'observability_unavailable',
+            });
+            expect(emitted).toEqual([]);
+            expect(unavailableReasons).toEqual(['observability_unavailable']);
+        }
     });
 
     it('subscribes from canonical feature bits even when capability metadata is missing or unavailable', async () => {
@@ -307,6 +315,10 @@ describe('peer mediation observability subscriptions', () => {
 
     it('drops deltas containing events for a different scope', async () => {
         const mod = await loadSubscriptionsModule();
+        const {
+            PeerMediationObservabilityDeltaV1Schema,
+            PeerMediationObservabilitySnapshotV1Schema,
+        } = await import('@happier-dev/protocol/machines/peer/mediation/observability/v1');
 
         expect(mod.createPeerMediationObservabilitySubscription).toBeTypeOf('function');
         if (!mod.createPeerMediationObservabilitySubscription) return;
@@ -329,20 +341,25 @@ describe('peer mediation observability subscriptions', () => {
             onDelta: (next) => deltas.push(next),
         });
 
-        handlers.get(PEER_MEDIATION_OBSERVABILITY_DELTA_SOCKET_EVENT)?.({
+        const snapshot = PeerMediationObservabilitySnapshotV1Schema.parse({
+            v: 1,
+            scope: machineScope,
+            sequence: 1,
+            capturedAtMs: 1_000,
+            flows: [],
+        });
+        handlers.get(PEER_MEDIATION_OBSERVABILITY_SNAPSHOT_SOCKET_EVENT)?.(snapshot);
+
+        const validDelta = PeerMediationObservabilityDeltaV1Schema.parse({
             v: 1,
             scope: machineScope,
             sequence: 2,
             events: [{
                 v: 1,
-                eventId: 'event_other_scope',
+                eventId: 'event_same_scope',
                 sequence: 2,
                 emittedAtMs: 2_000,
-                scope: {
-                    kind: 'machine',
-                    accountId: 'acct_1',
-                    machineId: 'machine_other',
-                },
+                scope: machineScope,
                 flow: {
                     flowId: 'flow_1',
                     flowKind: 'tcp_tunnel',
@@ -359,8 +376,30 @@ describe('peer mediation observability subscriptions', () => {
                 },
             }],
         });
+        handlers.get(PEER_MEDIATION_OBSERVABILITY_DELTA_SOCKET_EVENT)?.(validDelta);
+        expect(deltas).toEqual([validDelta]);
+
+        const mixedDelta = {
+            v: 1,
+            scope: machineScope,
+            sequence: 3,
+            events: [
+                { ...validDelta.events[0], eventId: 'event_same_scope_next', sequence: 3 },
+                {
+                    ...validDelta.events[0],
+                    eventId: 'event_other_scope',
+                    sequence: 3,
+                    scope: {
+                        kind: 'machine',
+                        accountId: 'acct_1',
+                        machineId: 'machine_other',
+                    },
+                },
+            ],
+        };
+        handlers.get(PEER_MEDIATION_OBSERVABILITY_DELTA_SOCKET_EVENT)?.(mixedDelta);
         subscription.close();
 
-        expect(deltas).toEqual([]);
+        expect(deltas).toEqual([validDelta]);
     });
 });

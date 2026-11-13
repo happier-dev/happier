@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
 
-import { StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
+import { formatHappierDataBytes, StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
 import { MachineResourceSummaryV1Schema, projectMachineResourceSummaryV1 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 import { MachineVitalsSnapshotV1Schema } from '@happier-dev/protocol/machines/vitals/machineVitalsRpcV1';
 
@@ -38,7 +38,7 @@ describe('MachineSummaryStrip', () => {
         expect(screen.findAll(node => node.type === Tooltip).some(node => String(node.props.label).includes(provenance))).toBe(true);
     });
     it.each([
-        { level: 'calm', tone: 'calm', said: null },
+        { level: 'calm', tone: 'calm', said: () => t('machineSummary.memoryFreeFact', { free: formatHappierDataBytes(6 * 1024 ** 3, { kind: 'memory' }) }) },
         { level: 'elevated', tone: 'warn', said: () => t('machineAttention.words.memoryElevated') },
         { level: 'critical', tone: 'crit', said: () => t('machineAttention.words.memoryCritical') },
     ] as const)('says a $level machine\'s memory as a fact, never a bare pressure word (picker fact)', async ({ level, tone, said }) => {
@@ -56,8 +56,7 @@ describe('MachineSummaryStrip', () => {
         const screen = await renderScreen(<MachineSummaryStrip testID="strip" availability={{ kind: 'reporting', summary, freshness: 'live' }}
             style="numbers" metrics={['memory']} layout="fact" />);
         const text = screen.getTextContent();
-        if (said) expect(text).toBe(said());
-        else expect(text).not.toBe(t('machineAttention.words.memoryElevated'));
+        expect(text).toBe(said());
         expect(text).not.toContain(t('machineSummary.pressure.critical'));
     });
     it('keeps an instrument\'s tree in place when a sample drops or regains its exact reading', async () => {
@@ -68,11 +67,16 @@ describe('MachineSummaryStrip', () => {
                 style="sparklines" metrics={['cpu']} layout="under" />
         );
         const screen = await renderScreen(draw({}));
-        const withReading = screen.findAll(node => node.type === Tooltip).length;
-        expect(withReading).toBe(1);
+        const tooltip = screen.findAllByType(Tooltip)[0];
+        const chart = screen.findAllByType(StackedSeriesChart)[0];
+        expect(tooltip).toBeDefined();
+        expect(chart).toBeDefined();
         // A sample without a reading must not swap the tooltip host out from around the line (it would remount the chart).
-        await screen.update(draw({ busyPct: null as never }));
-        expect(screen.findAll(node => node.type === Tooltip).length).toBe(withReading);
+        for (const busyPct of [null, calm.summary.cpu.busyPct]) {
+            await screen.update(draw({ busyPct }));
+            expect(screen.findAllByType(Tooltip)[0] === tooltip).toBe(true);
+            expect(screen.findAllByType(StackedSeriesChart)[0] === chart).toBe(true);
+        }
     });
     it('says what a filling tile\'s figure is without repeating the frame\'s metric name (lab `rw` M, Small)', async () => {
         const draw = (metric: 'cpu' | 'memory') => (

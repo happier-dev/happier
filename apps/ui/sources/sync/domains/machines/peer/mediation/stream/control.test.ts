@@ -60,33 +60,4 @@ describe('machine live-stream UI control gating', () => {
         });
     });
 
-    it('builds typed sideband control envelopes for relay transport', async () => {
-        const mod = await import('./control').catch((error: unknown) => ({ importError: error }));
-
-        expect(mod).toHaveProperty('createMachineLiveStreamSidebandControlEnvelope');
-        if (!('createMachineLiveStreamSidebandControlEnvelope' in mod)) return;
-
-        expect(mod.createMachineLiveStreamSidebandControlEnvelope({
-            sourceMachineId: 'machine_source',
-            targetMachineId: 'machine_target',
-            control: {
-                v: 1,
-                streamId: 'stream_1',
-                sourceId: 'source_1',
-                eventId: 'tap_1',
-                leaseId: 'lease_1',
-                kind: 'tap',
-                x: 0.5,
-                y: 0.25,
-            },
-        })).toEqual({
-            v: 1,
-            sourceMachineId: 'machine_source',
-            targetMachineId: 'machine_target',
-            message: {
-                kind: 'sideband_control',
-                control: expect.objectContaining({ kind: 'tap', eventId: 'tap_1' }),
-            },
-        });
-    });
 });

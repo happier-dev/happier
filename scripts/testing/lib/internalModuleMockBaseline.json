@@ -3371,7 +3371,6 @@
   "apps/ui/sources/hooks/inbox/useInboxModel.test.tsx": 1,
   "apps/ui/sources/hooks/inbox/useInboxSummary.test.tsx": 5,
   "apps/ui/sources/hooks/inbox/useUpdates.test.ts": 1,
-  "apps/ui/sources/hooks/machine/useCapabilityInstallability.test.tsx": 1,
   "apps/ui/sources/hooks/machine/useMachineCapabilityInvokeWithAlerts.test.tsx": 2,
   "apps/ui/sources/hooks/machine/useMachineEnvPresence.test.tsx": 1,
   "apps/ui/sources/hooks/machine/useMachineTerminalActionAdmission.approval.test.tsx": 1,

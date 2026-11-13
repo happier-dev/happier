@@ -120,13 +120,6 @@ function usePublishedMachineWorkingCounts(store: MachineWorkingCountsStore, coun
     React.useLayoutEffect(() => store.notify(), [counts, store]);
 }
 
-/** Publishes one projection to the rows below; a row re-renders only when its own number changes. */
-export function MachineWorkingCountsScope(props: Readonly<{ counts: MachineWorkingCounts; children: React.ReactNode }>) {
-    const [store] = React.useState(createMachineWorkingCountsStore);
-    usePublishedMachineWorkingCounts(store, props.counts);
-    return <MachineWorkingCountsContext.Provider value={store}>{props.children}</MachineWorkingCountsContext.Provider>;
-}
-
 function useMachineWorkingCountsStore(): MachineWorkingCountsStore {
     const store = React.useContext(MachineWorkingCountsContext);
     if (!store) throw new Error('Machine working counts are read inside MachineWorkingCountsProvider');

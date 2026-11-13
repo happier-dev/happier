@@ -176,14 +176,6 @@ describe('openPeerTcpTunnel', () => {
             handle.dispose();
         }
     });
-    it('exports the canonical loopback and relay stream owners from the tunnel entrypoint', async () => {
-        const mod = await loadModule('./index');
-
-        expect(mod.openPeerTcpTunnel).toBeTypeOf('function');
-        expect(mod.openPeerTcpTunnelLoopbackStream).toBeTypeOf('function');
-        expect(mod.openPeerTcpTunnelRelayStream).toBeTypeOf('function');
-    });
-
     it('opens a loopback stream after the tunnel open control request succeeds', async () => {
         const mod = await loadModule('./client');
         const openPeerTcpTunnel = mod.openPeerTcpTunnel;

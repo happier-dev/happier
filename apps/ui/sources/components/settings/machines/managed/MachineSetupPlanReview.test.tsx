@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MachineSetupApplyInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupEffectPlanV1Schema, type MachineRecipeStepV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
@@ -79,6 +81,12 @@ const target = (machineId: string) => ({
   desiredRevision: 1,
   recipePlans: [],
 });
+const reviewPlan = (machineId: string, steps: MachineRecipeStepV1[], satisfied: number[] = []) =>
+  MachineSetupEffectPlanV1Schema.parse({
+    v: 1, basis: { kind: 'setup', machineId, desiredRevision: 1 }, planDigest: 'd'.repeat(64), steps,
+    nativeFacts: steps.map((step, index) => ({ stepId: step.id,
+      status: satisfied.includes(index) ? 'satisfied' : 'drifted', facts: {} })),
+  });
 const names: Record<string, string> = {
   vps: 'vps-1',
   shop: 'shop-prod',
@@ -383,16 +391,13 @@ describe('MachineSetupPlanReview', () => {
   });
 
   it('breaks down what changes by kind, only for steps not already in place, and counts removals', async () => {
-    const plan = (steps: unknown[], satisfied: number[] = []) => ({
-      v: 1, basis: { kind: 'setup' }, planDigest: 'd'.repeat(64), steps,
-      nativeFacts: steps.map((step, index) => ({ stepId: (step as { id: string }).id, status: satisfied.includes(index) ? 'satisfied' : 'unsatisfied' })),
-    });
-    const prepared = {
+    const prepared: MachineSetupPreparedReview = {
       ok: true,
-      input: { homeId: 'home', machineId: 'vps', targets: [{ ...target('vps'), removeItemKeys: ['old'],
-        recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan: plan([
+      input: MachineSetupApplyInputV1Schema.parse({ homeId: 'home', machineId: 'vps', targets: [{ ...target('vps'),
+        sources: [{ kind: 'direct', setup: {} }], removeItemKeys: ['old'],
+        recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan: reviewPlan('vps', [
           { id: 'p', kind: 'package', manager: 'apt', packages: [{ name: 'docker-ce', version: '27.3' }, { name: 'docker-compose-plugin' }] },
-          { id: 'f', kind: 'file', path: '/etc/docker/daemon.json', content: { kind: 'literal', value: '{}' } },
+          { id: 'f', kind: 'file', path: '/etc/docker/daemon.json', owner: 'root', group: 'root', mode: 0o644, content: { kind: 'literal', value: '{}' } },
           { id: 'g', kind: 'group', name: 'docker', members: ['happier'] },
           { id: 'w', kind: 'firewall', rules: 'x', exposures: [
             { requirementId: 'ssh', hostAddress: '0.0.0.0', hostPort: 22, protocol: 'tcp', exposure: 'public' },
@@ -401,12 +406,12 @@ describe('MachineSetupPlanReview', () => {
           { id: 's', kind: 'serviceUnit', unit: 'docker.service', enabled: true, running: true },
           { id: 'c', kind: 'command', executable: 'corepack', args: ['enable'], check: { executable: 'corepack', args: ['-v'], unsatisfiedExitCodes: [1] } },
           // Already in place: not a change.
-          { id: 'f2', kind: 'file', path: '/etc/motd', content: { kind: 'literal', value: 'hi' } },
+          { id: 'f2', kind: 'file', path: '/etc/motd', owner: 'root', group: 'root', mode: 0o644, content: { kind: 'literal', value: 'hi' } },
         ], [6]) }],
-        removalPlans: [{ itemKey: 'old', plan: plan([{ id: 'r', kind: 'package', manager: 'apt', state: 'absent', packages: [{ name: 'caddy' }] }]) }],
-      }] },
+        removalPlans: [{ itemKey: 'old', plan: reviewPlan('vps', [{ id: 'r', kind: 'package', manager: 'apt', state: 'absent', packages: [{ name: 'caddy' }] }]) }],
+      }] }),
       facts: [{ homeId: 'home', machineId: 'vps', support: [] }],
-    } as unknown as MachineSetupPreparedReview;
+    };
     const screen = await renderScreen(
       <MachineSetupPlanReview testID="review" prepared={prepared} nameOf={(id) => names[id] ?? id} />,
     );
@@ -433,27 +438,23 @@ describe('MachineSetupPlanReview', () => {
   });
 
   it('lists a change several Machines share once, names a Machine only for its own changes, and counts packages, not sources', async () => {
-    const plan = (steps: unknown[]) => ({
-      v: 1, basis: { kind: 'setup' }, planDigest: 'd'.repeat(64), steps,
-      nativeFacts: steps.map((step) => ({ stepId: (step as { id: string }).id, status: 'unsatisfied' })),
-    });
-    const shared = [
+    const shared: MachineRecipeStepV1[] = [
       { id: 'src', kind: 'packageSource', manager: 'apt', path: '/etc/apt/sources.list.d/docker.list', keyPath: '/etc/apt/keyrings/docker.gpg',
         url: 'https://download.docker.com/linux/ubuntu', suite: 'noble', components: ['stable'], architectures: ['amd64'],
         keyUrl: 'https://download.docker.com/linux/ubuntu/gpg', keyFingerprint: '9DC858229FC7DD38854AE2D88D81803C0EBFCD88' },
       { id: 'p', kind: 'package', manager: 'apt', packages: [{ name: 'docker-ce' }, { name: 'docker-ce-cli' }] },
       { id: 'g', kind: 'group', name: 'docker', members: ['happier'] },
     ];
-    const prepared = {
+    const prepared: MachineSetupPreparedReview = {
       ok: true,
-      input: { homeId: 'home', machineId: 'vps', targets: [
-        { ...target('vps'), recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan: plan(shared) }] },
-        { ...target('shop'), recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan: plan([...shared,
+      input: MachineSetupApplyInputV1Schema.parse({ homeId: 'home', machineId: 'vps', targets: [
+        { ...target('vps'), sources: [{ kind: 'direct', setup: {} }], recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan: reviewPlan('vps', shared) }] },
+        { ...target('shop'), sources: [{ kind: 'direct', setup: {} }], recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan: reviewPlan('shop', [...shared,
           { id: 'c', kind: 'command', executable: 'corepack', args: ['enable'], check: { executable: 'corepack', args: ['-v'], unsatisfiedExitCodes: [1] } }]) }] },
-      ] },
+      ] }),
       facts: ['vps', 'shop'].map((machineId) => ({ homeId: 'home', machineId, support: [],
         review: { target: { homeId: 'home', machineId }, administratorRequired: true, downtime: 'none' } })),
-    } as unknown as MachineSetupPreparedReview;
+    };
     const screen = await renderScreen(
       <MachineSetupPlanReview testID="review" prepared={prepared} nameOf={(id) => names[id] ?? id} />,
     );

@@ -1007,7 +1007,8 @@ describe('MachineServicesTab rendered production wiring', () => {
         const watches: unknown[] = [];
         machineTransport.rpc.mockImplementation(async ({ method, payload }) => {
             if (method === RPC_METHODS.MACHINES_SERVICE_DISCOVERY) return { kind: 'snapshot', failures: [],
-                candidates: [candidate('fail2ban', 'fail2ban.service'), candidate('postgres', 'postgresql.service')] };
+                candidates: [candidate('fail2ban', 'fail2ban.service'), candidate('redis', 'redis.service'),
+                    candidate('unpicked', 'unpicked.service'), candidate('postgres', 'postgresql.service')] };
             if (method === RPC_METHODS.MACHINES_SERVICE_WATCH) {
                 watches.push(payload);
                 return { kind: 'applied', revision: 'next' };
@@ -1028,11 +1029,15 @@ describe('MachineServicesTab rendered production wiring', () => {
         expect(screen.getTextContent()).toContain(t('machineServices.watch.confirmNone'));
         await screen.pressByTestIdAsync('machine-services-watch-candidate:candidate-fail2ban');
         await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('machineServices.watch.confirm', { count: 1 })));
+        await screen.pressByTestIdAsync('machine-services-watch-candidate:candidate-redis');
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('machineServices.watch.confirm', { count: 2 })));
         await screen.pressByTestIdAsync('machine-services-watch-confirm');
-        await vi.waitFor(() => expect(watches).toHaveLength(1));
+        await vi.waitFor(() => expect(watches).toHaveLength(2));
         expect(discoveryReads()).toHaveLength(1);
-        expect(watches[0]).toMatchObject({ machineId, candidateId: 'candidate-fail2ban', expectedRevision: 'revision-fail2ban',
-            lifecyclePurpose: 'development' });
+        expect(watches).toEqual(expect.arrayContaining([
+            expect.objectContaining({ machineId, candidateId: 'candidate-fail2ban', expectedRevision: 'revision-fail2ban', lifecyclePurpose: 'development' }),
+            expect.objectContaining({ machineId, candidateId: 'candidate-redis', expectedRevision: 'revision-redis', lifecyclePurpose: 'development' }),
+        ]));
     });
 
     it('lines Port, Memory and Up up as columns on a wide page and says them in the byline on a phone', async () => {

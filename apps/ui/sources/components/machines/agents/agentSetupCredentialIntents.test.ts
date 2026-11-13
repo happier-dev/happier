@@ -68,10 +68,11 @@ describe('setup credential selection through the canonical purpose Action', () =
         expect(stored.bindings).toEqual(expect.arrayContaining([unrelated, selectedDefault]));
     });
 
-    it('refuses an unavailable account instead of silently choosing native or another service', () => {
-        expect(() => buildAgentSetupCredentialIntents({ agent, machineId: 'machine-a', serviceId: 'acme.agent/other' }))
+    it('requires an explicit selection and refuses a service absent from setup', () => {
+        expect(() => buildAgentSetupCredentialIntents({ agent, machineId: 'machine-a', serviceId: 'acme.agent/account' }))
             .toThrow('connected_account_unavailable');
-        expect(() => buildAgentSetupCredentialIntents({ agent, machineId: 'machine-a', serviceId: 'unknown/account' }))
+        expect(() => buildAgentSetupCredentialIntents({ agent, machineId: 'machine-a', serviceId: 'unknown/account',
+            selection: { selection: 'profile', profileId: 'work' } }))
             .toThrow('agent_connected_service_unavailable');
     });
 });

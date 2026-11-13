@@ -348,22 +348,55 @@ describe('pending terminal creation follows its existing member, not its mounted
         expect(rpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_CLOSE)).toBe(false);
         interest.abort(); await waiting; await hook.unmount(); await fixture.host.unmount();
     });
-    it('does not let an Agent member close borrow present-user authority to cancel a pending Artifact', async () => {
+    it('withdraws a UI-issued pending approval on Agent close under the Agent census policy', async () => {
         const fixture = await setup();
         const hook = await renderHook(() => useMachineTerminalActionAdmission(fixture.input));
         const interest = new AbortController();
-        const waiting = hook.getCurrent().admit(fixture.request, false, interest.signal);
+        let waiting: ReturnType<ReturnType<typeof useMachineTerminalActionAdmission>['admit']> | undefined;
         try {
-            await waitForHomeGovernance(() => expect(hook.getCurrent().approvalPending).toBe(true));
-            const artifactId = hook.getCurrent().approvalId!;
-            const closed = await invokeSessionTerminalAction({ actionId: 'session.terminals.close', input: {
-                scopeId: fixture.scopeId, terminalId: fixture.memberId,
-            }, context: { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
-                serverId: fixture.serverId, runtimeAccountId: 'bob', bypassApprovals: true } });
-            expect(closed).toMatchObject({ ok: false });
-            expect(JSON.parse(harness.artifacts(fixture.serverId).readPlainBody(artifactId)!)).toMatchObject({ status: 'open' });
+            const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+            const { setSessionTerminalPendingActionApproval } = await import('@/components/sessions/terminal/sessionTerminalWorkspaceRuntime');
+            // Explicit public creation produces a real queued UI request. An
+            // ordinary UI Ask is a local confirmation, not a pending Artifact.
+            const proposed = await createFrontDoorActionExecute()('approval.request.create', {
+                actionId: 'machines.terminal.open', actionArgs: { ...fixture.request,
+                    serverId: fixture.serverId, machineId: fixture.workspace.machineId },
+                summary: 'Open Shell', createdBy: { surface: 'system' },
+            }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+                serverId: fixture.serverId, expectedAccountId: fixture.scope.accountId, actionRequestId: 'terminal-ui-proposal' });
+            expect(proposed).toMatchObject({ ok: true, result: { artifactId: expect.any(String) } });
+            if (!proposed.ok || !proposed.result || typeof proposed.result !== 'object'
+                || !('artifactId' in proposed.result) || typeof proposed.result.artifactId !== 'string') throw new Error('Expected issued UI approval Artifact');
+            const artifactId = proposed.result.artifactId;
+            expect(ApprovalRequestV2Schema.parse(JSON.parse(harness.artifacts(fixture.serverId).readPlainBody(artifactId)!)))
+                .toMatchObject({ status: 'open', executionOriginV1: { surface: 'ui', authority: 'present_user' } });
+            await act(async () => {
+                expect(setSessionTerminalPendingActionApproval(fixture.scopeId, fixture.memberId, {
+                    scope: fixture.scope, artifactId, actionId: 'machines.terminal.open',
+                })).toBe(true);
+            });
+            waiting = hook.getCurrent().admit(fixture.request, false, interest.signal);
+            await waitForHomeGovernance(() => expect(hook.getCurrent())
+                .toMatchObject({ approvalPending: true, approvalId: artifactId }));
+            // Census admission is independent of withdrawal. These real saved
+            // policies distinguish the Agent caller from a borrowed UI caller.
+            await harness.setActionPolicy(fixture.serverId, 'machines.terminal.list', 'agent', 'allowed');
+            await harness.setActionPolicy(fixture.serverId, 'machines.terminal.list', 'ui', 'off');
+            await act(async () => {
+                expect(await invokeSessionTerminalAction({ actionId: 'session.terminals.close', input: {
+                    scopeId: fixture.scopeId, terminalId: fixture.memberId,
+                }, context: { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
+                    serverId: fixture.serverId, runtimeAccountId: 'bob', bypassApprovals: true } })).toMatchObject({ ok: true });
+            });
+            expect(JSON.parse(harness.artifacts(fixture.serverId).readPlainBody(artifactId)!)).toMatchObject({
+                status: 'canceled', executionOriginV1: { surface: 'ui', authority: 'present_user' },
+            });
             expect(readSessionTerminalWorkspaceForScope(fixture.scopeId)?.tabs.flatMap(tab => tab.terminals)
-                .some(member => member.id === fixture.memberId)).toBe(true);
+                .some(member => member.id === fixture.memberId)).toBe(false);
+            expect(harness.artifacts(fixture.serverId).list()).toHaveLength(1);
+            expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.DAEMON_TERMINAL_LIST,
+                payload: expect.objectContaining({ workspace: fixture.workspace }),
+            }));
             expect(rpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_ENSURE
                 || request.method === RPC_METHODS.DAEMON_TERMINAL_CLOSE)).toBe(false);
         } finally { interest.abort(); await waiting; await hook.unmount(); await fixture.host.unmount(); }

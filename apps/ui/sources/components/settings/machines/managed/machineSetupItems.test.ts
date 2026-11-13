@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import { MachinePresetItemV1Schema, type MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import {
   addMachineSetupSoftware,
   groupMachineSetupItems,
@@ -20,16 +20,16 @@ const recipe = (
   },
 });
 const app = (name: string): MachinePresetItemV1 =>
-  ({
+  MachinePresetItemV1Schema.parse({
     kind: 'app',
     authoredKey: name,
     definition: {
       name,
       project: { kind: 'create' },
-      definition: { from: 'compose', compose: 'services: {}\n' },
-      bindings: {},
+      definition: { from: 'compose', document: 'services: {}\n', profiles: [], services: [] },
+      bindings: [],
     },
-  }) as unknown as MachinePresetItemV1;
+  });
 const ids = (items: readonly MachinePresetItemV1[] | undefined) =>
   (items ?? []).map((item) =>
     item.kind === 'app' ? item.definition.name : item.selection.ref.recipeId,
