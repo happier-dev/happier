@@ -66,10 +66,12 @@ export function readS0Installation(home: DeploymentSocketHomeFixture) {
 /** The incumbent receiving daemon ingress, shared by composed deployment journeys. */
 export async function createS0DeploymentDaemonIngress(input: Readonly<{
     home: DeploymentSocketHomeFixture;
-    createDeploymentActionDeps?(requester?: RequesterAccountActionContext): Pick<ActionExecutorDeps,
+    createDeploymentActionDeps?(requester: RequesterAccountActionContext | undefined,
+        operations: ReturnType<typeof createHostActionOperationRuntime>): Pick<ActionExecutorDeps,
         'deploymentAction' | 'prepareDeploymentAction' | 'prepareDeploymentTeardown' | 'prepareDeploymentEnvironmentCreate' | 'prepareHostReviewedChildren'>;
     projectManagedServices?: NonNullable<NonNullable<Parameters<typeof registerDaemonLocalServicesMachineRpcHandlers>[1]>['projectManagedServices']>;
     managedMachineAction?: ActionExecutorDeps['managedMachineAction'];
+    machineServiceAction?: NonNullable<Parameters<typeof createCliActionExecutorFromCredentials>[0]['machineActionDirectTargetTransport']>['machineServiceAction'];
     resolveDeploymentRequesterIdentity?: DeploymentSourceRequesterIdentityResolver;
     nativeBoundary?: EnrollmentJourneyNativeBoundary;
     isolationWorkspace?: Readonly<{ rootId: string; path: string }>;
@@ -119,7 +121,7 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
         return prepared ? { ...prepared, ...(resolveTarget ? { resolveTarget } : {}) } : null;
     }
     const createExecutor = (scopedCredentials: typeof credentials, requester?: RequesterAccountActionContext) => {
-        const deployment = input.createDeploymentActionDeps?.(requester);
+        const deployment = input.createDeploymentActionDeps?.(requester, actionOperations);
         return createCliActionExecutorFromCredentials({
             credentials: scopedCredentials, readCredentials: async () => scopedCredentials,
             machineId: home.machineId, serverId: home.serverId, serverIdentityId: home.serverId, serverApiUrl: home.baseUrl,
@@ -146,6 +148,7 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
                 prepareRequesterAccountContext, daemonWorkSignal: daemonLifetime.signal,
             }),
             machineActionDirectTargetTransport: { machineId: home.machineId,
+                ...(input.machineServiceAction ? { machineServiceAction: input.machineServiceAction } : {}),
                 invoke: (method, request, options) => rpc.invokeLocal(method, request, options) },
         });
     };
