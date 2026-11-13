@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { describeApprovalActionFields, projectApprovalStructuredAnswers, readAcknowledgedActionResult } from './approvalFieldValues';
+import { describeApprovalActionFields, describeApprovalRequestFields, projectApprovalStructuredAnswers, readAcknowledgedActionResult } from './approvalFieldValues';
 import { resolveAcknowledgedActionInverse } from './actionResultFacts';
 import { readApprovalPreviewSummary } from './actionApprovalPresentation';
 import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
@@ -26,6 +26,7 @@ it('reads a ceiling request as binary memory, available room and the consequence
     const presentation = describeApprovalActionFields(input);
     expect(presentation.unrepresentable).toBeNull();
     expect(presentation.rows).toContainEqual(expect.objectContaining({ path: 'ceiling', value: '1 GB' }));
+    expect(describeApprovalRequestFields(input).rows).toContainEqual(expect.objectContaining({ path: 'ceiling', value: '1 GB' }));
     expect(presentation.rows).toContainEqual(expect.objectContaining({ path: 'room', value: '2 GB free of 8 GB' }));
     expect(presentation.rows).toContainEqual(expect.objectContaining({ path: 'ifReached', value: expect.stringMatching(/stop.*resume/i) }));
     expect(presentation.rows.find(row => row.path === 'bytes')).toMatchObject({ technical: true });

@@ -29,7 +29,7 @@ import { ComputerActionApprovalCard, describeComputerActionApproval, type Comput
 import { ComputerApprovalCapture } from './ComputerApprovalCapture';
 import { DeploymentReviewApprovalFacts, readDeploymentReviewApproval } from './DeploymentReviewApprovalFacts';
 import { ProjectCommandApprovalFacts, readProjectCommandApproval } from './ProjectCommandApprovalFacts';
-import { describeApprovalActionFields, resolveApprovalVisualPreview } from './approvalFieldValues';
+import { describeApprovalRequestFields, resolveApprovalVisualPreview } from './approvalFieldValues';
 import { readApprovalPreviewSummary } from './actionApprovalPresentation';
 import { readApprovalDocEditProposal } from './actionApprovalReview';
 import { HandoffTargetConsequencesCard, describeHandoffTargetApproval } from './HandoffTargetConsequencesCard';
@@ -78,7 +78,7 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
   const resource = React.useMemo(() => readResourceProposalApproval(request), [request]);
   const handoff = React.useMemo(() => HandoffTargetReplacementApprovalV1Schema.safeParse(readRecord(preview).handoffTargetReplacementApproval), [preview]);
   const generic = !deployment && !template && !command && !computer && !edit && !resource && !props.resourceProposal;
-  const fields = React.useMemo(() => generic && props.fields === undefined ? describeApprovalActionFields(request) : null, [generic, props.fields, request]);
+  const fields = React.useMemo(() => generic && props.fields === undefined ? describeApprovalRequestFields(request) : null, [generic, props.fields, request]);
   const reboot = readRecord(readRecord(preview).machineRebootReview);
   return <>
     <ApprovalPreviewFacts request={request} serverId={serverId} />

@@ -1330,6 +1330,7 @@ function isTargetActionApprovalFieldsRequest(request: object): request is Target
 export function describeApprovalRequestFields(
   request: (Pick<ApprovalRequest, 'actionId' | 'actionArgs' | 'preview'> & Partial<Pick<ApprovalRequest, 'status'>>)
     | TargetActionApprovalFieldsRequest,
+  context?: ApprovalPresentationContext,
 ): ApprovalActionFieldsPresentation {
   // `'actionId' in request` would leave the target member as `& Record<'actionId', unknown>`.
   if (isTargetActionApprovalFieldsRequest(request)) {
@@ -1338,6 +1339,7 @@ export function describeApprovalRequestFields(
   const actionPresentation = describeApprovalActionFields({
     actionId: request.actionId,
     actionArgs: request.actionArgs,
+    ...(context ? { context } : {}),
     ...(request.status === undefined ? {} : { status: request.status }),
     ...(request.preview === undefined ? {} : { preview: request.preview }),
   });

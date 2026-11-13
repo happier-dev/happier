@@ -3,27 +3,15 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
-
-import {
-  ApprovalIncludedSteps,
-  readApprovalIncludedSteps,
-} from './ApprovalIncludedSteps';
-import {
-  DeploymentReviewApprovalFacts,
-  readDeploymentReviewApproval,
-} from './DeploymentReviewApprovalFacts';
-import {
-  ProjectCommandApprovalFacts,
-  readProjectCommandApproval,
-} from './ProjectCommandApprovalFacts';
+import { ApprovalReviewFacts } from './ApprovalReviewFacts';
 
 /** The exact review a receiving executor carried back for the person's own press (`{ review, reviewDigest }`). */
 export type ActionConfirmationReviewInput = Readonly<{
@@ -32,75 +20,14 @@ export type ActionConfirmationReviewInput = Readonly<{
   preview: unknown;
 }>;
 
-/**
- * Whether a carried review has host-discovered facts beyond its one-line summary: the exact command a Service
- * starts, a deploy's reviewed effect, or the steps it includes. Those read through the same family presenters
- * the Inbox review uses; a summary-only review stays a sentence in the plain confirmation.
- */
-export function hasActionConfirmationReviewFacts(
-  input: ActionConfirmationReviewInput,
-): boolean {
-  return (
-    readDeploymentReviewApproval({ preview: input.preview }) !== null ||
-    readProjectCommandApproval(input) !== null ||
-    readApprovalIncludedSteps(input.preview).length > 0
-  );
-}
+type TypedConfirmation = Readonly<{ text: string; placeholder?: string; instruction?: string }>;
 
-/**
- * What the receiving executor reviewed, in the approval families' own presenters (the same pieces and order as
- * `useApprovalReview`'s sections). It decides nothing: the native confirmation and in-flow steps own the answer.
- */
-export const ActionConfirmationReviewFacts = React.memo(
-  function ActionConfirmationReviewFacts(
-    props: ActionConfirmationReviewInput &
-      Readonly<{
-        serverId: string | null;
-        testID: string;
-      }>,
-  ) {
-    const { actionId, actionArgs, preview } = props;
-    const deploymentReview = React.useMemo(
-      () => readDeploymentReviewApproval({ preview }),
-      [preview],
-    );
-    const projectCommand = React.useMemo(
-      () =>
-        deploymentReview
-          ? null
-          : readProjectCommandApproval({ actionId, actionArgs, preview }),
-      [actionArgs, actionId, deploymentReview, preview],
-    );
-    return (
-      <>
-        {deploymentReview ? (
-          <DeploymentReviewApprovalFacts
-            approval={deploymentReview}
-            serverId={props.serverId}
-            testID={`${props.testID}.deployment`}
-          />
-        ) : projectCommand ? (
-          // The dialog's title already names the Action: the command stands as its one block, unheaded.
-          <ItemGroup>
-            <SectionContentRow>
-              <ProjectCommandApprovalFacts
-                presentation={projectCommand}
-                testID={`${props.testID}.command`}
-              />
-            </SectionContentRow>
-          </ItemGroup>
-        ) : (
-          // The command or deploy effect already says what runs; included steps speak only when nothing else does.
-          <ApprovalIncludedSteps
-            preview={preview}
-            serverId={props.serverId}
-            testID={`${props.testID}.included-steps`}
-          />
-        )}
-      </>
-    );
-  },
-);
+/** The same family facts as a retained approval, without requiring an Artifact. */
+export const ActionConfirmationReviewFacts = React.memo(function ActionConfirmationReviewFacts(
+  props: ActionConfirmationReviewInput & Readonly<{ serverId: string | null; testID: string; summaryPlacement?: 'body' | 'host' }>,
+) {
+  return <ApprovalReviewFacts {...props} />;
+});
 
 type ConfirmationReviewModalProps = CustomModalInjectedProps &
   ActionConfirmationReviewInput &
@@ -108,17 +35,20 @@ type ConfirmationReviewModalProps = CustomModalInjectedProps &
     serverId: string | null;
     confirmLabel: string;
     irreversible: boolean;
+    summaryPlacement?: 'body' | 'host';
+    typedConfirmation?: TypedConfirmation;
     onAnswer: (confirmed: boolean) => void;
   }>;
 
 function ConfirmationReviewModal(props: ConfirmationReviewModalProps) {
-  const { onAnswer, onClose, setChrome, confirmLabel, irreversible } = props;
+  const { onAnswer, onClose, setChrome, confirmLabel, irreversible, typedConfirmation } = props;
+  const [typedValue, setTypedValue] = React.useState('');
   const answer = React.useCallback(
     (confirmed: boolean) => {
-      onAnswer(confirmed);
+      onAnswer(confirmed && (typedConfirmation === undefined || typedValue === typedConfirmation.text));
       onClose();
     },
-    [onAnswer, onClose],
+    [onAnswer, onClose, typedConfirmation, typedValue],
   );
   React.useEffect(() => {
     setChrome?.({
@@ -150,7 +80,15 @@ function ConfirmationReviewModal(props: ConfirmationReviewModalProps) {
           preview={props.preview}
           serverId={props.serverId}
           testID="actions.confirmation-review"
+          summaryPlacement={props.summaryPlacement}
         />
+        {typedConfirmation ? <View style={styles.challenge}>
+          {typedConfirmation.instruction ? <Text variant="body">{typedConfirmation.instruction}</Text> : null}
+          <FieldTextInput testID="actions.confirmation-review.typed-confirmation"
+            accessibilityLabel={typedConfirmation.text} value={typedValue} onChangeText={setTypedValue}
+            placeholder={typedConfirmation.placeholder ?? typedConfirmation.text} autoCapitalize="none"
+            onSubmitEditing={() => answer(true)} returnKeyType="done" />
+        </View> : null}
       </View>
     </ListPresentationProvider>
   );
@@ -166,6 +104,9 @@ export function confirmActionReview(
     Readonly<{
       title: string;
       summary: string | null;
+      /** Custom hosts keep local annotations in chrome; the default presenter already places the review sentence there. */
+      summaryPlacement?: 'body' | 'host';
+      typedConfirmation?: TypedConfirmation;
       confirmLabel: string;
       irreversible: boolean;
       serverId: string | null;
@@ -193,6 +134,8 @@ export function confirmActionReview(
         serverId: input.serverId,
         confirmLabel: input.confirmLabel,
         irreversible: input.irreversible,
+        summaryPlacement: input.summaryPlacement,
+        typedConfirmation: input.typedConfirmation,
         onAnswer: settle,
       },
       onRequestClose: () => settle(false),
@@ -222,4 +165,5 @@ export function confirmActionReview(
 const styles = StyleSheet.create((theme) => ({
   // Card chrome pads only its header and footer; the body aligns with the title's edge.
   body: { gap: theme.space.s16, paddingHorizontal: theme.space.s16, paddingBottom: theme.space.s16 },
+  challenge: { gap: theme.space.s8 },
 }));
