@@ -7,6 +7,11 @@ type Copy = Readonly<{
   steps: Readonly<{ start: string; describe: string; create: string }>;
   startTitle: string;
   startDescription: string;
+  startNewDescription: string;
+  yourCode: string;
+  startNew: string;
+  otherProject: string;
+  codeSubtitle: (p: Readonly<{ repository: string; provider: string }>) => string;
   startPick: string;
   haveCode: string;
   runExisting: string;
@@ -76,14 +81,20 @@ export const newAppTranslations: Readonly<
   >
 > = {
   en: {
-    menuTitle: 'New app…',
-    menuSubtitle: 'From a starter',
-    title: 'New app',
+    menuTitle: 'Deploy an app…',
+    menuSubtitle: 'Your code, a starter or the catalog',
+    title: 'Deploy an app',
     steps: { start: 'Start', describe: 'Describe', create: 'Create' },
-    startTitle: 'What are you making?',
+    startTitle: 'Deploy an app',
     startDescription:
+      'Your code or something that already exists. Nothing is created until you review it.',
+    startNewDescription:
       'Pick the closest starting point. Your agent shapes it from there, so nothing here is final.',
     startPick: 'Pick one to continue',
+    yourCode: 'Your code',
+    startNew: 'Start something new',
+    otherProject: 'Another project…',
+    codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: 'Already have code?',
     runExisting: 'Or run an app that already exists, no repository needed',
     fromCatalog: 'From the catalog',
@@ -140,14 +151,20 @@ export const newAppTranslations: Readonly<
     unavailable: 'Couldn’t check GitHub from this computer.',
   },
   ca: {
-    menuTitle: 'Aplicació nova…',
-    menuSubtitle: 'A partir d’una plantilla',
-    title: 'Aplicació nova',
+    menuTitle: 'Desplega una app…',
+    menuSubtitle: 'El teu codi, una plantilla o el catàleg',
+    title: 'Desplega una app',
     steps: { start: 'Inici', describe: 'Descripció', create: 'Creació' },
-    startTitle: 'Què estàs fent?',
+    startTitle: 'Desplega una app',
     startDescription:
+      'El teu codi o alguna cosa que ja existeix. No es crea res fins que ho revisis.',
+    startNewDescription:
       'Tria el punt de partida més proper. L’agent ho adapta a partir d’aquí, així que res no és definitiu.',
     startPick: 'Tria’n un per continuar',
+    yourCode: 'El teu codi',
+    startNew: 'Comença una cosa nova',
+    otherProject: 'Un altre projecte…',
+    codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: 'Ja tens codi?',
     runExisting: 'O executa una app que ja existeix, sense repositori',
     fromCatalog: 'Del catàleg',
@@ -204,14 +221,20 @@ export const newAppTranslations: Readonly<
     unavailable: 'No s’ha pogut comprovar GitHub des d’aquest ordinador.',
   },
   de: {
-    menuTitle: 'Neue App…',
-    menuSubtitle: 'Aus einer Vorlage',
-    title: 'Neue App',
+    menuTitle: 'App bereitstellen…',
+    menuSubtitle: 'Dein Code, eine Vorlage oder der Katalog',
+    title: 'App bereitstellen',
     steps: { start: 'Start', describe: 'Beschreiben', create: 'Erstellen' },
-    startTitle: 'Was baust du?',
+    startTitle: 'App bereitstellen',
     startDescription:
+      'Dein Code oder etwas, das es schon gibt. Nichts wird erstellt, bevor du es geprüft hast.',
+    startNewDescription:
       'Wähle den passendsten Ausgangspunkt. Dein Agent formt es von dort aus, nichts hier ist endgültig.',
     startPick: 'Wähle eins, um fortzufahren',
+    yourCode: 'Dein Code',
+    startNew: 'Etwas Neues beginnen',
+    otherProject: 'Anderes Projekt…',
+    codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: 'Schon Code vorhanden?',
     runExisting: 'Oder eine bestehende App ausführen, ohne Repository',
     fromCatalog: 'Aus dem Katalog',
@@ -268,14 +291,20 @@ export const newAppTranslations: Readonly<
     unavailable: 'GitHub konnte von diesem Computer aus nicht geprüft werden.',
   },
   es: {
-    menuTitle: 'App nueva…',
-    menuSubtitle: 'A partir de una plantilla',
-    title: 'App nueva',
+    menuTitle: 'Desplegar una app…',
+    menuSubtitle: 'Tu código, una plantilla o el catálogo',
+    title: 'Desplegar una app',
     steps: { start: 'Inicio', describe: 'Descripción', create: 'Creación' },
-    startTitle: '¿Qué estás creando?',
+    startTitle: 'Desplegar una app',
     startDescription:
+      'Tu código o algo que ya existe. No se crea nada hasta que lo revises.',
+    startNewDescription:
       'Elige el punto de partida más parecido. Tu agente lo adapta desde ahí, así que nada es definitivo.',
     startPick: 'Elige uno para continuar',
+    yourCode: 'Tu código',
+    startNew: 'Empezar algo nuevo',
+    otherProject: 'Otro proyecto…',
+    codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: '¿Ya tienes código?',
     runExisting: 'O ejecuta una app que ya existe, sin repositorio',
     fromCatalog: 'Del catálogo',
@@ -332,14 +361,20 @@ export const newAppTranslations: Readonly<
     unavailable: 'No se pudo comprobar GitHub desde este ordenador.',
   },
   fr: {
-    menuTitle: 'Nouvelle app…',
-    menuSubtitle: 'À partir d’un modèle',
-    title: 'Nouvelle app',
+    menuTitle: 'Déployer une app…',
+    menuSubtitle: 'Votre code, un modèle ou le catalogue',
+    title: 'Déployer une app',
     steps: { start: 'Départ', describe: 'Description', create: 'Création' },
-    startTitle: 'Que créez-vous ?',
+    startTitle: 'Déployer une app',
     startDescription:
+      'Votre code ou quelque chose qui existe déjà. Rien n’est créé avant votre vérification.',
+    startNewDescription:
       'Choisissez le point de départ le plus proche. Votre agent l’adapte ensuite, rien n’est définitif.',
     startPick: 'Choisissez-en un pour continuer',
+    yourCode: 'Votre code',
+    startNew: 'Commencer quelque chose de nouveau',
+    otherProject: 'Un autre projet…',
+    codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: 'Vous avez déjà du code ?',
     runExisting: 'Ou lancez une app qui existe déjà, sans dépôt',
     fromCatalog: 'Depuis le catalogue',
@@ -396,14 +431,20 @@ export const newAppTranslations: Readonly<
     unavailable: 'Impossible de vérifier GitHub depuis cet ordinateur.',
   },
   it: {
-    menuTitle: 'Nuova app…',
-    menuSubtitle: 'Da un modello',
-    title: 'Nuova app',
+    menuTitle: 'Distribuisci un’app…',
+    menuSubtitle: 'Il tuo codice, un modello o il catalogo',
+    title: 'Distribuisci un’app',
     steps: { start: 'Inizio', describe: 'Descrizione', create: 'Creazione' },
-    startTitle: 'Cosa stai creando?',
+    startTitle: 'Distribuisci un’app',
     startDescription:
+      'Il tuo codice o qualcosa che esiste già. Non viene creato nulla finché non lo controlli.',
+    startNewDescription:
       'Scegli il punto di partenza più vicino. Il tuo agente lo adatta da lì, quindi niente è definitivo.',
     startPick: 'Scegline uno per continuare',
+    yourCode: 'Il tuo codice',
+    startNew: 'Inizia qualcosa di nuovo',
+    otherProject: 'Un altro progetto…',
+    codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: 'Hai già del codice?',
     runExisting: 'Oppure esegui un’app che esiste già, senza repository',
     fromCatalog: 'Dal catalogo',
@@ -460,14 +501,20 @@ export const newAppTranslations: Readonly<
     unavailable: 'Impossibile verificare GitHub da questo computer.',
   },
   ja: {
-    menuTitle: '新しいアプリ…',
-    menuSubtitle: 'スターターから',
-    title: '新しいアプリ',
+    menuTitle: 'アプリをデプロイ…',
+    menuSubtitle: '自分のコード、スターター、カタログから',
+    title: 'アプリをデプロイ',
     steps: { start: '開始', describe: '説明', create: '作成' },
-    startTitle: '何を作りますか？',
+    startTitle: 'アプリをデプロイ',
     startDescription:
+      '自分のコード、またはすでにあるもの。確認するまで何も作成されません。',
+    startNewDescription:
       'いちばん近い出発点を選んでください。そこからエージェントが形にするので、ここで決めたことは変えられます。',
     startPick: '続けるには1つ選んでください',
+    yourCode: '自分のコード',
+    startNew: '新しく始める',
+    otherProject: '別のプロジェクト…',
+    codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: 'すでにコードがありますか？',
     runExisting: 'または既存のアプリを実行（リポジトリ不要）',
     fromCatalog: 'カタログから',
@@ -524,14 +571,20 @@ export const newAppTranslations: Readonly<
     unavailable: 'このコンピューターから GitHub を確認できませんでした。',
   },
   pl: {
-    menuTitle: 'Nowa aplikacja…',
-    menuSubtitle: 'Z szablonu',
-    title: 'Nowa aplikacja',
+    menuTitle: 'Wdróż aplikację…',
+    menuSubtitle: 'Twój kod, szablon lub katalog',
+    title: 'Wdróż aplikację',
     steps: { start: 'Start', describe: 'Opis', create: 'Tworzenie' },
-    startTitle: 'Co tworzysz?',
+    startTitle: 'Wdróż aplikację',
     startDescription:
+      'Twój kod lub coś, co już istnieje. Nic nie powstanie, dopóki tego nie sprawdzisz.',
+    startNewDescription:
       'Wybierz najbliższy punkt wyjścia. Agent dopracuje go dalej, więc nic tu nie jest ostateczne.',
     startPick: 'Wybierz jeden, aby kontynuować',
+    yourCode: 'Twój kod',
+    startNew: 'Zacznij coś nowego',
+    otherProject: 'Inny projekt…',
+    codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: 'Masz już kod?',
     runExisting: 'Albo uruchom istniejącą aplikację, bez repozytorium',
     fromCatalog: 'Z katalogu',
@@ -588,14 +641,20 @@ export const newAppTranslations: Readonly<
     unavailable: 'Nie udało się sprawdzić GitHuba z tego komputera.',
   },
   pt: {
-    menuTitle: 'App nova…',
-    menuSubtitle: 'A partir de um modelo',
-    title: 'App nova',
+    menuTitle: 'Implantar um app…',
+    menuSubtitle: 'Seu código, um modelo ou o catálogo',
+    title: 'Implantar um app',
     steps: { start: 'Início', describe: 'Descrição', create: 'Criação' },
-    startTitle: 'O que você está criando?',
+    startTitle: 'Implantar um app',
     startDescription:
+      'Seu código ou algo que já existe. Nada é criado até você revisar.',
+    startNewDescription:
       'Escolha o ponto de partida mais próximo. Seu agente adapta a partir daí, então nada aqui é definitivo.',
     startPick: 'Escolha um para continuar',
+    yourCode: 'Seu código',
+    startNew: 'Começar algo novo',
+    otherProject: 'Outro projeto…',
+    codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: 'Já tem código?',
     runExisting: 'Ou execute um app que já existe, sem repositório',
     fromCatalog: 'Do catálogo',
@@ -652,14 +711,20 @@ export const newAppTranslations: Readonly<
     unavailable: 'Não foi possível verificar o GitHub neste computador.',
   },
   ru: {
-    menuTitle: 'Новое приложение…',
-    menuSubtitle: 'Из шаблона',
-    title: 'Новое приложение',
+    menuTitle: 'Развернуть приложение…',
+    menuSubtitle: 'Ваш код, шаблон или каталог',
+    title: 'Развернуть приложение',
     steps: { start: 'Начало', describe: 'Описание', create: 'Создание' },
-    startTitle: 'Что вы создаёте?',
+    startTitle: 'Развернуть приложение',
     startDescription:
+      'Ваш код или то, что уже есть. Ничего не создаётся, пока вы не проверите.',
+    startNewDescription:
       'Выберите самую близкую основу. Агент доработает её дальше, так что здесь ничего не окончательно.',
     startPick: 'Выберите вариант, чтобы продолжить',
+    yourCode: 'Ваш код',
+    startNew: 'Начать новое',
+    otherProject: 'Другой проект…',
+    codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: 'Уже есть код?',
     runExisting: 'Или запустите готовое приложение без репозитория',
     fromCatalog: 'Из каталога',
@@ -716,14 +781,20 @@ export const newAppTranslations: Readonly<
     unavailable: 'Не удалось проверить GitHub с этого компьютера.',
   },
   'zh-Hans': {
-    menuTitle: '新应用…',
-    menuSubtitle: '从模板开始',
-    title: '新应用',
+    menuTitle: '部署应用…',
+    menuSubtitle: '你的代码、模板或目录',
+    title: '部署应用',
     steps: { start: '开始', describe: '描述', create: '创建' },
-    startTitle: '你要做什么？',
+    startTitle: '部署应用',
     startDescription:
+      '你的代码，或已有的东西。在你确认之前不会创建任何内容。',
+    startNewDescription:
       '选择最接近的起点。之后由你的智能体继续塑造，这里的选择都不是最终的。',
     startPick: '选择一个以继续',
+    yourCode: '你的代码',
+    startNew: '开始新项目',
+    otherProject: '其他项目…',
+    codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: '已经有代码了？',
     runExisting: '或者运行一个现成的应用，无需仓库',
     fromCatalog: '从目录中选择',
@@ -776,14 +847,20 @@ export const newAppTranslations: Readonly<
     unavailable: '无法从这台电脑检查 GitHub。',
   },
   'zh-Hant': {
-    menuTitle: '新應用程式…',
-    menuSubtitle: '從範本開始',
-    title: '新應用程式',
+    menuTitle: '部署應用程式…',
+    menuSubtitle: '你的程式碼、範本或目錄',
+    title: '部署應用程式',
     steps: { start: '開始', describe: '描述', create: '建立' },
-    startTitle: '你要做什麼？',
+    startTitle: '部署應用程式',
     startDescription:
+      '你的程式碼，或已有的東西。在你確認之前不會建立任何內容。',
+    startNewDescription:
       '選擇最接近的起點。之後由你的代理程式繼續塑造，這裡的選擇都不是最終的。',
     startPick: '選擇一個以繼續',
+    yourCode: '你的程式碼',
+    startNew: '開始新專案',
+    otherProject: '其他專案…',
+    codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: '已經有程式碼了？',
     runExisting: '或執行一個現成的應用程式，無需儲存庫',
     fromCatalog: '從目錄中選擇',

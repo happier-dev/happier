@@ -51,7 +51,7 @@ import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { PLUGINS_APP_ROUTE } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { DeploymentDatabasePage } from './DeploymentDatabasePage';
-import { buildDeploymentEnvironmentHref } from './deploymentNavigation';
+import { buildDeploymentEnvironmentHref, DEPLOYMENT_NEW_REPOSITORY_DRAFT } from './deploymentNavigation';
 import { useDeploymentProject } from './useDeploymentProject';
 import { useDeploymentCollection } from './useDeploymentReads';
 import { useProjectSource } from '../sources/useProjectSources';
@@ -224,10 +224,11 @@ const ProjectDeploymentsPage = React.memo(
       () => resolveDeploymentEnvironmentDestinationV1({ tab: routeTab, section: routeSection }),
       [routeSection, routeTab],
     );
-    // Store → Apps opens the draft on a stored definition; the address is consumed by the first save or discard.
+    // Store → Apps opens the draft on a stored definition, Deploy an app on the Project's repository; the address is
+    // consumed by the first save or discard.
     const routeNewDefinition = readProjectRouteStringParam(params.newDefinition);
     const newDefinition = routeNewDefinition === 'compose' || routeNewDefinition === 'image' ? routeNewDefinition : null;
-    const [drafting, setDrafting] = React.useState(newDefinition !== null);
+    const [drafting, setDrafting] = React.useState(newDefinition !== null || routeNewDefinition === DEPLOYMENT_NEW_REPOSITORY_DRAFT);
     const [draftSource, setDraftSource] = React.useState<DeploymentEnvironmentDetailV1 | null>(null);
     const selection = React.useMemo<Selection>(() => drafting && sourceAvailable ? DRAFTING : routeDefaults ? {
       environmentId: null, deploymentId: null, defaults: true,

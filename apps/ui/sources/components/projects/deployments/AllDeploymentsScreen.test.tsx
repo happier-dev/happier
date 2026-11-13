@@ -6,6 +6,7 @@ import {
   type DeploymentReadTransportV1,
 } from '@happier-dev/deployments';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol';
 import {
   act,
   renderScreen,
@@ -57,7 +58,7 @@ function environment(id: string, projectSourceId: string, title: string,
   };
 }
 const page = (
-  items: ReturnType<typeof environment>[],
+  items: DeploymentEnvironmentCollectionV1['items'],
   extra: Partial<{
     nextCursor: string | null;
     coverage: 'complete' | 'partial';
@@ -168,6 +169,16 @@ describe('Projects → All deployments', () => {
     const { controller } = controllerFor(() => page([]));
     const screen = await render(controller, 'all-deployments.empty');
     expect(screen.findByTestId('all-deployments.older')).toBeNull();
+    controller.retire();
+  });
+
+  it('leads an empty Account into Deploy an app, the one flow every entry opens (lab svcEmpty → f1src)', async () => {
+    phoneWindow.on = true;
+    const { controller } = controllerFor(() => page([]));
+    const screen = await render(controller, 'all-deployments.empty');
+    await screen.pressByTestIdAsync('all-deployments.empty.deployApp');
+    // On a phone the flow is its pushed page; on a computer the same screen opens as a dialog.
+    expect(routerMock.spies.push).toHaveBeenCalledWith(expect.objectContaining({ pathname: '/projects/new-app' }));
     controller.retire();
   });
 

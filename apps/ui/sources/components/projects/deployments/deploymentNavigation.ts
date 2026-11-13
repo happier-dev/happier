@@ -34,6 +34,14 @@ export function buildDeploymentNewDefinitionHref(input: Readonly<{ serverId: str
     return `/deployments/${input.projectSourceId ? encodeURIComponent(input.projectSourceId) : 'new'}?serverId=${encodeURIComponent(input.serverId)}&newDefinition=${input.kind}`;
 }
 
+/** The draft door's value for a Project's own repository (Deploy an app → Your code); not a stored definition. */
+export const DEPLOYMENT_NEW_REPOSITORY_DRAFT = 'repository' as const;
+
+/** A Project's new-Environment draft on its repository: Deploy an app's Configure step for "Your code". */
+export function buildDeploymentRepositoryDraftHref(input: Readonly<{ serverId: string; projectSourceId: string }>): string {
+    return `/deployments/${encodeURIComponent(input.projectSourceId)}?serverId=${encodeURIComponent(input.serverId)}&newDefinition=${DEPLOYMENT_NEW_REPOSITORY_DRAFT}`;
+}
+
 /** The same address as a link path, for consumers that hold a path rather than a typed route. */
 export function buildDeploymentEnvironmentHref(input: DeploymentEnvironmentAddress): string {
     const { params } = deploymentEnvironmentRoute(input);

@@ -8,6 +8,7 @@ import {
   useRouter,
 } from '@/components/appShell/workspace/destinationRoute';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { useOpenNewApp } from '@/components/projects/starters/newAppPresentation';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { Item } from '@/components/ui/lists/Item';
@@ -108,6 +109,8 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     }]} />
     </ItemGroup>
   ) : null;
+  const openNewApp = useOpenNewApp();
+  const openDeployApp = React.useCallback(() => openNewApp(), [openNewApp]);
   const header = (
     <PageHeader
       testID="all-deployments.header"
@@ -166,6 +169,8 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
           scene="shipped"
           title={t('projects.deployments.allEmptyTitle')}
           subtitle={t('projects.deployments.allEmptyBody')}
+          // The page's one way in: Deploy an app, the flow every entry opens (lab svcEmpty, reuse map §1/§4).
+          primaryAction={{ label: t('newApp.title'), onPress: openDeployApp, testID: 'all-deployments.empty.deployApp' }}
         />
       </ItemList>
     );

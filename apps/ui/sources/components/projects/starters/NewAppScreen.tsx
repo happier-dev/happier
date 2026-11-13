@@ -60,6 +60,8 @@ import {
 import { projectCheckoutParentPath } from '../activation/projectOpenChoices';
 import { StarterPreview, resolveStarterPreviewShape } from './StarterPreview';
 import { StoreAppDefinitionEntriesFor } from '@/components/store/StoreAppDefinitionEntries';
+import { buildDeploymentRepositoryDraftHref } from '@/components/projects/deployments/deploymentNavigation';
+import { NewAppCodeSources } from './NewAppCodeSources';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 
 import type { MachineCreationContinuationDraft } from '@/components/machines/add/MachineCreationContinuation';
@@ -138,6 +140,16 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const [starterId, setStarterId] = React.useState<string | null>(
     props.starterId ?? (starters.length === 1 ? starters[0]!.itemId : null),
   );
+  // Deploy an app → Your code: a repository Project, chosen instead of a starter (lab f1src). One choice at a time.
+  const [codeSourceId, setCodeSourceId] = React.useState<string | null>(null);
+  const chooseCode = React.useCallback((next: string | null) => {
+    setCodeSourceId(next);
+    if (next) setStarterId(null);
+  }, []);
+  const chooseStarter = React.useCallback((next: string | null) => {
+    setStarterId(next);
+    if (next) setCodeSourceId(null);
+  }, []);
   const [description, setDescription] = React.useState('');
   const [name, setName] = React.useState('');
   const [machineId, setMachineId] = React.useState<string | null>(null);
@@ -349,13 +361,21 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const pageBack = usePageBackControl('newApp.back', back);
 
   const stepIndex = STEPS.indexOf(step);
-  // With no starter to pick, the state's own next step (Add a computer, Retry) is the only action.
-  const primary = addingMachine || (step === 'start' && starters.length === 0) ? null :
+  // With nothing to pick, the state's own next step (Add a computer, Retry) is the only action. Your code continues
+  // in that Project's own new-Environment draft (lab f1cfg); a starter continues here.
+  const primary = addingMachine || (step === 'start' && starters.length === 0 && codeSourceId === null) ? null :
     step === 'start'
       ? {
           title: t('common.continue'),
-          disabled: !starter,
-          onPress: () => setStep('describe'),
+          disabled: !starter && codeSourceId === null,
+          onPress: () => {
+            if (codeSourceId !== null && scope) {
+              stepAside();
+              router.push(buildDeploymentRepositoryDraftHref({ serverId: scope.serverId, projectSourceId: codeSourceId }) as never);
+              return;
+            }
+            setStep('describe');
+          },
           testID: 'newApp.continue',
         }
       : step === 'describe'
@@ -389,7 +409,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             }
           : null;
   const footerNote = addingMachine ? null :
-    step === 'start' && !starter && starters.length > 0
+    step === 'start' && !starter && codeSourceId === null && starters.length > 0
       ? t('newApp.startPick')
       : step === 'describe'
         ? t('newApp.reviewNote')
@@ -472,10 +492,17 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     body = (
       <>
         {header(t('newApp.startTitle'), t('newApp.startDescription'))}
+        {scope ? (
+          <View style={dialog ? styles.dialogInset : null}>
+            <NewAppCodeSources scope={scope} value={codeSourceId} onChange={chooseCode}
+              insetStyle={dialog ? styles.dialogInset : null} />
+          </View>
+        ) : null}
         {/* Until the catalog owner has an answer the gallery is reading, never empty (it held "Nothing here yet" for
             ~40 s on #136 before its sources settled as unreachable). The states share the tiles' group and inset. */}
-        <ItemGroup surface="none">
-        <View style={dialog ? styles.galleryInset : null}>
+        <View style={dialog ? styles.dialogInset : null}>
+        <ItemGroup surface="none" title={t('newApp.startNew')} description={t('newApp.startNewDescription')}>
+        <View style={dialog ? styles.dialogInset : null}>
         {(starterCatalog.loading || !starterCatalog.hasValue) && !starterCatalog.error && starters.length === 0 ? (
           <SurfaceStateCard testID="newApp.loading" kind="loading" layout="inline" title={t('common.loading')} />
         ) : null}
@@ -523,12 +550,13 @@ export const NewAppScreen = React.memo(function NewAppScreen(
               previewAspectRatio={STARTER_PREVIEW_ASPECT_RATIO}
               accessibilityLabel={t('newApp.startTitle')}
               value={starterId}
-              onChange={(next) => setStarterId(next)}
+              onChange={chooseStarter}
               labelLines={3}
               options={starters.map((candidate) => starterTile(candidate))}
             />
           </View>
         </ItemGroup>
+        </View>
         {/* Lab s1 `ways`: an app that already exists runs without a repository, through the Store's own entries. */}
         {scope ? (
           <View testID="newApp.ways" style={styles.ways}>
@@ -837,11 +865,10 @@ const styles = StyleSheet.create((theme) => ({
   ways: { gap: theme.space.s8, paddingTop: theme.space.s20, paddingHorizontal: theme.space.s16 },
   waysEntries: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 },
   // The card has no page gutter, and a bare group bleeds one step past the card body there. The description field
-  // takes that step back so it shares the edge of the sheets beneath it.
+  // takes that step back so it shares the edge of the sheets beneath it. The start step's titled sections take it
+  // twice: once around the group (its title lines up with the page title), once around tiles that have no sheet, so
+  // they line up with the title and the run-existing row (measured live on #136: 416 → 432 against a 434 title).
   dialogInset: { paddingHorizontal: theme.space.s16 },
-  // The gallery has no sheet beside it: its tiles and states take the step back plus the sheet's inset, so they
-  // line up with the title and the run-existing row (measured live on #136: 416 → 432 against a 434 title).
-  galleryInset: { paddingHorizontal: theme.space.s32 },
 
   phoneFooter: { gap: theme.space.s8 },
 }));
