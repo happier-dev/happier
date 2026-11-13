@@ -7,7 +7,7 @@ import type { ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/mana
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { readRpcErrorCode, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { isDeepStrictEqual } from 'node:util';
-import { ManagedMachineControllerError, ManagedMachineNativeRefusal, ManagedMachineNativeEffectGuardRefusal, ManagedRetentionWaitSuperseded } from './controllerErrors';
+import { ManagedMachineControllerError, ManagedMachineNativeRefusal, ManagedMachineNativeEffectGuardRefusal, ManagedRetentionWaitSuperseded, isUncertainManagedControllerRequest } from './controllerErrors';
 import { createManagedNativeInvocation, reconcileManagedAcquisitionIdentity, reconcileManagedMachine, type ManagedMachineReconciliationInput } from './reconcile';
 import { createManagedGuestActivityTransport } from './managedActivityTransport';
 import { waitForChangeOrDeadline } from '@/daemon/lifecycle/waitForChangeOrDeadline';
@@ -261,6 +261,24 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
     const publishSettledNativeOperation = (before: ManagedMachineV1, after: ManagedMachineV1,
         outstanding: NonNullable<ManagedMachineV1['submittedNativeEffect']>) =>
         publishSettledManagedNativeOperation(options.context, before, after, outstanding);
+    const reportIntent = async (report: unknown): Promise<ManagedMachineV1> => {
+        try { return await client.row('report-intent', report, null); }
+        catch (error) {
+            const outstanding = machine.submittedNativeEffect;
+            if (outstanding?.intent !== 'delete' || !isUncertainManagedControllerRequest(error)) throw error;
+            // A lost settlement reply can leave Home absent with no intent to
+            // inspect later. Recover that fact once, without replaying native IO
+            // or the report; Home still owns exact-request correlation.
+            let current: ManagedMachineV1;
+            try {
+                current = await client.row('current', { homeId: machine.homeId, managedId: machine.id,
+                    expectedIntentRevision: outstanding.intentRevision, requestId: outstanding.requestId,
+                    controller: outstanding.controller, nativeRole: 'inspect' }, null);
+            } catch { throw error; }
+            if (publishSettledNativeOperation(machine, current, outstanding) !== true) throw error;
+            return current;
+        }
+    };
     try {
         client.assertConnection(machine);
         options.context?.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: machine.id,
@@ -302,9 +320,9 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                 const result = MachineProvisionerDestroyResultV1Schema.parse(await native().invoke('destroy', {
                     nativeOperation: machine.nativeOperationRef.value,
                 }));
-                const reported = await client.row('report-intent', { ...correlation, result,
+                const reported = await reportIntent({ ...correlation, result,
                     ...(result.kind === 'confirmed' ? { observation: { observedAt: Date.now(), availability: 'absent' as const } } : {}),
-                }, null);
+                });
                 assertManagedDeleteNativeResult(result);
                 return { machine: reported, deleteResult: result };
             }
@@ -326,9 +344,9 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                     }));
                 }
                 if (observed.kind !== 'unknown') {
-                    const reported = await client.row('report-intent', { ...correlation, result,
+                    const reported = await reportIntent({ ...correlation, result,
                         ...(result.kind === 'confirmed' ? { observation: { observedAt: Date.now(), availability: 'absent' } } : {}),
-                    }, null);
+                    });
                     if (continuesCleanup) assertManagedDeleteNativeResult(result);
                     return { machine: reported, deleteResult: continuesCleanup ? result : undefined };
                 }
@@ -336,18 +354,20 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
             if (!machine.resource && machine.nativeOperationRef && native().contribution.definition.reconciliation) {
                 machine = await reconcileManagedAcquisitionIdentity(params, machine, native());
                 if (machine.allocation === 'confirmed-absent' && outstanding.intent === 'delete') {
-                    return { machine: await client.row('report-intent', { ...correlation,
-                        result: { kind: 'confirmed' }, observation: machine.observation }, null), deleteResult: undefined };
+                    return { machine: await reportIntent({ ...correlation,
+                        result: { kind: 'confirmed' }, observation: machine.observation }), deleteResult: undefined };
                 }
-                if (!machine.resource) return { machine: await client.row('report-intent', { ...correlation,
-                    result: { kind: 'unknown', code: 'native_cleanup_unconfirmed' } }, null), deleteResult: undefined };
+                if (!machine.resource) return { machine: await reportIntent({ ...correlation,
+                    result: { kind: 'unknown', code: 'native_cleanup_unconfirmed' } }), deleteResult: undefined };
                 if (params.action === 'machines.managed.inspect') {
-                    return { machine: await client.row('report-intent', { ...correlation,
-                        result: { kind: 'unknown' }, observation: machine.observation }, null), deleteResult: undefined };
+                    return { machine: await reportIntent({ ...correlation,
+                        result: { kind: 'unknown' }, observation: machine.observation }), deleteResult: undefined };
                 }
             }
             return { machine: await reconcileManagedBoundNativeIntent({ machine, resource: machine.resource!, outstanding,
-                provisioner: native().contribution.definition, home: client, invoke: native().invoke }), deleteResult: undefined };
+                provisioner: native().contribution.definition, home: {
+                    row: async (_path, body) => await reportIntent(body),
+                }, invoke: native().invoke }), deleteResult: undefined };
         };
         const observeDelete = () => observeAcceptedManagedDelete(params, machine, async (current, outstanding) => {
             machine = current;
@@ -451,7 +471,7 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                 try {
                     assertLive(options.signal);
                 } catch (error) {
-                    await client.row('report-intent', { ...correlation, result: { kind: 'refused', code: options.signal?.aborted ? 'cancelled' : 'intent_changed' } }, null);
+                    await reportIntent({ ...correlation, result: { kind: 'refused', code: options.signal?.aborted ? 'cancelled' : 'intent_changed' } });
                     throw error;
                 }
                 let result: ReturnType<typeof MachineProvisionerPowerResultV1Schema.parse>
@@ -527,7 +547,7 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                         // Clear only this unused submission and keep the same
                         // accepted operation waiting when new guest work won.
                         try {
-                            machine = await client.row('report-intent', { ...correlation, result: { kind: 'refused', code: error.code } }, null);
+                            machine = await reportIntent({ ...correlation, result: { kind: 'refused', code: error.code } });
                         } catch (reportError) {
                             logger.warn('[MANAGED MACHINE] Native outcome report failed', projectActionFailureCauseV1(reportError, params.action));
                             throw error;
@@ -543,7 +563,7 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                         throw error;
                     }
                     try {
-                        await client.row('report-intent', { ...correlation, result: { kind: 'unknown', code: 'native_intent_unconfirmed' } }, null);
+                        await reportIntent({ ...correlation, result: { kind: 'unknown', code: 'native_intent_unconfirmed' } });
                     } catch (reportError) {
                         logger.warn('[MANAGED MACHINE] Native outcome report failed', projectActionFailureCauseV1(reportError, params.action));
                     }
@@ -553,7 +573,7 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                 const observation = powerObservation;
                 const before = machine;
                 machine = result.kind === 'bound' ? await client.reportIssuedRebuildBound(machine, result)
-                    : await client.row('report-intent', { ...correlation, result, ...(observation ? { observation } : {}) }, null);
+                    : await reportIntent({ ...correlation, result, ...(observation ? { observation } : {}) });
                 const settled = outstanding ? publishSettledNativeOperation(before, machine, outstanding) : undefined;
                 if (guestStartupError) throw guestStartupError;
                 if (result.kind === 'refused') throw new ManagedMachineNativeRefusal(result.code, undefined,

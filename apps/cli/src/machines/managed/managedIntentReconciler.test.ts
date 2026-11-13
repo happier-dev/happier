@@ -307,6 +307,8 @@ describe('Delete with a retained native resource after canceled bootstrap', () =
             observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' } satisfies ProviderObservationV1 },
         { incident: 'lost controller Delete reply', bootstrapInstalled: true,
             observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' } satisfies ProviderObservationV1 },
+        { incident: 'lost controller Delete report before commit', bootstrapInstalled: true,
+            observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' } satisfies ProviderObservationV1 },
     ])('deletes the retained stopped Lima disk when Home admission changes the cleanup reason ($incident)', async ({ incident, bootstrapInstalled, observation }) => {
         const directory = mkdtempSync(join(tmpdir(), 'managed-lima-delete-'));
         const resource = { instance: 'happier-retained-stopped', store: join(directory, 'store'), arch: 'x86_64', vmType: 'qemu',
@@ -367,6 +369,10 @@ describe('Delete with a retained native resource after canceled bootstrap', () =
                 if (String(url).endsWith('/admit-control')) {
                     test.setMachine({ cleanup: { disposition: 'pending', reason: 'delete_requested' } });
                 }
+                if (incident === 'lost controller Delete report before commit' && !reportReplyLost && String(url).endsWith('/report-intent')) {
+                    reportReplyLost = true;
+                    throw new axios.AxiosError('Report lost before Home committed', 'EPIPE');
+                }
                 const response = await transport(url, body, config);
                 if (incident === 'lost controller Delete reply' && !reportReplyLost && String(url).endsWith('/report-intent')) {
                     reportReplyLost = true;
@@ -375,17 +381,32 @@ describe('Delete with a retained native resource after canceled bootstrap', () =
                 return response;
             });
             const machine = test.readMachine();
+            let operationSequence = 0;
             const operations = createHostActionOperationRuntime({ machineId: machine.controller!.machineId,
-                resolveAccountId: async () => 'owner', generateOperationId: () => 'retained-delete' });
+                resolveAccountId: async () => 'owner', generateOperationId: () => `retained-${operationSequence++ === 0 ? 'delete' : 'inspect'}` });
             const input = { homeId: machine.homeId, managedId: machine.id, intent: 'delete', when: 'now',
                 expectedRevision: machine.intentRevision, reviewedDependencies: true };
             let work: ReturnType<typeof test.driver.execute> | undefined;
             await operations.observeExecution({ actionId: 'machines.managed.delete', input, actionRequestId: 'control',
                 execute: async context => {
                     work = test.driver.execute('machines.managed.delete', input, { requestId: 'control', context, signal: context.signal });
-                    return { ok: true, result: await work };
+                    const result = await work;
+                    const failure = ActionExecuteFailureSchema.safeParse(result);
+                    return failure.success ? failure.data : { ok: true, result };
                 } });
-            await expect(work).resolves.toMatchObject({ kind: 'accepted', managedId: 'managed' });
+            if (incident === 'lost controller Delete report before commit') {
+                await expect(work).resolves.toMatchObject({ ok: false, errorCode: 'action_outcome_unknown',
+                    failureCause: { phase: 'managed.controller.report_intent', errorCode: 'EPIPE' }, details: { requestId: 'control' } });
+                expect(test.readMachine().submittedNativeEffect?.intent).toBe('delete');
+                expect(await operations.handlers.getV2({ operationId: 'retained-delete' })).toMatchObject({ kind: 'found',
+                    operation: { state: 'running', observation: { kind: 'outcome_uncertain' } } });
+                await operations.observeExecution({ actionId: 'machines.managed.inspect', input: {}, actionRequestId: 'inspect',
+                    execute: async context => ({ ok: true, result: await test.driver.execute('machines.managed.inspect', {
+                        homeId: machine.homeId, managedId: machine.id,
+                    }, { requestId: 'inspect', context, signal: context.signal }) }) });
+            } else {
+                await expect(work).resolves.toMatchObject({ kind: 'accepted', managedId: 'managed' });
+            }
             expect(nativeDeletes).toEqual([['delete', '--force', resource.instance]]);
             expect(retained).toBe(false);
             expect(test.readMachine()).toMatchObject({ allocation: 'confirmed-absent', observation: { availability: 'absent' } });
@@ -1969,7 +1990,7 @@ describe('unused Stop through guest drain and controller operation custody', () 
             } });
         }
         if (uncertainAdmission || boundary === 'submit-intent' && code !== 'request_conflict') {
-            await expect(work).resolves.toMatchObject({ failureCause: { phase: expect.any(String), errorCode: code },
+            await expect(work).resolves.toMatchObject({ failureCause: { phase: `managed.controller.${boundary.replaceAll('-', '_')}`, errorCode: code },
                 details: { requestId: expect.any(String) } });
         }
         expect(test.effects).toEqual([]);
