@@ -20,6 +20,7 @@ export {
     areServerProfileIdentifiersEquivalent,
     captureActiveServerRuntimeTarget,
     getActiveServerHomeCarrier,
+    readActiveHomeTransport,
     publishActiveServerRuntimeOrigin,
     releaseActiveServerRuntimeOrigin,
     subscribeActiveServerRuntimeOrigin,

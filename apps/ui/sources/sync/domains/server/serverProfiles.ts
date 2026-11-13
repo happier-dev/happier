@@ -1791,6 +1791,29 @@ export function getActiveServerHomeCarrier(): HomeCarrier | null {
         : null;
 }
 
+/**
+ * The transport the connection owner has published for the focused Home, only when
+ * the target is exactly that Home: the same stable identity and canonical URL. The
+ * owner keeps custody of any `homeCarrier`: a borrower must not retain it beyond
+ * the request it serves, because the owner releases it on retry, switch or sign-out.
+ */
+export function readActiveHomeTransport(target: Readonly<{
+    serverIdentityId: string | null | undefined;
+    canonicalServerUrl: string;
+}>): Readonly<{ runtimeOrigin?: string; carrier?: 'https' | 'iroh'; homeCarrier: HomeCarrier | null }> | null {
+    const serverIdentityId = target.serverIdentityId?.trim();
+    const active = getActiveServerSnapshot();
+    if (!serverIdentityId || active.serverId !== serverIdentityId
+        || comparableUrlKey(active.serverUrl) !== comparableUrlKey(target.canonicalServerUrl)) return null;
+    const homeCarrier = getActiveServerHomeCarrier();
+    if (!homeCarrier && !active.runtimeOrigin) return null;
+    return {
+        ...(active.runtimeOrigin ? { runtimeOrigin: active.runtimeOrigin } : {}),
+        ...(active.carrier ? { carrier: active.carrier } : {}),
+        homeCarrier,
+    };
+}
+
 export function subscribeActiveServerRuntimeOrigin(listener: (snapshot: ActiveServerSnapshot) => void): () => void {
     runtimeOriginListeners.add(listener);
     return () => runtimeOriginListeners.delete(listener);

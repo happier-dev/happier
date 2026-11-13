@@ -98,6 +98,13 @@ export type LoopbackTunnelSupervisorOptions<
     adapter: LoopbackTunnelAdapter<Request, Native>;
     probe: LoopbackTunnelProbe<Request>;
     buildKey: (request: Request) => string;
+    /**
+     * The verification facts `buildKey` leaves out (e.g. the bearer a probe authenticates).
+     * When present, a ready lease whose stored request carries the same verification is
+     * shared without re-running the probe: that exact request already proved it, and the
+     * native event subscription owns its liveness. Absent, every reuse re-probes.
+     */
+    buildVerificationKey?: (request: Request) => string;
     createLease: (value: LoopbackTunnelLeaseFactoryInput<Request, Native>) => Lease;
     probeTimeoutMs?: number;
     /** Probe-result reason used when the bounded probe times out. */

@@ -312,6 +312,34 @@ describe('provider-neutral loopback tunnel supervisor', () => {
         expect(supervisor.listTunnels().leases[0]).toEqual(expect.objectContaining({ status: 'ready' }));
     });
 
+    it('shares a healthy lease without re-proving it for a request it already verified', async () => {
+        const probe = vi.fn(async () => ({ ok: true as const }));
+        const startLoopbackTunnel = vi.fn(async () => ({ nativeTunnelId: 'native-1', localPort: 49152 }));
+        const stopLoopbackTunnel = vi.fn(async () => undefined);
+        const supervisor = createLoopbackTunnelSupervisor<Request, LoopbackTunnelLease>({
+            adapter: { startLoopbackTunnel, stopLoopbackTunnel },
+            probe,
+            buildKey: () => 'home-key',
+            buildVerificationKey: (candidate) => candidate.verificationToken ?? '',
+            createLease: createLeaseFactory(),
+        });
+        const request = { ...createRequest(), verificationToken: 'token-focused' };
+
+        // The focused connection holds the lease; three scoped reads then acquire it in turn.
+        const focused = await supervisor.ensureTunnel(request);
+        for (let read = 0; read < 3; read += 1) {
+            const lease = await supervisor.ensureTunnel({ ...request });
+            expect(lease.leaseId).toBe(focused.leaseId);
+            await supervisor.releaseTunnel(lease.leaseId);
+        }
+
+        expect(startLoopbackTunnel).toHaveBeenCalledTimes(1);
+        expect(probe).toHaveBeenCalledTimes(1);
+        // Each read held a real reference: the focused holder still keeps the tunnel open.
+        expect(stopLoopbackTunnel).not.toHaveBeenCalled();
+        expect(supervisor.listTunnels().leases[0]).toEqual(expect.objectContaining({ status: 'ready' }));
+    });
+
     it('keeps supervising after a transient native status-read error until authoritative closure', async () => {
         type NativeListener = (event: {
             type: 'ready' | 'path_changed' | 'degraded' | 'closed' | 'error';

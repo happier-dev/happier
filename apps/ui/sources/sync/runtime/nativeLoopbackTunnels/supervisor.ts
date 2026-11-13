@@ -215,7 +215,11 @@ export function createLoopbackTunnelSupervisor<
                 const existing = store.getByKey(key);
                 let retainedReferenceCount = 0;
                 if (existing?.lease.status === 'ready' && existing.lease.localUrl) {
-                    const existingProbe = await runBoundedProbe(existing.lease.localUrl, request);
+                    const alreadyVerified = input.buildVerificationKey !== undefined
+                        && input.buildVerificationKey(existing.request) === input.buildVerificationKey(request);
+                    const existingProbe = alreadyVerified
+                        ? { ok: true as const }
+                        : await runBoundedProbe(existing.lease.localUrl, request);
                     if (existingProbe.ok) {
                         // A retained lease deliberately ignores verification-only
                         // facts in its key. Once the newest request verifies, it

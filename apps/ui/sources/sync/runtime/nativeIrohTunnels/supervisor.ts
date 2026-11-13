@@ -147,6 +147,9 @@ export function createIrohHomeTunnelSupervisor(params: Readonly<{
         probe: params.probe ?? probeIrohHomeTunnelOrigin,
         probeTimeoutMs: params.probeTimeoutMs,
         buildKey: buildIrohHomeTunnelKey,
+        buildVerificationKey: (request) => request.verification.kind === 'authenticated'
+            ? `authenticated:${request.verification.token.trim()}`
+            : 'enrollment',
         failureCodes: {
             suspended: IROH_HOME_TUNNEL_SUSPENDED_ERROR,
             probeFailed: IROH_HOME_TUNNEL_PROBE_FAILED_ERROR,

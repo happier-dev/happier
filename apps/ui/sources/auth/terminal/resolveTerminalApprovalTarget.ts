@@ -5,7 +5,7 @@ import {
     resolveServerProfileForPortableIdentity, type ServerProfile,
 } from '@/sync/domains/server/serverProfiles';
 import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
-import { getActiveServerHomeCarrier, getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { readActiveHomeTransport } from '@/sync/domains/server/serverRuntime';
 import { canonicalizeServerUrl, createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { resolveEffectiveServerUrlOverride } from '@/sync/domains/server/url/serverUrlOverridePolicy';
 import type { ParsedTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
@@ -98,23 +98,22 @@ export async function resolveTerminalApprovalTarget(params: Readonly<{
         serverId ? { serverId } : {},
     );
     if (credentials) {
-        const active = getActiveServerSnapshot();
-        const isExactActiveHome = active.serverId === profile.serverIdentityId
-            && createServerUrlComparableKey(active.serverUrl) === createServerUrlComparableKey(establishedEndpointUrl);
+        const active = readActiveHomeTransport({
+            serverIdentityId: profile.serverIdentityId,
+            canonicalServerUrl: establishedEndpointUrl,
+        });
         const targetsEstablishedEndpoint = createServerUrlComparableKey(endpointUrl)
             === createServerUrlComparableKey(establishedEndpointUrl);
-        const targetsActiveRuntimeOrigin = isExactActiveHome && Boolean(active.runtimeOrigin)
-            && createServerUrlComparableKey(endpointUrl) === createServerUrlComparableKey(active.runtimeOrigin ?? '');
-        const homeCarrier = isExactActiveHome ? getActiveServerHomeCarrier() : null;
-        if (isExactActiveHome && (active.runtimeOrigin || homeCarrier)
-            && (targetsActiveRuntimeOrigin || (!publishedDescriptor && targetsEstablishedEndpoint))) {
+        const targetsActiveRuntimeOrigin = Boolean(active?.runtimeOrigin)
+            && createServerUrlComparableKey(endpointUrl) === createServerUrlComparableKey(active?.runtimeOrigin ?? '');
+        if (active && (targetsActiveRuntimeOrigin || (!publishedDescriptor && targetsEstablishedEndpoint))) {
             // The connection owner has already authenticated this transport. Borrow it
-            // even when the same Home's saved descriptor names another origin. A link
-            // cannot establish that trust or replace the saved descriptor.
+            // for this one approval even when the same Home's saved descriptor names
+            // another origin. A link cannot establish that trust or replace the descriptor.
             return { endpointUrl, serverId, descriptor, credentials, transportOptions: {
                 runtimeOrigin: active.runtimeOrigin,
                 runtimeCarrier: active.carrier,
-                homeCarrier,
+                homeCarrier: active.homeCarrier,
             } };
         }
         if (!targetsEstablishedEndpoint) {

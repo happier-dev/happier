@@ -1,7 +1,5 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import {
-    canonicalizeServerUrl,
-} from '@/sync/domains/server/url/serverUrlCanonical';
+import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import { ServerScopedTransportUnavailableError } from '@/sync/runtime/homeCarrier';
 import {
@@ -9,6 +7,7 @@ import {
 } from '@/sync/runtime/homeCarrierPolicy';
 import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { getSavedHomeConnectionSnapshot } from '@/sync/domains/server/serverProfiles';
+import { readActiveHomeTransport } from '@/sync/domains/server/serverRuntime';
 
 export { ServerScopedTransportUnavailableError } from '@/sync/runtime/homeCarrier';
 
@@ -86,6 +85,17 @@ export async function resolveServerScopedTransport(params: Readonly<{
     let releaseCarrier = async (): Promise<void> => {};
     const saved = getSavedHomeConnectionSnapshot({ canonicalServerUrl, serverIdentityId: params.profile.serverIdentityId });
     const descriptor = params.profile.homeConnectionDescriptor ?? saved?.homeConnectionDescriptor;
+
+    const focused = descriptor
+        ? readActiveHomeTransport({ serverIdentityId: descriptor.homeServerIdentityId, canonicalServerUrl })
+        : null;
+    if (focused?.carrier === 'https' && focused.runtimeOrigin) {
+        // The connection owner already verified this Home's HTTPS origin; a read reuses
+        // it rather than re-proving the Home. Only a leaseless origin is reused: callers
+        // such as the scoped socket pool retain their transport, and the owner releases
+        // its Iroh carrier on retry, switch or sign-out, so an Iroh read acquires its own.
+        return { canonicalServerUrl, runtimeOrigin: focused.runtimeOrigin, carrier: 'https', release: async () => {} };
+    }
 
     if (descriptor) {
         const acquired = await acquireEligibleHomeCarrier({
