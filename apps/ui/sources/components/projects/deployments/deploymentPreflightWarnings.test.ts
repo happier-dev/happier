@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
-import { projectDeploymentPromotionBindingGaps, readDeploymentAddDeclaredInputs, readDeploymentDeclaredContainerPorts,
+import { projectDeploymentPromotionBindingGaps, readDeploymentAddDeclaredInputs, readDeploymentComposeServiceFacts,
     projectDeploymentConfigurePreflightV1, readDeploymentPreparationFacts } from './deploymentPreflightWarnings';
 
 const value = { kind: 'value' as const, value: 'public' };
@@ -59,14 +59,14 @@ describe('deployment preflight warnings', () => {
         await expect(readDeploymentAddDeclaredInputs('services: [', ['web'])).rejects.toHaveProperty('code', 'invalid_request');
     });
     it('reads each service\'s literal container ports from expose and the container side of ports', async () => {
-        expect(await readDeploymentDeclaredContainerPorts(JSON.stringify({ services: {
+        expect(await readDeploymentComposeServiceFacts(JSON.stringify({ services: {
             app: { image: 'nginx', expose: ['80', 80, '9000/udp'] },
             api: { ports: ['8080:3000', { target: 4000, published: 14000 }, '${PORT}:5000', '7000-7002'] },
             worker: { image: 'busybox' },
-        } }))).toEqual([
+        } }))).toEqual({ services: ['app', 'api', 'worker'], containerPorts: [
             { service: 'app', containerPort: 80 }, { service: 'app', containerPort: 9000 },
             { service: 'api', containerPort: 3000 }, { service: 'api', containerPort: 4000 }, { service: 'api', containerPort: 5000 },
-        ]);
+        ] });
     });
     it('compares variable identities including phase, without requiring matching secret refs or exposing their values', () => {
         const destination: EnvironmentSecretBindingV1[] = [{ purpose: 'variable', name: 'ORIGIN', phase: 'runtime', source: value }];

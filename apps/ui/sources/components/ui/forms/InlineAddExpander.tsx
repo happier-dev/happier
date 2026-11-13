@@ -26,6 +26,8 @@ export interface InlineAddExpanderProps {
     onCancel: () => void;
     onSave: () => void;
     saveDisabled?: boolean;
+    /** The save is in flight: the save button shows it working until the owner settles. */
+    saving?: boolean;
 
     cancelLabel: string;
     saveLabel: string;
@@ -50,6 +52,7 @@ export function InlineAddExpander({
     onCancel,
     onSave,
     saveDisabled = false,
+    saving = false,
     cancelLabel,
     saveLabel,
     cancelTestID,
@@ -92,7 +95,7 @@ export function InlineAddExpander({
                     <View style={styles.actions}>
                         <RoundButtonSizeScope size="normal" presentation="uniform">
                             <SectionButtonRow>
-                                <RoundButton testID={saveTestID} title={saveLabel} accessibilityLabel={saveLabel} onPress={onSave} disabled={saveDisabled} />
+                                <RoundButton testID={saveTestID} title={saveLabel} accessibilityLabel={saveLabel} onPress={onSave} disabled={saveDisabled} loading={saving} />
                                 {extraActions}
                                 <RoundButton testID={cancelTestID} display="secondary" title={cancelLabel} accessibilityLabel={cancelLabel} onPress={onCancel} />
                             </SectionButtonRow>

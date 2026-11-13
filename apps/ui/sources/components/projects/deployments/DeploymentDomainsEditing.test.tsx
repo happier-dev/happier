@@ -580,6 +580,29 @@ describe('Environment → Domains: Service never starts on the database (PAGE-AC
       await act(async () => {
         await vi.waitFor(() => expect(select(`${id}.port`)?.props.items.map((item: { id: string }) => item.id)).toEqual(['80', '443']));
       });
+      // Nothing is chosen yet, so the field shows the choose placeholder, never the first port as if picked (D9).
+      const { ValueFieldSelect } = await import('@/components/ui/forms/ValueFieldSelect');
+      const port = screen.findAllByType(ValueFieldSelect).find(node => node.props.testID === `${id}.port`);
+      expect(port?.props.selectedId).toBeNull();
+      expect(port?.props.placeholder).toBe(t('common.choose'));
+      await act(async () => { select(`${id}.port`)!.props.onSelect('443'); });
+      expect(screen.findAllByType(ValueFieldSelect).find(node => node.props.testID === `${id}.port`)?.props.selectedId).toBe('443');
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('offers the stored Compose services as Service choices before the first deploy (DEPLOY-REACCEPT-1113E P1)', async () => {
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const detail = withDatabase({ kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`,
+      document: 'services:\n  app:\n    image: nginx:alpine\n    expose:\n      - "80"\n', profiles: [], services: [] });
+    const { screen, controller, settle } = await renderDomains(detail, [], domainActions(detail));
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      const select = (testID: string) => screen.findAllByType(DropdownMenu).find(node => node.props.testID === testID);
+      await act(async () => {
+        await vi.waitFor(() => expect(select(`${id}.service`)?.props.selectedId).toBe('app'));
+      });
+      expect(screen.findByTestId(`${id}.port`)?.props.value).toBe('80');
     } finally { await screen.unmount(); controller.retire(); }
   });
 

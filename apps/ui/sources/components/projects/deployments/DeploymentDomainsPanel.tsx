@@ -34,7 +34,7 @@ import {
 } from './DeploymentEnvironmentDetail';
 import { useDeploymentDomainIngressFields, type DomainIngressInspection } from './DeploymentDomainIngressFields';
 import { DeploymentTabState } from './DeploymentTabState';
-import { readDeploymentDeclaredContainerPorts } from './deploymentPreflightWarnings';
+import { readDeploymentComposeServiceFacts } from './deploymentPreflightWarnings';
 import { useDeploymentEnvironmentDomains, useDeploymentEnvironmentRecord } from './useDeploymentReads';
 import { projectDeploymentDomainDnsReadinessV1, type DeploymentDomainDnsReadinessV1 } from '@happier-dev/deployments';
 import { DeploymentDomainRow, type DomainCredentialRole, type DomainItem } from './DeploymentDomainRow';
@@ -113,16 +113,17 @@ export function DeploymentDomainsPanel(
   const record = useDeploymentEnvironmentRecord(props.controller, editing ? props.environmentId : null, props.demand);
   const environment = record.snapshot.value;
   const content: EnvironmentContent | null = environment?.content ?? null;
-  const services = React.useMemo(() => content ? composeServices(content) : NO_SERVICES, [content]);
   // A recorded export names a service's port; otherwise the port its stored Compose service declares fills Port.
   const explicitExports = content?.ownServer?.serviceExports ?? NO_EXPORTS;
   const storedDocument = content?.definition.kind === 'stored' ? content.definition.document : null;
-  const [declared, setDeclared] = React.useState<Readonly<{ document: string; exports: readonly RouteExport[] }> | null>(null);
+  const [declared, setDeclared] = React.useState<Readonly<{
+    document: string; services: readonly string[]; exports: readonly RouteExport[];
+  }> | null>(null);
   React.useEffect(() => {
     if (!storedDocument) return;
     let current = true;
-    void readDeploymentDeclaredContainerPorts(storedDocument).then(exports => {
-      if (current) setDeclared({ document: storedDocument, exports });
+    void readDeploymentComposeServiceFacts(storedDocument).then(facts => {
+      if (current) setDeclared({ document: storedDocument, services: facts.services, exports: facts.containerPorts });
     }, () => {
       // Compose that does not parse declares no port; Port stays typed and the add's own check refuses it.
     });
@@ -134,6 +135,11 @@ export function DeploymentDomainsPanel(
     const named = new Set(explicitExports.map(entry => entry.service));
     return [...explicitExports, ...declaredExports.filter(entry => !named.has(entry.service))];
   }, [declared, explicitExports, storedDocument]);
+  // The definition's selected services; before one is selected (a never-deployed stored Compose), the ones it declares.
+  const services = React.useMemo(() => {
+    const selected = content ? composeServices(content) : NO_SERVICES;
+    return selected.length > 0 || !declared || declared.document !== storedDocument ? selected : declared.services;
+  }, [content, declared, storedDocument]);
   const bound = React.useMemo(() => content ? new Set(content.bindings.flatMap(binding => binding.purpose === 'domainCredential'
     ? [credentialKey(binding.domainId, binding.role)] : [])) : NO_BOUND, [content]);
   const setBindings = editing?.actions.setBindings;
@@ -369,6 +375,11 @@ function DomainAddForm(
   const [basicAuthUser, setBasicAuthUser] = React.useState('');
   const servicePorts = React.useMemo(() => [...new Set(props.routeExports
     .filter(item => item.service === service).map(item => item.containerPort))], [props.routeExports, service]);
+  // Declared services can arrive after the form opens; an empty Service then takes the starting one.
+  React.useEffect(() => {
+    if (props.initialService && props.services.includes(props.initialService))
+      setService(current => current === '' ? props.initialService! : current);
+  }, [props.initialService, props.services]);
   // Declared ports can arrive after the form opens; an empty Port then takes the service's one port.
   React.useEffect(() => {
     if (servicePorts.length === 1) setPort(current => current === '' ? String(servicePorts[0]) : current);
@@ -438,6 +449,7 @@ function DomainAddForm(
         if (ready && content) void props.onAdd(content);
       }}
       saveDisabled={!ready}
+      saving={props.busy}
       cancelLabel={t('common.cancel')}
       saveLabel={t('projects.deployments.domainAdd')}
       saveTestID="project-deployments.environment.domains.add.save"
@@ -498,7 +510,7 @@ function DomainAddForm(
           <FieldItem label={t('projects.deployments.domainFieldPort')} style={props.phone ? undefined : styles.routePort}>
             {/* One declared port is prefilled into the editable field; a menu only when there is a choice. */}
             {servicePorts.length > 1 ? (
-              <ValueFieldSelect testID="project-deployments.environment.domains.add.port" fill
+              <ValueFieldSelect testID="project-deployments.environment.domains.add.port" fill placeholder={t('common.choose')}
                 label={t('projects.deployments.domainFieldPort')}
                 items={servicePorts.map(value => ({ id: String(value), title: String(value) }))}
                 selectedId={port || null}

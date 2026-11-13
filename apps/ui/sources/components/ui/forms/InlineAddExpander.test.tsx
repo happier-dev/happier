@@ -31,4 +31,17 @@ describe('InlineAddExpander', () => {
         expect(onSave).toHaveBeenCalledOnce();
         expect(onCancel).toHaveBeenCalledOnce();
     });
+
+    it('shows its save in flight while the owner says it is saving (DEPLOY-REACCEPT-1113E P2)', async () => {
+        const screen = await renderScreen(
+            <InlineAddExpander isOpen onOpenChange={() => {}} title="Add domain" trigger={null}
+                onSave={() => {}} onCancel={() => {}} saveLabel="Add domain" cancelLabel="Cancel" saveDisabled saving
+                saveTestID="add-save" cancelTestID="add-cancel">
+                {React.createElement('Text', null, 'Domain fields')}
+            </InlineAddExpander>,
+        );
+        // The save button component (it names its own testID and display props), not its host view.
+        const save = screen.root.findAll((node) => typeof node.type !== 'string' && node.props.testID === 'add-save' && 'title' in node.props)[0];
+        expect(save?.props.loading).toBe(true);
+    });
 });
