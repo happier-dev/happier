@@ -208,7 +208,9 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     return { ...sample, ...budget,
       head: head ? { className: symbolicClass(head), minimumFloorKiB: minimumFloor(head),
         ageMs: Math.max(0, Date.now() - head.arrivedAt), reservationKiB: reservation.memoryKiB,
-        reservationActive: reservation.active, reservationDelayMs: HEAD_RESERVATION_DELAY_MS } : null,
+        reservationActive: reservation.active, reservationDelayMs: HEAD_RESERVATION_DELAY_MS,
+        ...(headPledge?.item === head && headPledge.lastHostBoundAdmissionKiB !== undefined
+          ? { lastHostBoundAdmissionKiB: headPledge.lastHostBoundAdmissionKiB } : {}) } : null,
       waitingByClassAndFloor: [...buckets.values()],
       unreservedCpuCores: Math.max(0, budget.unreservedCpuCores - reservation.cpuCores),
       queuedCpuCores: waiting.reduce((sum, item) => sum + (item.slot ? 0 : accountedCpuCores(item, item.floorOptions?.[0]?.workers)), 0),
@@ -421,7 +423,18 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     let availableMemoryKiB = budget.unreservedMemoryKiB;
     let availableCpuCores = budget.unreservedCpuCores;
     let head;
-    for (const item of [...waiting]) {
+    const pledgingHead = waiting.find(canReserveHead);
+    const reservation = headReservation(pledgingHead);
+    // Coordination 2026-11-13 11:22Z: source bundles (including stack reloads)
+    // cannot move hosts. Let fitting ones use a relocatable head's pledge first.
+    // Reorder only this pass, never the arrival queue or the retained pledge.
+    const hostBoundFirst = new Set(pledgingHead?.className !== 'source-bundle' && reservation.memoryKiB > 0
+      ? waiting.filter(item => item.className === 'source-bundle' && canReserveHead(item)
+        && item.floorKiB <= Math.min(reservation.memoryKiB, availableMemoryKiB)
+        && minimumCpuCores(item) <= availableCpuCores) : []);
+    const ordered = hostBoundFirst.size
+      ? [...hostBoundFirst, ...waiting.filter(item => !hostBoundFirst.has(item))] : [...waiting];
+    for (const item of ordered) {
       if (item.slot || item.blocked) continue;
       if (item.socket.destroyed) { removeWaiting(item); continue; }
       const minimumFloorKiB = item.floorOptions?.at(-1).floorKiB ?? item.floorKiB;
@@ -475,6 +488,9 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       availableMemoryKiB -= floorKiB;
       availableCpuCores -= cpuCores;
       item.slot = slot;
+      if (hostBoundFirst.has(item) && headPledge?.item === pledgingHead) {
+        headPledge.lastHostBoundAdmissionKiB = floorKiB;
+      }
       if (headPledge?.item === item) reserveHead();
       item.resourceSnapshot = resources.snapshot;
       send(item.socket, { kind: 'reserved', slotAddress: address, floorKiB, cpuCores: clientCpuCores, workers: slot.workers });

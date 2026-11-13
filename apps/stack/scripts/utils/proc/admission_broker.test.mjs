@@ -318,6 +318,57 @@ for (const starvation of [false, true]) test(`capped head reservation ${starvati
   assert.equal((await sample()).waitingCount, 0, 'the head starts despite sustained smaller demand');
 });
 
+// Coordination 2026-11-13 11:22Z: host-bound reloads may use a relocatable head's pledge.
+for (const scenario of ['nl3 reload', 'head resumes', 'relocatable order', 'host-bound head']) {
+  test(`host-bound pledge priority: ${scenario}`, linux, async t => {
+    const gib = 1024 * 1024;
+    let available = 100 * gib;
+    const { root } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: available, totalMemoryKiB: 100 * gib }) });
+    const holder = await (await acquire(root, 79 * gib, t)).admit();
+    const releasing = await (await acquire(root, 21 * gib, t)).admit();
+    const head = await acquire(root, 38 * gib, t, {
+      className: scenario === 'host-bound head' ? 'source-bundle' : 'compilation',
+      arrivedAt: Date.now() - headReservationDelayMs,
+    });
+    await requestAdmissionSample(root);
+    await releasing.release();
+    const pledged = await requestAdmissionSample(root);
+    assert.equal(pledged.head.reservationKiB, 21 * gib);
+    const follower = await acquire(root, 12 * gib, t, { className: 'compilation', noWait: true });
+    assert.equal((await follower.next()).reason, 'HSTACK_MEMORY_BUSY', 'relocatable backfills cannot spend the pledge');
+    if (scenario === 'host-bound head') {
+      const reload = await acquire(root, 12 * gib, t, { className: 'source-bundle', noWait: true });
+      assert.equal((await reload.next()).reason, 'HSTACK_MEMORY_BUSY', 'a host-bound head retains its pledge');
+      return;
+    }
+    const reload = await acquire(root, 12 * gib, t, { className: 'source-bundle', noWait: true });
+    const reloaded = await reload.admit();
+    assert.equal(reloaded.admitted.floorKiB, 12 * gib, 'the reload starts using the 21 GiB pledge');
+    const decision = await requestAdmissionSample(root);
+    assert.equal(decision.head.lastHostBoundAdmissionKiB, 12 * gib, 'the sample exposes the priority choice');
+    await reloaded.release();
+    await requestAdmissionSample(root);
+    if (scenario === 'nl3 reload') return;
+    await acquire(root, 50 * gib, t, { className: 'source-bundle' });
+    await requestAdmissionSample(root);
+    let younger;
+    if (scenario === 'relocatable order') younger = await acquire(root, 38 * gib, t, { className: 'compilation' });
+    available = 38 * gib;
+    await holder.release();
+    const started = await head.admit();
+    const after = await requestAdmissionSample(root);
+    assert.equal(after.head?.className ?? null, younger ? 'compilation' : null);
+    assert.equal(after.waitingCount, younger ? 2 : 1, 'a reload that cannot fit does not delay the head');
+    if (younger) {
+      assert.equal(after.waitingCount, 2, 'the younger relocatable job and oversized reload still wait behind the head');
+      await started.release();
+      const second = await younger.admit();
+      assert.equal(second.admitted.kind, 'admitted');
+    }
+    await started.release();
+  });
+}
+
 for (const resource of ['memory', 'CPU']) test(`${resource} backfills current free capacity and pledges later releases to the head`, linux, async t => {
   const reservations = [];
   const positions = [];
