@@ -717,11 +717,11 @@ const mcpServersUxTranslationExtension = {
   mcpServersStatusDetected: ({ provider }: { provider: string }) => `已在 ${provider} 中启用`,
   mcpServersStatusDisabledInProvider: ({ provider }: { provider: string }) => `已在 ${provider} 中禁用`,
   mcpServersDeliveryNativeTitle: '原生 MCP',
-  mcpServersDeliveryNativeSubtitle: '此后端将 Happier 工具作为原生 MCP 服务器接收。',
+  mcpServersDeliveryNativeSubtitle: '此智能体将 Happier 工具作为原生 MCP 服务器接收。',
   mcpServersDeliveryShellBridgeTitle: 'Happier Shell 桥接',
-  mcpServersDeliveryShellBridgeSubtitle: '此后端通过 happier tools 桥接调用 Happier 工具。',
+  mcpServersDeliveryShellBridgeSubtitle: '此智能体通过 happier tools 桥接调用 Happier 工具。',
   mcpServersDeliveryUnsupportedTitle: '不支持',
-  mcpServersDeliveryUnsupportedSubtitle: '此后端当前不接收 Happier 工具。',
+  mcpServersDeliveryUnsupportedSubtitle: '此智能体当前不接收 Happier 工具。',
 } as const;
 
 

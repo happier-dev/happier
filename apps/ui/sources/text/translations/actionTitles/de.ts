@@ -935,7 +935,7 @@ export const de = {
     machines_list: "Rechner auflisten",
     servers_list: "Server auflisten",
     review_engines_list: "Review-Systeme auflisten",
-    agents_backends_list: "Agent-Backends auflisten",
+    agents_backends_list: "Agenten auflisten",
     machines_agents_list: "Agents auf einem Rechner auflisten",
     workspace_files_search: "Text in Arbeitsbereichdateien suchen",
     machines_agents_signIn_start: "Bei einem Agent anmelden",

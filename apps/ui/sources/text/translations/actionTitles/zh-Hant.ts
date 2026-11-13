@@ -935,7 +935,7 @@ export const zhHant = {
     machines_list: "列出機器",
     servers_list: "列出伺服器",
     review_engines_list: "列出審查引擎",
-    agents_backends_list: "列出代理程式後端",
+    agents_backends_list: "列出代理程式",
     machines_agents_list: "列出機器上的代理程式",
     workspace_files_search: "搜尋工作區檔案中的文字",
     machines_agents_signIn_start: "登入代理程式",

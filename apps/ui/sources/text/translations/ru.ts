@@ -711,11 +711,11 @@ const mcpServersUxTranslationExtension = {
   mcpServersStatusDetected: ({ provider }: { provider: string }) => `Включено в ${provider}`,
   mcpServersStatusDisabledInProvider: ({ provider }: { provider: string }) => `Отключено в ${provider}`,
   mcpServersDeliveryNativeTitle: 'Нативный MCP',
-  mcpServersDeliveryNativeSubtitle: 'Этот бэкенд получает инструменты Happier как нативные MCP-серверы.',
+  mcpServersDeliveryNativeSubtitle: 'Этот агент получает инструменты Happier как нативные MCP-серверы.',
   mcpServersDeliveryShellBridgeTitle: 'Оболочечный мост Happier',
-  mcpServersDeliveryShellBridgeSubtitle: 'Этот бэкенд вызывает инструменты Happier через мост happier tools.',
+  mcpServersDeliveryShellBridgeSubtitle: 'Этот агент вызывает инструменты Happier через мост happier tools.',
   mcpServersDeliveryUnsupportedTitle: 'Не поддерживается',
-  mcpServersDeliveryUnsupportedSubtitle: 'Этот бэкенд пока не получает инструменты Happier.',
+  mcpServersDeliveryUnsupportedSubtitle: 'Этот агент пока не получает инструменты Happier.',
 } as const;
 
 

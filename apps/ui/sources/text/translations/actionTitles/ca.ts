@@ -935,7 +935,7 @@ export const ca = {
     machines_list: "Llista les màquines",
     servers_list: "Llista els servidors",
     review_engines_list: "Llista els motors de revisió",
-    agents_backends_list: "Llista els entorns dels agents",
+    agents_backends_list: "Llista els agents",
     machines_agents_list: "Llista els agents d'una màquina",
     workspace_files_search: "Cerca text als fitxers de l'espai de treball",
     machines_agents_signIn_start: "Inicia la sessió en un agent",

@@ -714,11 +714,11 @@ const mcpServersUxTranslationExtension = {
   mcpServersStatusDetected: ({ provider }: { provider: string }) => `已在 ${provider} 中啟用`,
   mcpServersStatusDisabledInProvider: ({ provider }: { provider: string }) => `已在 ${provider} 中停用`,
   mcpServersDeliveryNativeTitle: '原生 MCP',
-  mcpServersDeliveryNativeSubtitle: '此後端會將 Happier 工具作為原生 MCP 伺服器接收。',
+  mcpServersDeliveryNativeSubtitle: '此代理程式會將 Happier 工具作為原生 MCP 伺服器接收。',
   mcpServersDeliveryShellBridgeTitle: 'Happier Shell 橋接',
-  mcpServersDeliveryShellBridgeSubtitle: '此後端透過 happier tools 橋接呼叫 Happier 工具。',
+  mcpServersDeliveryShellBridgeSubtitle: '此代理程式透過 happier tools 橋接呼叫 Happier 工具。',
   mcpServersDeliveryUnsupportedTitle: '不支援',
-  mcpServersDeliveryUnsupportedSubtitle: '此後端目前不會接收 Happier 工具。',
+  mcpServersDeliveryUnsupportedSubtitle: '此代理程式目前不會接收 Happier 工具。',
 } as const;
 
 
@@ -4025,11 +4025,11 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 		        mcpServersScopeProviderUser: '代理程式使用者設定',
 		        mcpServersScopeBuiltIn: '內建',
 		        mcpServersDeliveryNativeTitle: '原生 MCP',
-		        mcpServersDeliveryNativeSubtitle: '此後端會以原生 MCP 伺服器的方式接收 Happier 工具。',
+		        mcpServersDeliveryNativeSubtitle: '此代理程式會以原生 MCP 伺服器的方式接收 Happier 工具。',
 		        mcpServersDeliveryShellBridgeTitle: 'Happier Shell 橋接',
-		        mcpServersDeliveryShellBridgeSubtitle: '此後端會透過 happier tools 橋接呼叫 Happier 工具。',
+		        mcpServersDeliveryShellBridgeSubtitle: '此代理程式會透過 happier tools 橋接呼叫 Happier 工具。',
 		        mcpServersDeliveryUnsupportedTitle: '不支援',
-		        mcpServersDeliveryUnsupportedSubtitle: '此後端目前不會接收 Happier 工具。',
+		        mcpServersDeliveryUnsupportedSubtitle: '此代理程式目前不會接收 Happier 工具。',
 
 		        // Dynamic settings messages
 		        accountConnected: ({ service }: { service: string }) => `已連結 ${service} 帳戶`,

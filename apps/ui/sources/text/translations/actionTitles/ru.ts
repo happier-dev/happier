@@ -935,7 +935,7 @@ export const ru = {
     machines_list: "Показать машины",
     servers_list: "Показать серверы",
     review_engines_list: "Показать средства проверки",
-    agents_backends_list: "Показать среды выполнения агентов",
+    agents_backends_list: "Список агентов",
     machines_agents_list: "Показать агентов на машине",
     workspace_files_search: "Найти текст в файлах рабочего пространства",
     machines_agents_signIn_start: "Войти в аккаунт агента",

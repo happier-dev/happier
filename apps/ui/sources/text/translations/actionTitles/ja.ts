@@ -935,7 +935,7 @@ export const ja = {
     machines_list: "マシンの一覧を表示",
     servers_list: "サーバーの一覧を表示",
     review_engines_list: "レビューエンジンの一覧を表示",
-    agents_backends_list: "エージェントバックエンドの一覧を表示",
+    agents_backends_list: "エージェントを一覧表示",
     machines_agents_list: "マシン上のエージェント一覧を表示",
     workspace_files_search: "ワークスペースのファイル内をテキスト検索",
     machines_agents_signIn_start: "エージェントにサインイン",

@@ -709,11 +709,11 @@ const mcpServersUxTranslationExtension = {
   mcpServersStatusDetected: ({ provider }: { provider: string }) => `Habilitat a ${provider}`,
   mcpServersStatusDisabledInProvider: ({ provider }: { provider: string }) => `Deshabilitat a ${provider}`,
   mcpServersDeliveryNativeTitle: 'MCP natiu',
-  mcpServersDeliveryNativeSubtitle: 'Aquest backend rep les eines de Happier com a servidors MCP natius.',
+  mcpServersDeliveryNativeSubtitle: 'Aquest agent rep les eines de Happier com a servidors MCP natius.',
   mcpServersDeliveryShellBridgeTitle: 'Pont de shell de Happier',
-  mcpServersDeliveryShellBridgeSubtitle: 'Aquest backend crida les eines de Happier a través del pont happier tools.',
+  mcpServersDeliveryShellBridgeSubtitle: 'Aquest agent crida les eines de Happier a través del pont happier tools.',
   mcpServersDeliveryUnsupportedTitle: 'No compatible',
-  mcpServersDeliveryUnsupportedSubtitle: 'Aquest backend encara no rep eines de Happier.',
+  mcpServersDeliveryUnsupportedSubtitle: 'Aquest agent encara no rep eines de Happier.',
 } as const;
 
 

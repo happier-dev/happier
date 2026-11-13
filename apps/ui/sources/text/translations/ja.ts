@@ -717,11 +717,11 @@ const mcpServersUxTranslationExtension = {
   mcpServersStatusDetected: ({ provider }: { provider: string }) => `${provider} で有効`,
   mcpServersStatusDisabledInProvider: ({ provider }: { provider: string }) => `${provider} で無効`,
   mcpServersDeliveryNativeTitle: 'ネイティブ MCP',
-  mcpServersDeliveryNativeSubtitle: 'このバックエンドは Happier のツールをネイティブ MCP サーバーとして受け取ります。',
+  mcpServersDeliveryNativeSubtitle: 'このエージェントは Happier のツールをネイティブ MCP サーバーとして受け取ります。',
   mcpServersDeliveryShellBridgeTitle: 'Happier シェルブリッジ',
-  mcpServersDeliveryShellBridgeSubtitle: 'このバックエンドは happier tools ブリッジ経由で Happier のツールを呼び出します。',
+  mcpServersDeliveryShellBridgeSubtitle: 'このエージェントは happier tools ブリッジ経由で Happier のツールを呼び出します。',
   mcpServersDeliveryUnsupportedTitle: '非対応',
-  mcpServersDeliveryUnsupportedSubtitle: 'このバックエンドは現在 Happier のツールを受け取りません。',
+  mcpServersDeliveryUnsupportedSubtitle: 'このエージェントは現在 Happier のツールを受け取りません。',
 } as const;
 
 

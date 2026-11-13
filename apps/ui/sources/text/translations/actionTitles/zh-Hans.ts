@@ -935,7 +935,7 @@ export const zhHans = {
     machines_list: "列出机器",
     servers_list: "列出服务器",
     review_engines_list: "列出审查引擎",
-    agents_backends_list: "列出代理后端",
+    agents_backends_list: "列出智能体",
     machines_agents_list: "列出机器上的代理",
     workspace_files_search: "搜索工作区文件中的文本",
     machines_agents_signIn_start: "登录代理",

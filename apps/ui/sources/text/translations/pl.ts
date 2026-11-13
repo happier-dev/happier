@@ -710,11 +710,11 @@ const mcpServersUxTranslationExtension = {
   mcpServersStatusDetected: ({ provider }: { provider: string }) => `Włączone w ${provider}`,
   mcpServersStatusDisabledInProvider: ({ provider }: { provider: string }) => `Wyłączone w ${provider}`,
   mcpServersDeliveryNativeTitle: 'Natywny MCP',
-  mcpServersDeliveryNativeSubtitle: 'Ten backend otrzymuje narzędzia Happier jako natywne serwery MCP.',
+  mcpServersDeliveryNativeSubtitle: 'Ten agent otrzymuje narzędzia Happier jako natywne serwery MCP.',
   mcpServersDeliveryShellBridgeTitle: 'Most powłoki Happier',
-  mcpServersDeliveryShellBridgeSubtitle: 'Ten backend wywołuje narzędzia Happier przez most happier tools.',
+  mcpServersDeliveryShellBridgeSubtitle: 'Ten agent wywołuje narzędzia Happier przez most happier tools.',
   mcpServersDeliveryUnsupportedTitle: 'Nieobsługiwane',
-  mcpServersDeliveryUnsupportedSubtitle: 'Ten backend obecnie nie otrzymuje narzędzi Happier.',
+  mcpServersDeliveryUnsupportedSubtitle: 'Ten agent obecnie nie otrzymuje narzędzi Happier.',
 } as const;
 
 

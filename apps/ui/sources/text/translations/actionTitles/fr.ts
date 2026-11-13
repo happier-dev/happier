@@ -935,7 +935,7 @@ export const fr = {
     machines_list: "Lister les machines",
     servers_list: "Lister les serveurs",
     review_engines_list: "Lister les moteurs de révision",
-    agents_backends_list: "Lister les moteurs d’agent",
+    agents_backends_list: "Lister les agents",
     machines_agents_list: "Lister les agents sur une machine",
     workspace_files_search: "Rechercher du texte dans les fichiers de l’espace de travail",
     machines_agents_signIn_start: "Se connecter à un agent",

@@ -731,13 +731,13 @@ const mcpServersUxTranslationExtension = {
     `Disabled in ${provider}`,
   mcpServersDeliveryNativeTitle: 'Native MCP',
   mcpServersDeliveryNativeSubtitle:
-    'This backend receives Happier tools as native MCP servers.',
+    'This Agent receives Happier tools as native MCP servers.',
   mcpServersDeliveryShellBridgeTitle: 'Happier shell bridge',
   mcpServersDeliveryShellBridgeSubtitle:
-    'This backend calls Happier tools through the happier tools bridge.',
+    'This Agent calls Happier tools through the happier tools bridge.',
   mcpServersDeliveryUnsupportedTitle: 'Unsupported',
   mcpServersDeliveryUnsupportedSubtitle:
-    'This backend does not currently receive Happier tools.',
+    'This Agent does not currently receive Happier tools.',
 } as const;
 
 const memoryEmbeddingsTranslationExtension = {

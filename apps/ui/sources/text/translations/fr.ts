@@ -710,11 +710,11 @@ const mcpServersUxTranslationExtension = {
   mcpServersStatusDetected: ({ provider }: { provider: string }) => `Activé dans ${provider}`,
   mcpServersStatusDisabledInProvider: ({ provider }: { provider: string }) => `Désactivé dans ${provider}`,
   mcpServersDeliveryNativeTitle: 'MCP natif',
-  mcpServersDeliveryNativeSubtitle: 'Ce backend reçoit les outils Happier comme des serveurs MCP natifs.',
+  mcpServersDeliveryNativeSubtitle: 'Cet agent reçoit les outils Happier comme des serveurs MCP natifs.',
   mcpServersDeliveryShellBridgeTitle: 'Pont shell Happier',
-  mcpServersDeliveryShellBridgeSubtitle: 'Ce backend appelle les outils Happier via le pont happier tools.',
+  mcpServersDeliveryShellBridgeSubtitle: 'Cet agent appelle les outils Happier via le pont happier tools.',
   mcpServersDeliveryUnsupportedTitle: 'Non pris en charge',
-  mcpServersDeliveryUnsupportedSubtitle: 'Ce backend ne reçoit pas les outils Happier pour le moment.',
+  mcpServersDeliveryUnsupportedSubtitle: 'Cet agent ne reçoit pas les outils Happier pour le moment.',
 } as const;
 
 

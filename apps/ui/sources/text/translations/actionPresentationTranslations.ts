@@ -943,7 +943,7 @@ const en = {
         machines_list: "List machines",
         servers_list: "List servers",
         review_engines_list: "List review engines",
-        agents_backends_list: "List agent backends",
+        agents_backends_list: "List agents",
         machines_agents_list: "List agents on a machine",
         workspace_files_search: "Search text in workspace files",
         machines_agents_signIn_start: "Sign in to an agent",

@@ -935,7 +935,7 @@ export const pt = {
     machines_list: "Listar máquinas",
     servers_list: "Listar servidores",
     review_engines_list: "Listar mecanismos de revisão",
-    agents_backends_list: "Listar backends de agentes",
+    agents_backends_list: "Listar agentes",
     machines_agents_list: "Listar agentes em uma máquina",
     workspace_files_search: "Buscar texto nos arquivos do espaço de trabalho",
     machines_agents_signIn_start: "Entrar em um agente",
