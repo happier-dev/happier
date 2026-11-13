@@ -26,7 +26,7 @@ import type { SessionBroadcastContainer } from '@happier-dev/protocol/updates';
 import type { VerifiedApiTokenPrincipal } from "@/app/auth/auth";
 import type { forwardRpcCall, RpcForwardResult } from '@/app/api/socket/rpc/forwardRpcCall';
 import { cancelRpcTarget } from '@/app/api/socket/rpc/cancelRpcTarget';
-import { classifyLiveSessionDelivery, projectSessionDeliveryForSocket } from './sessionDeliveryProjection';
+import { classifyLiveSessionDelivery, projectSessionDeliveryForSocket, socketConsumesSessionDelivery } from './sessionDeliveryProjection';
 import { admitLiveSessionDelivery, withdrawSessionConsumption } from '@/app/api/socket/sessionConsumption';
 import { MACHINE_ACCESS_LOSS_EVENT, type MachineAccessLoss } from './machineAccessLoss';
 import { PRESENCE_DEADLINE_EVENT, type PresenceDeadlineNotification } from '@/app/presence/presenceDeadlineNotification';
@@ -557,7 +557,7 @@ class EventRouter {
                 sockets: [...this.userConnections.get(params.userId) ?? []]
                     .filter(connection => connection !== params.skipSenderConnection && this.shouldSendToConnection(connection, {
                         type: "all-interested-in-session", sessionId: params.sessionId,
-                    }))
+                    }) && socketConsumesSessionDelivery(connection.socket.data, params.eventName, params.payload))
                     .map(connection => connection.socket),
                 emit: (socket, isSessionOwner, metadataLayoutVersion) => {
                     const payload = projectSessionDeliveryForSocket(socket.data, params.sessionId, params.eventName, params.payload, isSessionOwner, metadataLayoutVersion);
@@ -627,7 +627,8 @@ class EventRouter {
                 && socket.data.clientType !== "machine-scoped"
                 && (socket.data.clientType !== "session-scoped"
                     || socket.data.sessionId === delivery.sessionId
-                    || socket.data.sessionScopedBinding?.sessionId === delivery.sessionId)),
+                    || socket.data.sessionScopedBinding?.sessionId === delivery.sessionId)
+                && socketConsumesSessionDelivery(socket.data, delivery.eventName, delivery.payload)),
             emit: (socket, isSessionOwner, metadataLayoutVersion) => {
                 try {
                     const payload = projectSessionDeliveryForSocket(socket.data, delivery.sessionId, delivery.eventName, delivery.payload, isSessionOwner, metadataLayoutVersion);

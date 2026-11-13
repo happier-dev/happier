@@ -491,6 +491,44 @@ describe("eventRouter (rooms)", () => {
         expect(emits[0]!.payload.body.message).not.toHaveProperty("content");
     });
 
+    it("delivers a Session personal event only to the app sync sockets that present it", async () => {
+        const row = {
+            id: "session", primaryTeamId: null, accountId: "owner", account: { status: "active" }, seq: 0,
+            currentStorageState: "hosted", acceptedThroughServerSeq: null, materializationPublicationId: null,
+            materializedThroughSourceAt: null, publishedThroughServerSeq: null,
+            shares: [], teamGrants: [], groupGrants: [],
+        } satisfies SessionAccessProjectionRow;
+        findSession.mockReset();
+        findSession.mockResolvedValue(row);
+        const base = { userId: "owner", authAuthority: "present_user" };
+        // Consumers: the app's sync socket, account-wide or embedded in one Session.
+        // Runner Session sockets, scoped RPC carriers and server caches never read it.
+        const sockets = [
+            { id: "app", data: { ...base, clientType: "user-scoped", clientPurpose: "sync" } },
+            { id: "embed", data: { ...base, clientType: "session-scoped", sessionId: "session", clientPurpose: "sync" } },
+            { id: "runner", data: { ...base, clientType: "session-scoped", sessionId: "session" } },
+            { id: "rpc", data: { ...base, clientType: "user-scoped", clientPurpose: "scoped-rpc" } },
+            { id: "cache", data: { ...base, clientType: "user-scoped", clientPurpose: "concurrent-server-cache" } },
+        ];
+        const emits: Array<{ rooms: string[]; payload: unknown }> = [];
+        const io = {
+            in: () => ({ fetchSockets: async () => sockets }),
+            to: (room: string | string[]) => ({
+                emit: (_event: string, payload: unknown) => { emits.push({ rooms: Array.isArray(room) ? room : [room], payload }); },
+                disconnectSockets: () => {},
+            }),
+        } satisfies LocalSocketRoomEmitter;
+        const payload = { type: "session-personal-event", sessionId: "session", eventId: "message", event: "message",
+            message: { sequenceDomain: "session_transcript", messageSeq: 1 } };
+
+        await eventRouter.receiveCredentialQualifiedSessionDelivery(io, {
+            v: 1, accountId: "owner", sessionId: "session", eventName: "ephemeral", payload,
+        });
+
+        expect(emits.flatMap(emit => emit.rooms).sort()).toEqual(["app", "embed"]);
+        for (const emit of emits) expect(emit.payload).toBe(payload);
+    });
+
     it("routes machine-scoped-only to machine + user-scoped rooms", () => {
         const ioTo = vi.fn();
         const emit = vi.fn();

@@ -1,7 +1,7 @@
 import type { Socket } from 'socket.io';
 import { buildSessionMessageObservationFactsV1, classifySessionEventDelivery, type SessionMessageV1 } from '@happier-dev/protocol';
 
-import { appliesDurableMessageAppends, readSessionSocketConsumption } from '@/app/api/socket/sessionConsumption';
+import { appliesDurableMessageAppends, consumesSessionPersonalEvents, readSessionSocketConsumption } from '@/app/api/socket/sessionConsumption';
 import { readAccountStoredContentCompatibilityForSocket } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import { projectSessionTurnWaitingCompatibility } from '@/app/clientCompatibility/sessionTurnWaitingCompatibility';
 import { log } from '@/utils/logging/log';
@@ -55,6 +55,15 @@ function isMessageUpdateAppend(value: unknown): value is Readonly<{ content: unk
     if (!content || typeof content !== 'object' || !base || typeof base !== 'object') return false;
     const { updatedAt, length } = base as Readonly<Record<string, unknown>>;
     return Number.isSafeInteger(updatedAt) && Number.isSafeInteger(length) && (length as number) >= 0;
+}
+
+/**
+ * Whether this socket reads this Session delivery at all. Decided before the per-socket
+ * access decision, so a socket with no reader costs neither an admission nor an emit.
+ */
+export function socketConsumesSessionDelivery(data: Socket['data'], eventName: SocketRoomEventName, payload: unknown): boolean {
+    if (eventName !== 'ephemeral' || !payload || typeof payload !== 'object') return true;
+    return (payload as Readonly<Record<string, unknown>>).type !== 'session-personal-event' || consumesSessionPersonalEvents(data);
 }
 
 /** Project content demand using the same current Session snapshot as delivery admission. */

@@ -20,6 +20,16 @@ export function isUiConsumptionSocket(data: Socket["data"]): boolean {
 }
 
 /**
+ * Session personal events (activity notifications for the recipient) are presented only by the
+ * app's sync socket, account-wide or embedded in one Session. Runner Session sockets, scoped RPC
+ * carriers and server caches have no reader for them.
+ */
+export function consumesSessionPersonalEvents(data: Socket["data"]): boolean {
+    return data.clientPurpose === "sync"
+        && (data.clientType === "user-scoped" || data.clientType === "session-scoped");
+}
+
+/**
  * The app's sync socket applies a durable message revision as an append against the revision it
  * holds (and reads the full message when it does not). Other consumers receive full rows.
  */

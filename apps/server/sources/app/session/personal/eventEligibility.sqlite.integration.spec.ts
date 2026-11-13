@@ -40,7 +40,7 @@ describe("personal event recipients", () => {
                 .filter(account => (Array.isArray(rooms) ? rooms : [rooms]).includes(`user-scoped:${account.id}`))
                 .map(account => ({
                 id: account.id,
-                data: { userId: account.id, clientType: "user-scoped", authAuthority: "present_user", authTokenAuthenticationEvidence: [] },
+                data: { userId: account.id, clientType: "user-scoped", clientPurpose: "sync", authAuthority: "present_user", authTokenAuthenticationEvidence: [] },
             })) }),
             to: target => ({
                 disconnectSockets: () => {},
@@ -127,8 +127,8 @@ describe("personal event recipients", () => {
         // Socket.IO and the authenticated daemon socket are genuine transport boundaries.
         eventRouter.setIo({
             in: () => ({ fetchSockets: async () => [
-                { id: "qualified", data: { userId: reader.id, clientType: "user-scoped", authAuthority: "present_user", authTokenAuthenticationEvidence: [{ kind: "home_method", methodId: "key_challenge" }] } },
-                { id: "unqualified", data: { userId: reader.id, clientType: "user-scoped", authAuthority: "present_user", authTokenAuthenticationEvidence: [] } },
+                { id: "qualified", data: { userId: reader.id, clientType: "user-scoped", clientPurpose: "sync", authAuthority: "present_user", authTokenAuthenticationEvidence: [{ kind: "home_method", methodId: "key_challenge" }] } },
+                { id: "unqualified", data: { userId: reader.id, clientType: "user-scoped", clientPurpose: "sync", authAuthority: "present_user", authTokenAuthenticationEvidence: [] } },
             ] }),
             to: target => ({ disconnectSockets: () => {}, emit: (kind, payload) => {
                 if (kind === "ephemeral" && typeof payload === "object" && payload !== null
@@ -156,7 +156,7 @@ describe("personal event recipients", () => {
         const delivered: unknown[] = [];
         eventRouter.setIo({
             in: () => ({ fetchSockets: async () => [{ id: owner.id, data: { userId: owner.id,
-                clientType: "user-scoped", authAuthority: "present_user", authTokenAuthenticationEvidence: [] } }] }),
+                clientType: "user-scoped", clientPurpose: "sync", authAuthority: "present_user", authTokenAuthenticationEvidence: [] } }] }),
             to: () => ({ disconnectSockets: () => {}, emit: (kind, payload) => {
                 if (kind === "ephemeral" && typeof payload === "object" && payload !== null
                     && "type" in payload && payload.type === "session-personal-event") delivered.push(payload);
@@ -199,7 +199,7 @@ describe("personal event recipients", () => {
         const delivered: unknown[] = [];
         eventRouter.setIo({
             in: () => ({ fetchSockets: async () => [{ id: owner.id, data: { userId: owner.id,
-                clientType: "user-scoped", authAuthority: "present_user", authTokenAuthenticationEvidence: [] } }] }),
+                clientType: "user-scoped", clientPurpose: "sync", authAuthority: "present_user", authTokenAuthenticationEvidence: [] } }] }),
             to: () => ({ disconnectSockets: () => {}, emit: (kind, payload) => {
                 if (kind === "ephemeral" && typeof payload === "object" && payload !== null
                     && "type" in payload && payload.type === "session-personal-event") delivered.push(payload);
