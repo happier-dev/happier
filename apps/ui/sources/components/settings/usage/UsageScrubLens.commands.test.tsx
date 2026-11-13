@@ -42,17 +42,20 @@ it('reveals the same bucket, chooses its rows and dismisses through mounted agen
     const server = home.homes.a!;
     publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
     let contentReads = 0;
+    const contentResolvers: WeakRef<object>[] = [];
     function Fixture() {
         const [selected, setSelected] = React.useState(false);
-        return <ScrubLens testID="usage.scrub" layout={{ centers: [20, 80, 140] }} accentColor="#123456"
-            resolveContent={index => {
-                contentReads += 1;
-                return index === 1 ? null : {
+        const resolveContent = (index: number) => {
+            contentReads += 1;
+            return index === 1 ? null : {
                 title: index === 0 ? 'Nov 6' : 'Nov 7', total: index === 0 ? '12M' : '19M',
                 rows: [{ id: 'source', label: 'Main source', value: selected ? 'Selected' : 'Available', selected,
                     pressLabel: 'Choose main source', onPress: () => setSelected(value => !value) }],
-                };
-            }} />;
+            };
+        };
+        contentResolvers.push(new WeakRef(resolveContent));
+        return <ScrubLens testID="usage.scrub" layout={{ centers: [20, 80, 140] }} accentColor="#123456"
+            resolveContent={resolveContent} />;
     }
     const screen = await renderMountedCurrentUiContext(<Fixture />);
     const executor = createDefaultActionExecutor();
@@ -115,4 +118,17 @@ it('reveals the same bucket, chooses its rows and dismisses through mounted agen
     await act(async () => { gesture.gestures[1].gestures[1].__handlers.onEnd!({ x: 140 }); });
     expect(screen.findAllHostsByTestId('usage.scrub-lens')).toHaveLength(0);
     await screen.unmount();
+    // Gesture hosts can retain their callbacks after the lens unmounts.
+    // Those callbacks must release the chart data closed over by its resolver.
+    const { Session } = await import('node:inspector');
+    const inspector = new Session();
+    inspector.connect();
+    try {
+        await new Promise<void>(resolve => setImmediate(resolve));
+        await new Promise<void>((resolve, reject) => inspector.post('HeapProfiler.collectGarbage', error => error ? reject(error) : resolve()));
+        expect(contentResolvers.length).toBeGreaterThan(0);
+        expect(contentResolvers.filter(resolver => resolver.deref() !== undefined).length,
+            'retained native gesture callbacks release every retired content resolver').toBe(0);
+        expect(gesture.gestures[0].__handlers.onBegin).toBeTypeOf('function');
+    } finally { inspector.disconnect(); }
 });

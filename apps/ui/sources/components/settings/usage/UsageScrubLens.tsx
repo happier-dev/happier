@@ -98,6 +98,53 @@ const cellCenter = (index: number, layout: Layout) =>
     ? (layout.centers[index] ?? 0)
     : scrubCellCenterX(index, layout);
 
+// Native gesture hosts retain callbacks beyond unmount. Build them outside the
+// render frame so Hermes cannot keep resolveContent and its chart data alive.
+function createScrubGesture(
+  layoutRef: React.RefObject<Layout>,
+  lastIndexRef: React.RefObject<number | null>,
+  commandsRef: React.RefObject<ReturnType<typeof useCurrentUiContextLocalCommands>>,
+) {
+  const followPointer = (x: number, input: 'hover' | 'scrub') => {
+    const index = cellAt(x, layoutRef.current);
+    if (index !== null && index !== lastIndexRef.current) void commandsRef.current.invoke(`bucket:${index}`, input);
+  };
+  const followScrub = (x: number) => followPointer(x, 'scrub');
+  const followHover = (x: number) => followPointer(x, 'hover');
+  const releasePointer = () => { void commandsRef.current.invoke('dismiss', 'release'); };
+  const toggleHold = (x: number) => {
+    const index = cellAt(x, layoutRef.current);
+    if (index !== null) void commandsRef.current.invoke(`bucket:${index}`, 'toggle');
+  };
+  const pan = Gesture.Pan()
+    .activateAfterLongPress(LONG_PRESS_MS)
+    .onStart((event) => {
+      runOnJS(followScrub)(event.x);
+    })
+    .onUpdate((event) => {
+      runOnJS(followScrub)(event.x);
+    })
+    .onFinalize(() => {
+      runOnJS(releasePointer)();
+    });
+  const tap = Gesture.Tap()
+    .maxDuration(220)
+    .onEnd((event) => {
+      runOnJS(toggleHold)(event.x);
+    });
+  const hover = Gesture.Hover()
+    .onBegin((event) => {
+      runOnJS(followHover)(event.x);
+    })
+    .onUpdate((event) => {
+      runOnJS(followHover)(event.x);
+    })
+    .onFinalize(() => {
+      runOnJS(releasePointer)();
+    });
+  return Gesture.Simultaneous(hover, Gesture.Exclusive(pan, tap));
+}
+
 const styles = StyleSheet.create((theme) => ({
   container: {
     position: 'relative',
@@ -273,47 +320,7 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
   const commands = useCurrentUiContextLocalCommands(definitions);
   const commandsRef = React.useRef(commands);
   commandsRef.current = commands;
-  const followPointer = React.useCallback((x: number, input: 'hover' | 'scrub') => {
-    const index = cellAt(x, layoutRef.current);
-    if (index !== null && index !== lastIndexRef.current) void commandsRef.current.invoke(`bucket:${index}`, input);
-  }, []);
-  const followScrub = React.useCallback((x: number) => followPointer(x, 'scrub'), [followPointer]);
-  const followHover = React.useCallback((x: number) => followPointer(x, 'hover'), [followPointer]);
-  const releasePointer = React.useCallback(() => { void commandsRef.current.invoke('dismiss', 'release'); }, []);
-  const toggleHold = React.useCallback((x: number) => {
-    const index = cellAt(x, layoutRef.current);
-    if (index !== null) void commandsRef.current.invoke(`bucket:${index}`, 'toggle');
-  }, []);
-
-  const gesture = React.useMemo(() => {
-    const pan = Gesture.Pan()
-      .activateAfterLongPress(LONG_PRESS_MS)
-      .onStart((event) => {
-        runOnJS(followScrub)(event.x);
-      })
-      .onUpdate((event) => {
-        runOnJS(followScrub)(event.x);
-      })
-      .onFinalize(() => {
-        runOnJS(releasePointer)();
-      });
-    const tap = Gesture.Tap()
-      .maxDuration(220)
-      .onEnd((event) => {
-        runOnJS(toggleHold)(event.x);
-      });
-    const hover = Gesture.Hover()
-      .onBegin((event) => {
-        runOnJS(followHover)(event.x);
-      })
-      .onUpdate((event) => {
-        runOnJS(followHover)(event.x);
-      })
-      .onFinalize(() => {
-        runOnJS(releasePointer)();
-      });
-    return Gesture.Simultaneous(hover, Gesture.Exclusive(pan, tap));
-  }, [followHover, followScrub, toggleHold, releasePointer]);
+  const gesture = React.useMemo(() => createScrubGesture(layoutRef, lastIndexRef, commandsRef), []);
   const anchorX =
     shownIndex !== null ? cellCenter(shownIndex, layout) : 0;
   // The crosshair anchors the lens. Each bucket is a new anchor, so the popover re-places beside it.
