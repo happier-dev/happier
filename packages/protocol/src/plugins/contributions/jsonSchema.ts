@@ -103,7 +103,7 @@ export type PluginJsonSchemaV2 = {
   definitions?: Record<string, PluginJsonSchemaV2>;
   $defs?: Record<string, PluginJsonSchemaV2>;
   type?: 'null' | 'boolean' | 'number' | 'integer' | 'string' | 'array' | 'object';
-  format?: 'date-time' | 'time' | 'date' | 'duration' | 'uri' | 'uri-reference' | 'uri-template' | 'url' | 'email' | 'hostname' | 'ipv4' | 'ipv6' | 'regex' | 'uuid' | 'json-pointer' | 'relative-json-pointer';
+  format?: 'date-time' | 'time' | 'date' | 'duration' | 'uri' | 'uri-reference' | 'uri-template' | 'url' | 'email' | 'hostname' | 'ipv4' | 'ipv6' | 'regex' | 'uuid' | 'json-pointer' | 'relative-json-pointer' | 'byte';
   title?: string;
   description?: string;
   default?: PluginJsonValueV2;
@@ -150,7 +150,7 @@ const PluginJsonSchemaV2Definition: z.ZodMiniType<PluginJsonSchemaV2> = lazyZodS
   definitions: z.optional(z.record(z.string(), PluginJsonSchemaV2Schema)),
   $defs: z.optional(z.record(z.string(), PluginJsonSchemaV2Schema)),
   type: z.optional(z.enum(['null', 'boolean', 'number', 'integer', 'string', 'array', 'object'])),
-  format: z.optional(z.enum(['date-time', 'time', 'date', 'duration', 'uri', 'uri-reference', 'uri-template', 'url', 'email', 'hostname', 'ipv4', 'ipv6', 'regex', 'uuid', 'json-pointer', 'relative-json-pointer'])),
+  format: z.optional(z.enum(['date-time', 'time', 'date', 'duration', 'uri', 'uri-reference', 'uri-template', 'url', 'email', 'hostname', 'ipv4', 'ipv6', 'regex', 'uuid', 'json-pointer', 'relative-json-pointer', 'byte'])),
   title: z.optional(z.string()), description: z.optional(z.string()),
   default: z.optional(PluginJsonValueV2Schema), enum: z.optional(z.array(PluginJsonValueV2Schema)), const: z.optional(PluginJsonValueV2Schema),
   properties: z.optional(z.record(z.string(), PluginJsonSchemaV2Schema)), required: z.optional(z.array(z.string())),
