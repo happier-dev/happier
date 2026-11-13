@@ -5,6 +5,7 @@ import { createDeploymentEnvironmentDetailV1, createDeploymentSecretVariableBind
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
     DeploymentBindingsSetStorageInputV1Schema, DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployment-protocol';
 import * as installationStore from '@/daemon/identity/store';
+import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { ActionsSettingsV1Schema, type ActionExecutorContext } from '@happier-dev/protocol';
 import { createActionExecutor, createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { prepareHostReviewedChildPolicyV1, prepareHostReviewedChildrenV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleApproval';
@@ -23,9 +24,11 @@ import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifa
 afterEach(() => vi.restoreAllMocks());
 
 function fixture(scenario: Readonly<{ inventory: 'complete' | 'partial'; productionPage: number; existing?: boolean;
-    sameRepository?: boolean; allowCreate?: boolean; privateForkSelections?: boolean; domain?: boolean; domainRefused?: boolean }>) {
+    sameRepository?: boolean; allowCreate?: boolean; privateForkSelections?: boolean; domain?: boolean; domainRefused?: boolean;
+    originHome?: string }>) {
     const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/app' };
     const template = createDeploymentEnvironmentDetailV1();
+    template.environment.serverId = 'srv_home';
     template.environment.id = 'template';
     template.environment.contentArtifactId = 'template-content';
     template.environment.buildMachineId = scenario.allowCreate ? 'host' : 'builder';
@@ -52,7 +55,7 @@ function fixture(scenario: Readonly<{ inventory: 'complete' | 'partial'; product
         row.targetLink.machines = ['host'];
         row.targetLink.members = [{ machineId: 'host', installationId: 'installation-host', state: 'active' }];
     }
-    const root = DeploymentEnvironmentCreateInputV1Schema.parse({ serverId: 'home', projectSourceId: template.environment.projectSourceId,
+    const root = DeploymentEnvironmentCreateInputV1Schema.parse({ serverId: 'srv_home', projectSourceId: template.environment.projectSourceId,
         requestKey: 'fork-create-a', protection: 'nonProduction', purpose: 'preview', deployerMode: 'managers',
         controllerMachineId: 'host', buildMachineId: template.environment.buildMachineId, contentArtifactId: 'fork-content', contentHeaderVersion: 1,
         contentBodyVersion: 1, preview: { templateEnvironmentId: template.environment.id,
@@ -158,9 +161,9 @@ function fixture(scenario: Readonly<{ inventory: 'complete' | 'partial'; product
         throw new Error('Unapproved fork mutation');
     });
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
-    const owner = createDaemonDeploymentActionDeps({ credentials: { token, encryption: null }, serverId: 'home',
+    const owner = createDaemonDeploymentActionDeps({ credentials: { token, encryption: null }, serverId: 'srv_home',
         serverHttpBaseUrl: 'https://home.test', machineId: 'host', runtime: { acquire: native, acquireCandidate: native },
-        resolveRequesterIdentity: async () => ({ kind: 'owner_person', requester: { serverId: 'home', accountId: 'owner',
+        resolveRequesterIdentity: async () => ({ kind: 'owner_person', requester: { serverId: 'srv_home', accountId: 'owner',
             machineId: 'host', installationId: 'installation-host' } }) });
     // Approval persistence and HTTP/native/provider IO are the genuine boundaries.
     const approvals: ApprovalRequestV2[] = [];
@@ -180,12 +183,19 @@ function fixture(scenario: Readonly<{ inventory: 'complete' | 'partial'; product
             if (transition.ok) stored.set(artifactId, structuredClone(next));
             return transition;
         },
-        // Installed-daemon currentness is an environment boundary; all review/replay logic stays real.
-        isApprovalExecutionOriginCurrent: async () => true,
+        isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentness({
+            accountId: 'owner', machineId: 'host', serverId: 'home',
+            resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: scenario.originHome ?? 'srv_home', machineId: 'host' }),
+            resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token, encryption: null }, serverApiUrl: 'https://home.test' }),
+            isAccountCurrent: async () => (await axios.get('https://home.test/v1/account/encryption', {
+                headers: { Authorization: `Bearer ${token}` },
+            })).status === 200,
+            listAccountApiTokens: async () => { throw new Error('A present person has no API-token origin'); },
+        }),
     });
     const context: ActionExecutorContext = { surface: 'cli', authority: 'present_user', runtimeAccountId: 'owner',
         actionRequestId: 'fork-invocation',
-        actionCaller: { kind: 'host' }, serverId: 'home', serverIdentityId: 'home',
+        actionCaller: { kind: 'host' }, serverId: 'home', serverIdentityId: 'srv_home',
         externalActionTarget: { kind: 'machine', machineId: 'host' },
         machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'host',
             installationId: 'installation-host', role: 'manage', encryptionMode: 'plain' },
@@ -194,6 +204,17 @@ function fixture(scenario: Readonly<{ inventory: 'complete' | 'partial'; product
             'deployments.environments.create': ['cli'], 'deployments.deploy': ['cli'] } }) };
     return { executor, owner, root, forkContent, context, approvals, stored, mutations, native, provider, forkEnvironment, template };
 }
+
+it('refuses replay on a different Home while keeping the local routing profile distinct from Home identity', async () => {
+    const { executor, root, context, native, mutations } = fixture({ inventory: 'complete',
+        productionPage: 0, allowCreate: true, originHome: 'srv_other' });
+    const proposed = await executor.execute('deployments.environments.create', root, context);
+    expect(proposed, proposed.ok ? undefined : proposed.errorCode).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    await executor.execute('approval.request.decide', { artifactId: 'fork-approval', decision: 'approve' },
+        { ...context, surface: 'ui' });
+    expect(native).not.toHaveBeenCalled();
+    expect(mutations).toEqual([]);
+});
 
 it.each([false, true])('retains the real fork preparation person demand until its exact accepted replay (%s)', async accepted => {
     const { owner, root, forkContent, context, mutations, native } = fixture({ inventory: 'complete', productionPage: 0 });
@@ -260,7 +281,7 @@ it('carries fork consent through the existing UI review and rejects that review 
     expect(native).not.toHaveBeenCalled();
     const confirmation = { actionId: 'deployments.environments.create' as const,
         inputDigest: computeActionInputApprovalDigestV1('deployments.environments.create', root),
-        reviewDigest: review.details.reviewDigest, requestId: ui.actionRequestId!, accountId: 'owner', serverId: 'home',
+        reviewDigest: review.details.reviewDigest, requestId: ui.actionRequestId!, accountId: 'owner', serverId: ui.serverIdentityId!,
         target: ui.externalActionTarget! };
     const changed = { ...root, requestKey: 'fork-create-b', contentArtifactId: 'fork-content-next' };
     const stale = await executor.execute('deployments.environments.create', changed, { ...ui,
@@ -352,7 +373,7 @@ it('routes an existing fork child synchronization through a new Create review', 
 
 it('refuses direct Deploy of a fork child before fetching source or building images', async () => {
     const { executor, context, mutations, native, forkEnvironment } = fixture({ inventory: 'complete', productionPage: 0, existing: true });
-    const result = await executor.execute('deployments.deploy', { serverId: 'home', environmentId: forkEnvironment.id,
+    const result = await executor.execute('deployments.deploy', { serverId: 'srv_home', environmentId: forkEnvironment.id,
         targetLinkId: forkEnvironment.runtimeTargetLinkId, requestKey: 'bypass', sha: 'a'.repeat(40) }, context);
     expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
     expect(mutations).toEqual([]);
