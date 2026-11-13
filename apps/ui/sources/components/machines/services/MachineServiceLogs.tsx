@@ -319,6 +319,8 @@ export function NativeLogLines(
   followingRef.current = following;
   const linesRef = React.useRef(lines);
   linesRef.current = lines;
+  // A following log opens on its newest line, so the list's first scroll report already reads "at latest".
+  const initialScrollIndex = React.useRef(following && lines.length > 0 ? lines.length - 1 : undefined).current;
   const tolerance = theme.space.s8;
   const renderItem = React.useCallback(({ item }: { item: ForgeCiLogLineV1 }) => (
     <LogLine line={item} digits={digits} ranges={getLineRanges(item.id)} revealed={revealedLine === item.number} />
@@ -352,6 +354,7 @@ export function NativeLogLines(
         renderItem={renderItem}
         style={styles.block}
         contentContainerStyle={styles.blockContent}
+        initialScrollIndex={initialScrollIndex}
         maintainVisibleContentPosition
         scrollEventThrottle={16}
         onScroll={onScroll}

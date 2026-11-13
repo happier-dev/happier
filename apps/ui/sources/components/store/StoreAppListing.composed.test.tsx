@@ -74,7 +74,7 @@ afterEach(standardCleanup);
 
 let sequence = 0;
 async function createFixture(extraDomains: ReadonlyArray<{ key: string; required: boolean }> = [],
-  options: Readonly<{ teams?: boolean; domains?: ReturnType<typeof DeploymentTemplateV1Schema.parse>['domains']; receivingTemplate?: boolean; templateInputs?: boolean; machineCatalogs?: boolean }> = {}) {
+  options: Readonly<{ teams?: boolean; domains?: ReturnType<typeof DeploymentTemplateV1Schema.parse>['domains']; receivingTemplate?: boolean; templateInputs?: boolean; machineCatalogs?: boolean; ports?: boolean }> = {}) {
   const serverUrl = `https://store-app-presenter-${++sequence}.test`;
   const catalogUrl = `${serverUrl}/apps.json`;
   const sourceId = deriveMarketplaceSourceId(catalogUrl);
@@ -105,7 +105,7 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
     title: 'Uptime Kuma',
     description: 'Watch your sites and publish a status page',
     compose: {
-      document: `services:\n  kuma:\n    image: louislam/uptime-kuma:2\n${options.templateInputs ? '  sidecar:\n    image: busybox:1\n' : ''}`,
+      document: `services:\n  kuma:\n    image: louislam/uptime-kuma:2\n${options.ports ? '    container_name: kuma-1\n    ports:\n      - "3001:3001"\n' : ''}${options.templateInputs ? '  sidecar:\n    image: busybox:1\n' : ''}`,
       profiles: [],
       services: ['kuma'],
     },
@@ -620,6 +620,36 @@ it('installs from the person’s Store confirmation without a self-approval Arti
       preparation: expect.objectContaining({ operation: 'template', mode: 'apply',
         deploy: DeploymentTemplateInstantiateInputV1Schema.parse(fixture.creations[0]).deploy }) }]);
     expect(fixture.creations[0]).not.toHaveProperty('projectSourceId');
+  } finally {
+    await screen.unmount();
+    await fixture.dispose();
+  }
+});
+
+it('shows the ports and names the App declares in the person’s install review (#4)', async () => {
+  const { StoreAppPreparationReview } = await import('./StoreAppPreparation');
+  const fixture = await createFixture([], { ports: true });
+  function Harness() {
+    const state = useStoreAppListing({
+      selection: { sourceId: fixture.sourceId, itemId: 'uptime-kuma' },
+      lifetime: fixture.lifetime, demand: { presented: true },
+    });
+    return state.kind === 'ready'
+      ? <StoreAppPreparationReview ready={state} lifetime={fixture.lifetime} onClose={() => {}} /> : null;
+  }
+  const screen = await renderScreen(<Harness />);
+  try {
+    await waitForHomeGovernance(() => expect(hasProjectChoice(screen, 'storefront')).toBe(true));
+    await chooseMachine(screen, 'target');
+    await chooseProject(screen, 'new');
+    await act(async () => { changeTextTestInstance(screen.findHostByTestId('store.app.prepare.project.newName')!, 'Status'); });
+    await nameIt(screen);
+    await screen.pressByTestIdAsync('store.app.prepare.review');
+    await waitForHomeGovernance(() => expect(screen.findHostByTestId('store.app.prepare.ports')).toBeTruthy());
+    const ports = screen.findHostByTestId('store.app.prepare.ports')!;
+    const text = JSON.stringify(ports.findAll(() => true).map(node => node.props.children).filter(child => typeof child === 'string'));
+    expect(text).toContain('3001:3001');
+    expect(text).toContain('kuma-1');
   } finally {
     await screen.unmount();
     await fixture.dispose();

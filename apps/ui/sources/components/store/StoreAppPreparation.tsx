@@ -46,6 +46,7 @@ import type {
 } from './useStoreAppListing';
 import { useStoreAppListing } from './useStoreAppListing';
 import { createStoreAppPreparationState, type StoreAppPreparationStore } from './storeAppPreparationState';
+import { DeploymentAddPortsFacts } from '@/components/approvals/DeploymentAddPortsFacts';
 
 type Ready = Extract<StoreAppListingState, { kind: 'ready' }>;
 /** The Deploys field's choice for the Account's usual controller; a Machine id is never this word. */
@@ -405,6 +406,9 @@ export function StoreAppPreparationReview(
         })}
       </ExpandableItem>
     </ItemGroup>
+    {/* What the definition declares about ports and names, and known clashes on the chosen Machine (SOS-GAP-PREFLIGHT #4). */}
+    <DeploymentAddPortsFacts document={prepared.template.compose.document} services={prepared.template.compose.services}
+      serverId={serverId} machineId={prepared.machine.machineId} testID="store.app.prepare.ports" />
     {prepared.template.firstRunSetup ? (
       <AttentionBanner
         testID="store.app.prepare.firstRunWarning"
