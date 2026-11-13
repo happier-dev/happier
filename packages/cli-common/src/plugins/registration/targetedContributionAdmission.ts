@@ -90,6 +90,12 @@ function readBoundTargetedActionPlacement(
     return account ? (machine ? 'mixed' : 'account') : (machine ? 'machine' : 'none');
 }
 
+/** Declarations and admission exclusions observed at the same host read boundary. */
+export type TargetedContributionManifestSnapshot = Readonly<{
+    declarations: readonly TargetedContributionManifestDeclaration[];
+    unavailablePlugins?: readonly import('@happier-dev/protocol/plugins/manifest/ingest').PluginUnavailableSourceDiagnostic[];
+}>;
+
 /** Combines current host declaration snapshots without creating a second catalog. */
 export function mergeTargetedContributionManifestDeclarations(params: Readonly<{
     targetPluginId: string;

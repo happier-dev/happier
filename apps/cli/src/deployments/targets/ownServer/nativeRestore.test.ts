@@ -28,6 +28,11 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
 import { createActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
 import { createOwnServerExpectedDownPublisher } from './expectedDown';
+import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
+import { createDeploymentBackupActionForHost } from '@/deployments/actions/backups';
+import { readOrCreateInstallationIdentitySync } from '@/daemon/identity/store';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 
 describe('native restore adapter', () => {
     it('preserves ordinary receipt publication failures outside caller cancellation', async () => {
@@ -39,7 +44,7 @@ describe('native restore adapter', () => {
             { signal: new AbortController().signal }, async () => { throw failure; })).rejects.toBe(failure);
     });
 
-    it.each(['success', 'failure', 'cancel', 'missingTool', 'healthFailure', 'cancelPublication', 'safety', 'copySafety', 'copySafetyFailure', 'receiptCapture', 'publicRestore', 'publicRestoreUnknown', 'dumpFailure', 'repositoryOnly', 'volumeBackup', 'volumeBackupFailure', 'volumeRestore', 'volumeRestoreStopped', 'volumeRestoreFailure', 'volumeUpload', 'volumeRender', 'sqlUploadUnsafe', 'sqlUploadBinary', 'sqlUploadCustom', 'sqlUploadCustomChunks', 'sqliteBackup'] as const)(
+    it.each(['success', 'failure', 'cancel', 'missingTool', 'healthFailure', 'cancelPublication', 'safety', 'copySafety', 'copySafetyFailure', 'receiptCapture', 'publicRestore', 'publicRestoreUnknown', 'publicRestoreFailure', 'dumpFailure', 'repositoryOnly', 'volumeBackup', 'volumeBackupFailure', 'volumeRestore', 'volumeRestoreStopped', 'volumeRestoreFailure', 'volumeUpload', 'volumeRender', 'sqlUploadUnsafe', 'sqlUploadBinary', 'sqlUploadCustom', 'sqlUploadCustomChunks', 'sqliteBackup'] as const)(
         'settles the real restore and releases its one backup preparation: %s', async mode => {
             await withFiniteComposeFixture(async ({ project, docker, source, root, exec, io }) => {
                 await docker.registerRecordedImage('restic', RESTIC_RUNTIME_V1.image, nativeRestic0191);
@@ -57,7 +62,7 @@ describe('native restore adapter', () => {
                 await source.commit();
                 const copying = mode === 'copySafety' || mode === 'copySafetyFailure';
                 const boundary = await installRestoreBoundary(root, mode === 'cancelPublication' ? 'healthFailure'
-                    : copying ? 'safety' : mode);
+                    : mode === 'publicRestoreFailure' ? 'failure' : copying ? 'safety' : mode);
                 if (mode === 'volumeRestoreFailure') onTestFailed(async () => {
                     const events = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n').filter(Boolean)
                         .map(line => JSON.parse(line)).map(row => ({ kind: row.kind, operation: row.operation,
@@ -83,7 +88,7 @@ describe('native restore adapter', () => {
                     content: { kind: 'secret', value: role === 'repositoryPassword' ? 'repository-private' : role === 'accessKeyId' ? 'access-private' : 'secret-private' } }));
                 const username = "database user\\' --literal";
                 const usernameBinding: Extract<EnvironmentSecretBindingV1, { purpose: 'variable' }> = {
-                    purpose: 'variable', phase: 'runtime', name: 'LOGICAL_USER', source: mode === 'receiptCapture'
+                    purpose: 'variable', phase: 'runtime', name: 'LOGICAL_USER', source: mode === 'receiptCapture' || mode === 'dumpFailure'
                         ? { kind: 'secret', ref: formatSharedSavedSecretRefV1('logical-user'), resourceRevision: 1 }
                         : { kind: 'value', value: username } };
                 const usernameGrant = usernameBinding.source.kind === 'secret'
@@ -403,7 +408,7 @@ describe('native restore adapter', () => {
                             } };
                             return restoreInput;
                         };
-                        if (mode === 'receiptCapture' || mode === 'publicRestore' || mode === 'publicRestoreUnknown' || mode === 'dumpFailure') {
+                        if (mode === 'receiptCapture' || mode === 'publicRestore' || mode === 'publicRestoreUnknown' || mode === 'publicRestoreFailure' || mode === 'dumpFailure') {
                             const seedReceipt = createDeploymentReceiptDetailV1();
                             const approvedInputBasis = OwnServerDeploymentInputBasisV1Schema.parse({ v: 1,
                                 environmentId: source.environmentId, environmentRevision: 1, targetLinkId: seedReceipt.deployment.targetLinkId,
@@ -432,8 +437,31 @@ describe('native restore adapter', () => {
                                 },
                             });
                             if (mode === 'dumpFailure') {
-                                await expect(backup).rejects.toMatchObject({ code: 'backup_failed',
-                                    details: { nativeFailure: { exitCode: 7, stderr: '', stderrTruncated: false } } });
+                                const identity = readOrCreateInstallationIdentitySync();
+                                const executor = createActionExecutor({
+                                    deploymentBackupAction: createDeploymentBackupActionForHost({ serverId: 'home', machineId: source.machineId,
+                                        async assertCurrent(context) { context.signal?.throwIfAborted(); },
+                                        // The genuine native backup rejection crosses the host port unchanged.
+                                        async backup() { await backup; throw new Error('Expected the native dump to fail'); },
+                                    }),
+                                    resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(
+                                        async () => { throw new Error('Unexpected full Environment read'); },
+                                        async ({ environmentId }) => ({ ok: true, environment: {
+                                            id: environmentId, projectSourceId: 'source', purpose: 'standard',
+                                        } })),
+                                });
+                                const result = await executor.execute('deployments.backups.run', { serverId: 'home',
+                                    environmentId: source.environmentId, machineId: source.machineId,
+                                    installationId: identity.installationId, targetLinkId: receipt.deployment.targetLinkId,
+                                    deploymentId: receipt.deployment.id, expectedRevision: receipt.deployment.revision, configRevision: 1,
+                                }, { surface: 'cli', authority: 'present_user', serverId: 'home', runtimeAccountId: 'account',
+                                    bypassApprovals: true, actionRequestId: 'native-dump-failure',
+                                    operationAcceptance: { actionId: 'deployments.backups.run', operationId: 'native-dump-failure', accept() {} } });
+                                expect(result).toMatchObject({ ok: false, errorCode: 'backup_failed',
+                                    details: { nativeFailure: { exitCode: 7, stderr: expect.stringContaining('pg_dump: connection for user'),
+                                        stderrTruncated: false } } });
+                                expect(JSON.stringify(result)).not.toContain(username);
+                                expect(JSON.stringify(result)).not.toContain(JSON.stringify(username).slice(1, -1));
                                 expect(JSON.parse(await readFile(boundary.stateFile, 'utf8')).safetySnapshot).toBeUndefined();
                                 expect(await docker.readOperationContainerIds()).toEqual([]);
                                 return;
@@ -457,7 +485,7 @@ describe('native restore adapter', () => {
                                 receipt: recoveryReceipt, restoreBackupId: 'f'.repeat(64) })).rejects.toMatchObject({ code: 'backup_required' });
                             expect(passwordPath).toBeUndefined();
                         }
-                        if (mode === 'publicRestore' || mode === 'publicRestoreUnknown') {
+                        if (mode === 'publicRestore' || mode === 'publicRestoreUnknown' || mode === 'publicRestoreFailure') {
                             if (!recoveryReceipt) throw new Error('Expected the completed pre-migration receipt');
                             const action = DeploymentRollbackActionInputV1Schema.parse({ serverId: 'home',
                                 environmentId: source.environmentId, deploymentId: 'retained-code', restoreBackupId: 'd'.repeat(64) });
@@ -481,6 +509,21 @@ describe('native restore adapter', () => {
                                     receipt: recoveryReceipt, operationId: 'public-restore-unknown', destination,
                                     restoreBackupId: action.restoreBackupId!,
                                 })).rejects.toMatchObject({ code: 'outcome_unknown', details: { kind: 'outcome_unknown' } });
+                                return;
+                            }
+                            if (mode === 'publicRestoreFailure') {
+                                const failure = await adapter.executeOwnServerNativeRestore(forRecordedCapture, {
+                                    receipt: recoveryReceipt, operationId: 'public-restore-failure', destination,
+                                    restoreBackupId: action.restoreBackupId!,
+                                }).then(() => { throw new Error('Expected native integrity failure'); }, error => {
+                                    expect(error).toMatchObject({ code: 'restore_failed', details: {
+                                        kind: 'recoveryRequired', nativeFailure: { exitCode: 1, stderr: '', stderrTruncated: false },
+                                    } });
+                                    return projectDeploymentFailure('restore_failed', error);
+                                });
+                                expect(failure).toMatchObject({ ok: false, errorCode: 'restore_failed', details: {
+                                    nativeFailure: { exitCode: 1, stderr: '', stderrTruncated: false },
+                                } });
                                 return;
                             }
                             const admitted: DeploymentRestoreResolvedCaptureV1[] = [];
@@ -614,7 +657,7 @@ describe('native restore adapter', () => {
                     expect(JSON.parse(await readFile(boundary.stateFile, 'utf8')).safetySnapshot).toBeUndefined();
                 } else if (mode === 'missingTool') expect(events.some(row => row.argv?.[0] === 'createdb')).toBe(false);
                 else if (mode === 'publicRestoreUnknown') expect(events.some(row => row.kind === 'imported')).toBe(false);
-                else if (mode !== 'failure' && mode !== 'dumpFailure') {
+                else if (mode !== 'failure' && mode !== 'publicRestoreFailure' && mode !== 'dumpFailure') {
                     expect(events.find(row => row.kind === 'imported')).toMatchObject({ bytes: archive.length });
                     expect(JSON.parse(await readFile(boundary.stateFile, 'utf8')).names)
                         .toEqual(mode === 'safety' ? [destination.recoveryDatabase, destination.database]

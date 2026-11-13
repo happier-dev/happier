@@ -27,6 +27,8 @@ export async function executeServiceCommandStream(input: Readonly<{
     let bytes = 0;
     const naturalExit = (outcome: ChildOutcome | undefined) => outcome?.termination.requestedBy.kind === 'none'
         && outcome.termination.observed.kind === 'exit';
+    const failedExit = (outcome: ChildOutcome | undefined) => naturalExit(outcome)
+        && outcome?.termination.observed.kind === 'exit' && outcome.termination.observed.exitCode !== 0;
     const result = (exitCode: number, diagnostic: ChildOutcome): ServiceCommandResultV1 => {
         if (!producerOutcome || producerOutcome.termination.observed.kind !== 'exit' || !consumerOutcome) return { kind: 'outcome_unknown' };
         return { kind: 'completed', exitCode,
@@ -112,6 +114,9 @@ export async function executeServiceCommandStream(input: Readonly<{
         for (const release of releases) await release();
         return result(consumed.termination.observed.exitCode, consumed);
     } catch (error) {
+        // Stopping the other child can produce its own nonzero exit. Preserve
+        // the failure already observed before that compensation begins.
+        const originalFailure = [consumerOutcome, producerOutcome].find(failedExit);
         if (!children.length) {
             for (const release of releases) await release();
             throw error;
@@ -160,8 +165,7 @@ export async function executeServiceCommandStream(input: Readonly<{
                 ...(observeNativeSettlement ? { observeNativeSettlement } : {}) });
         }
         if (allReleased) {
-            const failed = [consumerOutcome, producerOutcome].find(outcome => naturalExit(outcome)
-                && outcome?.termination.observed.kind === 'exit' && outcome.termination.observed.exitCode !== 0);
+            const failed = originalFailure ?? [consumerOutcome, producerOutcome].find(failedExit);
             if (failed?.termination.observed.kind === 'exit') return result(failed.termination.observed.exitCode, failed);
         }
         return { kind: 'outcome_unknown' };

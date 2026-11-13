@@ -1,4 +1,5 @@
 import { randomUUID } from '@/platform/randomUUID';
+import { carryActionFailureDiagnostic, readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { logPluginSurfaceDiagnostic } from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
 import {
     createPluginReactNativeArtifactLeaseCacheSink,
@@ -57,13 +58,14 @@ export type PluginReactNativeArtifactAvailability =
 function refusePreparation(failure: ArtifactPreparationRefusal, input: PluginReactNativeArtifactAvailabilityInput): Extract<PluginReactNativeArtifactAvailability, { kind: 'unavailable' }> {
     // This owner has not entered an Action. Only a failed byte transport is
     // transient here; selection, graph and integrity refusals require changed facts.
-    const refusal = Object.freeze({ ...failure, requestId: randomUUID(), layer: 'artifact' as const, phase: 'preparation' as const, retryable:
+    const refusal = Object.freeze(carryActionFailureDiagnostic({ ...failure, requestId: randomUUID(), layer: 'artifact' as const, phase: 'preparation' as const, retryable:
         failure.code === 'artifact_bytes_rpc_unavailable' || failure.code === 'artifact_bytes_fetch_failed'
-        || failure.code === 'transport_unavailable' });
+        || failure.code === 'transport_unavailable' }, failure));
     logPluginSurfaceDiagnostic({ pluginId: input.cacheIdentity.pluginId,
         contributionId: input.cacheIdentity.contributionId, surfaceId: null }, {
         kind: 'artifact_preparation_refused', code: refusal.code, requestId: refusal.requestId,
         layer: refusal.layer, phase: refusal.phase, retryable: refusal.retryable,
+        failureDiagnostic: readActionOutputDiagnostic(refusal),
     });
     return refusal;
 }
@@ -152,6 +154,9 @@ export function createPluginReactNativeArtifactAvailabilityProducer(
                     selected.lease.dispose();
                     return refusePreparation(materialized, input);
                 }
+                // The executable cache now holds the bytes; this capability
+                // keeps only currentness and revocation.
+                selected.lease.releaseFiles();
                 return Object.freeze({
                     kind: 'available' as const,
                     cacheKey: materialized.cacheKey,

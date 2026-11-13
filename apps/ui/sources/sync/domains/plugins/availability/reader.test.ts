@@ -35,6 +35,7 @@ import { PluginJsonSchemaV2Schema } from '@happier-dev/protocol/plugins/contribu
 import { createAppShellPluginUiProjectionPublication } from '@/components/appShell/plugins/appShellPluginUiProjectionPublication';
 import * as projectionUnion from '@/sync/domains/plugins/ui/projectionUnion';
 import { rehydratePluginContributionPointSemanticsV1 } from '@happier-dev/protocol/plugins/contributions/targeted';
+import { log } from '@/log';
 
 const scope = { serverId: 'srv-local-a', accountId: 'account-a' } as const;
 
@@ -132,7 +133,7 @@ function snapshot(overrides: Partial<PluginAccountAvailabilitySnapshot> = {}): P
 }
 
 describe('Plugin Account Availability reader', () => {
-    it('keeps each Machine Event declaration current across equal-version claims and same-Machine edits', () => {
+    it('keeps each Machine Event declaration current across equal-version claims and same-Machine edits', async () => {
         const base = intentRead();
         const sourceConfigSchema = { type: 'object', properties: {}, additionalProperties: false } as const;
         const full = PluginPortableReleaseManifestV1Schema.parse({ ...base.release!.normalizedManifest,
@@ -147,21 +148,32 @@ describe('Plugin Account Availability reader', () => {
                     sourceConfigSchema,
                     setupActionRef: { pluginId: 'com.acme.fixture', localId: 'setup' } } } }] } });
         const smaller = PluginPortableReleaseManifestV1Schema.parse({ ...full, contributes: {} });
+        const digestOf = (manifest: typeof full) => `sha256:${(manifest === full ? 'c' : 'd').repeat(64)}`;
         const entry = (machineId: string, manifest = full) => ({ machineId,
-            machineInstallationId: `${machineId}-installation`, declaration: { manifest,
-                declarationDigestSha256: `sha256:${(manifest === full ? 'c' : 'd').repeat(64)}` } });
+            machineInstallationId: `${machineId}-installation`, declaration: { declarationDigestSha256: digestOf(manifest) } });
         const response = (machineDeclarations: readonly ReturnType<typeof entry>[]) =>
             PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ ...base, intent: { ...base.intent, desiredVersion: null }, release: null,
                 currentDeclaration: null, machineDeclarations });
-        const store = createPluginAccountAvailabilityReaderStore();
+        // This fixture isolates Machine currentness. The actual server census,
+        // exact read and body producer feed this reader in the cross-package
+        // pluginAvailability.hydration.composed.test.ts keeper.
+        const bodyReads: string[][] = [];
+        const store = createPluginAccountAvailabilityReaderStore({ loadDeclarationBodies: async (_scope, _pluginId, digests) => {
+            bodyReads.push([...digests]);
+            return [full, smaller].filter(manifest => digests.includes(digestOf(manifest)))
+                .map(manifest => ({ declarationDigestSha256: digestOf(manifest), manifest }));
+        } });
         const publish = (machineDeclarations: readonly ReturnType<typeof entry>[]) => store.replace({ scope,
             snapshot: snapshot({ intentReads: [{ pluginId: full.id, response: response(machineDeclarations) }] }) });
         publish([entry('machine-a')]);
         const reader = store.bind(scope);
         const request = { pluginId: full.id, version: full.version, eventLocalId: 'changed', sourceContractVersion: 1,
             machineId: 'machine-a', machineInstallationId: 'machine-a-installation' };
+        expect(reader.readCurrentAutomationEventContribution(request)).toBeNull();
+        await reader.ensureAutomationEventDeclarations({ pluginId: full.id, machineId: 'machine-a' });
         expect(reader.readCurrentAutomationEventContribution(request)).not.toBeNull();
         publish([entry('machine-a'), entry('machine-b', smaller)]);
+        await reader.ensureAutomationEventDeclarations({ pluginId: full.id, machineId: 'machine-b' });
         expect(reader.readCurrentAutomationEventContribution(request)).not.toBeNull();
         expect(reader.readCurrentAutomationEventContribution({ ...request,
             machineId: 'machine-b', machineInstallationId: 'machine-b-installation' })).toBeNull();
@@ -170,13 +182,14 @@ describe('Plugin Account Availability reader', () => {
         expect(reader.readCurrentAutomationEventContribution({ ...request, machineId: 'absent-machine' })).toBeNull();
         publish([entry('machine-a', smaller), entry('machine-b')]);
         expect(reader.readCurrentAutomationEventContribution(request)).toBeNull();
-        publish([{ ...entry('machine-a'), declaration: { ...entry('machine-a').declaration,
-            manifest: { ...full, version: 'invalid-semver' } } }]);
-        expect(reader.readCurrentAutomationEventContribution(request)).toBeNull();
+        expect(reader.readCurrentAutomationEventContribution({ ...request,
+            machineId: 'machine-b', machineInstallationId: 'machine-b-installation' })).not.toBeNull();
         const legacy = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ ...base,
-            currentDeclaration: entry('machine-a').declaration });
+            intent: { ...base.intent, desiredVersion: null }, release: null, currentDeclaration: entry('machine-a').declaration });
         store.replace({ scope, snapshot: snapshot({ intentReads: [{ pluginId: full.id, response: legacy }] }) });
         expect(reader.readCurrentAutomationEventContribution(request)).not.toBeNull();
+        // Each digest was read once, however many Machines and publications named it.
+        expect(bodyReads).toEqual([[digestOf(full)], [digestOf(smaller)]]);
     });
 
     it('publishes a plugin lifecycle only when its observed facts change', () => {
@@ -557,8 +570,10 @@ describe('Plugin Account Availability reader', () => {
         const packages = Object.keys(uiPackage.dependencies).filter(name => name.startsWith('@happier-dev/plugins-'));
         const corpus = packages.map(packageName => {
             // The package filesystem is the boundary; use the real bundled manifest corpus.
-            const manifest = PluginManifestV2LoadSchema.parse(JSON.parse(readFileSync(
+            const parsed = PluginManifestV2LoadSchema.safeParse(JSON.parse(readFileSync(
                 resolve('../../packages/plugins', packageName.slice('@happier-dev/plugins-'.length), '.happier-plugin/plugin.json'), 'utf8')));
+            if (!parsed.success) throw new Error(`Bundled manifest ${packageName} rejected`, { cause: parsed.error });
+            const manifest = parsed.data;
             return { pluginId: manifest.id, pluginVersion: manifest.version, packageName,
                 displayName: typeof manifest.displayName === 'string' ? manifest.displayName : manifest.displayName.fallback,
                 normalizedManifest: manifest, entriesById: projectPluginPortableUiDeclarationsV1(manifest) };
@@ -916,7 +931,8 @@ describe('Plugin Account Availability reader', () => {
     it('retains successful catalog declarations when a sibling asset fails and retries only the failed asset', async () => {
         const source = PluginPortableReleaseManifestV1Schema.parse(JSON.parse(readFileSync(
             resolve('../../apps/cli/assets/bundled-plugin-manifests/machine-vercel.json'), 'utf8')));
-        const failure = new Error('Asset unavailable');
+        const failure = Object.assign(new TypeError('private-bundle-location unavailable'), { code: 'EIO' });
+        const logOffset = log.getCount();
         let fail = true;
         const loads = [0, 0];
         const bundles = loads.map((_, index) => {
@@ -936,6 +952,14 @@ describe('Plugin Account Availability reader', () => {
         await expect(reader.ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' })).rejects.toBe(failure);
         expect(reader.readCurrentAccountExecutionDeclarations().map(selection => selection.manifest.id)).toEqual(['com.acme.retry-0']);
         expect(publications).toBe(1);
+        const diagnostics = log.getLogs().slice(logOffset).filter(entry => entry.startsWith('[plugin-ui-host-api] '))
+            .map(entry => JSON.parse(entry.slice('[plugin-ui-host-api] '.length)));
+        expect(diagnostics).toContainEqual({ pluginId: 'com.acme.retry-1', contributionId: null, surfaceId: null,
+            diagnostic: { kind: 'bundled_declaration_unavailable', failureDiagnostic: {
+                source: 'plugin_ui.bundled_declaration', phase: 'plugin_ui.bundled_declaration', issues: [],
+                failureCause: { phase: 'plugin_ui.bundled_declaration', errorClass: 'TypeError', errorCode: 'EIO', httpStatus: null },
+            } } });
+        expect(JSON.stringify(diagnostics)).not.toContain('private-bundle-location');
         fail = false;
         await reader.ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' });
         expect(reader.readCurrentAccountExecutionDeclarations()).toHaveLength(2);

@@ -98,7 +98,7 @@ function rows() {
 async function admittedOperation(declarations: readonly TargetedContributionManifestDeclaration[] = rows()) {
     const controller = new AbortController();
     const service = createManifestTargetedContributionsService({
-        readCurrentDeclarations: () => declarations,
+        readCurrentDeclarations: () => ({ declarations }),
         subscribeToCatalogChanges: () => () => {},
     }).bind({ pluginId: target.manifest.id, signal: controller.signal, isCurrent: () => true });
     const observation = service.observeForSelf(target.contributionPoints.sources, { onInvalidated() {} });
@@ -115,7 +115,7 @@ async function admittedOperation(declarations: readonly TargetedContributionMani
 
 async function readContributions(declarations: readonly TargetedContributionManifestDeclaration[]) {
     const service = createManifestTargetedContributionsService({
-        readCurrentDeclarations: () => declarations, subscribeToCatalogChanges: () => () => {},
+        readCurrentDeclarations: () => ({ declarations }), subscribeToCatalogChanges: () => () => {},
     }).bind({ pluginId: target.manifest.id, signal: new AbortController().signal, isCurrent: () => true });
     const observation = service.observeForSelf(target.contributionPoints.sources, { onInvalidated() {} });
     try { return (await observation.readCurrent()).contributions; }
@@ -231,7 +231,7 @@ describe('portable targeted contribution admission', () => {
             };
         });
         const signal = new AbortController().signal;
-        const observation = createManifestTargetedContributionsService({ readCurrentDeclarations: () => declarations,
+        const observation = createManifestTargetedContributionsService({ readCurrentDeclarations: () => ({ declarations }),
             subscribeToCatalogChanges: () => () => {},
         }).bind({ pluginId: nativeTarget.manifest.id, signal, isCurrent: () => true })
             .observeForSelf(nativeTarget.contributionPoints.sources, { onInvalidated() {} });
@@ -307,7 +307,7 @@ describe('portable targeted contribution admission', () => {
         };
         const declarations = [machineTarget, machineSource];
         const signal = new AbortController().signal;
-        const service = createManifestTargetedContributionsService({ readCurrentDeclarations: () => declarations,
+        const service = createManifestTargetedContributionsService({ readCurrentDeclarations: () => ({ declarations }),
             subscribeToCatalogChanges: () => () => {},
         }).bind({ pluginId: target.manifest.id, signal, isCurrent: () => true });
         const selected = await selectCurrentTargetedContribution({ service, point: target.contributionPoints.sources, selection, operationRole: 'inspect' });
@@ -369,7 +369,7 @@ describe('portable targeted contribution admission', () => {
             };
         });
         const signal = new AbortController().signal;
-        const observation = createManifestTargetedContributionsService({ readCurrentDeclarations: () => declarations,
+        const observation = createManifestTargetedContributionsService({ readCurrentDeclarations: () => ({ declarations }),
             subscribeToCatalogChanges: () => () => {},
         }).bind({ pluginId: credentialTarget.manifest.id, signal, isCurrent: () => true })
             .observeForSelf(credentialTarget.contributionPoints.sources, { onInvalidated() {} });
@@ -442,7 +442,7 @@ describe('portable targeted contribution admission', () => {
         let current = mergeTargetedContributionManifestDeclarations({ targetPluginId: target.manifest.id,
             accountDeclarations: [targetRow, account], machineDeclarations: [machine],
         });
-        const service = createManifestTargetedContributionsService({ readCurrentDeclarations: () => current,
+        const service = createManifestTargetedContributionsService({ readCurrentDeclarations: () => ({ declarations: current }),
             subscribeToCatalogChanges: () => () => {},
         }).bind({ pluginId: target.manifest.id, signal: new AbortController().signal, isCurrent: () => true });
         const selection = { target: { pluginId: target.manifest.id, sourceCustody: targetRow.sourceCustody },
@@ -521,7 +521,7 @@ describe('portable targeted contribution admission', () => {
         const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
         Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
         const service = createManifestTargetedContributionsService({
-            readCurrentDeclarations: () => rows(),
+            readCurrentDeclarations: () => ({ declarations: rows() }),
             subscribeToCatalogChanges: () => () => {},
         }).bind({ pluginId: target.manifest.id, signal: new AbortController().signal, isCurrent: () => true });
         const observation = service.observeForSelf(target.contributionPoints.sources, { onInvalidated() {} });
@@ -546,7 +546,7 @@ describe('portable targeted contribution admission', () => {
                 const read = new Promise<readonly TargetedContributionManifestDeclaration[]>(resolve => { settleRead = resolve; });
                 signal?.addEventListener('abort', () => { transportReleased = true; settleRead(rows()); }, { once: true });
                 startRead();
-                return read;
+                return read.then(declarations => ({ declarations }));
             },
             subscribeToCatalogChanges: () => () => {},
         }).bind({ pluginId: target.manifest.id, signal: new AbortController().signal, isCurrent: () => true });
@@ -737,7 +737,7 @@ describe('portable targeted contribution admission', () => {
             targetPluginId: target.manifest.id, accountDeclarations: declarations, machineDeclarations: [machineSource],
         });
         const service = createManifestTargetedContributionsService({
-            readCurrentDeclarations: () => merged, subscribeToCatalogChanges: () => () => {},
+            readCurrentDeclarations: () => ({ declarations: merged }), subscribeToCatalogChanges: () => () => {},
         }).bind({ pluginId: target.manifest.id, signal: new AbortController().signal, isCurrent: () => true });
         const observation = service.observeForSelf(target.contributionPoints.sources, { onInvalidated() {} });
         try {

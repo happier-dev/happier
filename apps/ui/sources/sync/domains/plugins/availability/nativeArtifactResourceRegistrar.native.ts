@@ -1,6 +1,7 @@
 import { requireNativeModule } from 'expo-modules-core';
 
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { carryActionFailureDiagnostic, withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 
 import type {
     PluginNativeArtifactResourceRegistrar,
@@ -88,8 +89,9 @@ function getNativeModule(): NativeArtifactRegistrarModule | null {
     if (nativeModule !== undefined) return nativeModule;
     try {
         nativeModule = requireNativeModule<NativeArtifactRegistrarModule>('HappierHostedWebFrame');
-    } catch {
-        nativeModule = null;
+    } catch (error) {
+        // Cache the unavailable module as before, retaining its private loader diagnosis.
+        nativeModule = Object.freeze(withActionFailureCauseDiagnostic({}, error, 'plugin_availability.native_module_load'));
     }
     return nativeModule;
 }
@@ -106,7 +108,7 @@ export function createExpoPluginNativeArtifactResourceRegistrar(): PluginNativeA
     return Object.freeze({
         register: async (input) => {
             const module = getNativeModule();
-            if (!module?.registerArtifact) return registrationFailed;
+            if (!module?.registerArtifact) return Object.freeze(carryActionFailureDiagnostic(registrationFailed, module));
             try {
                 return readRegistrationResult(await module.registerArtifact({
                     token: input.token,
@@ -124,8 +126,8 @@ export function createExpoPluginNativeArtifactResourceRegistrar(): PluginNativeA
                         } satisfies NativeArtifactRegistrationStorage),
                     policyTable: input.policyTable,
                 }));
-            } catch {
-                return registrationFailed;
+            } catch (error) {
+                return Object.freeze(withActionFailureCauseDiagnostic(registrationFailed, error, 'plugin_availability.native_register'));
             }
         },
         unregister: (token) => {

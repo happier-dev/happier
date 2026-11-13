@@ -281,7 +281,10 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
         if (state.mode === 'failure') process.exitCode = 1;
     } else if (argv[0] === 'pg_dump') {
         process.stdout.write(Buffer.from(state.archive,'base64'));
-        if (state.mode === 'dumpFailure') process.exitCode = 7;
+        if (state.mode === 'dumpFailure') {
+            process.stderr.write('pg_dump: connection for user ' + argv.find(value => value.startsWith('--username=')).slice('--username='.length) + ' failed');
+            process.exitCode = 7;
+        }
     }
     else if (argv[0] === 'createdb') { state.names.push(argv.at(-1)); save(); }
     else if (argv[0] === 'pg_restore') {

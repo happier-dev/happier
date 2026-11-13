@@ -1,4 +1,5 @@
 import { apiSocket } from '@/sync/api/session/apiSocket';
+import { withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -19,19 +20,21 @@ export type ActivePluginAccountArtifactRemoveResult =
     | Readonly<{ kind: 'removed' }>
     | Readonly<{ kind: 'unavailable' }>;
 
-const defaultDependencies: ActivePluginAccountArtifactRemoverDependencies = {
-    getServerSnapshot: () => {
-        const snapshot = getActiveServerSnapshot();
-        return { serverId: snapshot.serverId, generation: snapshot.generation };
-    },
-    captureRequestAuthority: async (scope) => {
-        const authority = await captureServerRequestAuthorityForServerAccountScope({
-            scope,
-            activeRequest: (path, init) => apiSocket.request(path, init),
-        });
-        return Object.freeze({ request: authority.request, release: authority.release });
-    },
-};
+function defaultDependencies(): ActivePluginAccountArtifactRemoverDependencies {
+    return {
+        getServerSnapshot: () => {
+            const snapshot = getActiveServerSnapshot();
+            return { serverId: snapshot.serverId, generation: snapshot.generation };
+        },
+        captureRequestAuthority: async (scope) => {
+            const authority = await captureServerRequestAuthorityForServerAccountScope({
+                scope,
+                activeRequest: (path, init) => apiSocket.request(path, init),
+            });
+            return Object.freeze({ request: authority.request, release: authority.release });
+        },
+    };
+}
 
 function isCurrent(
     lifetime: ActiveServerAccountScopeLifetime,
@@ -59,7 +62,7 @@ export function createActivePluginAccountArtifactRemover<TTarget>(
         target: TTarget;
     }>) => Promise<ActivePluginAccountArtifactRemoveResult>;
 }> {
-    const dependencies = { ...defaultDependencies, ...overrides };
+    const dependencies = { ...defaultDependencies(), ...overrides };
     return Object.freeze({
         remove: async ({ accountLifetime, target }) => {
             const parsed = contract.parseTarget(target);
@@ -85,17 +88,19 @@ export function createActivePluginAccountArtifactRemover<TTarget>(
                         signal: controller.signal,
                     },
                 );
-                const raw = await response.json().catch(() => null);
+                if (!response.ok) return Object.freeze(withActionFailureCauseDiagnostic(
+                    { kind: 'unavailable' as const }, response, 'plugin_availability.artifact_remove'));
+                const raw = await response.json();
                 if (
-                    !response.ok
-                    || !isCurrent(accountLifetime, snapshot, dependencies.getServerSnapshot)
+                    !isCurrent(accountLifetime, snapshot, dependencies.getServerSnapshot)
                     || !contract.matchesResponse(raw, parsed.data)
                 ) {
                     return Object.freeze({ kind: 'unavailable' as const });
                 }
                 return Object.freeze({ kind: 'removed' as const });
-            } catch {
-                return Object.freeze({ kind: 'unavailable' as const });
+            } catch (error) {
+                return Object.freeze(withActionFailureCauseDiagnostic(
+                    { kind: 'unavailable' as const }, error, 'plugin_availability.artifact_remove'));
             } finally {
                 retirement.dispose();
                 await authority?.release?.();

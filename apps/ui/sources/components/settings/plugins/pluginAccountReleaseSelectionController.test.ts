@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
+import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 
 import { PluginReleaseFactsV1Schema } from '@happier-dev/protocol/plugins/availability';
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { createActivePluginAccountHostedArtifactRemover } from '@/sync/api/plugins/availability/removeActivePluginAccountHostedArtifact';
+import { createActivePluginAccountAvailabilityIntentSetter } from '@/sync/api/plugins/availability/setActivePluginAccountAvailabilityIntent';
+import { createActivePluginAccountPackageAssetsRemover } from '@/sync/api/plugins/availability/removeActivePluginAccountPackageAssets';
+import { log } from '@/log';
 
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { createPluginAccountAvailabilityReader, type PluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';
@@ -9,6 +15,8 @@ import {
     createPluginAccountReleaseAdministration as createPluginAccountReleaseSelectionController,
     type PluginAccountReleaseSelectionControllerDependencies,
 } from './pluginAccountReleaseSelectionController';
+
+await initializeRealAppRuntimeForTests();
 
 const pluginId = 'example.tasks';
 const targetVersion = '2.0.0';
@@ -31,6 +39,67 @@ const facts = PluginReleaseFactsV1Schema.parse({
         archiveDigestSha256: `sha256:${'b'.repeat(64)}`,
         resources: [],
     },
+});
+
+describe.each(['hostedUi', 'packageAssets'] as const)('Artifact removal transport (%s)', (sourceKind) => {
+    it.each(['throw', 'http503', 'invalidJson'] as const)('retains a thrown hosted-link removal cause through real transport and administration into the private surface log (%s)', async (failureMode) => {
+        const active = createLifetime();
+        const scope = active.lifetime.scope;
+        const slot = { contributionId: 'tasks-ui', artifactId: 'tasks-artifact', tier: 'hostedWeb' as const,
+            platform: 'web' as const, artifactDigest: `sha256:${'c'.repeat(64)}` as const, hostUiApiRange: '^1.0.0' };
+        const release = PluginReleaseFactsV1Schema.parse({ ...facts, uiSlots: sourceKind === 'hostedUi' ? [slot] : [],
+            ...(sourceKind === 'packageAssets' ? {
+                normalizedManifest: { ...facts.normalizedManifest, contributes: { resources: [
+                    { id: 'brand', kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
+                ] } },
+                packageAssetArchive: { ...facts.packageAssetArchive, resources: [{ resourceId: 'brand', path: 'assets/brand.png',
+                    mimeType: 'image/png', byteSize: 3, digestSha256: `sha256:${'d'.repeat(64)}` }] },
+            } : {}),
+        });
+        const intent = { pluginId, desiredVersion: targetVersion, enabled: true, offlineUiHosting: 'enabled' as const,
+            writableCollections: [], revision: 'intent-current' };
+        const reader = createPluginAccountAvailabilityReader({ scope, snapshot: {
+            availabilityCursor: 4, materializations: [], snapshots: [], intentReads: [{ pluginId, response: {
+                availabilityCursor: 4, hostingCapability: { enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048 },
+                intent, release,
+                packageAssets: sourceKind === 'packageAssets' ? [{ release: release.ref,
+                    artifactId: '00000000-0000-4000-8000-000000000001', descriptor: release.packageAssetArchive }] : [],
+                uiArtifacts: sourceKind === 'hostedUi' ? [{ release: release.ref, ...slot,
+                    accountArtifactId: '00000000-0000-4000-8000-000000000001' }] : [],
+            } }],
+        } });
+        // Only request/response and captured environment are substituted; domain setters/removers remain real.
+        const setter = createActivePluginAccountAvailabilityIntentSetter({ captureLifetime: () => active.lifetime,
+            getServerSnapshot: () => ({ serverId: scope.serverId, generation: 1 }),
+            captureRequestAuthority: async () => ({ request: async () => new Response(JSON.stringify({
+                intent: { ...intent, offlineUiHosting: 'disabled' },
+            }), { status: 200 }) }),
+        });
+        const transport = {
+            getServerSnapshot: () => ({ serverId: scope.serverId, generation: 1 }),
+            captureRequestAuthority: async () => ({ request: async () => {
+                if (failureMode === 'throw') throw new TypeError('private malformed response payload');
+                return new Response('private malformed response payload', { status: failureMode === 'http503' ? 503 : 200 });
+            } }),
+        };
+        const remover = createActivePluginAccountHostedArtifactRemover(transport);
+        const packageRemover = createActivePluginAccountPackageAssetsRemover(transport);
+        const controller = createPluginAccountReleaseSelectionController({ captureLifetime: () => active.lifetime,
+            setIntent: setter.set, removeHostedArtifact: remover.remove, removePackageAssets: packageRemover.remove });
+        const result = await controller.disableAndRemoveHostedArtifacts({ pluginId, reader });
+        expect(result).toEqual({ kind: 'unavailable' });
+        const diagnostic = readActionOutputDiagnostic(result);
+        expect(diagnostic).toMatchObject({ source: 'plugin_availability.artifact_remove', failureCause: {
+            phase: 'plugin_availability.artifact_remove',
+            errorClass: failureMode === 'throw' ? 'TypeError' : failureMode === 'invalidJson' ? 'SyntaxError' : 'UnknownThrownValue',
+            errorCode: null, httpStatus: failureMode === 'http503' ? 503 : null,
+        } });
+        expect(JSON.stringify(diagnostic)).not.toContain('private malformed response payload');
+        const logged = log.getLogs().at(-1);
+        expect(logged).toContain('[plugin-ui-host-api] ');
+        expect(JSON.parse(logged!.slice('[plugin-ui-host-api] '.length))).toMatchObject({ pluginId,
+            diagnostic: { kind: 'artifact_removal_failed', failureDiagnostic: diagnostic } });
+    });
 });
 
 function createLifetime() {

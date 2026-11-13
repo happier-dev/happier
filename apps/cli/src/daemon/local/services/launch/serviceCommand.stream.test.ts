@@ -248,7 +248,7 @@ describe('host service command stream', () => {
         } finally { redaction.close(); }
     });
 
-    it.each([0, 7, 'cancel', 'consumerExit'] as const)('withholds consumer EOF after dump stdout closes until producer outcome %s', async exitCode => {
+    it.each([0, 7, 'cancel', 'consumerExit', 'producerFailure'] as const)('withholds consumer EOF after dump stdout closes until producer outcome %s', async exitCode => {
         // Replace only the private file sink; native processes and supervision remain real.
         const localLog = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
         onTestFinished(() => localLog.mockRestore());
@@ -256,6 +256,16 @@ describe('host service command stream', () => {
         const success = join(root, 'producer-success');
         const eof = join(root, 'consumer-eof');
         const stopped = join(root, 'consumer-stopped');
+        const nativeStop = join(root, 'native-stop');
+        let consumerExited!: () => void;
+        const nativeConsumerClosed = new Promise<void>(resolve => { consumerExited = resolve; });
+        const originalSpawn = childProcessBoundary.spawn;
+        const nativeSpawn = exitCode === 'producerFailure' ? vi.spyOn(childProcessBoundary, 'spawn').mockImplementation((...args) => {
+            const child: ReturnType<typeof originalSpawn> = Reflect.apply(originalSpawn, childProcessBoundary, args);
+            if (Array.isArray(args[1]) && args[1][1]?.includes('Fatal: context canceled')) child.once('close', consumerExited);
+            return child;
+        }) : undefined;
+        if (nativeSpawn) syncBuiltinESMExports();
         const redaction = createProviderRedactionLease({ values: ['raw-secret-sentinel'] });
         let released = 0;
         const controller = new AbortController();
@@ -270,10 +280,11 @@ describe('host service command stream', () => {
         try {
             await machineNativeEffectAdmission.run({ operation: { operationId: `stream-${root}`, kind: 'backup' }, keys: [] }, async context => {
                 const producer = commands.admitNativeServiceCommandForHost({ context, signal: controller.signal, async assertCurrent() {}, async launch() {
-                    return launch(`const fs=require('node:fs'); const b=Buffer.alloc(65536,255); let n=129; function write(){ while(n-->0)if(!process.stdout.write(b))return process.stdout.once('drain',write); process.stdout.end(()=>{fs.writeFileSync(${JSON.stringify(closed)},'closed');${exitCode === 'cancel' ? 'process.stdin.resume();' : `setTimeout(()=>{${exitCode === 0 ? `fs.writeFileSync(${JSON.stringify(success)},'ok');` : ''}process.exit(${typeof exitCode === 'number' ? exitCode : 0})},100);`}}); } write();`);
+                    return launch(`const fs=require('node:fs'); const b=Buffer.alloc(65536,255); let n=129; function write(){ while(n-->0)if(!process.stdout.write(b))return process.stdout.once('drain',write); process.stdout.end(()=>{fs.writeFileSync(${JSON.stringify(closed)},'closed');${exitCode === 'cancel' ? 'process.stdin.resume();' : `setTimeout(()=>{${exitCode === 0 ? `fs.writeFileSync(${JSON.stringify(success)},'ok');` : ''}${exitCode === 'producerFailure' ? 'process.stderr.write("pg_dump: database raw-secret-sentinel does not exist");' : ''}process.exit(${typeof exitCode === 'number' ? exitCode : exitCode === 'producerFailure' ? 7 : 0})},100);`}}); } write();`);
                 } });
-                const consumer = commands.admitNativeServiceCommandForHost({ context, signal: controller.signal, async assertCurrent() {}, async launch() {
-                    return launch(`const fs=require('node:fs');const h=require('node:crypto').createHash('sha256');let bytes=0;process.on('SIGTERM',()=>{fs.writeFileSync(${JSON.stringify(stopped)},'stopped');process.exit(0)});process.stdin.on('data',b=>{${exitCode === 'consumerExit' ? 'process.exit(1);' : ''}bytes+=b.length;h.update(b)});process.stdin.on('end',()=>{fs.writeFileSync(${JSON.stringify(eof)},'eof');process.stdout.write(JSON.stringify({bytes,checksum:h.digest('hex'),producerSucceeded:fs.existsSync(${JSON.stringify(success)})}));});`);
+                const consumer = commands.admitNativeServiceCommandForHost({ context, signal: controller.signal, async assertCurrent() {},
+                    ...(exitCode === 'producerFailure' ? { async stopNative() { await writeFile(nativeStop, 'stop'); await nativeConsumerClosed; } } : {}), async launch() {
+                    return launch(`const fs=require('node:fs');const h=require('node:crypto').createHash('sha256');let bytes=0;${exitCode === 'producerFailure' ? `const w=fs.watch(${JSON.stringify(root)},(_,f)=>{if(String(f)==='native-stop'){w.close();fs.writeFileSync(${JSON.stringify(stopped)},'stopped');process.stderr.write("Fatal: context canceled",()=>process.exit(130));}});` : ''}process.on('SIGTERM',()=>{fs.writeFileSync(${JSON.stringify(stopped)},'stopped');process.exit(0)});process.stdin.on('data',b=>{${exitCode === 'consumerExit' ? 'process.exit(1);' : ''}bytes+=b.length;h.update(b)});process.stdin.on('end',()=>{fs.writeFileSync(${JSON.stringify(eof)},'eof');process.stdout.write(JSON.stringify({bytes,checksum:h.digest('hex'),producerSucceeded:fs.existsSync(${JSON.stringify(success)})}));});`);
                 } });
                 const compose = Reflect.get(commands, 'admitServiceCommandStreamForHost') as ((input: Readonly<{
                     producer: commands.AdmittedServiceExecContextV1; consumer: commands.AdmittedServiceExecContextV1;
@@ -292,8 +303,10 @@ describe('host service command stream', () => {
                         checksumSha256: JSON.parse(result.stdout).checksum });
                 } else {
                     if (exitCode === 'consumerExit') expect(result).toMatchObject({ kind: 'completed', exitCode: 1, producer: { exitCode: 0 } });
+                    else if (exitCode === 'producerFailure') expect(result).toMatchObject({ kind: 'completed', exitCode: 7,
+                        stderr: 'pg_dump: database [REDACTED] does not exist', producer: { exitCode: 7 } });
                     else expect(result.kind).toBe('outcome_unknown');
-                    if (exitCode === 7) {
+                    if (exitCode === 7 || exitCode === 'producerFailure') {
                         expect(localLog).toHaveBeenCalledWith('[Service command stream] Native stream failed', expect.objectContaining({
                             operationId: context.operation.operationId, producerExitCode: 7,
                         }));
@@ -302,8 +315,8 @@ describe('host service command stream', () => {
                     await expect(readFile(eof)).rejects.toMatchObject({ code: 'ENOENT' });
                     if (exitCode !== 'consumerExit') expect(await readFile(stopped, 'utf8')).toBe('stopped');
                 }
-                expect(released).toBe(exitCode === 0 || exitCode === 'consumerExit' ? 2 : exitCode === 7 ? 1 : 0);
+                expect(released).toBe(exitCode === 0 || exitCode === 'consumerExit' || exitCode === 'producerFailure' ? 2 : exitCode === 7 ? 1 : 0);
             });
-        } finally { watcher.close(); redaction.close(); await rm(root, { recursive: true, force: true }); }
+        } finally { nativeSpawn?.mockRestore(); if (nativeSpawn) syncBuiltinESMExports(); watcher.close(); redaction.close(); await rm(root, { recursive: true, force: true }); }
     });
 });

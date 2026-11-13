@@ -5,6 +5,7 @@ import {
     type PluginUiArtifactFileV1,
     type PluginUiArtifactsManifestEntryV2,
 } from '@happier-dev/protocol/plugins/ui';
+import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { PluginAccountHostedArtifactPublicationResult } from './accountHostedArtifactPublication';
 import {
@@ -143,7 +144,7 @@ export type PluginSelectedArtifactLeaseFileResult =
     }>
     | Readonly<{
         kind: 'unavailable';
-        code: 'artifact_file_not_declared' | 'artifact_lease_revoked';
+        code: 'artifact_file_not_declared' | 'artifact_lease_revoked' | 'artifact_lease_files_released';
     }>;
 
 export type PluginSelectedArtifactLease = Readonly<{
@@ -153,6 +154,11 @@ export type PluginSelectedArtifactLease = Readonly<{
     artifactGraph: PluginUiArtifactsManifestEntryV2;
     files: readonly PluginUiArtifactFileV1[];
     readFile: (relativePath: string) => Promise<PluginSelectedArtifactLeaseFileResult>;
+    /**
+     * The holder has copied what it needs. The lease drops its verified bytes;
+     * currentness, revocation and dispose are unchanged.
+     */
+    releaseFiles: () => void;
     isCurrent: () => boolean;
     onRevoke: (listener: () => void) => Readonly<{ dispose: () => void }>;
     dispose: () => void;
@@ -782,6 +788,22 @@ async function materializeInFlightVerifiedPluginArtifactSource(input: Readonly<{
     }
 }
 
+// Its own scope: the Account-lived retirement listener must not capture a
+// call's settled promise, which holds that Artifact's verified bytes.
+function readSharedMaterializations(lifetime: object, acquisitionLifetime: PluginArtifactLeaseAccountLifetime | undefined) {
+    const existing = sharedMaterializationsByLifetime.get(lifetime);
+    if (existing) return existing;
+    const byDigest = new Map<PluginUiArtifactDigestV1, InFlightArtifactMaterialization>();
+    sharedMaterializationsByLifetime.set(lifetime, byDigest);
+    let retirement: Readonly<{ dispose: () => void }> | undefined;
+    retirement = acquisitionLifetime?.onRetire(() => {
+        retirement?.dispose();
+        byDigest.clear();
+        sharedMaterializationsByLifetime.delete(lifetime);
+    });
+    return byDigest;
+}
+
 function materializeSharedVerifiedPluginArtifactSource(input: Readonly<{
     reader: PluginAccountAvailabilityReader;
     acquisitionLifetime?: PluginArtifactLeaseAccountLifetime;
@@ -792,19 +814,7 @@ function materializeSharedVerifiedPluginArtifactSource(input: Readonly<{
     signal: AbortSignal;
     accountHostedArtifactId?: string;
 }>): Promise<PluginArtifactVerifiedSourceResult> {
-    const lifetime = input.acquisitionLifetime ?? input.reader;
-    let byDigest = sharedMaterializationsByLifetime.get(lifetime);
-    if (!byDigest) {
-        byDigest = new Map();
-        sharedMaterializationsByLifetime.set(lifetime, byDigest);
-        const retained = byDigest;
-        let retirement: Readonly<{ dispose: () => void }> | undefined;
-        retirement = input.acquisitionLifetime?.onRetire(() => {
-            retirement?.dispose();
-            retained.clear();
-            sharedMaterializationsByLifetime.delete(lifetime);
-        });
-    }
+    const byDigest = readSharedMaterializations(input.acquisitionLifetime ?? input.reader, input.acquisitionLifetime);
     const participant: InFlightArtifactMaterializationParticipant = Object.freeze({
         artifact: input.artifact,
         sources: input.sources,
@@ -828,7 +838,7 @@ function materializeSharedVerifiedPluginArtifactSource(input: Readonly<{
         participants.clear();
         // Settled byte reuse belongs to the existing persistent/cache owner,
         // including its eviction policy. This map shares only active work.
-        if (byDigest?.get(input.artifact.digest)?.promise === promise) {
+        if (byDigest.get(input.artifact.digest)?.promise === promise) {
             byDigest.delete(input.artifact.digest);
         }
     });
@@ -905,7 +915,7 @@ export async function acquirePluginSelectedArtifactLease(input: Readonly<{
         });
     }
     if (admission.kind !== 'available') {
-        return Object.freeze({ kind: 'unavailable', code: admission.code });
+        return Object.freeze(carryActionFailureDiagnostic({ kind: 'unavailable', code: admission.code }, admission));
     }
     const graph = PluginUiArtifactsManifestEntryV2Schema.safeParse(input.artifactGraph);
     if (!graph.success) {
@@ -1008,9 +1018,11 @@ export async function acquirePluginSelectedArtifactLease(input: Readonly<{
                 : materializedSource.code ?? 'artifact_source_unavailable',
         });
     }
-    const files = new Map(materializedSource.files.map(
-        ({ file, bytes }) => [file.relativePath, { file, bytes }] as const,
-    ));
+    // Revocation closures share this scope, so the bytes are held only through
+    // this binding, which `releaseFiles` clears once the holder has its copy.
+    let files: ReadonlyMap<string, Readonly<{ file: PluginUiArtifactFileV1; bytes: Uint8Array }>> | null = new Map(
+        materializedSource.files.map(({ file, bytes }) => [file.relativePath, { file, bytes }] as const),
+    );
     // Digest reuse never admits a contradictory graph supplied by another
     // occurrence. Check its declared metadata against the verified file set
     // without hashing or copying those immutable bytes again.
@@ -1021,6 +1033,9 @@ export async function acquirePluginSelectedArtifactLease(input: Readonly<{
     const readFile = async (relativePath: string): Promise<PluginSelectedArtifactLeaseFileResult> => {
         if (!isCurrent()) {
             return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
+        }
+        if (!files) {
+            return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_files_released' });
         }
         const record = files.get(relativePath);
         if (!record) {
@@ -1040,6 +1055,7 @@ export async function acquirePluginSelectedArtifactLease(input: Readonly<{
             artifactGraph: graph.data,
             files: Object.freeze(graph.data.files.map(cloneFile)),
             readFile,
+            releaseFiles: () => { files = null; },
             isCurrent,
             onRevoke: (listener: () => void) => {
                 if (revoked) {

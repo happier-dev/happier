@@ -174,7 +174,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
     resolveHostPolicy: ResolveTargetActionHostPolicy;
     createServices: CreatePluginInvocationServices;
     readCurrentTargetedDeclarations?(pluginId: string, signal?: AbortSignal,
-        resolveMachine?: PluginInvocationServicesSeed['resolveAccountSourceMachine']): Promise<readonly import('@happier-dev/cli-common/plugins/registration').TargetedContributionManifestDeclaration[]>;
+        resolveMachine?: PluginInvocationServicesSeed['resolveAccountSourceMachine']): Promise<import('@happier-dev/cli-common/plugins/registration').TargetedContributionManifestSnapshot>;
     createAccountSourceMachineResolver?(seed: PluginInvocationServicesSeed): PluginInvocationServicesSeed['resolveAccountSourceMachine'];
     prepareInvocationServices?(input: Readonly<{ pluginId: string; localId: string }>): Promise<void>;
     beginDiagnosticScope?: BeginPluginInvocationDiagnosticScope;

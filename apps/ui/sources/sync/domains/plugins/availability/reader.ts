@@ -37,6 +37,8 @@ import { projectPluginStoreKindDeclarationV1 } from '@happier-dev/protocol/plugi
 import { readAutomationEligibleEventContributionV1, type AutomationEligibleEventContributionV1 } from '@happier-dev/protocol/plugins/contributions/events';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { derivePluginReactNativeBundleCacheKey } from '@/components/plugins/reactNative/bundleCache';
+import { readActionOutputDiagnostic, withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { logPluginSurfaceDiagnostic } from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
 
 import {
     areServerAccountScopesEqual,
@@ -2545,7 +2547,14 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
                 throw Object.assign(new Error('Bundled Plugin UI declaration identity mismatch'), { code: 'plugin_ui_declaration_invalid' });
             }
             return prepareBundledUiDeclarations([declaration])[0]!;
-        }).catch(error => { declarationLoads.delete(pluginId); throw error; });
+        }).catch(error => {
+            declarationLoads.delete(pluginId);
+            logPluginSurfaceDiagnostic({ pluginId, contributionId: null, surfaceId: null }, {
+                kind: 'bundled_declaration_unavailable',
+                failureDiagnostic: readActionOutputDiagnostic(withActionFailureCauseDiagnostic({}, error, 'plugin_ui.bundled_declaration')),
+            });
+            throw error;
+        });
         declarationLoads.set(pluginId, operation);
         return operation;
     };

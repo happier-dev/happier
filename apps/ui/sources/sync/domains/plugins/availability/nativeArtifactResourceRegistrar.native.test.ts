@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 
 import type { PluginNativeArtifactResourceRegistrar } from './nativeArtifactResource';
 
@@ -72,13 +73,34 @@ describe('Expo native Artifact registrar', () => {
 
     it('fails closed when the packaged native registrar is unavailable', async () => {
         nativeModuleMock.requireNativeModule.mockImplementationOnce(() => {
-            throw new Error('native module unavailable');
+            throw new Error('private native module /account/location unavailable');
         });
         const { createExpoPluginNativeArtifactResourceRegistrar } = await import('./nativeArtifactResourceRegistrar.native');
         const registrar = createExpoPluginNativeArtifactResourceRegistrar();
 
-        await expect(registrar.register(registration)).resolves.toEqual(registrationFailed);
+        const result = await registrar.register(registration);
+        expect(result).toEqual(registrationFailed);
+        expect(readActionOutputDiagnostic(result)).toMatchObject({ failureCause: {
+            phase: 'plugin_availability.native_module_load', errorClass: 'Error', errorCode: null, httpStatus: null,
+        } });
+        expect(JSON.stringify(readActionOutputDiagnostic(result))).not.toContain('private native');
+        const repeated = await registrar.register(registration);
+        expect(readActionOutputDiagnostic(repeated)).toEqual(readActionOutputDiagnostic(result));
+        expect(nativeModuleMock.requireNativeModule).toHaveBeenCalledOnce();
         expect(registrar.unregister(registration.token)).toBe(false);
+    });
+
+    it('preserves a rejected native registration without private bridge prose', async () => {
+        nativeModuleMock.requireNativeModule.mockReturnValueOnce({
+            registerArtifact: async () => { throw Object.assign(new Error('private native /account/location'), { code: 'EACCES' }); },
+        });
+        const { createExpoPluginNativeArtifactResourceRegistrar } = await import('./nativeArtifactResourceRegistrar.native');
+        const result = await createExpoPluginNativeArtifactResourceRegistrar().register(registration);
+        expect(result).toEqual(registrationFailed);
+        const diagnostic = readActionOutputDiagnostic(result);
+        expect(diagnostic).toMatchObject({ failureCause: { phase: 'plugin_availability.native_register',
+            errorClass: 'Error', errorCode: 'EACCES', httpStatus: null } });
+        expect(JSON.stringify(diagnostic)).not.toContain('private');
     });
 
     it('projects verified current-load bytes through the existing Expo native token registration', async () => {

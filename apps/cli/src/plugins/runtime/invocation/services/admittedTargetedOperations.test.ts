@@ -50,7 +50,7 @@ describe('admitted targeted-operation execution', () => {
         let machineDeclarations: readonly TargetedContributionManifestDeclaration[] = [];
         const declarations = () => mergeTargetedContributionManifestDeclarations({ targetPluginId: target.manifest.id,
             accountDeclarations, machineDeclarations });
-        const observation = createManifestTargetedContributionsService({ readCurrentDeclarations: declarations,
+        const observation = createManifestTargetedContributionsService({ readCurrentDeclarations: () => ({ declarations: declarations() }),
             subscribeToCatalogChanges: () => () => {} }).bind({ pluginId: target.manifest.id,
             signal: new AbortController().signal, isCurrent: () => true }).observeForSelf(target.contributionPoints.sources, { onInvalidated() {} });
         const seed = { plugin: { id: target.manifest.id }, occurrenceId: accountDeclarations[0]!.occurrenceId };
@@ -150,7 +150,7 @@ describe('admitted targeted-operation execution', () => {
             sourceCustody: createManagedPluginSourceCustody(plugin.manifest.id),
         }));
         const signal = new AbortController().signal;
-        const observation = createManifestTargetedContributionsService({ readCurrentDeclarations: () => declarations,
+        const observation = createManifestTargetedContributionsService({ readCurrentDeclarations: () => ({ declarations }),
             subscribeToCatalogChanges: () => () => {} }).bind({ pluginId: target.manifest.id, signal, isCurrent: () => true })
             .observeForSelf(target.contributionPoints.sources, { onInvalidated() {} });
         const providerHost = await createPluginTestkit({ manifest: source.manifest, module: source });
@@ -164,7 +164,7 @@ describe('admitted targeted-operation execution', () => {
             occurrenceId: `${target.manifest.id}:current`, sourceCustody: createManagedPluginSourceCustody(target.manifest.id),
             correlationId: 'admitted-operation-trace', requestId: 'admitted-operation-request',
             surface: 'plugin', signal, isOccurrenceCurrent: () => true,
-            readCurrentTargetedDeclarations: async () => declarations,
+            readCurrentTargetedDeclarations: async () => ({ declarations }),
         }, actionExecutor: { execute: vi.fn() },
         // This adapter is the cross-host dispatch boundary. The public SDK host
         // below performs the real registration, parser and provider handler.

@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 
 import type { PluginNativeArtifactResourceRegistrar } from './nativeArtifactResource';
 import {
@@ -22,6 +23,33 @@ const registration = {
 } satisfies Parameters<PluginNativeArtifactResourceRegistrar['register']>[0];
 
 describe('Tauri desktop Artifact registrar', () => {
+    it('preserves an official Tauri module-loader failure without private loader prose', async () => {
+        // The official platform SDK module acquisition is the system boundary.
+        vi.doMock('@tauri-apps/api/core', () => ({
+            get invoke() { throw new TypeError('private platform loader payload'); },
+        }));
+        try {
+            const result = await createTauriPluginNativeArtifactResourceRegistrar().register(registration);
+            expect(result).toEqual({ kind: 'unavailable', code: 'native_artifact_resource_registration_failed' });
+            const diagnostic = readActionOutputDiagnostic(result);
+            expect(diagnostic).toMatchObject({ failureCause: { phase: 'plugin_availability.native_module_load',
+                errorClass: 'TypeError', errorCode: null, httpStatus: null } });
+            expect(JSON.stringify(diagnostic)).not.toContain('private platform');
+        } finally {
+            vi.doUnmock('@tauri-apps/api/core');
+        }
+    });
+    it('preserves a rejected native registration command without private bridge prose', async () => {
+        const registrar = createTauriPluginNativeArtifactResourceRegistrar({
+            invoke: async () => { throw Object.assign(new Error('private native /account/location'), { code: 'EACCES' }); },
+        });
+        const result = await registrar.register(registration);
+        expect(result).toEqual({ kind: 'unavailable', code: 'native_artifact_resource_registration_failed' });
+        const diagnostic = readActionOutputDiagnostic(result);
+        expect(diagnostic).toMatchObject({ failureCause: { phase: 'plugin_availability.native_register',
+            errorClass: 'Error', errorCode: 'EACCES', httpStatus: null } });
+        expect(JSON.stringify(diagnostic)).not.toContain('private');
+    });
     it('settles the native acknowledgement the canonical registry keeps its registration for', async () => {
         const deferredAcknowledgements: Array<Promise<boolean>> = [];
         let nextAcknowledgement: ((value: boolean | PromiseLike<boolean>) => void) | undefined;

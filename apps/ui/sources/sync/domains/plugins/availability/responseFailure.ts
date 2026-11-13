@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import { carryActionFailureDiagnostic, invalidActionOutputFailure } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 export type PluginAvailabilityResponsePhase = 'materializations' | 'intent_census' | 'intent_identity';
@@ -42,7 +43,10 @@ export function parsePluginAvailabilityResponse<T>(
     try {
         return schema.parse(value);
     } catch (error) {
-        if (error instanceof z.core.$ZodError) throw new PluginAvailabilityInvalidResponseError(phase, scope);
+        if (error instanceof z.core.$ZodError) throw carryActionFailureDiagnostic(
+            new PluginAvailabilityInvalidResponseError(phase, scope),
+            invalidActionOutputFailure(error, `plugin_availability.${phase}`, undefined, { issuePaths: 'omit' }),
+        );
         throw error;
     }
 }

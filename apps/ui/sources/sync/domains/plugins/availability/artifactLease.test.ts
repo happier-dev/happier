@@ -1,3 +1,5 @@
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -615,6 +617,72 @@ describe('Artifact selected handle lease', () => {
         expect(revoked).toHaveBeenCalledTimes(1);
         expect(acquired.lease.isCurrent()).toBe(false);
         expect(retireListeners.size).toBe(0);
+    });
+
+    it('drops its verified bytes when the holder releases its files, keeping currentness and revocation', async () => {
+        setFlagsFromString('--expose-gc');
+        const collect: () => void = runInNewContext('gc');
+        setFlagsFromString('--no-expose-gc');
+        const entrySize = 8 * 1024 * 1024;
+        const current = fixture(true, undefined, undefined, undefined, slot.pluginId, `<p>${'x'.repeat(entrySize)}</p>`);
+        const store = createPluginAccountAvailabilityReaderStore();
+        store.replace({ scope, snapshot: current.snapshot });
+        const acquired = await acquirePluginSelectedArtifactLease({
+            reader: store.bind(scope), slot, artifactGraph: current.graph,
+            sources: [{ kind: 'appExact', fetch: async () => current.bytesByPath }],
+        });
+        if (acquired.kind !== 'available') throw new Error('expected Account-release lease');
+        const padding = 32 * 1024 * 1024;
+        const held = () => { collect(); return process.memoryUsage().arrayBuffers; };
+        // Ballast proves the measurement sees ArrayBuffer release within this worker.
+        let ballast: Uint8Array | null = new Uint8Array(padding).fill(1);
+        const withBallast = held();
+        ballast = null;
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(withBallast - held()).toBeGreaterThan(padding / 2);
+        void ballast;
+
+        const before = held();
+        acquired.lease.releaseFiles();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        // Compare a boolean: the lease's private copy of the 8 MiB entry is gone.
+        expect(before - held() >= entrySize).toBe(true);
+        await expect(acquired.lease.readFile(current.graph.entry)).resolves.toEqual({ kind: 'unavailable', code: 'artifact_lease_files_released' });
+        expect(acquired.lease.isCurrent()).toBe(true);
+        const revoked = vi.fn();
+        acquired.lease.onRevoke(revoked);
+        acquired.lease.dispose();
+        expect(revoked).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not keep a settled shared acquisition alive through its Account retirement listener', async () => {
+        setFlagsFromString('--expose-gc');
+        const collect: () => void = runInNewContext('gc');
+        setFlagsFromString('--no-expose-gc');
+        const entrySize = 8 * 1024 * 1024;
+        const current = fixture(true, undefined, undefined, undefined, slot.pluginId, `<p>${'x'.repeat(entrySize)}</p>`);
+        const store = createPluginAccountAvailabilityReaderStore();
+        store.replace({ scope, snapshot: current.snapshot });
+        const retireListeners = new Set<() => void>();
+        const accountLifetime = { isCurrent: () => true, onRetire: (listener: () => void) => {
+            retireListeners.add(listener);
+            return { dispose: () => { retireListeners.delete(listener); } };
+        } };
+        const held = () => { collect(); return process.memoryUsage().arrayBuffers; };
+        const before = held();
+        let acquired: Awaited<ReturnType<typeof acquirePluginSelectedArtifactLease>> | null = await acquirePluginSelectedArtifactLease({
+            reader: store.bind(scope), accountLifetime, slot, artifactGraph: current.graph,
+            sources: [{ kind: 'appExact', fetch: async () => current.bytesByPath }],
+        });
+        if (acquired.kind !== 'available') throw new Error('expected Account-release lease');
+        const withLease = held();
+        acquired.lease.dispose();
+        acquired = null;
+        await new Promise(resolve => setTimeout(resolve, 0));
+        // The lifetime stays current and its retirement listener stays registered.
+        expect(retireListeners.size).toBeGreaterThan(0);
+        expect(withLease - before >= entrySize).toBe(true);
+        expect(withLease - held() >= entrySize).toBe(true);
     });
 
     it('does not fall back to Account release selection for a stale daemon-owned occurrence', async () => {

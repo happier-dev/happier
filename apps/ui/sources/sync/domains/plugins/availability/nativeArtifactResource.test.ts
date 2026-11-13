@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { log } from '@/log';
 
 import {
     computePluginUiArtifactFileSetSha256DigestV1,
@@ -28,6 +30,7 @@ import {
     type PluginNativeArtifactResourceRegistrar,
 } from './nativeArtifactResource';
 import { projectSelectedHostedWebArtifactAvailability } from './hostedWebArtifactLease';
+import { createTauriPluginNativeArtifactResourceRegistrar } from './nativeArtifactResourceRegistrar.tauri';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
     derivePluginUiPersistentArtifactKey,
@@ -406,7 +409,7 @@ describe('native Artifact resource bridge', () => {
         expect(registry.isPersistentArtifactIdentityInUse(identityKey)).toBe(false);
     });
 
-    it('does not reinterpret a persistent-store failure as an oversized current load', async () => {
+    it.each(['write', 'describe'] as const)('does not reinterpret a persistent-store failure as an oversized current load (%s)', async (operation) => {
         const { lease } = await acquireFixtureLease();
         const register = vi.fn(async () => nativeRegistrationAccepted);
         const registry = createPluginNativeArtifactResourceRegistry({
@@ -416,18 +419,32 @@ describe('native Artifact resource bridge', () => {
         const { lifetime } = createLifetime();
         const store: PluginNativeArtifactPersistentStore = Object.freeze({
             ...createPersistentStore([]),
-            write: async () => {
-                throw new Error('disk unavailable');
-            },
+            ...(operation === 'write' ? { write: async () => {
+                throw Object.assign(new Error('private disk /account/artifact unavailable'), { code: 'EACCES' });
+            } } : { describeNativeResource: async () => {
+                throw Object.assign(new Error('private disk /account/artifact unavailable'), { code: 'EACCES' });
+            } }),
         });
 
-        await expect(registry.materialize({
+        const result = await registry.materialize({
             lease,
             persistent: Object.freeze({ scope, store, isCurrent: () => true }),
             accountLifetime: lifetime,
             isCurrent: () => true,
             hostedWebPolicy: hostedWebPolicyInput(),
-        })).resolves.toEqual({ kind: 'unavailable', code: 'native_artifact_store_unavailable' });
+        });
+        expect(result).toEqual({ kind: 'unavailable', code: 'native_artifact_store_unavailable' });
+        const diagnostic = readActionOutputDiagnostic(result);
+        expect(diagnostic).toMatchObject({ source: `plugin_availability.native_store_${operation}`, failureCause: {
+            phase: `plugin_availability.native_store_${operation}`, errorClass: 'Error', errorCode: 'EACCES', httpStatus: null,
+        } });
+        expect(JSON.stringify(diagnostic)).not.toContain('private disk');
+        const logged = log.getLogs().at(-1);
+        expect(logged).toContain('[plugin-ui-host-api] ');
+        expect(JSON.parse(logged!.slice('[plugin-ui-host-api] '.length))).toMatchObject({
+            pluginId: lease.artifact.pluginId,
+            diagnostic: { kind: 'native_artifact_unavailable', failureDiagnostic: diagnostic },
+        });
         expect(register).not.toHaveBeenCalled();
     });
 
@@ -486,6 +503,68 @@ describe('native Artifact resource bridge', () => {
             isCurrent: () => true,
             hostedWebPolicy: hostedWebPolicyInput(),
         })).resolves.toEqual(profileIsolationUnavailable);
+    });
+
+    it.each(['expoRegister', 'tauriRegister', 'expoLoader', 'tauriLoader'] as const)('retains a native bridge exception through real registration and Artifact acquisition into the private log (%s)', async (adapter) => {
+        const { lease } = await acquireFixtureLease();
+        const failure = Object.assign(new Error('private native account payload'), { code: 'EACCES' });
+        nativeModuleMock.requireNativeModule.mockReset();
+        if (adapter === 'expoLoader') nativeModuleMock.requireNativeModule.mockImplementation(() => { throw failure; });
+        else nativeModuleMock.requireNativeModule.mockReturnValue({
+            registerArtifact: async () => { throw failure; },
+            unregisterArtifact: () => true,
+        });
+        if (adapter === 'tauriLoader') vi.doMock('@tauri-apps/api/core', () => ({ get invoke() { throw failure; } }));
+        vi.resetModules();
+        const { createExpoPluginNativeArtifactResourceRegistrar } = await import('./nativeArtifactResourceRegistrar.native');
+        const registry = createPluginNativeArtifactResourceRegistry({
+            registrar: adapter === 'expoRegister' || adapter === 'expoLoader' ? createExpoPluginNativeArtifactResourceRegistrar()
+                : createTauriPluginNativeArtifactResourceRegistrar(adapter === 'tauriRegister'
+                    ? { invoke: async () => { throw failure; } } : {}),
+            createOpaqueId: () => 'opaque-native-exception',
+        });
+        const { lifetime } = createLifetime();
+        const result = await registry.materialize({ lease,
+            persistent: Object.freeze({ scope, store: createPersistentStore([]), isCurrent: () => true }),
+            accountLifetime: lifetime, isCurrent: () => true, hostedWebPolicy: hostedWebPolicyInput(),
+        }).finally(() => vi.doUnmock('@tauri-apps/api/core'));
+        expect(result).toEqual({ kind: 'unavailable', code: 'native_artifact_resource_registration_failed' });
+        const diagnostic = readActionOutputDiagnostic(result);
+        expect(diagnostic).toMatchObject({ failureCause: { phase: adapter.endsWith('Loader')
+            ? 'plugin_availability.native_module_load' : 'plugin_availability.native_register',
+            errorClass: 'Error', errorCode: 'EACCES', httpStatus: null } });
+        expect(JSON.stringify(diagnostic)).not.toContain('private native');
+        const logged = log.getLogs().at(-1);
+        expect(logged).toContain('[plugin-ui-host-api] ');
+        expect(JSON.parse(logged!.slice('[plugin-ui-host-api] '.length))).toMatchObject({
+            pluginId: lease.artifact.pluginId,
+            diagnostic: { kind: 'native_artifact_unavailable', failureDiagnostic: diagnostic },
+        });
+    });
+
+    it('retains a rejected native registrar boundary through the terminal result and private log', async () => {
+        const { lease } = await acquireFixtureLease();
+        // The registrar is the platform bridge boundary; its Promise can reject before returning a typed result.
+        const registry = createPluginNativeArtifactResourceRegistry({ registrar: {
+            register: async () => { throw Object.assign(new Error('private rejected bridge payload'), { code: 'EACCES' }); },
+            unregister: () => true,
+        }, createOpaqueId: () => 'opaque-rejected-registrar' });
+        const { lifetime } = createLifetime();
+        const result = await registry.materialize({ lease,
+            persistent: Object.freeze({ scope, store: createPersistentStore([]), isCurrent: () => true }),
+            accountLifetime: lifetime, isCurrent: () => true, hostedWebPolicy: hostedWebPolicyInput(),
+        });
+        expect(result).toEqual({ kind: 'unavailable', code: 'native_artifact_resource_registration_failed' });
+        const diagnostic = readActionOutputDiagnostic(result);
+        expect(diagnostic).toMatchObject({ failureCause: { phase: 'plugin_availability.native_register',
+            errorClass: 'Error', errorCode: 'EACCES', httpStatus: null } });
+        expect(JSON.stringify(diagnostic)).not.toContain('private rejected');
+        const logged = log.getLogs().at(-1);
+        expect(logged).toContain('[plugin-ui-host-api] ');
+        expect(JSON.parse(logged!.slice('[plugin-ui-host-api] '.length))).toMatchObject({
+            pluginId: lease.artifact.pluginId,
+            diagnostic: { kind: 'native_artifact_unavailable', failureDiagnostic: diagnostic },
+        });
     });
 
     it('fails closed when the canonical hosted-web policy would bind traversal outside its root', async () => {

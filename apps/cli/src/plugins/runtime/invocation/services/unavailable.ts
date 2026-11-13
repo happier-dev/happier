@@ -865,7 +865,6 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         createAvailable({ seed, params }): TargetedContributionsService | null {
             const owner = seed.readCurrentTargetedDeclarations ? createManifestTargetedContributionsService({
                 readCurrentDeclarations: seed.readCurrentTargetedDeclarations,
-                readUnavailablePlugins: seed.readUnavailableTargetedPlugins,
                 subscribeToCatalogChanges: () => () => {},
             }) : params.targetedContributions;
             return owner?.bind({

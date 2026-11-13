@@ -1,5 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { mergeTargetedContributionManifestDeclarations, type TargetedContributionManifestDeclaration } from '@happier-dev/cli-common/plugins/registration';
+import { mergeTargetedContributionManifestDeclarations, type TargetedContributionManifestDeclaration, type TargetedContributionManifestSnapshot } from '@happier-dev/cli-common/plugins/registration';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import {
@@ -21,17 +21,19 @@ export function createPluginSurfaceTargetedDeclarationSource(input: Readonly<{
     const availability = readPluginAccountAvailability(input.accountLifetime.scope);
     let machine = input.machine;
     const bindMachineSubscriptions = new Set<() => void>();
-    let machineDeclarations: readonly TargetedContributionManifestDeclaration[] = [];
+    let machineSnapshot: TargetedContributionManifestSnapshot = { declarations: [] };
     const readDeclarations = (): readonly TargetedContributionManifestDeclaration[] => mergeTargetedContributionManifestDeclarations({
         targetPluginId: input.pluginId,
         accountDeclarations: availability.readCurrentAccountExecutionDeclarations()
             .map(row => ({ manifest: row.manifest, occurrenceId: row.custodyId, sourceCustody: row.sourceCustody })),
-        machineDeclarations,
+        machineDeclarations: machineSnapshot.declarations,
     });
+    const readSnapshot = (): TargetedContributionManifestSnapshot => ({ declarations: readDeclarations(),
+        ...(machineSnapshot.unavailablePlugins === undefined ? {} : { unavailablePlugins: machineSnapshot.unavailablePlugins }) });
     return {
         readDeclarations,
         async readCurrentDeclarations(signal: AbortSignal = input.signal,
-            onAccountReady?: (declarations: readonly TargetedContributionManifestDeclaration[]) => Promise<void>) {
+            onAccountReady?: (snapshot: TargetedContributionManifestSnapshot) => Promise<void>) {
             const assertCurrent = () => {
                 signal.throwIfAborted();
                 if (!input.accountLifetime.isCurrent() || !input.isCurrent()) {
@@ -41,9 +43,9 @@ export function createPluginSurfaceTargetedDeclarationSource(input: Readonly<{
             assertCurrent();
             await availability.ensureAccountTargetDeclarations(input.pluginId);
             assertCurrent();
-            if (input.isMachineAvailable?.() === false) return readDeclarations();
+            if (input.isMachineAvailable?.() === false) return readSnapshot();
             if (onAccountReady && (machine || input.resolveMachine)) {
-                await onAccountReady(readDeclarations());
+                await onAccountReady(readSnapshot());
                 assertCurrent();
             }
             if (!machine && input.resolveMachine) {
@@ -57,9 +59,11 @@ export function createPluginSurfaceTargetedDeclarationSource(input: Readonly<{
                     accountLifetime: input.accountLifetime, signal,
                 });
                 assertCurrent();
-                machineDeclarations = result.supported ? result.sourceDeclarations : [];
+                machineSnapshot = result.supported ? { declarations: result.sourceDeclarations,
+                    ...(result.unavailablePlugins === undefined ? {} : { unavailablePlugins: result.unavailablePlugins }) }
+                    : { declarations: [] };
             }
-            return readDeclarations();
+            return readSnapshot();
         },
         subscribe(listener: () => void) {
             const unsubscribeAccount = availability.subscribe(listener, input.pluginId);

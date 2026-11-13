@@ -91,7 +91,7 @@ export type PluginActionsServiceSeed = Readonly<{
     /** Re-read the originating mounted UI caller immediately before provider effect. */
     isMountedCallerCurrent?: () => boolean | Promise<boolean>;
     /** Host-only current declaration reader for an opaque targeted operation. */
-    readCurrentTargetedDeclarations?(signal?: AbortSignal): Promise<readonly import('@happier-dev/cli-common/plugins/registration').TargetedContributionManifestDeclaration[]>;
+    readCurrentTargetedDeclarations?(signal?: AbortSignal): Promise<import('@happier-dev/cli-common/plugins/registration').TargetedContributionManifestSnapshot>;
     session?: Readonly<{ id: string }>;
     /** Host-private active-turn authority for Agent-placed Action execution. */
     readActiveTurnAdmissionWitness?(): import('./types').AgentInvocationTurnAdmissionWitness | null;
@@ -515,7 +515,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
             }), beforeHandlerInvocation: async () => {
                 throwIfInactive(params.seed, signal, undefined, true);
                 requireAdmittedTargetedOperationExecutionBinding(originalOperation, params.seed,
-                    await params.seed.readCurrentTargetedDeclarations?.(signal));
+                    (await params.seed.readCurrentTargetedDeclarations?.(signal))?.declarations);
                 throwIfInactive(params.seed, signal, undefined, true);
             } } : {}),
             ...(params.seed.requesterAccount ? { requesterAccount: params.seed.requesterAccount } : {}),
@@ -562,7 +562,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
     ): Promise<TResult> => {
         const signal = composeActionSignal(params.seed.signal, options?.signal);
         const binding = requireAdmittedTargetedOperationExecutionBinding(operation, params.seed,
-            await params.seed.readCurrentTargetedDeclarations?.(signal));
+            (await params.seed.readCurrentTargetedDeclarations?.(signal))?.declarations);
         const admittedInput = await resolveAdmittedTargetedOperationInput({
             seed: params.seed,
             assertCurrent: () => throwIfInactive(params.seed, signal, undefined, true),
@@ -584,7 +584,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
     const observeAdmittedTargetedOperation: ActionsService['observeAdmittedTargetedOperation'] = async (operation, input, invalidate, options) => {
         const sourceSignal = composeActionSignal(params.seed.signal, options?.signal);
         const binding = requireAdmittedTargetedOperationExecutionBinding(operation, params.seed,
-            await params.seed.readCurrentTargetedDeclarations?.(sourceSignal));
+            (await params.seed.readCurrentTargetedDeclarations?.(sourceSignal))?.declarations);
         const admittedInput = await resolveAdmittedTargetedOperationInput({
             seed: params.seed, assertCurrent: () => throwIfInactive(params.seed, sourceSignal, undefined, true),
             binding, input, expectedSelectedConnectedAccountRef: options?.expectedSelectedConnectedAccountRef,
@@ -950,7 +950,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
     }>> => {
         const signal = composeActionSignal(params.seed.signal, options?.signal);
         const binding = requireAdmittedTargetedOperationExecutionBinding(operation, params.seed,
-            await params.seed.readCurrentTargetedDeclarations?.(signal));
+            (await params.seed.readCurrentTargetedDeclarations?.(signal))?.declarations);
         const admittedInput = await resolveAdmittedTargetedOperationInput({
             seed: params.seed,
             assertCurrent: () => throwIfInactive(params.seed, signal, undefined, true),

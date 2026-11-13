@@ -1,4 +1,5 @@
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 
 import type {
     PluginNativeArtifactResourceProfileIsolationCapability,
@@ -101,8 +102,8 @@ export function createTauriPluginNativeArtifactResourceRegistrar(input: Readonly
             let dispatch: TauriHostedArtifactCommandInvoke;
             try {
                 dispatch = await resolveInvoke();
-            } catch {
-                return registrationFailed;
+            } catch (error) {
+                return Object.freeze(withActionFailureCauseDiagnostic(registrationFailed, error, 'plugin_availability.native_module_load'));
             }
             try {
                 const storage = registration.storage.kind === 'persistent'
@@ -127,8 +128,8 @@ export function createTauriPluginNativeArtifactResourceRegistrar(input: Readonly
                         },
                     },
                 ), registration.storagePartitionId);
-            } catch {
-                return registrationFailed;
+            } catch (error) {
+                return Object.freeze(withActionFailureCauseDiagnostic(registrationFailed, error, 'plugin_availability.native_register'));
             }
         },
         unregister: (token) => {

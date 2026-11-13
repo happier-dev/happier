@@ -25,9 +25,13 @@ export function readDaemonSourceDeclarations(runtimeRegistry: ResolvedExecutable
         if (!sourceCustody) return { status: 'unavailable', code: 'plugin_targeted_contributions_unavailable' };
         selected.push({ declaration, occurrenceId, sourceCustody });
     }
-    // Occurrences version admitted immutable manifests; custody and membership
-    // also change this token on retirement, replacement and daemon restart.
-    const sourceRevision = JSON.stringify(selected.map(row => [row.declaration.pluginId, row.occurrenceId, row.sourceCustody]));
+    const unavailablePlugins = (runtimeRegistry.contributes.unavailablePlugins ?? [])
+        .filter(source => request.sourcePluginId === undefined || source.pluginId === request.sourcePluginId);
+    // Exclusions can change while the selected declaration list remains empty.
+    // Keep conditional reuse tied to the complete admission snapshot.
+    const sourceRevision = JSON.stringify([
+        selected.map(row => [row.declaration.pluginId, row.occurrenceId, row.sourceCustody]), unavailablePlugins,
+    ]);
     if (request.knownSourceRevision === sourceRevision) return {
         status: 'sourceDeclarationsUnchanged', pluginId: request.pluginId, sourceRevision,
     };
@@ -55,5 +59,6 @@ export function readDaemonSourceDeclarations(runtimeRegistry: ResolvedExecutable
             sourceCustody,
         });
     }
-    return { status: 'sourceDeclarations', pluginId: request.pluginId, sourceRevision, sourceDeclarations };
+    return { status: 'sourceDeclarations', pluginId: request.pluginId, sourceRevision, sourceDeclarations,
+        ...(unavailablePlugins.length ? { unavailablePlugins } : {}) };
 }

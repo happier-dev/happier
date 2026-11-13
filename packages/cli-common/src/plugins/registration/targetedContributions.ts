@@ -5,22 +5,21 @@ import type { TargetedContributionPointRef, TargetedContributionObservation, Tar
 import type { PluginCancellationOptions } from './contracts.js';
 import type { AdmittedTargetedContributionSnapshot } from './targetedContributionTypes.js';
 import { createAdmittedTargetedOperationExecutionHandle } from './admittedTargetedOperation.js';
-import { resolveManifestTargetedContributions, type TargetedContributionManifestDeclaration } from './targetedContributionAdmission.js';
+import { resolveManifestTargetedContributions, type TargetedContributionManifestSnapshot } from './targetedContributionAdmission.js';
 import { normalizePluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 
 /** Binds current host-owned manifest custody to the existing target-local admission and observation owners. */
 export function createManifestTargetedContributionsService(host: Readonly<{
-    readCurrentDeclarations(signal?: AbortSignal): readonly TargetedContributionManifestDeclaration[] | Promise<readonly TargetedContributionManifestDeclaration[]>;
+    readCurrentDeclarations(signal?: AbortSignal): TargetedContributionManifestSnapshot | Promise<TargetedContributionManifestSnapshot>;
     subscribeToCatalogChanges(listener: () => void): () => void;
-    readUnavailablePlugins?(): readonly import('@happier-dev/protocol/plugins/manifest/ingest').PluginUnavailableSourceDiagnostic[];
 }>): StableTargetedContributionsOwner {
     return createTargetedContributionsService({
         subscribeToCatalogChanges(listener) {
             return host.subscribeToCatalogChanges(listener);
         },
         async readAdmittedSnapshot({ pluginId, point, signal }) {
-            const declarations = await host.readCurrentDeclarations(signal);
-            const admitted = resolveManifestTargetedContributions(declarations, host.readUnavailablePlugins?.()).read({
+            const { declarations, unavailablePlugins } = await host.readCurrentDeclarations(signal);
+            const admitted = resolveManifestTargetedContributions(declarations, unavailablePlugins).read({
                 targetPluginId: pluginId,
                 pointId: point.id,
                 protocol: point.protocol,

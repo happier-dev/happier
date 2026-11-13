@@ -156,8 +156,7 @@ export type PluginInvocationServicesSeed = Readonly<{
     /** Re-read that mounted caller at the final provider-effect boundary. */
     isMountedCallerCurrent?: () => boolean | Promise<boolean>;
     /** Host-only exact current targeted declarations, never an SDK capability. */
-    readUnavailableTargetedPlugins?(): readonly import('@happier-dev/protocol/plugins/manifest/ingest').PluginUnavailableSourceDiagnostic[];
-    readCurrentTargetedDeclarations?(signal?: AbortSignal): Promise<readonly import('@happier-dev/cli-common/plugins/registration').TargetedContributionManifestDeclaration[]>;
+    readCurrentTargetedDeclarations?(signal?: AbortSignal): Promise<import('@happier-dev/cli-common/plugins/registration').TargetedContributionManifestSnapshot>;
     session?: Readonly<{ id: string }>;
     currentSession?: HostCurrentSessionUiServices;
     signal: AbortSignal;

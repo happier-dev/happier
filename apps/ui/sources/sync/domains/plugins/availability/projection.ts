@@ -31,9 +31,10 @@ import {
 } from './reader';
 
 const readerStore = createPluginAccountAvailabilityReaderStore({
-    loadMachineDeclarations: async (scope, pluginId) => {
+    loadDeclarationBodies: async (scope, pluginId, digests) => {
+        if (!currentProjectionLifetime(scope)) return [];
         const { sync } = await import('@/sync/sync');
-        if (currentProjectionLifetime(scope)) await sync.refreshPluginAccountAvailability([pluginId]);
+        return await sync.readPluginAccountDeclarationBodies(pluginId, digests);
     },
     loadHostBundledUi: () => {
         if (!BUNDLED_PLUGIN_UI_APP_DECLARATIONS) throw new Error('Bundled Plugin UI declarations are not prepared');

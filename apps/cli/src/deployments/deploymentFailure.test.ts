@@ -52,6 +52,21 @@ describe('deployment failure diagnostics', () => {
         expect(JSON.stringify(opaque)).not.toContain('private-secret-value');
     });
 
+    it('retains closed native maintenance evidence without forwarding arbitrary PluginError details', () => {
+        const nativeFailure = { exitCode: 7, stderr: 'pg_dump: database does not exist', stderrTruncated: false };
+        const error = new PluginError({ code: 'restore_failed', details: {
+            nativeFailure, kind: 'recoveryRequired', token: 'private-native-token',
+        } });
+        const projected = ActionExecuteFailureSchema.parse(projectDeploymentFailure(error.code, error));
+        expect(projected).toMatchObject({ ok: false, errorCode: 'restore_failed', details: { nativeFailure } });
+        expect(JSON.stringify(projected)).not.toContain('private-native-token');
+        expect(projected.details).not.toHaveProperty('kind');
+        const invalid = projectDeploymentFailure(error.code, new PluginError({ code: error.code,
+            details: { nativeFailure: { ...nativeFailure, token: 'private-native-token' } } }));
+        expect(invalid.details).not.toHaveProperty('nativeFailure');
+        expect(JSON.stringify(invalid)).not.toContain('private-native-token');
+    });
+
     it('publishes the closed native backup network refusal with actionable recovery', () => {
         const code = 'service_admission_unavailable';
         const details = { reason: 'backup_destination_host_network_unavailable' };

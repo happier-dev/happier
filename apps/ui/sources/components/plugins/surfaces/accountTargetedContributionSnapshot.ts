@@ -1,5 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { resolveManifestTargetedContributions, type TargetedContributionManifestDeclaration } from '@happier-dev/cli-common/plugins/registration';
+import { resolveManifestTargetedContributions, type TargetedContributionManifestSnapshot } from '@happier-dev/cli-common/plugins/registration';
 import {
     projectPluginUiTargetedContributionIdentityV1,
     projectPluginUiTargetedContributionsV1,
@@ -41,9 +41,9 @@ export async function readAccountTargetedContributionSnapshot(input: AccountTarg
 
 function projectAccountTargetedContributionSnapshot(input: AccountTargetedContributionInput,
     availability: ReturnType<typeof readPluginAccountAvailability>,
-    declarations: readonly TargetedContributionManifestDeclaration[], assertCurrent: () => void,
+    { declarations, unavailablePlugins }: TargetedContributionManifestSnapshot, assertCurrent: () => void,
 ) {
-    const admitted = resolveManifestTargetedContributions(declarations);
+    const admitted = resolveManifestTargetedContributions(declarations, unavailablePlugins);
     const readSourceCustody = (pluginId: string, occurrenceId: string) => declarations.find(row => (
         row.manifest.id === pluginId && row.occurrenceId === occurrenceId
     ))?.sourceCustody;

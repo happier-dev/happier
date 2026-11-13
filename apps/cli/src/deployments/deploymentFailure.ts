@@ -1,4 +1,5 @@
 import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { withActionFailureDiagnostic, type ActionFailureDiagnosticInput } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { logger } from '@/ui/logger';
 import { readDeploymentAuthorizationFailure } from './deploymentAuthorizationFailure';
@@ -10,7 +11,7 @@ import { readPluginActionError, readPluginActionFailureAuthorPayload } from '@ha
 import { DeploymentSourceAdmissionFailureV1Schema, DeploymentReceiptFailureV1Schema,
     type DeploymentReceiptFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
-import { DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentMissingRequiredSecretsV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/deployment-protocol';
 import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
 
 /** The acquisition boundary supplies context; arbitrary deployment network errors
@@ -42,8 +43,10 @@ export function projectDeploymentReceiptFailure(result: ActionExecuteFailure,
 /** Preserve typed owner diagnostics across deployment exceptions and child transport. */
 export function projectDeploymentFailure(errorCode: string, error?: unknown, phase = 'deployment.failure'): ActionExecuteFailure {
     const failure = readAuthoredDeploymentFailure(errorCode, error, phase);
-    return failure.details === undefined
+    const projected = failure.details === undefined
         ? { ...failure, details: projectDeploymentFailureRecoveryV1({}) } : failure;
+    return errorCode === 'deployment_unavailable'
+        ? deploymentUnavailableDiagnostic(projected, phase, 'native_failure', error) : projected;
 }
 
 function readAuthoredDeploymentFailure(errorCode: string, error: unknown, phase: string): ActionExecuteFailure {
@@ -72,7 +75,23 @@ function readAuthoredDeploymentFailure(errorCode: string, error: unknown, phase:
     const carried = ActionExecuteFailureSchema.safeParse(error instanceof Error ? error.cause : error);
     if (carried.success && carried.data.errorCode === errorCode) return carried.data;
     const cause = error === undefined ? undefined : normalizeActionExecutorThrownError(error, phase).failureCause;
+    const retainedDetails = readDeploymentBackupMaintenanceFailureEvidenceV1(error)
+        ?? (error instanceof MachineNativeEffectAdmissionError && error.code === errorCode ? error.details : undefined);
     return { ok: false, errorCode, error: errorCode,
-        ...(error instanceof MachineNativeEffectAdmissionError && error.code === errorCode && error.details ? { details: error.details } : {}),
+        ...(retainedDetails === undefined ? {} : { details: retainedDetails }),
         ...(cause === undefined ? {} : { failureCause: cause }) };
+}
+
+/** Deployment owners supply facts; the shared Action projector alone sanitizes them. */
+export function deploymentUnavailableDiagnostic<T extends object>(value: T, phase: string,
+    causeKind: ActionFailureDiagnosticInput['causeKind'], error?: unknown): T {
+    return withActionFailureDiagnostic(value, { phase, causeKind, error }, diagnostic => {
+        logger.warnLocalFile('[Deployment] Unavailable', diagnostic);
+    });
+}
+
+export function deploymentUnavailableError(phase: string,
+    causeKind: ActionFailureDiagnosticInput['causeKind'], error?: unknown): Error & { code: 'deployment_unavailable' } {
+    return deploymentUnavailableDiagnostic(Object.assign(new Error('deployment_unavailable'),
+        { code: 'deployment_unavailable' as const }), phase, causeKind, error);
 }

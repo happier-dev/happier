@@ -527,7 +527,8 @@ export async function executeOwnServerNativeRestore(factory: OwnServerNativeRest
     if (result.kind !== 'restored' || result.verified !== true) {
         throw new PluginError({ code: result.kind === 'outcome_unknown' ? 'outcome_unknown' : result.code ?? 'restore_failed',
             message: 'Native database recovery did not verify restoration',
-            details: { kind: result.kind, nextAction: result.nextAction, steps: result.steps } });
+            details: { kind: result.kind, nextAction: result.nextAction, steps: result.steps,
+                ...(result.nativeFailure ? { nativeFailure: result.nativeFailure } : {}) } });
     }
     return result;
 }

@@ -1,5 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex } from '@noble/hashes/utils';
+import { readActionOutputDiagnostic, withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { logPluginSurfaceDiagnostic } from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
 import {
     createHostedWebAssetNativePolicyTableV1,
     type HostedWebAssetNativePolicyTableV1,
@@ -574,6 +576,15 @@ export function createPluginNativeArtifactResourceRegistry(input: Readonly<{
             (tokensByPersistentIdentity.get(identityKey)?.size ?? 0) > 0
         ),
         materialize: async (materialization) => {
+            const reportFailure = (failure: Extract<PluginNativeArtifactResourceAcquireResult, { kind: 'unavailable' }>) => {
+                const failureDiagnostic = readActionOutputDiagnostic(failure);
+                if (failureDiagnostic) logPluginSurfaceDiagnostic({
+                    pluginId: materialization.lease.artifact.pluginId,
+                    contributionId: materialization.lease.artifact.contributionId,
+                    surfaceId: null,
+                }, { kind: 'native_artifact_unavailable', failureDiagnostic });
+                return failure;
+            };
             const current = () => leaseAndConsumerAreCurrent({
                 lease: materialization.lease,
                 persistentScope: materialization.persistent.scope,
@@ -616,8 +627,9 @@ export function createPluginNativeArtifactResourceRegistry(input: Readonly<{
                     }
                     try {
                         writeDisposition = await materialization.persistent.store.write(record);
-                    } catch {
-                        return Object.freeze({ kind: 'unavailable', code: 'native_artifact_store_unavailable' });
+                    } catch (error) {
+                        return reportFailure(Object.freeze(withActionFailureCauseDiagnostic({ kind: 'unavailable' as const,
+                            code: 'native_artifact_store_unavailable' as const }, error, 'plugin_availability.native_store_write')));
                     }
                 }
                 if (!current()) {
@@ -631,8 +643,10 @@ export function createPluginNativeArtifactResourceRegistry(input: Readonly<{
                         identity,
                         files: files.map(({ relativePath, digest, byteSize }) => ({ relativePath, digest, byteSize })),
                     });
-                } catch {
-                    descriptor = null;
+                } catch (error) {
+                    return reportFailure(Object.freeze(withActionFailureCauseDiagnostic({ kind: 'unavailable' as const,
+                        code: current() ? 'native_artifact_store_unavailable' as const : 'artifact_lease_revoked' as const,
+                    }, error, 'plugin_availability.native_store_describe')));
                 }
                 if (!descriptor || !nativeDescriptorMatchesLease({ descriptor, files }) || !current()) {
                     return Object.freeze({
@@ -731,8 +745,9 @@ export function createPluginNativeArtifactResourceRegistry(input: Readonly<{
                     storage,
                     policyTable: responseTable.table,
                 }));
-            } catch {
+            } catch (error) {
                 // The registrar's result union remains fail-closed on a bridge error.
+                registrationResult = Object.freeze(withActionFailureCauseDiagnostic(registrationResult, error, 'plugin_availability.native_register'));
             } finally {
                 registration.nativeRegistrationPending = false;
             }
@@ -743,7 +758,7 @@ export function createPluginNativeArtifactResourceRegistry(input: Readonly<{
             }
             if (registrationResult.kind !== 'registered') {
                 registration.revoke();
-                return registrationResult;
+                return reportFailure(registrationResult);
             }
             if (!registration.isCurrent()) {
                 registration.revoke();

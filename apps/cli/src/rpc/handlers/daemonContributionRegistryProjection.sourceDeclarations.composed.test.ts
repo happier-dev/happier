@@ -94,7 +94,7 @@ describe('current Machine source declarations for an Account target', () => {
                 archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
             } }, ...response.sourceDeclarations];
             const service = createManifestTargetedContributionsService({
-                readCurrentDeclarations: () => declarations,
+                readCurrentDeclarations: () => ({ declarations }),
                 subscribeToCatalogChanges: () => () => {},
             }).bind({ pluginId: 'happier.triage', signal: new AbortController().signal, isCurrent: () => true });
             const observation = service.observeForSelf(TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1, { onInvalidated() {} });

@@ -22,7 +22,7 @@ export async function refreshPluginAccountAvailabilityProjection(
         if (projection) applyPluginAccountAvailabilityProjectionRefresh(projection);
     } catch (error) {
         if (isPluginAvailabilityResponseFailure(error)) {
-            failPluginAccountAvailabilityProjection({ scope: error.scope, code: error.code });
+            failPluginAccountAvailabilityProjection(error);
         }
         throw error;
     }
