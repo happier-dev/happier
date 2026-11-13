@@ -1,14 +1,15 @@
 import { removeOwnedDirectorySync } from '../utils/fs/fs.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, renameSync, statSync } from 'node:fs';
-import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { performance } from 'node:perf_hooks';
+import { tmpdir } from 'node:os';
 import { runSourceBuildCommand, sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { runWorkspaceBuildAdmission } from '../utils/proc/workspace_build_admission.mjs';
-import { isWorkspaceBundleLockActive, withWorkspaceBundleLock, WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
+import { isWorkspaceBundleLockActive, withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { isPidAlive, observePidLiveness } from '../utils/proc/pids.mjs';
 import { readWorkspaceBuildInputs, readSourceComponentBuildInputs, isSourceServerGeneratedInput } from '../utils/fs/workspaceBuildInputs.mjs';
 import { readCachedFileDigestSync } from '../utils/fs/cached_file_digest.mjs';
@@ -31,6 +32,8 @@ import { emitSourceAuthorPackages, isFirstPartyBuiltInput } from './source_autho
 import { readSourceRuntimeDependencyIdentity } from './source_author_inputs.mjs';
 import { buildSourceGuestPayload, readSourceGuestPayloadTargets } from './source_guest_payload.mjs';
 import { resolveRuntimeBuildAuthority } from '../runtime/shared/runtime_build_authority.mjs';
+import { readGreenSourceRuntimeCandidateGroups, sourceRuntimeLastGreenUnavailable } from './source_runtime_last_green.mjs';
+import { assertSourceReloadBundledPluginFailures } from '../runtime/launch/sourceReloadPluginFailures.mjs';
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
 
 import { SOURCE_CONDITION, SOURCE_RUNTIME_OUTPUT_OPTIONS, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
@@ -172,10 +175,28 @@ function sourceBundleCandidatePath({ bundleRoot, candidateKey }) {
 
 /** The completed product's publisher owns its exact locator. Domains choose
  * their key from their real capture contract, not from retained directories. */
-export async function publishSourceBundleCandidate({ bundleRoot, candidateKey, outputDir, record }) {
-  await writeJsonAtomic(sourceBundleCandidatePath({ bundleRoot, candidateKey }), {
+export async function publishSourceBundleCandidate({ bundleRoot, candidateKey, outputDir, record, producerCompletedAt, producerCandidateKey }) {
+  const candidatePath = sourceBundleCandidatePath({ bundleRoot, candidateKey });
+  if (producerCompletedAt) {
+    const previous = await readOptionalJson(candidatePath);
+    if (previous?.outputName !== basename(outputDir) && /^(?:bundle|runtime|web)-[^\\/\0]+$/.test(previous?.outputName ?? '')) {
+      // A legacy current locator also proves a successful producer. Preserve
+      // it before the newest pointer advances to an unverified capture.
+      const preservedPath = sourceBundleCandidatePath({ bundleRoot, candidateKey: `capture-${previous.outputName}` });
+      const legacyTimestamp = previous.producerCompletedAt ? null : await lstat(candidatePath);
+      await writeJsonAtomic(preservedPath, {
+        ...previous, producerCandidateKey: previous.producerCandidateKey ?? candidateKey,
+      });
+      if (legacyTimestamp) await utimes(preservedPath, legacyTimestamp.atime, legacyTimestamp.mtime);
+    }
+  }
+  const candidate = {
     outputName: basename(outputDir), inputIdentity: record.inputIdentity, reuseFingerprint: record.reuseFingerprint,
-  });
+    ...(producerCompletedAt ? { producerCompletedAt, producerCandidateKey } : {}),
+  };
+  await writeJsonAtomic(candidatePath, candidate);
+  if (producerCompletedAt) await writeJsonAtomic(sourceBundleCandidatePath({ bundleRoot,
+    candidateKey: `capture-${candidate.outputName}` }), candidate);
 }
 
 async function readReusableSourceBundle({ outputDir, record, repoDir, component, serverComponent, dbProvider, sharedSourceInputs, env, newestCompleted = false, sourceCapturedAfter, allowOlderSourceWhenInputsMatch = false }) {
@@ -686,38 +707,23 @@ async function probePreparedSourceRuntimeBundle({ built, component, repoDir, env
   }
 }
 
-/** Runtime and web consumers share candidate custody. Domain verification
- * runs outside publication; its selected/pending pin is written before the
- * existing fingerprint lease ends. No compilation or admission runs here. */
-export async function adoptReusableSourceBundle({ bundleRoot, candidateKey, component, env, signal, verify, publish }) {
-  const candidate = await readOptionalJson(sourceBundleCandidatePath({ bundleRoot, candidateKey }));
+/** Completed immutable runtime/web products need only the narrow publication
+ * owner for metadata reads and their final selected/pending pin. */
+export async function adoptReusableSourceBundle({ bundleRoot, candidateKey, publishedCandidate, component, signal, verify, publish }) {
+  const candidate = publishedCandidate ?? await readOptionalJson(sourceBundleCandidatePath({ bundleRoot, candidateKey }));
   if (typeof candidate?.outputName !== 'string' || !/^(?:bundle|runtime|web)-[^\\/\0]+$/.test(candidate.outputName)
       || !candidate.inputIdentity || !/^[a-f0-9]{64}$/.test(candidate.reuseFingerprint)) return null;
-  try {
-    // Reuse existing fingerprint custody, which reclamation already honors.
-    // Never wait for a producer or request admission while holding this lease.
-    // An admitted producer can inherit its own exact lease; a busy different
-    // candidate is a miss and goes through the ordinary cold-build owner.
-    return await withWorkspaceBundleLock(async () => {
-      // Wait out an already-loaded retainer before inspecting the product.
-      // Later scans see our fingerprint custody; current retainers also check
-      // it immediately before retirement. Only this exact metadata read waits.
-      const outputDir = join(bundleRoot, candidate.outputName);
-      const record = await withSourceBundlePublicationCustody({ bundleRoot, component, signal, operation: 'reuse-read' },
-        () => readOptionalJson(join(outputDir, 'source-bundle.json')));
-      if (record?.inputIdentity !== candidate.inputIdentity || record?.reuseFingerprint !== candidate.reuseFingerprint) return null;
-      const reusable = await verify({ record, outputDir });
-      if (!reusable) return null;
-      // The chosen product stays protected until the canonical selected or
-      // pending record pins it. Hashing and the real command probe have ended.
-      return await withSourceBundlePublicationCustody({ bundleRoot, component, signal, operation: 'reuse-select' },
-        () => publish({ ...reusable, record }));
-    }, { lockPath: sourceBundleBuildLockPath(bundleRoot, candidate.reuseFingerprint), wait: false,
-      timeoutMs: Infinity, staleAfterMs: Infinity, env, signal, errorLabel: 'source-bundle reuse lock' });
-  } catch (error) {
-    if (error.code === WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE) return null;
-    throw error;
-  }
+  const outputDir = join(bundleRoot, candidate.outputName);
+  const record = await withSourceBundlePublicationCustody({ bundleRoot, component, signal, operation: 'reuse-read' },
+    () => readOptionalJson(join(outputDir, 'source-bundle.json')));
+  if (record?.inputIdentity !== candidate.inputIdentity || record?.reuseFingerprint !== candidate.reuseFingerprint) return null;
+  const reusable = await verify({ record, outputDir });
+  if (!reusable) return null;
+  return await withSourceBundlePublicationCustody({ bundleRoot, component, signal, operation: 'reuse-select' }, async () => {
+    const completed = await readOptionalJson(join(outputDir, 'source-bundle.json'));
+    if (completed?.inputIdentity !== candidate.inputIdentity || completed?.reuseFingerprint !== candidate.reuseFingerprint) return null;
+    return await publish({ ...reusable, record: completed });
+  });
 }
 
 export function normalizeSourceCapturedAfter(value) {
@@ -738,58 +744,76 @@ export function sourceRuntimeProducerUnavailable(cause, context) {
 }
 
 async function readCompletedProducerComponents({ repoDir, stackBaseDir, components, env, signal,
-  sourceCapturedAfter, pending, reuseSelected, requireCurrentSource = false, captureFingerprints }) {
+  sourceCapturedAfter, pending, reuseSelected, requireCurrentSource = false, captureFingerprints,
+  requireLastGreen = false, loadSentinelPasses, allowOlderSourceWhenInputsMatch = true }) {
   const bundleRoot = join(dirname(stackBaseDir), 'source-bundles');
-  const candidates = await withSourceBundlePublicationCustody({ bundleRoot, signal, operation: 'producer-read' },
-    () => Promise.all(components.map((component, index) => readOptionalJson(sourceBundleCandidatePath({ bundleRoot,
-      candidateKey: captureFingerprints ? sourceRuntimeCaptureCandidateKey(captureFingerprints[index])
-        : sourceRuntimeCandidateKey({ repoDir, serverComponent: 'happier-server-light', ...component }) })))));
-  if (candidates.some(candidate => !candidate?.reuseFingerprint)) return null;
-  const locks = [...new Set(candidates.map(candidate => sourceBundleBuildLockPath(bundleRoot, candidate.reuseFingerprint)))].sort();
-  const read = async index => {
-    if (index < locks.length) return await withWorkspaceBundleLock(() => read(index + 1), {
-      lockPath: locks[index], wait: false, timeoutMs: Infinity, staleAfterMs: Infinity, env, signal,
-      errorLabel: 'source-bundle producer adoption' });
+  const keys = components.map((component, index) => captureFingerprints
+    ? sourceRuntimeCaptureCandidateKey(captureFingerprints[index])
+    : sourceRuntimeCandidateKey({ repoDir, serverComponent: 'happier-server-light', ...component }));
+  const candidateSets = await withSourceBundlePublicationCustody({ bundleRoot, signal, operation: 'producer-read' }, async () => {
+    if (requireLastGreen) {
+      const groups = await readGreenSourceRuntimeCandidateGroups({ repoDir, bundleRoot, loadSentinelPasses });
+      return groups.filter(group => keys.every(key => group.candidates.has(key)))
+        .map(group => keys.map(key => group.candidates.get(key)));
+    }
+    return [await Promise.all(keys.map(candidateKey => readOptionalJson(sourceBundleCandidatePath({ bundleRoot, candidateKey }))))];
+  });
+  for (const candidates of candidateSets) {
+    if (candidates.some(candidate => !candidate?.reuseFingerprint)) continue;
     const prepared = {};
     const records = {};
     for (const [index, descriptor] of components.entries()) {
       const candidate = candidates[index];
-      if (!/^(?:bundle|runtime)-[^\\/\0]+$/.test(candidate.outputName ?? '')) return null;
+      if (!/^(?:bundle|runtime)-[^\\/\0]+$/.test(candidate.outputName ?? '')) break;
       const outputDir = join(bundleRoot, candidate.outputName);
-      const record = await readOptionalJson(join(outputDir, 'source-bundle.json'));
-      if (record?.inputIdentity !== candidate.inputIdentity || record?.reuseFingerprint !== candidate.reuseFingerprint) return null;
-      const reusable = await readReusableSourceBundle({ outputDir, record, repoDir, serverComponent: 'happier-server-light',
+      const record = await withSourceBundlePublicationCustody({ bundleRoot, signal, operation: 'producer-record' },
+        () => readOptionalJson(join(outputDir, 'source-bundle.json')));
+      if (record?.inputIdentity !== candidate.inputIdentity || record?.reuseFingerprint !== candidate.reuseFingerprint) break;
+      const reusable = await readReusableSourceBundle({ outputDir, record, repoDir, env, serverComponent: 'happier-server-light',
         ...descriptor, newestCompleted: !requireCurrentSource
-          && !(components.length === 1 && descriptor.component === 'daemon' && sourceCapturedAfter != null),
-        // A daemon-only reload consumes only this component. Once its current
-        // authored identity matches, an older capture is byte-equivalent and
-        // can be adopted; paired/server reloads retain the explicit freshness
-        // boundary so their coordinated capture remains after the request.
+          && !(allowOlderSourceWhenInputsMatch && components.length === 1 && descriptor.component === 'daemon' && sourceCapturedAfter != null),
         sourceCapturedAfter,
-        allowOlderSourceWhenInputsMatch: components.length === 1 && descriptor.component === 'daemon' });
-      if (!reusable) return null;
+        allowOlderSourceWhenInputsMatch: allowOlderSourceWhenInputsMatch && components.length === 1 && descriptor.component === 'daemon' });
+      if (!reusable) break;
       await probePreparedSourceRuntimeBundle({ built: reusable.built, component: descriptor.component, repoDir, env, signal });
       prepared[descriptor.component] = reusable.built;
       records[descriptor.component] = record;
     }
-    if (prepared.server && prepared.daemon && await readSourceRuntimeInputConflict({ stackBaseDir, replacements: prepared })) return null;
+    if (Object.keys(prepared).length !== components.length) continue;
+    if (prepared.server && prepared.daemon && await readSourceRuntimeInputConflict({ stackBaseDir, replacements: prepared })) continue;
+    // A completed immutable product needs no producer/fingerprint lease.
+    // Publication custody validates completion and pins the chosen product;
+    // probes stay outside this short publication section.
     await withSourceBundlePublicationCustody({ bundleRoot, signal, operation: 'producer-adoption' }, async () => {
-      if (captureFingerprints) for (const descriptor of components) await publishSourceBundleCandidate({ bundleRoot,
+      if (captureFingerprints) for (const [index, descriptor] of components.entries()) await publishSourceBundleCandidate({ bundleRoot,
         outputDir: resolve(prepared[descriptor.component].runtimeDir, '../..'), record: records[descriptor.component],
-        candidateKey: sourceRuntimeCandidateKey({ repoDir, ...descriptor }) });
+        candidateKey: sourceRuntimeCandidateKey({ repoDir, ...descriptor }),
+        producerCompletedAt: candidates[index].producerCompletedAt,
+        producerCandidateKey: candidates[index].producerCandidateKey });
       for (const [component, built] of Object.entries(prepared)) prepared[component] = await selectCompletedSourceRuntimeBundle({
         stackBaseDir, component, built, signal, reuseSelected, pendingRequestId: pending?.requestId });
     });
     return prepared;
-  };
-  try { return await read(0); }
-  catch (error) { if (error.code === WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE) return null; throw error; }
+  }
+  return null;
+}
+
+// Compiler children can write inherited stdout, including during exit. Keep
+// their diagnostics on stderr and use the same result-file boundary as workspace
+// package workers so those writes cannot corrupt the finite build result.
+async function withSourceRuntimeWorkerResult(run) {
+  const directory = await mkdtemp(join(tmpdir(), 'hstack-source-result-'));
+  const resultPath = join(directory, 'result.json');
+  try {
+    await run(resultPath);
+    return JSON.parse(await readFile(resultPath, 'utf8'));
+  } finally { await rm(directory, { recursive: true, force: true }); }
 }
 
 /** QA adopts completed products. Only this repository producer request enters
  * the compiler owner, under the execution host's shared admission locks. */
 export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, components, env = process.env,
-  signal, sourceCapturedAfter, pending, reuseSelected, logger = console, stderrStream = process.stderr }) {
+  signal, sourceCapturedAfter, pending, reuseSelected, requireLastGreen = false, loadSentinelPasses, allowOlderSourceWhenInputsMatch = true, logger = console, stderrStream = process.stderr }) {
   repoDir = resolve(repoDir);
   stackBaseDir = resolve(stackBaseDir);
   signal ??= pending?.signal;
@@ -799,7 +823,7 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
   const context = resolveSourceRuntimeProducerContext({ repoDir, stackBaseDir, env });
   const requireCurrentSource = context.consumerStackName === context.producerStackName;
   const adopt = () => readCompletedProducerComponents({ repoDir, stackBaseDir, components, env: context.env,
-    signal, sourceCapturedAfter, pending, reuseSelected, requireCurrentSource });
+    signal, sourceCapturedAfter, pending, reuseSelected, requireCurrentSource, requireLastGreen, loadSentinelPasses, allowOlderSourceWhenInputsMatch });
   const report = prepared => {
     for (const [component, built] of Object.entries(prepared)) logger.error(`[source-bundle] adopted component=${component} producer=${context.producerStackName} capturedAt=${built.sourceCapture?.capturedAt} inputIdentity=${built.sourceCapture?.inputIdentity}`);
     return prepared;
@@ -807,26 +831,32 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
   try {
     const completed = await adopt();
     if (completed) return report(completed);
+    if (requireLastGreen) throw sourceRuntimeLastGreenUnavailable();
     if (!existsSync(join(repoDir, 'package.json'))) throw Object.assign(new Error('producer checkout is unavailable'), { code: 'ENOENT' });
-    const result = await runWorkspaceBuildAdmission({ repoDir,
-      launcherPath: fileURLToPath(new URL('../../bin/hstack-exec', import.meta.url)), command: process.execPath,
-      args: sourceBuildNodeArgs({ repoDir, scriptPath: fileURLToPath(import.meta.url), args: [JSON.stringify({ repoDir,
-        stackBaseDir: context.producerStackBaseDir, consumerStackBaseDir: stackBaseDir, pendingRequestId: pending?.requestId,
-        producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource })] }),
-      locks: [{ path: sourceRuntimeProducerBuildLockPath(context.producerStackBaseDir), kind: 'workspace', timeoutMs: null,
-        errorLabel: 'source runtime producer lock' }],
-      cwd: repoDir, env: context.env, signal, devStartup: true, admissionClass: 'source-bundle', stdio: ['ignore', 'pipe', 'pipe'],
-      onStderr: chunk => stderrStream.write(chunk) });
-    if (result.error) throw result.error;
-    if (result.status !== 0) {
-      const refusal = String(result.stderr).split('\n').map(line => parseSourceReloadRefusalLine(line, context.env))
-        .find(refusal => refusal?.code);
-      throw Object.assign(new Error(`producer exited with ${result.signal ?? result.status}`),
-        { code: 'source_runtime_producer_failed', signal: result.signal, diagnostic: result.stderr, ...refusal, producerFailed: true });
-    }
-    const response = JSON.parse(result.stdout);
-    const failure = readTerminalBuildFailure(response);
-    if (failure) throw failure;
+    const response = await withSingleTrailingBuildPass({ run: async () => {
+      const response = await withSourceRuntimeWorkerResult(async resultPath => {
+        const result = await runWorkspaceBuildAdmission({ repoDir,
+          launcherPath: fileURLToPath(new URL('../../bin/hstack-exec', import.meta.url)), command: process.execPath,
+          args: sourceBuildNodeArgs({ repoDir, scriptPath: fileURLToPath(import.meta.url), args: [JSON.stringify({ repoDir,
+            stackBaseDir: context.producerStackBaseDir, consumerStackBaseDir: stackBaseDir, pendingRequestId: pending?.requestId,
+            producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource, allowOlderSourceWhenInputsMatch, resultPath })] }),
+          locks: [{ path: sourceRuntimeProducerBuildLockPath(context.producerStackBaseDir), kind: 'workspace', timeoutMs: null,
+            errorLabel: 'source runtime producer lock' }],
+          cwd: repoDir, env: context.env, signal, devStartup: true, admissionClass: 'source-bundle', stdio: ['ignore', 'pipe', 'pipe'],
+          captureStdout: false, onStdout: chunk => stderrStream.write(chunk),
+          onStderr: chunk => stderrStream.write(chunk) });
+        if (result.error) throw result.error;
+        if (result.status !== 0) {
+          const refusal = String(result.stderr).split('\n').map(line => parseSourceReloadRefusalLine(line, context.env))
+            .find(refusal => refusal?.code);
+          throw Object.assign(new Error(`producer exited with ${result.signal ?? result.status}`),
+            { code: 'source_runtime_producer_failed', signal: result.signal, diagnostic: result.stderr, ...refusal, producerFailed: true });
+        }
+      });
+      const failure = readTerminalBuildFailure(response);
+      if (failure) throw failure;
+      return response;
+    } });
     return report(response);
   } catch (cause) {
     if (signal?.aborted) throw cause;
@@ -835,16 +865,16 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
 }
 
 async function prepareSourceRuntimeProducerInProcess({ repoDir, stackBaseDir, consumerStackBaseDir, pendingRequestId,
-  producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource, env = process.env, signal }) {
+  producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource, allowOlderSourceWhenInputsMatch, env = process.env, signal }) {
   if (pendingRequestId) await updatePendingSourcePreparationPhase({ stackBaseDir: consumerStackBaseDir,
     requestId: pendingRequestId, phase: 'building',
     ...(components.length === 1 ? { component: components[0].component } : {}), signal });
   const completed = await readCompletedProducerComponents({ repoDir, stackBaseDir: consumerStackBaseDir, components, env,
-    signal, sourceCapturedAfter, reuseSelected, requireCurrentSource, pending: { requestId: pendingRequestId } });
+    signal, sourceCapturedAfter, reuseSelected, requireCurrentSource, allowOlderSourceWhenInputsMatch, pending: { requestId: pendingRequestId } });
   if (completed) return completed;
   const fingerprints = await Promise.all(components.map(component => sourceBundleFingerprint({ repoDir, ...component, env })));
   const historical = await readCompletedProducerComponents({ repoDir, stackBaseDir: consumerStackBaseDir, components, env,
-    signal, sourceCapturedAfter, reuseSelected, requireCurrentSource: true, captureFingerprints: fingerprints, pending: { requestId: pendingRequestId } });
+    signal, sourceCapturedAfter, reuseSelected, requireCurrentSource: true, captureFingerprints: fingerprints, allowOlderSourceWhenInputsMatch, pending: { requestId: pendingRequestId } });
   if (historical) return historical;
   const bundleRoot = join(dirname(stackBaseDir), 'source-bundles');
   const locks = [...new Set(fingerprints)].sort().map(fingerprint => sourceBundleBuildLockPath(bundleRoot, fingerprint));
@@ -868,12 +898,15 @@ async function prepareSourceRuntimeProducerInProcess({ repoDir, stackBaseDir, co
         });
       }
       await withSourceBundlePublicationCustody({ bundleRoot, signal, operation: 'producer-completion' }, async () => {
+        const producerCompletedAt = new Date().toISOString();
         for (const descriptor of components) {
           const built = prepared[descriptor.component];
           const outputDir = resolve(built.runtimeDir, '../..');
           const record = await readOptionalJson(join(outputDir, 'source-bundle.json'));
+          const producerCandidateKey = sourceRuntimeCandidateKey({ repoDir, ...descriptor });
           await publishSourceBundleCandidate({ bundleRoot, outputDir, record,
-            candidateKey: sourceRuntimeCandidateKey({ repoDir, ...descriptor }) });
+            candidateKey: producerCandidateKey, producerCompletedAt, producerCandidateKey });
+
         }
         for (const [component, built] of Object.entries(prepared)) prepared[component] = await selectCompletedSourceRuntimeBundle({
           stackBaseDir: consumerStackBaseDir, component, built, signal, reuseSelected, pendingRequestId });
@@ -981,9 +1014,9 @@ async function buildSourceRuntimeBundleOnce({ repoDir, outputDir, component, ser
   env = process.env, signal, devStartup = false, sharedSourceInputs, logger = console, stderrStream = process.stderr }) {
   repoDir = resolve(repoDir);
   outputDir = resolve(outputDir);
-  const stdout = await runSourceBuildCommand({ repoDir, scriptPath: fileURLToPath(import.meta.url),
-    args: [JSON.stringify({ repoDir, outputDir, component, serverComponent, dbProvider, sharedSourceInputs })], env, signal, devStartup, captureStderr: true, stderrStream, admissionClass:'source-bundle' });
-  const result = JSON.parse(stdout);
+  const result = await withSourceRuntimeWorkerResult(resultPath => runSourceBuildCommand({ repoDir, scriptPath: fileURLToPath(import.meta.url),
+    args: [JSON.stringify({ repoDir, outputDir, component, serverComponent, dbProvider, sharedSourceInputs, resultPath })],
+    env, signal, devStartup, captureStderr: true, captureStdout: false, stdoutStream: stderrStream, stderrStream, admissionClass:'source-bundle' }));
   const failure = readTerminalBuildFailure(result);
   if (failure) throw failure;
   const {sourceInputDigests, inputIdentity, captureFingerprint, ...built} = result;
@@ -1049,6 +1082,8 @@ export async function admitSourceRuntimeReload({ stackBaseDir, components, ui = 
   pending.signal.throwIfAborted();
   if (components.daemon) {
     try {
+      const incumbent = await readSelectedSourceRuntimeRecord({ stackBaseDir, component: 'daemon', required: false });
+      await assertSourceReloadBundledPluginFailures({ replacementCliDir: components.daemon.runtimeDir, incumbentCliDir: incumbent?.runtimeDir });
       await assertSourceRuntimeDependenciesCurrent({ entrypoint: components.daemon.entrypoint, env, signal: pending.signal });
       await probeCliDistRuntimeImport(components.daemon.entrypoint,
         { cwd: components.daemon.cliDir, env, signal: pending.signal, timeoutMs: null });
@@ -1208,15 +1243,21 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     } else result = await withSourceCaptureRetry({ ...options, env: process.env,
       beforeRetry: () => removeOwnedDirectorySync(resolve(options.outputDir)) },
       () => buildSourceRuntimeBundleInProcess(options));
-    process.stdout.write(JSON.stringify(result));
+    if (options.resultPath) await writeFile(options.resultPath, JSON.stringify(result));
+    else process.stdout.write(JSON.stringify(result)); // Already queued pre-cutover workers.
   } catch (error) {
     await diagnoseSourceReloadFailure(error, { ...options, env: process.env });
     if (options?.producerComponents) Object.assign(error, { sourceStack: process.env.HAPPIER_STACK_STACK,
       phase: error.phase ?? 'source-producer', retryable: error.retryable ?? true,
       code: error.code ?? 'source_runtime_producer_failed' });
-    emitSourceReloadRefusal(error);
     const failure = serializeTerminalBuildFailure(error, { includeRetryableDrift: true });
-    if (failure) { process.stdout.write(JSON.stringify(failure)); }
+    // A retryable worker result is not a terminal reload refusal. The shared
+    // convergence owner settles its trailing pass before the caller reports it.
+    if (!failure || isTerminalBuildFailure(error)) emitSourceReloadRefusal(error);
+    if (failure) {
+      if (options?.resultPath) await writeFile(options.resultPath, JSON.stringify(failure));
+      else process.stdout.write(JSON.stringify(failure));
+    }
     else if (error?.name === 'AbortError') process.exitCode = 130;
     else {
       console.error(error);
@@ -1498,11 +1539,13 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
     Object.assign(result.metafile.outputs,sidecars.metafile.outputs);
     if (existsSync(join(projectDir, 'assets'))) await cp(join(projectDir, 'assets'), join(runtimeDir, 'assets'), { recursive: true });
     const projectedCli = join(daemonProjectionRoot, 'apps/cli');
+    const failuresPath = join(runtimeDir, BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH);
+    await mkdir(dirname(failuresPath), { recursive: true });
     if (derivesDaemonProjections) {
       if (existsSync(join(projectedCli, 'assets'))) await cp(join(projectedCli, 'assets'), join(runtimeDir, 'assets'), { recursive: true });
-      const failuresPath = join(runtimeDir, BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH);
-      await mkdir(dirname(failuresPath), { recursive: true });
       await cp(join(projectedCli, BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH), failuresPath);
+    } else {
+      await writeFile(failuresPath, '[]');
     }
     const nativeSource = join(projectDir, 'native/processcustody');
     const buildsProcessCustody = existsSync(join(nativeSource, 'go.mod'));

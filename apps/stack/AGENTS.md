@@ -52,14 +52,14 @@ server, daemon, SDK and Plugin UI products on their actual execution host. They
 never compile a replacement in the consumer stack. `buildSourceRuntimeBundle`
 owns runtime production and reuse; `resolveRuntimeBuildAuthority` owns producer
 identity. The existing dev reload coordinator keeps the producer current on
-eligible execution hosts, with nl3 first. A plain source reload records one
-request-start time and requires each requested server and daemon capture at or
-after that time. The coordinator forwards the same boundary to every execution
-host and any explicit UI export. For fast adoption, `--source-after=<ISO timestamp>`
-uses that fix time instead of request-start time, so an already-finished rolling
-prebuild captured at or after the fix can be reused without compiling again.
-`--allow-older-source` explicitly permits older completed compatible captures,
-while still honoring an explicit `--source-after` value. General source starts
+eligible execution hosts, with nl3 first. A plain QA source reload adopts the
+newest compatible capture whose producer run and post-capture load sentinel
+passed, without taking the producer build lease. Publication stays serialized by
+its existing lock. `--source-after=<ISO timestamp>` requires a capture at or after
+that fix time; beyond the last green capture it requests fresh producer work.
+The coordinator forwards this explicit boundary unchanged to every execution host
+and any explicit UI export. `--allow-older-source` remains accepted and still
+honors an explicit `--source-after` value. General source starts
 and other non-reload adoption keep their newest-completed default. Check the
 printed capture time and input identity before attributing a loaded fix. A
 producer failure retains the incumbent and reports the reason and recovery

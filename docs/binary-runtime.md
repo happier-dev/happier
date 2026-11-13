@@ -1594,24 +1594,34 @@ authored `files` entries, including README/API documentation and resource direct
 The strict workspace copier consumes those captured bytes; generated `dist` remains
 the current source-emission owner's output, never a checkout capture input.
 In 0.3 development, QA source stacks adopt the repository producer's completed
-compatible captures on their actual execution host. A plain source reload records
-one request-start time and requires each requested server and daemon capture at or
-after that time. The reload coordinator forwards that same boundary to every
-execution host and any explicit UI export; workers do not choose a later boundary
-from their own clocks. The request joins producer work and waits for an eligible
-capture instead of compiling in the consumer stack.
+compatible captures on their actual execution host. A plain QA source reload
+adopts the newest capture whose producer run and post-capture load sentinel
+passed, without taking the producer build lease. Publication remains serialized
+by its existing lock. The consumer never compiles its own replacement.
 
-For fast adoption, reload with `--source-after=<ISO timestamp of the fix>`.
-This explicit boundary replaces the default request-start time, allowing a
-completed rolling prebuild captured at or after the fix to be adopted without
-compiling again. For example, a prebuild captured at 12:01 can satisfy a reload
-requested at 12:05 with `--source-after=2026-11-09T12:00:00.000Z`. A plain reload
-at 12:05 still requires a capture at or after 12:05.
+Use `--source-after=<ISO timestamp of the fix>` when a reload must include a
+particular fix. The coordinator forwards that boundary unchanged to every
+execution host and any explicit UI export. A compatible completed capture at or
+after the fix can be reused; a boundary beyond the last green capture requests
+fresh producer work.
 
-`--allow-older-source` permits the newest completed compatible capture without
-the request-start requirement. An explicit `--source-after` still applies when
-both flags are present. A producer capture older than the required boundary is
-refused; a timestamp in the future requires retrying after that time.
+When no retained compatible capture has both completion facts, plain QA reload
+reports unavailable before compiler admission. Restore the canonical sentinel
+evidence or use an explicit fix boundary to request fresh producer work.
+Daemon replacement admission also requires the canonical bundled-plugin
+publication failures to be empty or unchanged from the incumbent. Missing,
+malformed or changed replacement failure evidence refuses preparation before
+cutover and preserves the incumbent with the reason.
+
+The replacement daemon's existing readiness wait also requires its new log to
+show `Machine registered` without `registration unavailable`, and its loaded
+Agent catalog count to be at least the incumbent's. A failed check reports
+`NOT_READY` with the reason after cutover. The lead re-adopts the previous green
+capture; this does not provide automatic rollback or overlapping handover.
+
+`--allow-older-source` remains accepted; an explicit `--source-after` still
+applies when both flags are present. A producer capture older than the required
+boundary is refused; a timestamp in the future requires retrying after that time.
 General source starts, web builds and daemon start/restart keep newest-completed
 adoption as their default and accept `--source-after` when a later capture is
 required. The underlying producer API keeps the same default; its caller supplies

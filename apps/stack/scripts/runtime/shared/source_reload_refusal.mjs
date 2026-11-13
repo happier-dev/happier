@@ -9,7 +9,8 @@ const componentGraphs = Object.freeze({ daemon: 'daemon', cli: 'cli', server: 's
 
 /** @typedef {{component?: string, entryGraph?: string, firstFailingModule?: string,
  * code?: string|number, phase?: string, retryable?: boolean, sourceStack?: string,
- * reason?: string, nextAction?: string, missingMigrations?: string[], failedMigration?: string}} SourceReloadRefusal */
+ * reason?: string, nextAction?: string, missingMigrations?: string[], failedMigration?: string,
+ * pluginFailures?: {pluginId: string, diagnostic: {code: string}}[]}} SourceReloadRefusal */
 
 function publicIdentifier(value, env) {
   return typeof value === 'string' && value.length > 0 && !/[\r\n]/u.test(value)
@@ -29,6 +30,13 @@ export function readSourceReloadRefusal(error, env = process.env) {
   if (typeof error.retryable === 'boolean') refusal.retryable = error.retryable;
   if (Array.isArray(error.missingMigrations)) {
     refusal.missingMigrations = error.missingMigrations.map(value => publicIdentifier(value, env)).filter(Boolean);
+  }
+  if (Array.isArray(error.pluginFailures)) {
+    refusal.pluginFailures = error.pluginFailures.flatMap(failure => {
+      const pluginId = publicIdentifier(failure?.pluginId, env);
+      const code = publicIdentifier(failure?.diagnostic?.code, env);
+      return pluginId && code ? [{ pluginId, diagnostic: { code } }] : [];
+    });
   }
   return refusal;
 }

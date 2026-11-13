@@ -26,7 +26,7 @@ import { resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath, w
 import { withPatchedProcessEnv } from '../testkit/core/env_scope.mjs';
 import { resolveHeavyweightMemoryFloorKiB } from '../utils/dev_targets/remote_commands.mjs';
 import { isJsonOwnerFileLockActive } from '../utils/proc/jsonOwnerFileLock.mjs';
-import { isWorkspaceBundleLockActive } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
+import { isWorkspaceBundleLockActive, withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 
 for (const mode of ['fixed', 'old', 'still-broken', 'unnamed']) {
   test(`web producer capture retry: ${mode}`, async t => {
@@ -303,6 +303,27 @@ if(resolve(process.argv[1]??'')===${JSON.stringify(publicOwner)}){
   const second = await exportShared(options);
   assert.equal(second.uiDir, first.uiDir, 'source edits adopt the completed capture');
   assert.equal((await exports()).length, 1, 'a QA adoption launches no compiler');
+  await t.test('default web reload refuses an export without a sentinel verdict', async () => {
+    await assert.rejects(exportShared({ ...options, requireLastGreen: true, loadSentinelPasses: [] }),
+      { code: 'source_runtime_producer_unavailable', reason: 'source_runtime_producer_capture_unavailable' });
+  });
+  await t.test('last-green web adoption bypasses busy producer and fingerprint leases', async () => {
+    const bundleRoot = fixture.path('stacks/source-bundles');
+    const record = JSON.parse(await readFile(join(first.uiDir, '../source-bundle.json'), 'utf8'));
+    const history = join(repoDir, '.project/tmp/load-sentinel/HISTORY.txt');
+    await mkdir(dirname(history), { recursive: true });
+    const passedAt = new Date().toISOString();
+    await writeFile(history, `${passedAt} PASS failed=0 passStartedAt~${passedAt} passEndedAt~${passedAt} graphs=5\n`);
+    const { readLoadSentinelPasses } = await import('../perf/load-sentinel.mjs');
+    const loadSentinelPasses = await readLoadSentinelPasses(repoDir);
+    await withWorkspaceBundleLock(() => withWorkspaceBundleLock(async () => {
+      const adopted = await exportShared({ ...options, requireLastGreen: true, loadSentinelPasses,
+        env: { ...options.env, HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: '0' } });
+      assert.equal(adopted.uiDir, first.uiDir);
+      assert.equal((await exports()).length, 1, 'adoption must not launch another Expo producer');
+    }, { lockPath: join(bundleRoot, `build-${record.reuseFingerprint}.lock`), env: options.env, signal: cancellation.signal }),
+    { lockPath: join(bundleRoot, 'build-producer.lock'), env: options.env, signal: cancellation.signal });
+  });
   const legacyUiDir = fixture.path('legacy-serving');
   await mkdir(legacyUiDir);
   await writeFile(join(legacyUiDir, 'app.js'), 'globalThis.old=true;');
@@ -417,7 +438,6 @@ await writeFile(join(web,'app.js'),'globalThis.debug = '+JSON.stringify(process.
   const bundleRoot = fixture.path('stacks/source-bundles');
   const publicationLock = join(bundleRoot, 'publication.lock');
   const completedRecord = JSON.parse(await readFile(join(first.uiDir, '../source-bundle.json'), 'utf8'));
-  const candidateLock = join(bundleRoot, `build-${completedRecord.reuseFingerprint}.lock`);
   for (let index = 0; index < 128; index += 1) {
     const directory = join(bundleRoot, `web-unrelated-${index}`);
     await mkdir(directory);
@@ -430,7 +450,6 @@ await writeFile(join(web,'app.js'),'globalThis.debug = '+JSON.stringify(process.
   let inventoryReads = 0;
   let completionReads = 0;
   let verificationUnderPublication = 0;
-  let protectedDigestReads = 0;
   filesystem.readFile = async (path, ...args) => {
     if (String(path).endsWith('source-bundle.json')) completionReads += 1;
     return await originalRead(path, ...args);
@@ -444,20 +463,16 @@ await writeFile(join(web,'app.js'),'globalThis.debug = '+JSON.stringify(process.
     if ((absolute.startsWith(repoDir) || absolute.startsWith(first.uiDir)) && isJsonOwnerFileLockActive(publicationLock)) {
       verificationUnderPublication += 1;
     }
-    if (absolute.startsWith(first.uiDir) && isWorkspaceBundleLockActive(candidateLock, { staleAfterMs: Infinity })) {
-      protectedDigestReads += 1;
-    }
     return await originalLstat(path, ...args);
   };
   syncBuiltinESMExports();
   let repeat;
   try {
     repeat = await exportShared({ ...options, outputDir: fixture.path('second'), env: { ...env, GOMAXPROCS: '3' } });
-    context.diagnostic(`web retained=128 inventoryReads=${inventoryReads} completionReads=${completionReads} verificationUnderPublication=${verificationUnderPublication} protectedDigestReads=${protectedDigestReads}`);
+    context.diagnostic(`web retained=128 inventoryReads=${inventoryReads} completionReads=${completionReads} verificationUnderPublication=${verificationUnderPublication}`);
     assert.equal(inventoryReads, 0, 'warm web lookup must not scan retained bundle directories');
     assert.ok(completionReads <= 2, 'warm web lookup reads only its chosen completion');
     assert.equal(verificationUnderPublication, 0, 'source and output digest verification run outside publication custody');
-    assert.ok(protectedDigestReads > 0, 'existing fingerprint custody protects real exported-byte verification');
   } finally {
     filesystem.readFile = originalRead;
     filesystem.readdir = originalReaddir;
@@ -593,10 +608,14 @@ await writeFile(join(web,'app.js'),'globalThis.debug = '+JSON.stringify(process.
     new Map([['../../build/build_source_runtime.mjs', pathToFileURL(runtimePath)],
       ['../../build/build_source_web_ui.mjs', pathToFileURL(publicOwner)]])));
   const { prepareSourceRuntimeReload } = await import(pathToFileURL(reloadPath));
-  const reload = () => prepareSourceRuntimeReload({ stackName: 'independent', stackBaseDir: otherStackBaseDir,
-    repoDir, args: ['--no-daemon', '--ui=export'], onHost: true,
+  const reload = sourceCapturedAfter => prepareSourceRuntimeReload({ stackName: 'independent', stackBaseDir: otherStackBaseDir,
+    repoDir, args: ['--no-daemon', '--ui=export', ...(sourceCapturedAfter ? [`--source-after=${sourceCapturedAfter}`] : [])], onHost: true,
     env: { ...env, HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light', HAPPIER_DB_PROVIDER: 'sqlite' } });
-  const firstReload = await reload();
+  const firstReload = await reload(new Date().toISOString());
+  const history = join(repoDir, '.project/tmp/load-sentinel/HISTORY.txt');
+  await mkdir(dirname(history), { recursive: true });
+  const passedAt = new Date().toISOString();
+  await writeFile(history, `${passedAt} PASS failed=0 passStartedAt~${passedAt} passEndedAt~${passedAt} graphs=5\n`);
   const selectedServerPath = join(otherStackBaseDir, 'source-runtime/selected-server.json');
   const firstServer = await readFile(selectedServerPath, 'utf8');
   const firstReloadExports = await exports();

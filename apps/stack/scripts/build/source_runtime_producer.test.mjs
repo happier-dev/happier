@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdir, readFile, writeFile, symlink, chmod, readdir, lstat } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, symlink, chmod, readdir, lstat, rm, utimes } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
@@ -15,13 +15,13 @@ import { parseArgs } from '../utils/cli/args.mjs';
 import { isDevStartupSourceDrift } from '../utils/dev/devReloadCoordinator.mjs';
 import { Writable } from 'node:stream';
 
-test('reload freshness defaults to request time and an explicit fix time permits prebuilt adoption', async () => {
+test('reload defaults to last-green adoption and preserves an explicit fix boundary', async () => {
   const { resolveSourceRuntimeReloadArguments } = await import('../runtime/launch/prepareSourceRuntimeReload.mjs');
   const requestStartedAt = Date.parse('2026-11-09T12:00:00.000Z');
   const past = '2026-11-09T11:00:00.000Z';
   const future = '2026-11-09T13:00:00.000Z';
   for (const { args, expected } of [
-    { args: ['--no-ui'], expected: requestStartedAt },
+    { args: ['--no-ui'], expected: undefined },
     { args: [`--source-after=${past}`], expected: Date.parse(past) },
     { args: [`--source-after=${future}`], expected: Date.parse(future) },
     { args: ['--allow-older-source'], expected: undefined },
@@ -70,6 +70,27 @@ async function createProducerFixture(t) {
   return { fixture, native, repoDir, cliDir, entry, compilers, env, stacks };
 }
 
+test('source runtime results survive child writes to inherited stdout through both build paths', { skip: process.platform !== 'linux' }, async t => {
+  for (const producer of [true, false]) await t.test(producer ? 'producer admission' : 'standalone build', async context => {
+    const { fixture, native, repoDir, env, stacks } = await createProducerFixture(context);
+    const childMarker = fixture.path('stdout-child-ran');
+    const child = `process.stdout.write('native-child-output\\n'); require('node:fs').writeFileSync(${JSON.stringify(childMarker)}, 'ran');`;
+    // Inject only the OS child boundary into the copied genuine worker. A
+    // preload can also run in loader threads, whose fd 1 is not this channel.
+    const worker = await readFile(native.runtimePath, 'utf8');
+    await writeFile(native.runtimePath, `import { execFileSync } from 'node:child_process';\n` + worker.replace(
+      'options = JSON.parse(process.argv[2]);',
+      `execFileSync(process.execPath, ['-e', ${JSON.stringify(child)}], { stdio: 'inherit' }); options = JSON.parse(process.argv[2]);`));
+    let diagnostics = '';
+    const stderrStream = new Writable({ write(chunk, _encoding, done) { diagnostics += chunk; done(); } });
+    const built = await native.build({ repoDir, component: 'daemon', env, signal: context.signal, stderrStream,
+      ...(producer ? { stackBaseDir: stacks[0] } : { outputDir: fixture.path('standalone-output') }) });
+    assert.equal(await readFile(childMarker, 'utf8'), 'ran', 'the real nested child wrote to inherited fd 1');
+    assert.match(diagnostics, /native-child-output/, 'inherited child diagnostics reach stderr without corrupting the result');
+    assert.equal((await import(pathToFileURL(built.entrypoint))).value, 1);
+  });
+});
+
 test('QA requests adopt one producer capture across source movement and join an explicit newer request', { skip: process.platform !== 'linux' }, async t => {
   const { native, repoDir, entry, compilers, env, stacks } = await createProducerFixture(t);
   const options = { repoDir, component: 'daemon', env, waitForSourceChanges: false };
@@ -111,6 +132,98 @@ test('QA requests adopt one producer capture across source movement and join an 
 });
 
 
+test('completed adoption bypasses busy producer and fingerprint leases', { skip: process.platform !== 'linux' }, async t => {
+  const { native, repoDir, compilers, env, stacks } = await createProducerFixture(t);
+  const options = { repoDir, component: 'daemon', env, stackBaseDir: stacks[0], waitForSourceChanges: false };
+  const first = await native.build(options);
+  const record = JSON.parse(await readFile(resolve(first.runtimeDir, '../../source-bundle.json'), 'utf8'));
+  const bundleRoot = join(dirname(stacks[0]), 'source-bundles');
+  // Prior development producers wrote these exact three locator fields.
+  // The current context locator still proves the successful whole producer.
+  let publishedAt = 0;
+  for (const name of await readdir(bundleRoot)) {
+    if (!name.startsWith('candidate-') || !name.endsWith('.json')) continue;
+    const path = join(bundleRoot, name);
+    const { outputName, inputIdentity, reuseFingerprint } = JSON.parse(await readFile(path, 'utf8'));
+    await writeFile(path, JSON.stringify({ outputName, inputIdentity, reuseFingerprint }));
+    publishedAt = Math.max(publishedAt, (await lstat(path)).mtimeMs);
+  }
+  const history = join(repoDir, '.project/tmp/load-sentinel/HISTORY.txt');
+  await mkdir(dirname(history), { recursive: true });
+  const passedAt = new Date(Math.ceil(publishedAt)).toISOString();
+  await writeFile(history, `${passedAt} PASS failed=0 passStartedAt~${passedAt} passEndedAt~${passedAt} graphs=5\n`);
+  const { sourceBundleBuildLockPath, sourceRuntimeProducerBuildLockPath } = await import(pathToFileURL(native.runtimePath));
+  await withWorkspaceBundleLock(() => withWorkspaceBundleLock(async () => {
+    const adopted = await native.build({ ...options, requireLastGreen: true, env: { ...env, HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: '0' } });
+    assert.equal(adopted.entrypoint, first.entrypoint);
+    assert.deepEqual((await readFile(compilers, 'utf8')).trim().split('\n'), ['repo-producer'],
+      'a completed capture needs no new producer allocation');
+  }, { lockPath: sourceBundleBuildLockPath(join(dirname(stacks[0]), 'source-bundles'), record.reuseFingerprint), env, signal: t.signal }),
+  { lockPath: sourceRuntimeProducerBuildLockPath(stacks[0]), env, signal: t.signal });
+});
+
+test('last-green reload selection uses the post-producer sentinel verdict and retains the incumbent when none passed', { skip: process.platform !== 'linux' }, async t => {
+  const { native, repoDir, entry, compilers, env, stacks } = await createProducerFixture(t);
+  const { prepareSourceRuntimeProducer } = await import(pathToFileURL(native.runtimePath));
+  const options = { repoDir, stackBaseDir: stacks[0], components: [{ component: 'daemon' }], env, signal: t.signal };
+  const first = (await prepareSourceRuntimeProducer(options)).daemon;
+  await assert.rejects(prepareSourceRuntimeProducer({ ...options, requireLastGreen: true }),
+    { code: 'source_runtime_producer_unavailable', reason: 'source_runtime_producer_capture_unavailable' });
+  const history = join(repoDir, '.project/tmp/load-sentinel/HISTORY.txt');
+  await mkdir(dirname(history), { recursive: true });
+  const startedAt = new Date().toISOString();
+  await writeFile(history, `${startedAt} PASS failed=0 passStartedAt~${startedAt} passEndedAt~${startedAt} graphs=5\n`);
+  await assert.rejects(prepareSourceRuntimeProducer({ ...options, requireLastGreen: true, loadSentinelPasses: [] }),
+    { code: 'source_runtime_producer_unavailable', reason: 'source_runtime_producer_capture_unavailable' },
+    'an explicitly forwarded empty verdict must not be replaced by a worker-local history');
+  await writeFile(entry, 'export const value = 2;');
+  const second = (await prepareSourceRuntimeProducer({ ...options, sourceCapturedAfter: Date.now() })).daemon;
+  assert.notEqual(second.entrypoint, first.entrypoint);
+  const adopted = (await prepareSourceRuntimeProducer({ ...options, requireLastGreen: true })).daemon;
+  assert.equal(adopted.entrypoint, first.entrypoint, 'a newer producer completion without its post-capture sentinel PASS cannot replace the last green');
+  assert.deepEqual((await readFile(compilers, 'utf8')).trim().split('\n'), ['repo-producer', 'repo-producer']);
+  const passedAt = new Date().toISOString();
+  await writeFile(history, `${passedAt} PASS failed=0 passStartedAt~${passedAt} passEndedAt~${passedAt} graphs=5\n`, { flag: 'a' });
+  const { readLoadSentinelPasses } = await import('../perf/load-sentinel.mjs');
+  const loadSentinelPasses = await readLoadSentinelPasses(repoDir);
+  await rm(history);
+  // Ordinary remote starts invoke --restart, rather than the reload worker.
+  const { buildRemoteStackCommand } = await import('../utils/dev_targets/remote_commands.mjs');
+  const { resolveSourceRuntimeReloadArguments } = await import('../runtime/launch/prepareSourceRuntimeReload.mjs');
+  const command = buildRemoteStackCommand({ name: 'worker', platform: 'posix', ssh: 'worker',
+    repoDir: '/remote/repo', cliHomeDir: '/remote/home' }, {
+    services: { daemon: true }, serverUrl: 'http://127.0.0.1:43005', stackName: 'qa',
+    runtimeMode: 'source-snapshot', env: {}, loadSentinelPasses,
+  });
+  const transportedValue = /--source-load-sentinel-passes='([^']+)'/.exec(command.replaceAll("'\"'\"'", "'"))?.[1];
+  const transported = transportedValue == null ? undefined : `--source-load-sentinel-passes=${transportedValue}`;
+  const workerRequest = resolveSourceRuntimeReloadArguments({ args: ['--restart', ...(transported ? [transported] : [])] });
+  assert.equal((await prepareSourceRuntimeProducer({ ...options, requireLastGreen: true,
+    loadSentinelPasses: workerRequest.loadSentinelPasses })).daemon.entrypoint, second.entrypoint,
+    'the worker adopts the newest producer from the forwarded sentinel verdict without a local HISTORY file');
+});
+
+test('an explicit daemon-only reload boundary captures unchanged source again', { skip: process.platform !== 'linux' }, async t => {
+  const { native, repoDir, compilers, env, stacks } = await createProducerFixture(t);
+  const first = await native.build({ repoDir, stackBaseDir: stacks[1], component: 'daemon', env });
+  const history = join(repoDir, '.project/tmp/load-sentinel/HISTORY.txt');
+  await mkdir(dirname(history), { recursive: true });
+  const passedAt = new Date().toISOString();
+  await writeFile(history, `${passedAt} PASS failed=0 passStartedAt~${passedAt} passEndedAt~${passedAt} graphs=5\n`);
+  const sourceCapturedAfter = Date.now();
+  let capture;
+  await native.prepareReload({ repoDir, stackName: 'qa-one', stackBaseDir: stacks[0], onHost: true,
+    args: ['--no-ui', '--no-server', `--source-after=${new Date(sourceCapturedAfter).toISOString()}`],
+    env: { ...env, HAPPIER_STACK_DAEMON: '1', HAPPIER_SERVER_URL: 'http://127.0.0.1:45454' },
+    onPrepared({ sourceCaptures }) { capture = sourceCaptures.daemon; } });
+  assert.ok(Date.parse(capture.capturedAt) >= sourceCapturedAfter,
+    'an explicit reload boundary requests a new capture even when the daemon authored identity is unchanged');
+  assert.notEqual(JSON.parse(await readFile(join(stacks[0], 'source-runtime/selected-daemon.json'), 'utf8')).entrypoint, first.entrypoint);
+  const lastGreen = await native.build({ repoDir, stackBaseDir: stacks[1], component: 'daemon', env, requireLastGreen: true });
+  assert.equal(lastGreen.entrypoint, first.entrypoint, 'a newer unverified capture of unchanged inputs must retain the prior green capture');
+  assert.deepEqual((await readFile(compilers, 'utf8')).trim().split('\n'), ['repo-producer', 'repo-producer']);
+});
+
 test('real source reload adopts a coherent producer pair and waits for activation before selection', { skip: process.platform !== 'linux' }, async t => {
   const { native, repoDir, entry, compilers, env, stacks } = await createProducerFixture(t);
   const serverDir = join(repoDir, 'apps/server');
@@ -123,6 +236,24 @@ test('real source reload adopts a coherent producer pair and waits for activatio
   `);
   await writeFile(join(serverDir, 'scripts/migrate.sqlite.deploy.ts'), 'export async function runSqliteMigrationDeploy() {}');
   await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(serverDir, 'node_modules/esbuild'), 'dir');
+  const { prepareSourceRuntimeProducer } = await import(pathToFileURL(native.runtimePath));
+  await prepareSourceRuntimeProducer({ repoDir, stackBaseDir: stacks[1], components: [
+    { component: 'server', serverComponent: 'happier-server-light', dbProvider: 'sqlite' }, { component: 'daemon' },
+  ], env, sourceCapturedAfter: Date.now(), signal: t.signal });
+  const bundleRoot = join(dirname(stacks[0]), 'source-bundles');
+  const legacyCompletedAt = Date.now() - 1000;
+  let locatorIndex = 0;
+  for (const name of (await readdir(bundleRoot)).filter(name => name.startsWith('candidate-'))) {
+    const locatorPath = join(bundleRoot, name);
+    const { outputName, inputIdentity, reuseFingerprint } = JSON.parse(await readFile(locatorPath, 'utf8'));
+    await writeFile(locatorPath, JSON.stringify({ outputName, inputIdentity, reuseFingerprint }));
+    const pointerTime = new Date(legacyCompletedAt + locatorIndex++);
+    await utimes(locatorPath, pointerTime, pointerTime);
+  }
+  const history = join(repoDir, '.project/tmp/load-sentinel/HISTORY.txt');
+  await mkdir(dirname(history), { recursive: true });
+  const passedAt = new Date().toISOString();
+  await writeFile(history, `${passedAt} PASS failed=0 passStartedAt~${passedAt} passEndedAt~${passedAt} graphs=5\n`);
   let activate;
   const activation = new Promise(resolve => { activate = resolve; });
   let capture;
@@ -140,14 +271,28 @@ test('real source reload adopts a coherent producer pair and waits for activatio
   }));
   assert.deepEqual(records.map(record => record.sourceCapture.capturedAt), [capture.server.capturedAt, capture.server.capturedAt]);
   assert.deepEqual((await readFile(compilers, 'utf8')).trim().split('\n'), ['repo-producer']);
+  const newerUnverifiedPair = await prepareSourceRuntimeProducer({ repoDir, stackBaseDir: stacks[1], components: [
+    { component: 'server', serverComponent: 'happier-server-light', dbProvider: 'sqlite' }, { component: 'daemon' },
+  ], env, sourceCapturedAfter: Date.now(), signal: t.signal });
+  assert.notEqual(newerUnverifiedPair.daemon.sourceCapture.capturedAt, capture.daemon.capturedAt);
+  await native.prepareReload({ repoDir, stackName: 'qa-one', stackBaseDir: stacks[0], args: ['--no-ui'], onHost: true,
+    env: { ...env, HAPPIER_STACK_DAEMON: '1', HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light' },
+    onPrepared({ sourceCaptures }) {
+      for (const component of ['server', 'daemon']) assert.equal(sourceCaptures[component].capturedAt, capture[component].capturedAt,
+        'a newer unverified pair with unchanged inputs must retain the prior coherent green pair');
+    } });
   const reloadRequestedAt = Date.now();
   await writeFile(entry, 'export const value = 2;');
   await native.prepareReload({ repoDir, stackName: 'qa-one', stackBaseDir: stacks[0], args: ['--no-ui'], onHost: true,
     env: { ...env, HAPPIER_STACK_DAEMON: '1', HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light' },
     onPrepared({ sourceCaptures }) {
-      for (const component of ['server', 'daemon']) assert.ok(Date.parse(sourceCaptures[component].capturedAt) >= reloadRequestedAt,
-        `plain reload must capture ${component} after the reload request`);
+      for (const component of ['server', 'daemon']) assert.equal(sourceCaptures[component].capturedAt, capture[component].capturedAt,
+        `plain reload adopts the last-green ${component} capture across authored source movement`);
     } });
+  assert.deepEqual((await readFile(compilers, 'utf8')).trim().split('\n'), ['repo-producer', 'repo-producer']);
+  await native.prepareReload({ repoDir, stackName: 'qa-one', stackBaseDir: stacks[0],
+    args: ['--no-ui', `--source-after=${new Date(reloadRequestedAt).toISOString()}`], onHost: true,
+    env: { ...env, HAPPIER_STACK_DAEMON: '1', HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light' } });
   const daemonSelection = JSON.parse(await readFile(join(stacks[0], 'source-runtime/selected-daemon.json'), 'utf8'));
   assert.equal((await import(pathToFileURL(daemonSelection.entrypoint))).value, 2);
   const completed = JSON.parse(await readFile(resolve(dirname(daemonSelection.entrypoint), '../../../source-bundle.json'), 'utf8'));
@@ -245,9 +390,10 @@ test('producer JSON entry keeps in-process console diagnostics off stdout', { sk
   // any producer logic or requiring a mutation of the shared dependency tree.
   await writeFile(preload, `if (process.argv[1] === ${JSON.stringify(native.runtimePath)}) process.on('exit', () => console.log(${JSON.stringify(diagnostic)}));`);
   const stdout = await native.runSourceCommand({ repoDir, scriptPath: native.runtimePath,
-    args: [JSON.stringify({ repoDir, outputDir: fixture.path('output'), component: 'daemon' })],
+    args: [JSON.stringify({ repoDir, outputDir: fixture.path('output'), component: 'daemon', resultPath: fixture.path('worker-result.json') })],
     env: { ...env, NODE_OPTIONS: `${env.NODE_OPTIONS ?? ''} --import=${pathToFileURL(preload).href}` }, captureStderr: true });
-  const built = JSON.parse(stdout);
+  assert.equal(stdout, '', 'worker stdout is diagnostic-only and empty for console diagnostics');
+  const built = JSON.parse(await readFile(fixture.path('worker-result.json'), 'utf8'));
   assert.equal((await import(pathToFileURL(built.entrypoint))).value, 1);
 });
 
@@ -273,3 +419,24 @@ for (const mode of ['fixed', 'old', 'still-broken']) {
       mode === 'old' ? 0 : 1, 'one retry diagnostic names the failing source and both timestamps');
   });
 }
+
+test('recovering dependency drift does not publish a refusal before the producer settles', { skip: process.platform !== 'linux' }, async t => {
+  const { fixture, native, repoDir, entry, env, stacks } = await createProducerFixture(t);
+  const { resolveDependencyRefreshLockPath } = await import('../utils/proc/dependency_refresh.mjs');
+  const generationPath = `${resolveDependencyRefreshLockPath(repoDir, env)}.generation`;
+  await mkdir(dirname(generationPath), { recursive: true });
+  await writeFile(generationPath, JSON.stringify({ generation: 'initial', completedGeneration: 'initial' }));
+  const witness = fixture.path('drift-once');
+  await writeFile(entry, `import {existsSync,writeFileSync} from 'node:fs';
+    if (!existsSync(${JSON.stringify(witness)})) {
+      writeFileSync(${JSON.stringify(witness)}, 'drifted');
+      writeFileSync(${JSON.stringify(generationPath)}, JSON.stringify({generation:'new',completedGeneration:'new'}));
+    }
+    export const value = 42;`);
+  let diagnostics = '';
+  const stderrStream = new Writable({ write(chunk, _encoding, done) { diagnostics += chunk; done(); } });
+  const built = await native.build({ repoDir, component: 'daemon', env, stackBaseDir: stacks[0], stderrStream });
+  assert.equal((await import(pathToFileURL(built.entrypoint))).value, 42);
+  assert.doesNotMatch(diagnostics, /^HSTACK_SOURCE_RELOAD_REFUSAL=/m,
+    'a worker with a trailing pass available cannot publish a terminal reload refusal');
+});

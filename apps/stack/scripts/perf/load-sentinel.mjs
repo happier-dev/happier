@@ -215,3 +215,16 @@ export async function watchLoadSentinel({ repoDir, signal, post, onResult, graph
   }
   if (failure && !signal.aborted) throw failure;
 }
+
+/** Read the sentinel runner's existing completed verdicts; graph samples and
+ * partial/in-progress passes never manufacture a green result. */
+export async function readLoadSentinelPasses(repoDir) {
+  let history;
+  try { history = await readFile(join(repoDir, '.project/tmp/load-sentinel/HISTORY.txt'), 'utf8'); }
+  catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+  return history.split('\n').flatMap(line => {
+    const match = /^\S+ PASS failed=0 passStartedAt~(\S+) passEndedAt~(\S+) graphs=\d+\s*$/.exec(line);
+    if (!match || !Number.isFinite(Date.parse(match[1])) || !(Date.parse(match[2]) >= Date.parse(match[1]))) return [];
+    return [{ startedAt: match[1], endedAt: match[2] }];
+  });
+}

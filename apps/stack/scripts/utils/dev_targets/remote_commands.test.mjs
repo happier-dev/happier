@@ -5377,3 +5377,16 @@ test('agents and ElevenLabs shared source resolvers skip publication in both dis
     assert.equal(resolveRemoteCommandPolicy(unknown, { repoRoot: root, cwd }).kind, 'runtime');
   }
 });
+
+test('ordinary source starts transport sentinel facts without retaining them in stack environment on both platforms', () => {
+  const loadSentinelPasses = [{ startedAt: '2026-11-12T16:30:26.000Z', endedAt: '2026-11-12T16:31:26.000Z' }];
+  for (const target of [posix, windows]) {
+    const command = buildRemoteStackCommand(target, { services: { daemon: true },
+      serverUrl: 'http://127.0.0.1:43005', stackName: 'green-qa', runtimeMode: 'source-snapshot',
+      env: {}, loadSentinelPasses });
+    const text = target.platform === 'windows' ? Buffer.from(command.split(' ').at(-1), 'base64').toString('utf16le') : command;
+    assert.ok(text.includes('--source-load-sentinel-passes='));
+    assert.ok(text.includes(JSON.stringify(loadSentinelPasses)));
+    assert.ok(!text.includes('HAPPIER_STACK_LOAD_SENTINEL_PASSES='));
+  }
+});

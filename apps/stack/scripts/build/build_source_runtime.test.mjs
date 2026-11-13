@@ -1,3 +1,5 @@
+import { readSourceReloadRefusal, parseSourceReloadRefusalLine } from '../runtime/shared/source_reload_refusal.mjs';
+import { projectStackReloadVerification } from '../stack/reload_verdict.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { chmod, cp, mkdtemp, mkdir, writeFile, readFile, realpath, rename, symlink, rm, access, readdir, stat, utimes, open } from 'node:fs/promises';
@@ -317,6 +319,31 @@ test('dependency publication rejects source completion before writing or selecti
   }), { code: 'BUILD_INPUTS_CHANGED' });
   assert.equal(published, false);
   await assert.rejects(readFile(join(outputDir, 'source-bundle.json')), { code: 'ENOENT' });
+});
+
+test('reload recaptures retryable dependency drift before activating the replacement', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-reload-dependency-recapture-', registerCleanup: false });
+  t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
+  const repoDir = await createReloadDaemonRepo(fixture, 'export const ready = true;');
+  const native = await installSourceAdmissionFixture(fixture.root);
+  const env = { ...process.env, ...native.env, HAPPIER_STACK_HOME_DIR: fixture.path('home'),
+    HAPPIER_STACK_DAEMON: '1', HAPPIER_SERVER_URL: 'http://fixture.invalid' };
+  const generationPath = `${resolveDependencyRefreshLockPath(repoDir, env)}.generation`;
+  await mkdir(dirname(generationPath), { recursive: true });
+  await writeFile(generationPath, JSON.stringify({ generation: 'initial', completedGeneration: 'initial' }));
+  const witness = fixture.path('drifted-once');
+  await writeFile(join(repoDir, 'apps/cli/src/index.ts'), `import { existsSync, writeFileSync } from 'node:fs';
+    if (!existsSync(${JSON.stringify(witness)})) {
+      writeFileSync(${JSON.stringify(witness)}, 'drifted');
+      writeFileSync(${JSON.stringify(generationPath)}, JSON.stringify({ generation: 'replacement', completedGeneration: 'replacement' }));
+    }
+    export const ready = true;`);
+  const stackBaseDir = fixture.path('stacks/consumer');
+  await native.prepareReload({ stackName: 'consumer', repoDir, stackBaseDir, env, onHost: true,
+    args: ['--no-server', '--no-ui', `--source-after=${new Date().toISOString()}`] });
+  assert.equal(await readFile(witness, 'utf8'), 'drifted');
+  const selected = JSON.parse(await readFile(join(stackBaseDir, 'source-runtime/selected-daemon.json'), 'utf8'));
+  assert.equal((await import(pathToFileURL(selected.entrypoint))).ready, true);
 });
 
 test('dependency drift preserves its refusal while removing read-only captured author packages', { skip: process.platform !== 'linux' }, async t => {
@@ -2548,6 +2575,9 @@ test('source reload and required startup reuse agree on a shared Postgres provid
 }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-reload-shared-postgres-', registerCleanup: false });
   t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
+  const native = process.platform === 'linux' ? await installSourceAdmissionFixture(fixture.root)
+    : { prepareReload: prepareSourceRuntimeReload, env: process.env };
+  const sourceAfter = new Date().toISOString();
   const repoDir = fixture.path('repo');
   const serverDir = join(repoDir, 'apps/server');
   await Promise.all(['sources', 'scripts', 'node_modules'].map(path => mkdir(join(serverDir, path), { recursive: true })));
@@ -2587,16 +2617,16 @@ test('source reload and required startup reuse agree on a shared Postgres provid
   // Exercise real preparation, canonical Postgres smoke skip and activation.
   // The smoke suite separately proves sqlite/pglite isolated health admission.
   const stackBaseDir = fixture.path('stacks/consumer');
-  const env = { ...process.env,
+  const { env } = sourceProducerFixtureOptions({ stackBaseDir, env: { ...native.env,
     HAPPIER_STACK_REPO_DIR: repoDir,
     HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light',
     HAPPIER_STACK_DAEMON: '0',
     HAPPIER_DB_PROVIDER: 'sqlite',
     HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'producer',
     HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE: sourceEnvPath,
-  };
-  await prepareSourceRuntimeReload({ stackName: 'consumer', stackBaseDir, repoDir,
-    args: ['--no-daemon', '--no-ui'], env, onHost: true });
+  } });
+  await native.prepareReload({ stackName: 'consumer', stackBaseDir, repoDir,
+    args: ['--no-daemon', '--no-ui', `--source-after=${sourceAfter}`], env, onHost: true });
 
   const selection = JSON.parse(await readFile(join(stackBaseDir, 'source-runtime/selected-server.json'), 'utf8'));
   const selectedBundle = JSON.parse(await readFile(resolve(dirname(selection.entrypoint), '../../../source-bundle.json'), 'utf8'));
@@ -2631,6 +2661,9 @@ async function reloadFixtureGraph(t, source) {
     dependencyPublication: await readFixtureDependencyPublication(fixture.root) };
   await writeFile(daemon.entrypoint, source);
   await writeFile(join(candidateRoot, 'source-bundle.json'), JSON.stringify(daemon));
+  const candidateFailures = join(runtimeDir, '.project/tmp/bundled-plugin-publication/failures.json');
+  await mkdir(dirname(candidateFailures), { recursive: true });
+  await writeFile(candidateFailures, '[]');
   const incumbentRoot = fixture.path('incumbent');
   const incumbentRuntimeDir = join(incumbentRoot, 'apps/cli');
   const old = { entrypoint: join(incumbentRuntimeDir, 'src/index.mjs') };
@@ -3011,7 +3044,6 @@ test('completed source runtime lookup reads one candidate and verifies outside p
   const completed = JSON.parse(await readFile(completionPath, 'utf8'));
   assert.equal(Object.hasOwn(first, 'captureFingerprint'), false);
   assert.equal(Object.hasOwn(completed, 'captureFingerprint'), false, 'capture lookup metadata stays private to the finite producer');
-  const candidateLock = join(bundleRoot, `build-${completed.reuseFingerprint}.lock`);
   await rm(join(graph.stackBaseDir, 'source-runtime/selected-daemon.json'));
   for (let index = 0; index < 128; index += 1) {
     const directory = join(bundleRoot, `bundle-unrelated-${index}`);
@@ -3033,7 +3065,6 @@ test('completed source runtime lookup reads one candidate and verifies outside p
   let inventoryReads = 0;
   let probes = 0;
   let probesUnderPublication = 0;
-  let protectedProbes = 0;
   let hashingUnderPublication = 0;
   fs.readFile = async (path, ...args) => {
     if (basename(String(path)) === 'source-bundle.json') {
@@ -3055,24 +3086,21 @@ test('completed source runtime lookup reads one candidate and verifies outside p
     if (args[1]?.[0] === first.entrypoint) {
       probes += 1;
       if (isJsonOwnerFileLockActive(publicationLock)) probesUnderPublication += 1;
-      if (isWorkspaceBundleLockActive(candidateLock, { staleAfterMs: Infinity })) protectedProbes += 1;
     }
     return originalSpawn(...args);
   };
   syncBuiltinESMExports();
   try {
     assert.equal((await build(options)).entrypoint, first.entrypoint);
-    t.diagnostic(`retained=128 inventoryReads=${inventoryReads} completionReads=${completionReads} probesUnderPublication=${probesUnderPublication} protectedProbes=${protectedProbes}`);
+    t.diagnostic(`retained=128 inventoryReads=${inventoryReads} completionReads=${completionReads} probesUnderPublication=${probesUnderPublication}`);
     assert.equal(inventoryReads, 0, 'warm lookup must not scan N retained bundle directories');
     assert.equal(completionReads, 2, 'only the chosen record and its final selection are read');
     assert.equal(protectedCompletionReads, 2, 'short completion admission and final selection both exclude retirement');
     assert.equal(hashingUnderPublication, 0);
     assert.equal(probes, 1);
     assert.equal(probesUnderPublication, 0, 'the real daemon import probe must run outside publication custody');
-    assert.equal(protectedProbes, 1, 'existing fingerprint custody protects the chosen graph until selection');
-    assert.equal(isWorkspaceBundleLockActive(candidateLock, { staleAfterMs: Infinity }), false);
     assert.deepEqual(JSON.parse(await readFile(join(graph.stackBaseDir, 'source-runtime/selected-daemon.json'), 'utf8')),
-      { entrypoint: first.entrypoint }, 'selection pins the candidate after fingerprint custody ends');
+      { entrypoint: first.entrypoint }, 'publication selection pins the completed candidate');
   } finally {
     fs.readFile = original;
     fs.lstat = originalLstat;
@@ -4891,3 +4919,71 @@ for (const shared of [false,true]) test(`cancelling ${shared ? 'shared' : 'admit
         'a later publication reclaims the cancelled producer without reclaiming active producers');
     }
   });
+
+
+for (const publicationCase of ['changed', 'empty', 'unchanged']) {
+  test(`source reload bundled publication ${publicationCase} preserves the admitted plugin failure contract`, async t => {
+    const graph = await reloadFixtureGraph(t, 'export {};');
+    const failure = { packageName: '@happier-dev/plugins-example', pluginId: 'example',
+      diagnostic: { code: 'plugin_manifest_invalid', message: 'Manifest rejected' } };
+    const incumbentFailures = [failure];
+    const replacementFailures = publicationCase === 'empty' ? []
+      : publicationCase === 'unchanged' ? incumbentFailures
+      : [{ ...failure, diagnostic: { ...failure.diagnostic, message: '/private/plugin-path/manifest.json rejected' } }];
+    const artifactPath = '.project/tmp/bundled-plugin-publication/failures.json';
+    for (const [cliDir, failures] of [[dirname(dirname(graph.old.entrypoint)), incumbentFailures],
+      [graph.daemon.runtimeDir, replacementFailures]]) {
+      const path = join(cliDir, artifactPath);
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, JSON.stringify(failures));
+    }
+    const admission = admitSourceRuntimeReload({ stackBaseDir: graph.stackBaseDir,
+      components: { daemon: graph.daemon }, pending: graph.pending });
+    if (publicationCase === 'changed') {
+      await assert.rejects(admission, error => {
+        assert.equal(error.code, 'ESOURCERELOADNOTREADY');
+        assert.equal(error.reason, 'bundled_plugin_failures_changed');
+        const pluginFailures = [{ pluginId: 'example', diagnostic: { code: 'plugin_manifest_invalid' } }];
+        assert.deepEqual(error.pluginFailures, pluginFailures);
+        assert.match(error.message, /example.*plugin_manifest_invalid/);
+        assert.ok(!error.message.includes('/private/plugin-path'));
+        const transported = parseSourceReloadRefusalLine('HSTACK_SOURCE_RELOAD_REFUSAL='
+          + JSON.stringify(readSourceReloadRefusal(error)));
+        assert.equal(transported.phase, 'bundled-plugin-publication');
+        assert.equal(transported.component, 'daemon');
+        assert.deepEqual(transported.pluginFailures, pluginFailures);
+        assert.ok(!JSON.stringify(transported).includes('/private/plugin-path'));
+        assert.deepEqual(projectStackReloadVerification({ failure: { check: 'start', error: transported } }), {
+          status: 'NOT_READY', check: 'start', baseline: 'unavailable',
+          evidence: { code: 'ESOURCERELOADNOTREADY', reason: 'bundled_plugin_failures_changed', pluginFailures },
+        });
+        return true;
+      });
+    } else {
+      await (await admission).activate();
+      assert.deepEqual(JSON.parse(await readFile(graph.selectedPath, 'utf8')), { entrypoint: graph.daemon.entrypoint });
+    }
+    if (publicationCase === 'changed') {
+      assert.deepEqual(JSON.parse(await readFile(graph.selectedPath, 'utf8')), graph.old);
+    }
+    assert.deepEqual(JSON.parse(await readFile(graph.runtimePath, 'utf8')), graph.runtime);
+  });
+}
+
+
+for (const artifactCase of ['missing', 'malformed']) {
+  test(`source reload bundled publication ${artifactCase} refuses an unknown replacement`, async t => {
+    const graph = await reloadFixtureGraph(t, 'export {};');
+    const artifact = join(graph.daemon.runtimeDir, '.project/tmp/bundled-plugin-publication/failures.json');
+    if (artifactCase === 'missing') await rm(artifact);
+    else await writeFile(artifact, '{}');
+    await assert.rejects(admitSourceRuntimeReload({ stackBaseDir: graph.stackBaseDir,
+      components: { daemon: graph.daemon }, pending: graph.pending }), error => {
+      assert.equal(error.code, 'ESOURCERELOADNOTREADY');
+      assert.equal(error.reason, 'bundled_plugin_failures_unavailable');
+      return true;
+    });
+    assert.deepEqual(JSON.parse(await readFile(graph.selectedPath, 'utf8')), graph.old);
+    assert.deepEqual(JSON.parse(await readFile(graph.runtimePath, 'utf8')), graph.runtime);
+  });
+}

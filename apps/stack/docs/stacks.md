@@ -186,11 +186,28 @@ source changes. For fast adoption of a completed prebuild, add
 hstack stack start exp1 --runtime=source --restart --verify --source-after=2026-11-09T12:00:00.000Z
 ```
 
-The explicit fix time replaces the default request-start boundary. A compatible
-prebuild captured at or after that fix can be reused without compiling again.
-A plain reload requires captures at or after its request time. Preparation still
+A plain QA reload adopts the newest compatible capture whose producer run and
+post-capture load sentinel passed, without waiting for the producer build lease.
+An explicit fix time requires a capture at or after that fix; a boundary beyond
+the last green capture requests fresh producer work. If no retained capture has
+a completed producer run and a passing post-capture sentinel, preparation reports
+unavailable; restore the sentinel evidence or request fresh work with an explicit
+`--source-after`. Preparation still
 checks the replacement and the existing restart owner performs cutover. Startup
 and verification still run after fast adoption.
+Before cutover, daemon replacement admission requires its bundled-plugin
+publication failures to be empty or unchanged from the incumbent. Missing or
+malformed replacement evidence, or a changed failure list, refuses preparation
+and retains the incumbent with the reason.
+The replacement daemon's existing readiness wait also requires its new log to
+show `Machine registered` without `registration unavailable`, and its loaded
+Agent catalog count to be at least the incumbent's. A failed check reports
+`NOT_READY` with the reason after cutover. Bundled plugin publication refusals name each failing plugin and diagnostic code, omitting diagnostic messages and paths. The lead re-adopts the previous green
+capture; this does not provide automatic rollback or overlapping handover.
+Ordinary remote source starts also forward the controller sentinel verdicts to
+the worker reload preparation; they do not require worker-local sentinel history.
+These facts are invocation arguments, never retained Stack environment.
+
 App-only screen edits are served by borrowed Expo/Metro; refresh the app or
 browser to replay them. A full reload still applies its runtime capture boundary,
 even when the edited screen is outside the server and daemon inputs.
@@ -275,7 +292,10 @@ an SSH disconnect cannot terminate that owner. Transport-only SSH or tunnel
 loss uses the existing reconnect path, verifies health and selected/loaded
 identity, and reattaches without startup, retirement or source capture. If the
 runtime is gone after SSH loss, recovery restarts its recorded source selection
-with `--reuse-source-runtime`. Explicit Stop still retires the recorded owner,
+with `--reuse-source-runtime`. Local source recovery also accepts this flag with
+`--runtime=source --no-dev-targets`; the printed cleanup recovery command includes
+these flags so it can reuse the retained capture after Stop clears runtime state.
+Explicit Stop still retires the recorded owner,
 and the owner-death watchdog still sweeps a runtime whose owner actually dies.
 
 A source start superseded by a newer start is terminal for the older controller.

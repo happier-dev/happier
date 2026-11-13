@@ -22,23 +22,27 @@ import { emitSourceReloadRefusal, formatSourceReloadRefusal, recordSourceReloadR
 import { preflightSourceRuntimeMigrations } from './preflightSourceRuntimeMigrations.mjs';
 import { emitSourceRuntimeSourceTimes, formatSourceRuntimeSourceTimes } from '../shared/source_bundle_record.mjs';
 import { redactFailureDiagnostic } from '../../utils/proc/proc.mjs';
+import { readLoadSentinelPasses } from '../../perf/load-sentinel.mjs';
 
 /** Normalize once at the reload boundary, before dispatch to execution hosts. */
-export function resolveSourceRuntimeReloadArguments({ args, requestStartedAt = Date.now() }) {
+export function resolveSourceRuntimeReloadArguments({ args }) {
   const { flags, kv } = parseArgs(args);
   const requestedBoundary = normalizeSourceCapturedAfter(kv.get('--source-after'));
-  // An explicit fix time permits fast adoption of a completed rolling prebuild.
-  // The same boundary travels to every worker instead of advancing its clock.
-  const sourceCapturedAfter = requestedBoundary ?? (flags.has('--allow-older-source') ? undefined : requestStartedAt);
+  // Plain reloads use the producer's last-green capture. Only an explicit fix
+  // boundary requests newer source, unchanged across execution hosts.
+  const sourceCapturedAfter = requestedBoundary;
   if (sourceCapturedAfter != null) args = [...(args ?? []), `--source-after=${new Date(sourceCapturedAfter).toISOString()}`];
-  return { args, flags, kv, sourceCapturedAfter };
+  const forwardedPasses = kv.get('--source-load-sentinel-passes');
+  const loadSentinelPasses = forwardedPasses == null ? undefined : JSON.parse(forwardedPasses);
+  return { args, flags, kv, sourceCapturedAfter, loadSentinelPasses };
 }
 
 /** Called by the existing restart owner before any incumbent retirement. */
 export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repoDir, args, env,
-  activation = Promise.resolve(true), onPrepared = async () => {}, onHost = false, onPhase, sourceStartRequestId }) {
+  activation = Promise.resolve(true), onPrepared = async () => {}, onHost = false, onPhase, sourceStartRequestId, loadSentinelPasses }) {
   const request = resolveSourceRuntimeReloadArguments({ args });
   const { flags, kv, sourceCapturedAfter } = request;
+  if (sourceCapturedAfter == null) loadSentinelPasses ??= request.loadSentinelPasses ?? await readLoadSentinelPasses(repoDir);
   args = request.args;
   const uiMode = resolveSourceQaUiMode({ uiMode: kv.get('--ui') ?? (flags.has('--ui') ? '' : undefined),
     noUi: flags.has('--no-ui'), consumerStackName: stackName, producerStackName: env.HAPPIER_STACK_EXPO_SOURCE_STACK });
@@ -79,7 +83,7 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
     // waiting for an edit. This record carries logs and terminal outcomes.
     await writeJsonAtomic(statusPath, { logPath });
     await log('[reload] preparing replacement while incumbent runtime remains loaded');
-    await log(`[reload] source capture boundary: ${sourceCapturedAfter == null ? 'newest completed compatible capture' : new Date(sourceCapturedAfter).toISOString()}; fast adoption: --source-after=<ISO fix time> can reuse a completed rolling prebuild`);
+    await log(`[reload] source capture boundary: ${sourceCapturedAfter == null ? 'newest last-green compatible capture' : new Date(sourceCapturedAfter).toISOString()}; fast adoption: --source-after=<ISO fix time> can reuse a completed rolling prebuild`);
     if (placement?.target && !connection.startServer) {
       throw new Error('[reload] remote server placement cannot be activated with an external-server source start; incumbent retained');
     }
@@ -107,7 +111,7 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
             env: { ...env, HAPPIER_STACK_SERVER_COMPONENT: serverComponent,
               HAPPIER_SERVER_URL: connection.startServer
                 ? (await resolveStackServerEndpoint({ env, stackName })).internalServerUrl : connection.internalServerUrl },
-            sourceStartRequestId: pending.requestId,
+            sourceStartRequestId: pending.requestId, loadSentinelPasses,
             signal: pending.signal, onPhase: (target, phase) => pending.setPhase(phase, target),
             onLog: message => { retainLog(`${message}\n`); } });
         }
@@ -115,7 +119,8 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       })();
       const localPreparation = localComponents.length ? prepareSourceRuntimeProducer({ repoDir, stackBaseDir,
         components: localComponents, pending, env: serverEnv, signal: pending.signal,
-        sourceCapturedAfter, logger, stderrStream }) : Promise.resolve({});
+        sourceCapturedAfter, requireLastGreen: sourceCapturedAfter == null, loadSentinelPasses,
+        allowOlderSourceWhenInputsMatch: false, logger, stderrStream }) : Promise.resolve({});
       // Finite producers retain their own joint host/resource admission. The
       // coordinator holds no capacity while the independent preparations run.
       preparations = [localPreparation, remotePreparation];
@@ -123,7 +128,8 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       if (server) components.server = server;
       if (daemon) components.daemon = daemon;
       const ui = components.server && uiMode === 'export' ? await exportSourceWebUi({ repoDir, baseDir: sourceRoot,
-        stackBaseDir, pending, env, signal: pending.signal, sourceCapturedAfter }) : null;
+        stackBaseDir, pending, env, signal: pending.signal, sourceCapturedAfter,
+        requireLastGreen: sourceCapturedAfter == null, loadSentinelPasses }) : null;
       await log('[reload] producer capture adopted; checking replacement daemon loader, server health and UI boot');
       await pending.setPhase({ phase: 'checking' });
       let admitted;

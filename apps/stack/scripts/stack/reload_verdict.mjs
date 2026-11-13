@@ -1,3 +1,5 @@
+import { readSourceReloadRefusal } from '../runtime/shared/source_reload_refusal.mjs';
+
 /** Project the existing lifecycle owners' evidence into one reload verdict. */
 export function projectStackReloadVerification({ info, beforeManagedCli, auth, render, failure } = {}) {
   const runtime = info?.runtime;
@@ -10,6 +12,7 @@ export function projectStackReloadVerification({ info, beforeManagedCli, auth, r
     return notReady(failure.check, {
       code: failure.error?.code ?? null,
       ...(reason ? { reason } : {}),
+      ...(failure.error?.pluginFailures ? { pluginFailures: readSourceReloadRefusal(failure.error).pluginFailures } : {}),
     });
   }
   if (!runtime?.running || runtime.valid !== true) {
