@@ -281,6 +281,14 @@ export function describeUncheckedSources(
   return [...lines];
 }
 
+/**
+ * Something the person can act on: a waiting version, a choice, or an item its source dropped. Each opens its owner's
+ * review; `unchecked` and `current` are facts, not work. Shared by the Store row and a Machine's Updates group.
+ */
+export function isStoreUpdateActionable(entry: StoreUpdateEntry): boolean {
+  return entry.state === 'available' || entry.state === 'needsChoice' || entry.state === 'removed';
+}
+
 /** Placement comes from native inventory, never from the Machine being viewed or its availability. */
 export function readStoreUpdateMachineIds(entry: StoreUpdateEntry): readonly string[] {
   const row = entry.row;

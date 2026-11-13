@@ -16,6 +16,8 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { formatLastSeen } from '@/utils/sessions/sessionUtils';
 import type { UpdatesContentModel, UpdatesGroup } from '@/updates/useUpdatesContentModel';
+import { StoreUpdateRow, useStoreUpdateRowHost, type StoreUpdateRowHost } from '@/components/store/updates/StoreUpdateRow';
+import { isStoreUpdateActionable } from '@/components/store/updates/storeUpdatesModel';
 
 import { describeUpdatesHeader } from './describeUpdatesSummary';
 import { describeUpdatesGroupRow, partitionUncheckedItems, partitionUpdatesPageGroups, updatesGroupTitle } from './describeUpdatesGroupRow';
@@ -107,6 +109,7 @@ const UpdatesGroupSection = React.memo(function UpdatesGroupSection(props: Reado
     model: UpdatesContentModel;
     group: UpdatesGroup;
     secondaryActions: boolean;
+    storeHost: StoreUpdateRowHost;
 }>) {
     const { theme } = useUnistyles();
     const { model, group } = props;
@@ -151,6 +154,10 @@ const UpdatesGroupSection = React.memo(function UpdatesGroupSection(props: Reado
                         ))}
                     </CountedDisclosureItem>
                 ) : null}
+                {/* What the Store installed on this Machine: the Store's own row, opening each item's owner review. */}
+                {group.storeItems?.map((entry) => (
+                    <StoreUpdateRow key={entry.key} entry={entry} host={props.storeHost} testID={`updates.section.${group.id}.store.${entry.key}`} />
+                ))}
                 {skipVersion ? (
                     <Item
                         title={t('updates.action.skipVersion')}
@@ -231,9 +238,11 @@ export const UpdatesContent = React.memo(function UpdatesContent(props: Readonly
     const secondaryActions = model.summary.actionableCount >= 2 && !model.batch;
     // The calm empty state only when every row proved it is current (the header's own decision).
     const pageGroups = React.useMemo(() => partitionUpdatesPageGroups(model.groups), [model.groups]);
+    const storeHost = useStoreUpdateRowHost(model.storeRows);
     const nothingToShow = compact
         && describeUpdatesHeader(model.summary, model.batch, model).empty
-        && !model.whatsNewUnread;
+        && !model.whatsNewUnread
+        && !model.groups.some((group) => group.storeItems?.some(isStoreUpdateActionable));
 
     return (
         <View style={[styles.content, compact ? styles.compactContent : null]} testID={`updates.content.${presentation}`}>
@@ -271,6 +280,7 @@ export const UpdatesContent = React.memo(function UpdatesContent(props: Readonly
                                 model={model}
                                 group={group}
                                 secondaryActions={secondaryActions}
+                                storeHost={storeHost}
                             />
                         ))}
                         {pageGroups.quiet.length > 0 ? <MachineFoldSection kind="quiet" groups={pageGroups.quiet} /> : null}

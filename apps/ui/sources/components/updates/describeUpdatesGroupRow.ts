@@ -1,5 +1,6 @@
 import { t } from '@/text';
 import { partitionMachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
+import { isStoreUpdateActionable } from '@/components/store/updates/storeUpdatesModel';
 import { planUpdateAll } from '@/updates/items/buildUpdatesSummary';
 import { isNewerVersion, type UpdateItem } from '@/updates/items/updateItem';
 import type { UpdatesGroup } from '@/updates/useUpdatesContentModel';
@@ -94,15 +95,20 @@ export function describeUpdatesGroupRow(
     }
 
     const plan = planUpdateAll(group.items);
-    if (plan.total > 0) {
+    // Store items on this Machine wait too; each opens its owner's review, so they count here but Update all never runs them.
+    const storeWaiting = group.storeItems?.filter(isStoreUpdateActionable).length ?? 0;
+    if (plan.total > 0 || storeWaiting > 0) {
         const waiting = group.items.filter((item) => plan.appItemId === item.id || plan.machines.some((machine) => machine.itemIds.includes(item.id)));
         const required = waiting.some((item) => item.state === 'required');
-        if (waiting.length === 1) {
+        if (waiting.length === 0) {
+            return { title, status: t('updates.summary.available', { count: storeWaiting }), tone: 'info', action: null };
+        }
+        if (waiting.length === 1 && storeWaiting === 0) {
             return { title, status: withSessionNote(namedItemStatus(waiting[0]!), waiting), tone: required ? 'attention' : 'info', action: runnableAction(waiting[0]!) };
         }
         return {
             title,
-            status: withSessionNote(t('updates.summary.available', { count: waiting.length }), waiting),
+            status: withSessionNote(t('updates.summary.available', { count: waiting.length + storeWaiting }), waiting),
             tone: required ? 'attention' : 'info',
             action: { kind: 'group', label: t('updates.action.update') },
         };
@@ -127,6 +133,7 @@ export function describeUpdatesGroupRow(
 
 /** Nothing to do on this machine now: no update to run or install, nothing failed or in flight. */
 function isQuietMachineGroup(group: UpdatesGroup): boolean {
+    if (group.storeItems?.some(isStoreUpdateActionable)) return false;
     return group.items.every((item) => {
         if (item.state === 'running' || item.state === 'failed' || item.state === 'ready' || item.state === 'checking') return false;
         if ((item.state === 'unknown' || item.state === 'unchecked')

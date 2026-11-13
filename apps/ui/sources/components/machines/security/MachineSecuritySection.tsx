@@ -24,6 +24,8 @@ import {
 import { UpdateRow } from '@/components/updates/UpdateRow';
 import type { UpdateItem } from '@/updates/items/updateItem';
 import { useUpdatesContentModel } from '@/updates/useUpdatesContentModel';
+import { StoreUpdateRow, useStoreUpdateRowHost, type StoreUpdateRowHost } from '@/components/store/updates/StoreUpdateRow';
+import type { StoreUpdateEntry } from '@/components/store/updates/storeUpdatesModel';
 import { joinList } from '@/utils/text/joinList';
 
 import { MachineAdminPowerSection } from './MachineAdminPowerSection';
@@ -84,7 +86,7 @@ export function MachineSecuritySection(
     reachable: props.online,
   });
   const { refresh } = updates;
-  const happier = useMachineHappierUpdate(props.machineId);
+  const { happier, store } = useMachineUpdateRows(props.machineId);
   const onSettled = React.useCallback(() => {
     void refresh();
   }, [refresh]);
@@ -148,6 +150,7 @@ export function MachineSecuritySection(
         controls={controls}
         canManage={props.canManage}
         happier={happier}
+        store={store}
         serverId={props.serverId}
       />
     </>
@@ -164,6 +167,8 @@ export function MachineSecurityView(
     canManage?: boolean;
     /** Happier on this Machine: the Updates surface's own row for it, last in the section. */
     happier?: MachineHappierUpdate | null;
+    /** What the Store installed on this Machine (Apps, extensions, plugins…): the Store's own row, last. */
+    store?: MachineStoreUpdates | null;
     /** The Machine's Home, for naming what its carried review mentions. */
     serverId?: string | null;
   }>,
@@ -245,6 +250,9 @@ export function MachineSecurityView(
             sessionsRunning={props.happier.sessionsRunning}
           />
         ) : null}
+        {props.store?.items.map((entry) => (
+          <StoreUpdateRow key={entry.key} entry={entry} host={props.store!.host} testID={`machine-security-store-${entry.key}`} />
+        ))}
       </ItemGroup>
       <UpdatesReviewCard machineName={machine} controls={controls} serverId={props.serverId ?? null} />
     </View>
@@ -257,20 +265,27 @@ export type MachineHappierUpdate = Readonly<{
   sessionsRunning: boolean;
 }>;
 
+export type MachineStoreUpdates = Readonly<{ items: readonly StoreUpdateEntry[]; host: StoreUpdateRowHost }>;
+
 /**
- * Happier on this Machine: the Updates surface's own row for it (`machines.cli.update`), read for this one
- * Machine only. Decided here, not inside the group: a row that renders nothing would still draw its divider.
+ * This Machine's rows from the one Updates owner, read for this Machine only: Happier's own row
+ * (`machines.cli.update`) and what the Store installed here (UPDATES-UNIFY-1113 `group.storeItems`). Decided here,
+ * not inside the group: a row that renders nothing would still draw its divider.
  */
-function useMachineHappierUpdate(machineId: string): MachineHappierUpdate | null {
+function useMachineUpdateRows(machineId: string): Readonly<{ happier: MachineHappierUpdate | null; store: MachineStoreUpdates | null }> {
   const model = useUpdatesContentModel({ machineId });
-  const item = model.groups.find((group) => group.machineId === machineId)
-    ?.items.find((candidate) => candidate.subject.kind === 'happier-cli') ?? null;
+  const group = model.groups.find((candidate) => candidate.machineId === machineId);
+  const item = group?.items.find((candidate) => candidate.subject.kind === 'happier-cli') ?? null;
+  const storeItems = group?.storeItems ?? null;
   const sessionsRunning = model.sessionsRunningOn.has(machineId);
   const { runItem } = model;
-  return React.useMemo(
+  const host = useStoreUpdateRowHost(model.storeRows);
+  const happier = React.useMemo(
     () => item ? { item, onRun: (next: UpdateItem) => { void runItem(next); }, sessionsRunning } : null,
     [item, runItem, sessionsRunning],
   );
+  const store = React.useMemo(() => storeItems && storeItems.length > 0 ? { items: storeItems, host } : null, [host, storeItems]);
+  return { happier, store };
 }
 
 type UpdatesStatus = Readonly<{
@@ -531,7 +546,6 @@ function RestartRow(
           <Item
             testID="machine-security-restart"
             icon={restartIcon}
-          icon={restartIcon}
             title={t(`${s}.restartNeededTitle`)}
             subtitle={t(
               props.controls.canReboot ? `${s}.restartNeededReason` : `${s}.restartNoInstallation`,
@@ -712,6 +726,7 @@ function UpdatesReviewCard(
         </ItemGroup>
         {confirmation ? (
           <ActionConfirmationReviewFacts actionId={confirmation.actionId} actionArgs={confirmation.actionArgs}
+            summaryPlacement="host"
             preview={confirmation.preview} serverId={props.serverId} testID="machine-security-confirmation" />
         ) : null}
         {/* The decision sits after the review's sheet (SectionButtonRow contract), not inside it. */}

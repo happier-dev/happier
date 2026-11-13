@@ -17,6 +17,7 @@ import {
 } from '@/updates/items/buildMachineUpdateItems';
 import { buildUpdatesSummary, type UpdatesSummary } from '@/updates/items/buildUpdatesSummary';
 import type { UpdatesContentModel, UpdatesGroup } from '@/updates/useUpdatesContentModel';
+import { NO_STORE_UPDATE_ROWS } from '@/components/store/updates/StoreUpdateRow';
 
 /**
  * Developer preview of the Updates surface: the real components fed by the real item builders
@@ -176,6 +177,7 @@ export default function UpdatesDemoScreen() {
             skipAppVersion: null,
             openWhatsNew: noop,
             whatsNewUnread: false,
+            storeRows: NO_STORE_UPDATE_ROWS,
         };
     }, [state]);
 

@@ -1,6 +1,7 @@
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
 import { useInstalledUpdates } from './useInstalledUpdates';
+import type { StoreUpdateRowFacts } from '@/components/store/updates/StoreUpdateRow';
 import * as React from 'react';
 
 import { useReleaseNotesLauncher, useReleaseNotesUnread } from '@/changelog/releaseNotes';
@@ -58,6 +59,8 @@ export type UpdatesContentModel = Readonly<{
     /** Release notes stay reachable from the This app group (R13 (e)). */
     openWhatsNew: () => void;
     whatsNewUnread: boolean;
+    /** What each group's Store item rows (`group.storeItems`) review through: the installed-updates owner's facts. */
+    storeRows: StoreUpdateRowFacts;
 }>;
 
 /** The machines with an active session, as one stable key (the canonical session state). */
@@ -241,6 +244,11 @@ export function useUpdatesContentModel(options: Readonly<{
     );
     const checkedAt = app.checkedAt == null && factsCheckedAt == null ? null : Math.max(app.checkedAt ?? 0, factsCheckedAt ?? 0);
 
+    const { execute: storeExecute, getSignal: storeGetSignal, ready: storeReady } = installed.execution;
+    const storeApplied = installed.browserExtension.continuation;
+    const storeRows = React.useMemo<StoreUpdateRowFacts>(() => ({ input: installedQuery, execute: storeExecute,
+        getSignal: storeGetSignal, ready: storeReady, onApplied: storeApplied }),
+    [installedQuery, storeApplied, storeExecute, storeGetSignal, storeReady]);
     return React.useMemo(() => ({
         homeLabel,
         summary,
@@ -258,5 +266,6 @@ export function useUpdatesContentModel(options: Readonly<{
         skipAppVersion: app.skipVersion ? skipAppVersion : null,
         openWhatsNew: releaseNotesLauncher.openWhatsNew,
         whatsNewUnread: releaseNotes.hasUnread,
-    }), [app.skipVersion, batch, checkNow, checkedAt, checking, groups, homeLabel, releaseNotesLauncher.openWhatsNew, releaseNotes.hasUnread, runItem, sessionsRunningOn, skipAppVersion, stopAfterCurrent, summary, uncheckedMachineCount, updateAll, updateGroup]);
+        storeRows,
+    }), [app.skipVersion, batch, checkNow, checkedAt, checking, groups, homeLabel, releaseNotesLauncher.openWhatsNew, releaseNotes.hasUnread, runItem, sessionsRunningOn, skipAppVersion, stopAfterCurrent, storeRows, summary, uncheckedMachineCount, updateAll, updateGroup]);
 }

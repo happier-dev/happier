@@ -154,6 +154,36 @@ describe('partitionUncheckedItems — one cause is said once', () => {
     });
 });
 
+describe('a Machine\'s Store items (UPDATES-UNIFY-1113 group.storeItems)', () => {
+    async function appEntries(state: 'update_available' | 'current') {
+        const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+        const { buildStoreUpdates, captureStoreUpdateBasis } = await import('@/components/store/updates/storeUpdatesModel');
+        const detail = createDeploymentEnvironmentDetailV1();
+        const row = { kind: 'app' as const, key: 'app:env', scope: { serverId: 'home', accountId: 'account' },
+            native: { environment: detail.environment, title: detail.content.name, chip: null }, home: '/environment', projectKeys: null };
+        const view = buildStoreUpdates([row], [{ kind: 'app', key: detail.environment.id,
+            upstream: state === 'current' ? { state: 'current' } : { state: 'update_available', latest: { kind: 'version', version: '2.0' } } }],
+            { checkedAt: 20, failed: false, basis: captureStoreUpdateBasis([row]) });
+        return view.sections.flatMap((section) => section.entries);
+    }
+
+    it('keeps a Machine whose only waiting change is a Store item as its own section and says it is waiting', async () => {
+        const { partitionUpdatesPageGroups } = await import('./describeUpdatesGroupRow');
+        const waiting = await appEntries('update_available');
+        expect(waiting).toHaveLength(1);
+        const studio = machine([current(cli)], { storeItems: waiting });
+        expect(partitionUpdatesPageGroups([studio]).sections.map((group) => group.id)).toEqual(['machine:studio']);
+        // Each Store item opens its own owner's review, so the Machine row says it waits but offers no Update all.
+        expect(describeUpdatesGroupRow(studio)).toMatchObject({ status: 'updates.summary.available(count=1)', tone: 'info', action: null });
+    });
+
+    it('still folds a Machine whose Store items are all current', async () => {
+        const { partitionUpdatesPageGroups } = await import('./describeUpdatesGroupRow');
+        const quiet = machine([current(cli)], { storeItems: await appEntries('current') });
+        expect(partitionUpdatesPageGroups([quiet]).quiet.map((group) => group.id)).toEqual(['machine:studio']);
+    });
+});
+
 describe('partitionUpdatesPageGroups — quiet machines', () => {
     it('folds reachable machines with nothing to do into one place and keeps machines with an update, a failure or a newer version to install yourself', async () => {
         const { partitionUpdatesPageGroups } = await import('./describeUpdatesGroupRow');

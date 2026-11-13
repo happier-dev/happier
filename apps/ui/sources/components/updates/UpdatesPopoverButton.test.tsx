@@ -236,7 +236,7 @@ describe('UpdatesPopoverButton', () => {
         const model: UpdatesContentModel = {
             summary: TWO, groups: [], checkedAt: null, uncheckedMachineCount: 0, sessionsRunningOn: new Set(),
             runItem: async () => {}, updateGroup: async () => {}, updateAll: async () => {}, stopAfterCurrent: () => {},
-            batch: null, checking: true, checkNow: () => {}, skipAppVersion: null, openWhatsNew: () => {}, whatsNewUnread: false,
+            batch: null, checking: true, checkNow: () => {}, skipAppVersion: null, openWhatsNew: () => {}, whatsNewUnread: false, storeRows: (await import('@/components/store/updates/StoreUpdateRow')).NO_STORE_UPDATE_ROWS,
         };
         const screen = await renderScreen(<UpdatesContent model={model} presentation="screen" />);
         expect(screen.findAllByTestId('updates.checkNow.spinner').length).toBeGreaterThan(0);
@@ -274,7 +274,7 @@ describe('UpdatesPopoverButton', () => {
             groups: [{ id: 'this-computer', kind: 'thisComputer', machineName: 'local', machineId: 'unrelated-group-id', online: true, lastSeenAt: null, items: [item] }],
             checkedAt: null, uncheckedMachineCount: 0, sessionsRunningOn: new Set(['local']),
             runItem: async () => {}, updateGroup: async () => {}, updateAll: async () => {}, stopAfterCurrent: () => {}, batch: null,
-            checking: false, checkNow: () => {}, skipAppVersion: null, openWhatsNew: () => {}, whatsNewUnread: false,
+            checking: false, checkNow: () => {}, skipAppVersion: null, openWhatsNew: () => {}, whatsNewUnread: false, storeRows: (await import('@/components/store/updates/StoreUpdateRow')).NO_STORE_UPDATE_ROWS,
         };
         const screen = await renderScreen(<UpdatesContent model={model} presentation={presentation} />);
         const hasNote = () => screen.findAll((node) => typeof node.props?.accessibilityLabel === 'string')

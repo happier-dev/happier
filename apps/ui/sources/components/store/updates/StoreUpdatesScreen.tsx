@@ -5,11 +5,6 @@ import { StoreProjectScopeChip } from '../StoreProjectScopeChip';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { CapabilityRow } from '@/components/capabilities/row/CapabilityRow';
-import { SKILLS_UPDATES_ROUTE } from '@/components/settings/skills/updates/skillsUpdatesModel';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -19,28 +14,18 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { describeRegistrySourceStatus } from '@/registries/describeRegistrySourceStatus';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { useStoreActionTarget, useStoreMachineScope } from '@/components/settings/plugins/model/useStoreMachineScope';
 import { t } from '@/text';
-import { Modal } from '@/modal';
-import { useHappyAction } from '@/hooks/ui/useHappyAction';
-import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
-import { fireAndForget } from '@/utils/system/fireAndForget';
 
-import { RowMark } from '../inventory/ManagedInventoryDirectory';
-import { presentInventoryRow, type ManagedInventoryRowPresentation } from '../inventory/inventoryRows';
 import type { StoreInstalledInput } from '../catalog/storeKinds';
 import {
-  type StoreUpdateEntry,
   type StoreUpdateKind,
   STORE_UPDATE_KINDS,
   describeUncheckedSources,
 } from './storeUpdatesModel';
-import { submitBrowserExtensionMutation } from '../submitBrowserExtensionMutation';
-
-type Href = ManagedInventoryRowPresentation['home']['href'];
+import { StoreUpdateRow, useStoreUpdateRowHost } from './StoreUpdateRow';
 
 const KIND_TITLE: Readonly<Record<StoreUpdateKind, () => string>> = {
   app: () => t('capabilities.store.kinds.app.title'),
@@ -78,15 +63,9 @@ export function StoreUpdatesScreen(): React.ReactNode {
     useInstalledUpdates(query, presented, externalActionTarget, true);
   const refreshBrowserExtensions = browserExtension.continuation;
   const families = { app, mcpServer, skill, agent, browserExtension, plugin };
-  const router = useRouter();
-  const go = React.useCallback(
-    (href: NonNullable<Href>) => {
-      const result = runGuardedNavigation(() => router.push(href as never));
-      if (result !== true)
-        fireAndForget(result, { tag: 'StoreUpdatesScreen.go' });
-    },
-    [router],
-  );
+  const rowHost = useStoreUpdateRowHost(React.useMemo(() => ({ input: query, execute: execution.execute,
+    getSignal: execution.getSignal, ready: execution.ready, onApplied: refreshBrowserExtensions }),
+    [execution.execute, execution.getSignal, execution.ready, query, refreshBrowserExtensions]));
 
   const loading =
     view.sections.length === 0 &&
@@ -204,15 +183,10 @@ export function StoreUpdatesScreen(): React.ReactNode {
                   surface="none"
                 >
                   {section.entries.map((entry) => (
-                    <UpdateRow
+                    <StoreUpdateRow
                       key={entry.key}
                       entry={entry}
-                      input={query}
-                      go={go}
-                      execute={execution.execute}
-                      getSignal={execution.getSignal}
-                      ready={execution.ready}
-                      onApplied={refreshBrowserExtensions}
+                      host={rowHost}
                       testID={`store.updates.row.${entry.key}`}
                     />
                   ))}
@@ -261,90 +235,6 @@ function UpdatesEmpty(
       title={t('capabilities.store.updates.notChecked')}
       // A partial read is already said once by the coverage line above; the card doesn't repeat it.
       reason={props.partial ? undefined : t('capabilities.store.updates.notCheckedBody')}
-    />
-  );
-}
-
-/** One waiting change, reviewed through its native Action or its owner's detail page. */
-function UpdateRow(
-  props: Readonly<{
-    entry: StoreUpdateEntry;
-    input: Parameters<typeof presentInventoryRow>[1];
-    go: (href: NonNullable<Href>) => void;
-    execute: ReturnType<typeof useMountedActionExecution>['execute'];
-    getSignal: () => AbortSignal;
-    ready: boolean;
-    onApplied?: () => void;
-    testID: string;
-  }>,
-) {
-  const { entry } = props;
-  const presentation = presentInventoryRow(entry.row, props.input);
-  const title = presentation.facts.title;
-  const href =
-    entry.row.kind === 'skill' &&
-    (entry.state === 'available' || entry.state === 'needsChoice')
-      ? SKILLS_UPDATES_ROUTE
-      : presentation.home.href;
-  const version = entry.from && entry.to ? `${entry.from} → ${entry.to}` : entry.state === 'current' ? entry.from : null;
-  const state =
-    entry.state === 'current'
-      ? t('capabilities.store.updates.upToDate')
-      : entry.state === 'available'
-        ? t('capabilities.store.updates.ready')
-      : entry.state === 'needsChoice'
-        ? t('capabilities.store.updates.needsChoice')
-        : entry.state === 'removed'
-          ? t('capabilities.skills.home.removedFromSource')
-          : [
-              t('capabilities.store.updates.unchecked'),
-              entry.reason ? describeRegistrySourceStatus(entry.reason) : null,
-            ]
-              .filter(Boolean)
-              .join(' · ');
-  const [applying, apply] = useHappyAction(async () => {
-    if (!entry.apply) return;
-    const result = await submitBrowserExtensionMutation({ ...entry.apply,
-      machineId: entry.apply.input.machineId, execute: props.execute, signal: props.getSignal(),
-      confirmText: t('capabilities.store.updates.review') });
-    if (result.ok) props.onApplied?.();
-    else if (result.code) Modal.alert(t('common.error'), result.code);
-  });
-  const open = () => {
-    if (entry.apply) apply();
-    else if (href) props.go(href);
-  };
-  const actionable = Boolean(entry.apply || href);
-  const disabled = Boolean(entry.apply && (applying || !props.ready));
-  const fix =
-    entry.state === 'removed' || entry.state === 'needsChoice'
-      ? t('capabilities.store.updates.choose')
-      : entry.state === 'available'
-        ? t('capabilities.store.updates.review')
-        : null;
-  return (
-    <CapabilityRow
-      testID={props.testID}
-      title={title}
-      description={[version, state].filter(Boolean).join(' · ')}
-      status={entry.status}
-      mark={<RowMark row={entry.row} title={title} input={props.input} />}
-      divider={false}
-      stackActionWhenNarrow
-      action={
-        fix && actionable ? (
-          <RoundButton
-            testID={`${props.testID}.review`}
-            size="small"
-            display="secondary"
-            title={fix}
-            loading={applying}
-            disabled={disabled}
-            onPress={open}
-          />
-        ) : undefined
-      }
-      onPress={actionable && !disabled ? open : undefined}
     />
   );
 }
