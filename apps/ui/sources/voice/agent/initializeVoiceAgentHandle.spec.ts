@@ -381,7 +381,7 @@ describe('initializeVoiceAgentHandle', () => {
         storage.setState({ ...current, sessions: { ...current.sessions,
             [carrierId]: createSessionFixture({ id: carrierId, serverId: sessionServerId, active: true,
                 presence: 'online', encryptionMode: 'plain', metadata: {
-                    machineId: 'machine-1', path: '/voice', flavor: 'claude',
+                    host: 'tester.local', machineId: 'machine-1', path: '/voice', flavor: 'claude',
                     ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }),
                     voiceConversationScopeV1: { v: 1, kind: 'voice_home' },
                 } }),
@@ -389,6 +389,7 @@ describe('initializeVoiceAgentHandle', () => {
         voiceSessionBindingStore.getState().bind({ adapterId: 'local_conversation',
             controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId: carrierId,
             conversationSessionAddress: { serverId: sessionServerId, sessionId: carrierId },
+            targetSessionAddress: null,
             lifetime: 'runtime_attempt', transcriptMode: 'synthetic', updatedAt: 1 });
         try {
             const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
@@ -412,7 +413,7 @@ describe('initializeVoiceAgentHandle', () => {
         storage.setState({ ...current, sessions: { ...current.sessions,
             [carrierId]: createSessionFixture({ id: carrierId, serverId: sessionServerId, active: true,
                 presence: 'online', encryptionMode: 'plain', metadata: {
-                    machineId: 'machine-1', path: '/voice', flavor: 'claude',
+                    host: 'tester.local', machineId: 'machine-1', path: '/voice', flavor: 'claude',
                     ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }),
                     voiceConversationScopeV1: { v: 1, kind: 'voice_home' },
                 } }),
@@ -420,6 +421,7 @@ describe('initializeVoiceAgentHandle', () => {
         voiceSessionBindingStore.getState().bind({ adapterId: 'local_conversation',
             controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId: carrierId,
             conversationSessionAddress: { serverId: sessionServerId, sessionId: carrierId },
+            targetSessionAddress: null,
             lifetime: 'runtime_attempt', transcriptMode: 'synthetic', updatedAt: 1 });
         try {
             const transport = createVoiceExecutionTransport();
@@ -970,7 +972,7 @@ describe('initializeVoiceAgentHandle', () => {
         const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
         const current = storage.getState();
         const carrierId = 'configured-acp-root-carrier';
-        const ownerMetadata = { ...buildCommittedLaunchMetadata({ options: {
+        const ownerMetadata = { path: '/workspace', host: 'tester.local', ...buildCommittedLaunchMetadata({ options: {
             sessionCreationCorrespondence: buildSessionCreationCorrespondence({
                 identity: { callerCreationNamespace: 'user', creationKey: 'configured-acp-root' },
                 recipe: { execution: { machineId: 'machine-1', directory: { kind: 'path', path: '/workspace' } },
@@ -991,9 +993,9 @@ describe('initializeVoiceAgentHandle', () => {
         const local = readLocalConversationSettingsFromAccountSettings(current.settings);
         storage.setState({ sessions: { ...current.sessions,
             s1: createSessionFixture({ ...current.sessions.s1, metadataLayoutVersion: 1,
-                metadata: { v: 1, agentPresentation: { agentId: 'custom-acp' } }, ownerMetadataView: ownerMetadata }),
+                metadata: { path: '/workspace', host: 'tester.local', v: 1, agentPresentation: { agentId: 'custom-acp' } }, ownerMetadataView: ownerMetadata }),
             [carrierId]: createSessionFixture({ id: carrierId, serverId: sessionServerId, active: true,
-                presence: 'online', encryptionMode: 'plain', metadata: { flavor: 'codex', machineId: 'machine-1',
+                presence: 'online', encryptionMode: 'plain', metadata: { host: 'tester.local', flavor: 'codex', machineId: 'machine-1',
                     path: '/voice', ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }) } }),
         }, settings: { ...current.settings, voice: voiceSettingsParse({ ...current.settings.voice,
             providers: { ...current.settings.voice.providers, local_conversation: { schemaVersion: 1, config: {

@@ -38,7 +38,9 @@ function admittedRunStart() {
   const input = daemonAction.mock.calls[0]?.[0].input;
   if (!input) throw new Error('Expected a signed Run Start request');
   const { sessionId: _sessionId, ...start } = input;
-  return ExecutionRunEnsureOrStartRequestSchema.parse({ start }).start;
+  const request = ExecutionRunEnsureOrStartRequestSchema.parse({ start });
+  if (!request.start) throw new Error('Expected Run Start input');
+  return request.start;
 }
 
 const settingsState = {
@@ -61,7 +63,7 @@ function installDaemonBoundary() {
     const match = /^\/v2\/sessions\/([^/]+)$/.exec(path);
     if (!match) return null;
     const session = createSessionFixture({ id: decodeURIComponent(match[1]), serverId: home.id, active: true,
-      metadata: { machineId: 'machine-1', path: '/workspace', flavor: 'codex' } });
+      metadata: { host: 'tester.local', machineId: 'machine-1', path: '/workspace', flavor: 'codex' } });
     return Response.json(createPlainSessionByIdResponseFixture(session));
   });
   network.setRpcResponder(async request => {
@@ -204,7 +206,7 @@ describe('DaemonVoiceAgentClient', () => {
     voiceScope = account.accountLifetime.scope;
     account.dispose();
     const session = createSessionFixture({ id: 's1', serverId: voiceScope.serverId, active: true,
-      metadata: { machineId: 'machine-1', path: '/workspace', flavor: 'codex' } });
+      metadata: { host: 'tester.local', machineId: 'machine-1', path: '/workspace', flavor: 'codex' } });
     storage.setState({ sessions: { ...storage.getState().sessions, s1: session },
       sessionListRowsByServerId: { ...storage.getState().sessionListRowsByServerId,
         [voiceScope.serverId]: { ...storage.getState().sessionListRowsByServerId[voiceScope.serverId], s1: session } } });

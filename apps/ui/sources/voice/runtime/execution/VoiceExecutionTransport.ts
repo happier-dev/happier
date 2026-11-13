@@ -97,7 +97,9 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
         signal.throwIfAborted();
         if (!account.isCurrent()) throw new Error('voice_agent_account_scope_retired');
         const targetMetadata = readVoiceSessionOwnerMetadataFromState(storage.getState(), target);
-        if (isGlobalTarget && isVoiceConversationSystemSessionMetadata(targetMetadata) && !targetMetadata?.machineId) {
+        const isGlobalCarrier = isGlobalTarget && isVoiceConversationSystemSessionMetadata(targetMetadata);
+        const globalCarrierMachineId = isGlobalCarrier ? targetMetadata?.machineId : null;
+        if (isGlobalCarrier && !globalCarrierMachineId) {
             throw Object.assign(new Error('voice_agent_selection_unavailable'), { code: 'VOICE_AGENT_SELECTION_UNAVAILABLE' });
         }
         const configured = agent.agentSource === 'agent' || agent.providerChat?.status === 'configured'
@@ -107,10 +109,10 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
             throw Object.assign(new Error('voice_agent_selection_unavailable'), { code: 'VOICE_AGENT_SELECTION_UNAVAILABLE' });
         }
         const backendTarget = configured?.ok ? convertBackendTargetRefV2ToV1(configured.backendTarget)
-            : isGlobalTarget && isVoiceConversationSystemSessionMetadata(targetMetadata)
+            : globalCarrierMachineId
             ? convertBackendTargetRefV2ToV1(await resolveVoiceConversationBackendTarget(
                 storage.getState(),
-                targetMetadata.machineId,
+                globalCarrierMachineId,
                 signal,
             ))
             : requireVoiceSessionAgentSelection(resolveVoiceSessionAgentSelection(targetMetadata));
