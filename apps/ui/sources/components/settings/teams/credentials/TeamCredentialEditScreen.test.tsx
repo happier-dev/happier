@@ -272,8 +272,12 @@ async function renderEditor(params?: Readonly<{
         .toContain('team-credential-edit-save'));
     if (params?.sourceOwner !== false && params?.poolsEnabled !== false && !params?.section
         && resource.brokerPresentation.eligiblePools.length > 0) {
-        await vi.waitFor(() => expect(findDeclaredRow(screen,
-            `team-credential-edit-broker:machine_pool:${resource.brokerPresentation.eligiblePools[0]!.poolId}`)).not.toBeNull());
+        await vi.waitFor(() => {
+            for (const pool of resource.brokerPresentation.eligiblePools) {
+                expect(findDeclaredRow(screen,
+                    `team-credential-edit-broker:machine_pool:${pool.poolId}`)).not.toBeNull();
+            }
+        });
     }
     return { screen, firstPoolId, secondPoolId, resource, serverId };
 }

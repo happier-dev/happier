@@ -733,8 +733,8 @@ describe('NewSessionMachineSelectionContent', () => {
             section.title,
             section.kind === 'static' ? section.count : undefined,
         ])).toEqual([
-            ['server:server-a', 'Server A', 0],
-            ['server:server-b', 'Server B', 0],
+            ['server:server-a', 'Server A', undefined],
+            ['server:server-b', 'Server B', undefined],
             ['server:server-c', 'Server C', 1],
             ['server:server-d', 'Server D', 1],
             ['server:server-e', 'Server E', 0],
