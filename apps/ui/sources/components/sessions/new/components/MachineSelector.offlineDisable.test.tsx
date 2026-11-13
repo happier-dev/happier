@@ -8,6 +8,8 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { buildServerScopedMachine } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 
 installNewSessionComponentsCommonModuleMocks();
 vi.mock('react-native', async () =>
@@ -19,11 +21,12 @@ let home: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>> | undefined
 beforeEach(async () => { home = await createPlainArtifactHomeFixture('https://machine-selector.test', { currentAccount: true, accountId: 'machine-selector-account' }); });
 afterEach(async () => { await home?.dispose(); home = undefined; });
 const { MachineSelector: MachineSelectorOwner } = await import('./MachineSelector');
+const { NewSessionMachineSelectionContent } = await import('./NewSessionMachineSelectionContent');
 function MachineSelector(props: React.ComponentProps<typeof MachineSelectorOwner>) {
     return <MachineSelectorOwner serverId={home!.home.id} {...props} />;
 }
 
-async function renderMachineSelector(element: React.ReactElement<React.ComponentProps<typeof MachineSelector>>) {
+async function renderMachineSelector(element: React.ReactElement<React.ComponentProps<typeof MachineSelector>>, page = false) {
     const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
     const { storage } = await import('@/sync/domains/state/storageStore');
     const { linkMachineActivity } = await import('@/sync/domains/machines/machineActivity');
@@ -36,7 +39,7 @@ async function renderMachineSelector(element: React.ReactElement<React.Component
             linkMachineActivity(admitted, machine);
         }
     });
-    return renderScreen(element);
+    return renderScreen(page ? <ListPresentationProvider value="page">{element}</ListPresentationProvider> : element);
 }
 
 function machine(id: string, active: boolean): Machine {
@@ -46,6 +49,69 @@ function machine(id: string, active: boolean): Machine {
 }
 
 describe('MachineSelector', () => {
+    it.each(['owned', 'shared'] as const)('keeps the selected %s offline Machine on the open and closed trigger while its fold stays closed', async ownership => {
+        const owned = [machine('Studio desktop', false), machine('Build desktop', false)];
+        const shared = ['Shared workstation', 'Shared runner'].map(id => ({ ...machine(id, false), isShared: true, access: {
+            custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use' as const,
+            resourceMode: 'plain' as const, accessState: 'ready' as const,
+        } }));
+        const selected = (ownership === 'owned' ? owned : shared)[0]!;
+        const screen = await renderMachineSelector(<MachineSelector machines={[...owned, ...shared]} selectedMachine={selected}
+            presentation="dropdown" disableOfflineMachines={false} onSelect={vi.fn()} showCliGlyphs={false}
+            showFavorites={false} showRecent={false} dropdownTestID="selected-trigger" />, true);
+        const triggerTexts = () => screen.findByTestId('selected-trigger').findAll(node => node.type === 'Text')
+            .flatMap(node => typeof node.props.children === 'string' ? [node.props.children] : []);
+        expect(triggerTexts()).toContain(selected.id);
+        expect(triggerTexts()).not.toContain(t('common.choose'));
+        await screen.pressByTestIdAsync('selected-trigger');
+        await vi.waitFor(() => expect(screen.findAllByType(SelectionList)).toHaveLength(1));
+        const list = screen.findByType(SelectionList).props as React.ComponentProps<typeof SelectionList>;
+        expect(list.rootStep.sections.flatMap(section => section.kind === 'static' ? section.options.map(option => option.id) : []))
+            .toEqual(['offline:all', 'offline:shared:alice']);
+        expect(triggerTexts()).toContain(selected.id);
+        expect(triggerTexts()).not.toContain(t('common.choose'));
+        await act(async () => screen.findByType(DropdownMenu).props.onOpenChange(false));
+        expect(triggerTexts()).toContain(selected.id);
+        expect(triggerTexts()).not.toContain(t('common.choose'));
+    });
+
+    it('keeps own and shared destinations named while Team defaults and New Session apply their availability', async () => {
+        const shared = (id: string, displayName: string | null, active: boolean, custodianId = id): Machine => ({ ...machine(id, active), isShared: true,
+            access: { custodian: { accountId: custodianId, displayName }, role: 'use', resourceMode: 'plain', accessState: 'ready' } });
+        const machines = [shared('c', 'qa-c', false), shared('c-runner', 'qa-c', false, 'c'),
+            machine('owned', true), shared('unknown', null, true), shared('b', 'QA TH B', true)];
+        const screen = await renderMachineSelector(<MachineSelector machines={machines} selectedMachine={null}
+            presentation="dropdown" disableOfflineMachines={false} onSelect={vi.fn()} showCliGlyphs={false}
+            showFavorites={false} showRecent={false} />);
+        await act(async () => screen.findByType(DropdownMenu).props.onOpenChange(true));
+        const teamSections = (screen.findByType(SelectionList).props as React.ComponentProps<typeof SelectionList>).rootStep.sections;
+        const serverId = home!.home.id;
+        const session = await renderScreen(<NewSessionMachineSelectionContent groups={[{ serverId, serverName: 'Home', loading: false,
+            signedOut: false, machines: machines.map(row => buildServerScopedMachine(row, { serverId, serverName: 'Home' })) }]}
+            selectedMachine={null} selectedServerId={serverId} onSelectMachine={() => {}} onSelectScopedMachine={() => {}}
+            recentMachines={[]} favoriteMachines={[]}
+            showCliGlyphs={false} showFavorites={false} showRecent={false} />);
+        const sessionSections = (session.findByType(SelectionList).props as React.ComponentProps<typeof SelectionList>).rootStep.sections;
+        expect(teamSections.map(section => section.id)).toEqual(['all', 'shared:', 'shared:b', 'shared:c']);
+        expect(teamSections.map(section => section.id)).toEqual(sessionSections.map(section => section.id));
+        const sections = (target: typeof screen) => (target.findByType(SelectionList).props as React.ComponentProps<typeof SelectionList>).rootStep.sections;
+        const summarize = (rows: typeof teamSections) => rows.flatMap(section => section.kind === 'static' ? [{
+            id: section.id, title: section.title, options: section.options.map(option => option.id),
+        }] : []);
+        expect(summarize(teamSections)).toEqual(summarize(sessionSections));
+        for (const target of [screen, session]) {
+            const fold = sections(target).flatMap(section => section.kind === 'static' ? section.options : [])
+                .find(option => option.id === 'offline:shared:c');
+            expect(fold).toBeDefined();
+            await act(async () => fold?.onSelect?.());
+        }
+        expect(summarize(sections(screen))).toEqual(summarize(sections(session)));
+        const offlineRow = (target: typeof screen) => sections(target).flatMap(section => section.kind === 'static' ? section.options : [])
+            .find(option => option.id === 'c');
+        expect(offlineRow(screen)?.disabled).toBe(false);
+        expect(offlineRow(session)?.disabled).toBe(true);
+    });
+
     it.each(['list', 'dropdown'] as const)('offers own and shared offline defaults equally in %s', async presentation => {
         const owned = machine('owned', false);
         const shared: Machine = { ...machine('shared', false), isShared: true, access: {

@@ -199,6 +199,23 @@ function firstStaticOption(model: ReturnType<typeof UseMachineSelectionListModel
 }
 
 describe('useMachineSelectionListModel', () => {
+    it.each(['owned', 'shared'] as const)('retains selected metadata outside a closed %s offline fold', async ownership => {
+        const machines = ['Selected desktop', 'Other desktop'].map(id => ({ ...createMachine(id), active: false, activeAt: 0,
+            ...(ownership === 'shared' ? { isShared: true, access: {
+                custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use' as const,
+                resourceMode: 'plain' as const, accessState: 'ready' as const,
+            } } : {}),
+        }));
+        const fixture = createFixture(machines);
+        publishMachineActivityForTest(fixture.machines);
+        const rendered = await renderHook(() => useMachineSelectionListModel({ ...buildParams(fixture, makeHandlers()),
+            recentMachines: [], favoriteMachines: [], showRecent: false, showFavorites: false, showCliGlyphs: false,
+        }));
+        expect(rendered.getCurrent()).toMatchObject({ selectedOption: { id: 'Selected desktop', label: 'Selected desktop' } });
+        expect(rendered.getCurrent().rootStep.sections.flatMap(section => section.kind === 'static' ? section.options.map(option => option.id) : []))
+            .toEqual([ownership === 'owned' ? 'offline:all' : 'offline:shared:alice']);
+    });
+
     it('folds a large New Session offline roster once per section and expands only that section in place', async () => {
         const machines = Array.from({ length: 220 }, (_, i) => ({ ...createMachine(`offline-${i}`), active: false, activeAt: 0 }));
         const shared = machines.slice(0, 3).map(machine => ({ ...machine, id: `shared-${machine.id}`, isShared: true, access: {

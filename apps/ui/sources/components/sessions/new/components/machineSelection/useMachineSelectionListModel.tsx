@@ -76,6 +76,8 @@ import {
 type MachineSelectionListModel = Readonly<{
     rootStep: SelectionListStep;
     selectedOptionId: string | null;
+    /** Selected root option metadata remains available when its section is folded. */
+    selectedOption: SelectionListOption | null;
     managedWakeByServerId: Readonly<Record<string, Readonly<Record<string, 'asleep' | 'starting'>>>>;
     /**
      * Machines whose only reason for not being selectable is that they are offline, per Home. A Machine
@@ -1265,6 +1267,15 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
     // Request reachability changes presence without any Machine row change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [params.groups, purpose, resolveMachinePlacementFacts, presenceKey, scopeForServer]);
+    const selectedOption = React.useMemo(() => {
+        if (model.selectedOptionId === null) return null;
+        for (const section of model.rootStep.sections) {
+            if (section.kind !== 'static') continue;
+            const option = section.options.find(candidate => candidate.id === model.selectedOptionId);
+            if (option) return option;
+        }
+        return null;
+    }, [model.rootStep, model.selectedOptionId]);
     const offlineStateForSection = useOfflineWorkerSectionState();
     const rootStep = React.useMemo(() => {
         const offlineIds = new Set(Object.entries(offlineOnlyMachineIdsByServerId).flatMap(([serverId, ids]) =>
@@ -1282,5 +1293,5 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                 };
             }) };
     }, [model.rootStep, offlineOnlyMachineIdsByServerId, offlineStateForSection, purpose, theme, language]);
-    return { ...model, rootStep, managedWakeByServerId, offlineOnlyMachineIdsByServerId };
+    return { ...model, rootStep, selectedOption, managedWakeByServerId, offlineOnlyMachineIdsByServerId };
 }

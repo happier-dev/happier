@@ -9,7 +9,6 @@ import type { ManagedSessionPlacementV1 } from '@happier-dev/protocol/teams/mana
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { t } from '@/text';
 import { resolveMachinePickerPresence } from './resolveMachinePickerPresence';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -112,9 +111,6 @@ export function MachineSelector(props: MachineSelectorProps) {
     }, [changeDropdownOpen, presentation]);
     const managedOffers = supportsManagedMachineSelection(purpose)
         ? props.managedMachines ?? EMPTY_MANAGED_MACHINES : EMPTY_MANAGED_MACHINES;
-    const placementPreset = props.managedPlacementPreset;
-    const selectedManagedOffer = placementPreset ? managedOffers.find(offer =>
-        offer.homeId === placementPreset.homeId && offer.presetId === placementPreset.presetId) : undefined;
     const groups = React.useMemo(() => [{
         serverId: groupServerId, serverName: '', loading: false, signedOut: false,
         machines: props.machines.map(machine => buildServerScopedMachine(machine, { serverId: groupServerId, serverName: '' })),
@@ -180,13 +176,19 @@ export function MachineSelector(props: MachineSelectorProps) {
         currentUiContextForegroundOverlay={props.currentUiContextForegroundOverlay}
         maxHeight={maxHeight} rootStep={rootStep} selectedOptionId={selectedOptionId}
         onSelect={closeManagedSelection} onRequestClose={requestClose} />;
-    // Dropdown trigger metadata and legacy selection callbacks consume the same options as its rendered list.
-    const dropdownOptions = React.useMemo(() => sections.flatMap(section => section.kind === 'static'
-        ? section.options.map(option => ({ option, category: section.title })) : []), [sections]);
+    // The list stays folded; trigger metadata must still include the selected Machine.
+    const dropdownOptions = React.useMemo(() => {
+        const options = sections.flatMap(section => section.kind === 'static'
+            ? section.options.map(option => ({ option, category: section.title })) : []);
+        if (model.selectedOption && !options.some(({ option }) => option.id === model.selectedOption?.id)) {
+            options.push({ option: model.selectedOption, category: undefined });
+        }
+        return options;
+    }, [sections, model.selectedOption]);
     const dropdownItems: readonly DropdownMenuItem[] = React.useMemo(() => dropdownOptions.map(({ option, category }) => ({
         id: option.id, testID: option.testID, title: option.label, subtitle: option.subtitle, disabled: option.disabled, category,
     })), [dropdownOptions]);
-    const machineNames = React.useMemo(() => resolveMachineDisplayNames(props.machines), [props.machines]);
+    const selectedTitle = model.selectedOption?.label ?? (clearOption?.current ? clearOption.title : null);
     if (presentation !== 'dropdown') return renderList();
     const dropdown = <DropdownMenu
         open={dropdownOpen} onOpenChange={changeDropdownOpen}
@@ -203,9 +205,7 @@ export function MachineSelector(props: MachineSelectorProps) {
         matchTriggerWidth connectToTrigger popoverBoundaryRef={props.popoverBoundaryRef}
         itemTrigger={{
             title: props.dropdownTitle ?? t('newSession.selectMachineTitle'),
-            subtitle: props.dropdownSubtitle ?? (props.selectedMachine
-                ? machineNames.get(props.selectedMachine.id) ?? getMachineDisplayName(props.selectedMachine) ?? props.selectedMachine.id
-                : selectedManagedOffer?.title ?? clearOption?.title ?? t('newSession.selectMachineDescription')),
+            subtitle: props.dropdownSubtitle ?? selectedTitle ?? t('newSession.selectMachineDescription'),
             showSelectedDetail: false, showSelectedSubtitle: false,
             icon: <Icon name="desktop" size={24} color={theme.colors.text.secondary} />,
             itemProps: { testID: props.dropdownTestID },

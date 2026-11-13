@@ -39,6 +39,9 @@ export function buildMachineOwnershipGroups<T extends MachineDisplayRenderable>(
     }
     return [
         ...(owned.length > 0 || shared.size === 0 ? [{ key: 'owned', custodian: null, machines: owned }] : []),
-        ...Array.from(shared, ([key, group]) => ({ key: `shared:${key}`, ...group })),
+        ...Array.from(shared).sort(([leftKey, left], [rightKey, right]) =>
+            (left.custodian?.displayName?.trim() ?? '').localeCompare(right.custodian?.displayName?.trim() ?? '', undefined, { sensitivity: 'base' })
+            || leftKey.localeCompare(rightKey))
+            .map(([key, group]) => ({ key: `shared:${key}`, ...group })),
     ];
 }
