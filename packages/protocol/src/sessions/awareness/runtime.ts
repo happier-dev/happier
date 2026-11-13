@@ -352,11 +352,11 @@ export function hasSessionAwarenessReadyEvidenceV1(
   if (lifecycle.latestTurnStatus === 'in_progress'
     || lifecycle.latestTurnStatus === 'waiting'
     || lifecycle.latestTurnStatus === 'failed'
-    || lifecycle.latestTurnStatus === 'cancelled'
+    || (lifecycle.latestTurnStatus === 'cancelled' && lifecycle.processTerminalState === 'stopped')
     || normalizeAwarenessTimestampV1(lifecycle.archivedAtMs) !== null) return false;
   const readySeq = normalizeAwarenessSequenceV1(lifecycle.latestReadyEventSeq);
   if (readySeq !== null && readySeq > 0) return true;
-  if (lifecycle.latestTurnStatus !== 'completed') return false;
+  if (lifecycle.latestTurnStatus !== 'completed' && lifecycle.latestTurnStatus !== 'cancelled') return false;
   return !hasActivityClearlyAfterTerminalProjectionV1(
     lifecycle.meaningfulActivityAtMs,
     lifecycle.latestTurnStatusObservedAtMs,

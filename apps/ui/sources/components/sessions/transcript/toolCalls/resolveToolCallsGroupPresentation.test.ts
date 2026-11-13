@@ -11,6 +11,17 @@ import type { ToolCall } from '@happier-dev/session-core/messages';
 const groupStatus = (params: Parameters<typeof resolveToolCallsGroupSummary>[0]) => resolveToolCallsGroupSummary(params).status;
 
 describe('hidden tool group presentation', () => {
+    it('keeps stopped calls distinct from failure in a collapsed group', () => {
+        const base = createToolCallMessageFixture();
+        const stopped = createToolCallMessageFixture({ id: 'stopped', tool: { ...base.tool,
+            state: 'error', result: { status: 'cancelled' } } });
+        const failed = createToolCallMessageFixture({ id: 'failed', tool: { ...base.tool,
+            state: 'error', result: { status: 'failed' } } });
+        expect(resolveToolCallsGroupSummary({ toolMessages: [stopped], showToolCalls: false }))
+            .toMatchObject({ status: 'stopped', failed: 0 });
+        expect(groupStatus({ toolMessages: [stopped, failed], showToolCalls: false })).toBe('error');
+    });
+
     it.each(['denied', 'canceled'] as const)('summarises a person’s Shell %s decision with the approval vocabulary', (status) => {
         const base = createToolCallMessageFixture();
         const message = createToolCallMessageFixture({ tool: { ...base.tool, name: 'Bash', state: 'error',

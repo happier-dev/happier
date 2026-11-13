@@ -345,18 +345,19 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
                         historicalAgentId,
                     }) ?? t('errors.permissionDenied')
                 )
-                : null;
+                : statusKind === 'stopped' ? t('machineGuard.session.stopped') : null;
     // A native decision collapses to the exact label that was applied, who answered and when (lab mb B).
-    const nativeAnswerPermission = statusKind !== 'error' && resolveNativePermissionAnswer(toolForRendering.permission)
+    const nativeAnswerPermission = statusKind !== 'error' && statusKind !== 'stopped' && resolveNativePermissionAnswer(toolForRendering.permission)
         ? toolForRendering.permission : undefined;
     const headerTerminalStatus = nativeAnswerPermission ? (
         <PermissionAnswerOutcomeStatus permission={nativeAnswerPermission} serverId={props.serverId} />
     ) : terminalStatusSummary ? (
         <ToolOutcomeStatus
-            testID={statusKind === 'permission_blocked' ? 'tool-timeline-row-permission-blocked' : 'tool-timeline-row-error'}
+            testID={statusKind === 'stopped' ? 'tool-timeline-row-stopped'
+                : statusKind === 'permission_blocked' ? 'tool-timeline-row-permission-blocked' : 'tool-timeline-row-error'}
             label={terminalStatusSummary}
-            glyph={statusKind === 'permission_blocked' || isRefusal ? 'minus-circle' : 'warning-circle'}
-            tone={isRefusal || (statusKind === 'permission_blocked' && declinedApproval !== null) ? 'quiet' : 'danger'}
+            glyph={statusKind === 'stopped' || statusKind === 'permission_blocked' || isRefusal ? 'minus-circle' : 'warning-circle'}
+            tone={statusKind === 'stopped' || isRefusal || (statusKind === 'permission_blocked' && declinedApproval !== null) ? 'quiet' : 'danger'}
         />
     ) : null;
     const headerRunningIndicator = !headerTerminalStatus && showTaskRunningIndicator && toolForRendering.state === 'running'

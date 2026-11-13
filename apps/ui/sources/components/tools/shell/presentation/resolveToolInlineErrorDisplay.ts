@@ -6,6 +6,7 @@ import type { KnownToolDefinition } from '@/components/tools/catalog/_types';
 import { parseToolUseError } from '@/utils/errors/toolErrorParser';
 import { resolveToolPermissionTerminalErrorMessage } from '../permissions/resolveToolPermissionTerminalErrorMessage';
 import type { TranscriptPermissionDisabledReason } from '@/utils/sessions/deriveTranscriptInteraction';
+import { resolveToolStatusIndicatorKind } from './resolveToolStatusIndicatorKind';
 
 export function resolveToolErrorDisplay(message: string) {
     const parsed = parseToolUseError(message);
@@ -35,7 +36,7 @@ export function resolveToolInlineErrorDisplay(params: Readonly<{
     const result = params.tool.result;
     const isSubAgentRun = params.normalizedToolName === 'SubAgentRun' || params.tool.name === 'SubAgentRun'
         || isSubAgentRunErrorResult(result);
-    if (params.tool.state !== 'error' || !result || parseToolUseError(result).isToolUseError || isSubAgentRun) {
+    if (resolveToolStatusIndicatorKind(params.tool) !== 'error' || !result || parseToolUseError(result).isToolUseError || isSubAgentRun) {
         return { override: null, append: null, generic: null };
     }
     const raw = typeof result === 'string' ? result : JSON.stringify(result, null, 2);

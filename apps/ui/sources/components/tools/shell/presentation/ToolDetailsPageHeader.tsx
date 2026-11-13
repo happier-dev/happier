@@ -20,6 +20,8 @@ function outcomeWord(kind: ToolStatusIndicatorKind): string | null {
   switch (kind) {
     case 'completed':
       return t('toolView.outcome.completed');
+    case 'stopped':
+      return t('machineGuard.session.stopped');
     case 'running':
       return t('toolView.outcome.running');
     case 'permission_pending':

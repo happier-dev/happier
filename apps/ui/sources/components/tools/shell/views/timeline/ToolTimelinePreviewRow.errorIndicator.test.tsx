@@ -44,6 +44,20 @@ function makeToolMessage(overrides: Partial<any> = {}) {
 const { ToolTimelinePreviewRow } = await import('./ToolTimelinePreviewRow');
 
 describe('ToolTimelinePreviewRow (error indicator)', () => {
+    it('presents an interrupted tool as stopped with a quiet accessible outcome', async () => {
+        const { createToolCallMessageFixture } = await import('@/dev/testkit/fixtures/transcriptFixtures');
+        const base = createToolCallMessageFixture();
+        const message = createToolCallMessageFixture({ tool: { ...base.tool, state: 'error',
+            result: { status: 'cancelled', failureReason: 'cancelled by tool cancellation' } } });
+        const screen = await renderScreen(<ToolTimelinePreviewRow toolMessage={message} metadata={null} />);
+        expect(screen.findAllByTestId('tool-timeline-preview-row-error')).toHaveLength(0);
+        expect(screen.findByTestId('tool-timeline-preview-row-stopped')?.props.accessibilityLabel)
+            .toBe('machineGuard.session.stopped');
+        const outcome = screen.tree.root.findAll(node => node.props.testID === 'tool-timeline-preview-row-stopped'
+            && typeof node.props.tone === 'string')[0];
+        expect(outcome?.props.tone).toBe('quiet');
+    });
+
     afterEach(() => {
         standardCleanup();
     });

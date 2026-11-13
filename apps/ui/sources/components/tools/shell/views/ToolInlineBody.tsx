@@ -32,6 +32,7 @@ import { t } from '@/text';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveToolActionFailure } from '@/components/tools/shell/presentation/resolveToolActionFailure';
 import { isSubAgentRunErrorResult, resolveToolInlineErrorDisplay } from '@/components/tools/shell/presentation/resolveToolInlineErrorDisplay';
+import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
 import { useTranscriptRowLayoutMutation } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
 import { useHistoricalTranscriptAgentId } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 import type { ExecutionRunPromptResponseTarget } from '@/components/tools/shell/permissions/executionRunPromptResponseTarget';
@@ -149,8 +150,9 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
     const isSubAgentRunTool = normalizedToolName === 'SubAgentRun' || tool.name === 'SubAgentRun';
     const shouldUseSubAgentRunErrorFallback = isSubAgentRunTool || isSubAgentRunLikeErrorResult;
 
+    const isError = resolveToolStatusIndicatorKind(tool) === 'error';
     const isToolUseError =
-        tool.state === 'error' &&
+        isError &&
         tool.result &&
         parseToolUseError(tool.result).isToolUseError;
 
@@ -273,7 +275,7 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
     }
 
     // Show error state if present (not a tool-use error)
-    if (tool.state === 'error' && tool.result && !isToolUseError) {
+    if (isError && tool.result && !isToolUseError) {
         if (shouldUseSubAgentRunErrorFallback) {
             return (
                 <StructuredResultView

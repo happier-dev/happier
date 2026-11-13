@@ -204,7 +204,7 @@ export const ToolCallDetailsSections = React.memo(
               ]}
             />
           </ItemGroup>
-        ) : tool.state === 'error' && tool.result != null && !formatToolPermissionDecisionLabel(tool.permission) ? (
+        ) : outcome.kind === 'status' && outcome.indicator === 'error' && tool.result != null && !formatToolPermissionDecisionLabel(tool.permission) ? (
           <ItemGroup
             title={t('tools.fullView.error')}
             testID="tool-details-error"

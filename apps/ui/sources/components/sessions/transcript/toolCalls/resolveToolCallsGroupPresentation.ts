@@ -8,7 +8,7 @@ import { readDeclinedApprovalAtToolCall } from '@/components/tools/shell/views/t
 import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import { projectReviewToolMessage } from '@/components/sessions/reviews/messages/projectReviewToolMessage';
 
-export type ToolCallsGroupStatus = 'running' | 'completed' | 'error' | 'refused' | 'permission_denied';
+export type ToolCallsGroupStatus = 'running' | 'completed' | 'stopped' | 'error' | 'refused' | 'permission_denied';
 
 /** What a group's header says: its one status, and how many calls failed or were refused. */
 export type ToolCallsGroupSummary = Readonly<{
@@ -36,6 +36,7 @@ export function resolveToolCallsGroupSummary(params: Readonly<{
     let failuresAreActionOutcomes = false;
     let sawPermissionDenied = false;
     let sawRunning = false;
+    let sawStopped = false;
     for (const message of params.toolMessages) {
         const tool = resolveInactiveSessionToolCallFailure({
             tool: projectReviewToolMessage(message).tool,
@@ -48,6 +49,7 @@ export function resolveToolCallsGroupSummary(params: Readonly<{
             tool,
         });
         const kind = resolveToolStatusIndicatorKind(tool, declinedApproval);
+        if (kind === 'stopped') sawStopped = true;
         if (kind === 'running' || kind === 'permission_pending') sawRunning = true;
         if (kind === 'error') {
             // A refused call is the product saying no, not a break: it outranks nothing that failed.
@@ -84,6 +86,7 @@ export function resolveToolCallsGroupSummary(params: Readonly<{
             : failed > 0 ? 'error'
                 : refused > 0 ? 'refused'
                     : sawPermissionDenied ? 'permission_denied'
+                        : sawStopped ? 'stopped'
                         : sawRunning ? 'running'
                             : 'completed';
     return { status, failed, refused, failuresAreActionOutcomes,

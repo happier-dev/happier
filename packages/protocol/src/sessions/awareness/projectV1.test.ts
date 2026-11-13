@@ -144,16 +144,17 @@ describe('projectSessionAwarenessV1 — operational semantics', () => {
     expect(SessionAwarenessProjectionV1Schema.safeParse({ ...projection, managedSessions: { ...managedSessions, total: -1 } }).success).toBe(false);
     expect(SessionAwarenessProjectionV1Schema.safeParse({ ...projection, manager: { ...manager, permission: 'admin' } }).success).toBe(false);
   });
-  it('keeps a terminal turn projection authoritative over stale thinking', () => {
+  it.each(['completed', 'cancelled'] as const)('returns a %s turn to ready despite stale thinking', (latestTurnStatus) => {
     const projection = projectSessionAwarenessV1(input({
-      lifecycle: { latestTurnStatus: 'completed', latestTurnStatusObservedAtMs: NOW - 5_000 },
+      lifecycle: { latestTurnStatus, latestTurnStatusObservedAtMs: NOW - 5_000 },
       runtime: { presence: 'online', active: true, thinking: true, thinkingAtMs: NOW - 1_000 },
     }));
 
     expect(projection.runtime).toBe('idle');
-    expect(projection.lifecycle).toBe('ready');
+    expect(projection.lifecycle).toBe(latestTurnStatus === 'completed' ? 'ready' : 'cancelled');
     expect(projection.operational.primary).toBe('ready');
     expect(projection.operational.reasons).not.toContain('working');
+    expect(readSessionAwarenessPresentationV1(projection)).toBe('ready');
   });
 
   it('separates continuing background work from a completed foreground turn', () => {

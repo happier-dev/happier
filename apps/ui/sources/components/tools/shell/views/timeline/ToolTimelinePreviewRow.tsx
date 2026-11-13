@@ -119,15 +119,15 @@ export const ToolTimelinePreviewRow = React.memo(function ToolTimelinePreviewRow
                         historicalAgentId,
                     }) ?? t('errors.permissionDenied')
                 )
-                : null;
+                : statusKind === 'stopped' ? t('machineGuard.session.stopped') : null;
     const terminalStatus = terminalStatusSummary ? (
         <ToolOutcomeStatus
-            testID={statusKind === 'permission_blocked'
+            testID={statusKind === 'stopped' ? 'tool-timeline-preview-row-stopped' : statusKind === 'permission_blocked'
                 ? 'tool-timeline-preview-row-permission-blocked'
                 : 'tool-timeline-preview-row-error'}
             label={terminalStatusSummary}
-            glyph={statusKind === 'permission_blocked' || isRefusal ? 'minus-circle' : 'warning-circle'}
-            tone={isRefusal ? 'quiet' : 'danger'}
+            glyph={statusKind === 'stopped' || statusKind === 'permission_blocked' || isRefusal ? 'minus-circle' : 'warning-circle'}
+            tone={statusKind === 'stopped' || isRefusal ? 'quiet' : 'danger'}
         />
     ) : null;
 

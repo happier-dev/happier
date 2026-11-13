@@ -347,7 +347,7 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
     const statusKind = resolveToolStatusIndicatorKind(toolForRendering, declinedApproval);
     // A typed refusal is the product working as designed: quiet ink, not the failure rose.
     const isRefusal = statusKind === 'error' && resolveToolActionFailure(toolForRendering)?.outcome === 'refused';
-    if (statusKind === 'permission_blocked') {
+    if (statusKind === 'permission_blocked' || statusKind === 'stopped') {
         statusIcon = <Icon name="minus-circle" size={20} color={theme.colors.text.secondary} />;
     } else if (statusKind === 'permission_pending') {
         statusIcon = <Icon name="lock" size={20} color={theme.colors.state.neutral.foreground} />;

@@ -21,6 +21,19 @@ const { SubAgentView } = await import('@/components/tools/renderers/workflow/Sub
 const { ToolError } = await import('@/components/tools/shell/presentation/ToolError');
 
 describe('ToolInlineBody (SubAgentRun error fallback)', () => {
+    it('does not turn a cancelled result into an error body or Find error text', async () => {
+        const tool = { name: 'unrecognized-tool', description: null, state: 'error' as const, input: {},
+            result: { status: 'cancelled', error: 'The turn ended before this tool returned a result.' },
+            createdAt: 1, startedAt: 1, completedAt: 2 };
+        const screen = await renderScreen(<ToolInlineBody mode="timeline" tool={tool}
+            normalizedToolName={tool.name} metadata={null} messages={[]} detailLevel="summary"
+            setHeaderActions={() => {}} />);
+        expect(screen.findAllByType(ToolError)).toHaveLength(0);
+        const { resolveToolInlineErrorDisplay } = await import('../presentation/resolveToolInlineErrorDisplay');
+        expect(resolveToolInlineErrorDisplay({ tool, normalizedToolName: tool.name, metadata: null }))
+            .toEqual({ override: null, append: null, generic: null });
+    });
+
     afterEach(() => {
         standardCleanup();
     });

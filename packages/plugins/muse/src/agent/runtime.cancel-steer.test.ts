@@ -62,6 +62,10 @@ it.each(['steer', 'cancel'] as const)('routes %s to the actual owning native tur
     await writeFile(`${nativeNotificationPath}.complete`, JSON.stringify(remapped));
     await rename(`${nativeNotificationPath}.complete`, nativeNotificationPath);
     await events.until('turn-cancelled', { signal: fixture.context.signal });
+    expect(events.canonicalEvents()).toContainEqual(expect.objectContaining({
+      kind: 'turn-cancelled', turnId: 'owning-turn',
+      cause: control === 'cancel' ? 'user' : 'providerInterrupted',
+    }));
     await operations.resetOrDisposeRuntime('session_closed'); operations = undefined;
     const audit = await fixture.readAudit();
     const nativeControl = audit.commandTargets.filter(target => target.method === `turn/${control === 'steer' ? 'steer' : 'interrupt'}`);

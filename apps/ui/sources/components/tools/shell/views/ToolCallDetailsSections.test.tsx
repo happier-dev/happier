@@ -7,6 +7,15 @@ import { ToolCallDetailsSections } from './ToolCallDetailsSections';
 
 afterEach(standardCleanup);
 
+it.each(['cancelled', 'interrupted', 'failed'] as const)('shows error details only for a real failure (%s)', async (status) => {
+    const tool: ToolCall = { name: 'unrecognized-tool', state: 'error', input: {}, description: null,
+        createdAt: 1, startedAt: 1, completedAt: 2, result: { status, error: 'Turn ended' } };
+    const screen = await renderScreen(<ToolCallDetailsSections tool={tool} />);
+    const errors = screen.findAllByTestId('tool-details-error');
+    if (status === 'failed') expect(errors.length).toBeGreaterThan(0);
+    else expect(errors).toHaveLength(0);
+});
+
 it.each([
     { source: { kind: 'artifact', serverId: 'home', artifactId: '80f7dabe-1f05-44b7-8e44-d98f2127f523' },
         expectedVersion: '1.0.10', creation: { directory: { kind: 'path', path: '~' } }, name: 'Coffee' },

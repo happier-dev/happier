@@ -3,6 +3,14 @@ import type { ToolCall } from '../messages/index.js';
 import { resolveToolRowPresentation } from './toolRowPresentation.js';
 
 describe('tool row presentation', () => {
+    it.each(['cancelled', 'interrupted'])('presents a native %s tool as stopped rather than failed', status => {
+        const tool: ToolCall = { name: 'Bash', input: { command: 'sleep 30' }, description: null,
+            state: 'error', result: { status, failureReason: 'cancelled by tool cancellation' },
+            createdAt: 1, startedAt: 1, completedAt: 2 };
+        expect(resolveToolRowPresentation(tool).statusKind).toBe('stopped');
+        expect(resolveToolRowPresentation({ ...tool, result: { status: 'failed' } }).statusKind).toBe('error');
+    });
+
     it('names a denied shell call by its command and keeps denial ahead of completed transport state', () => {
         const tool: ToolCall = { name: 'Bash', input: { command: 'pwd' }, description: 'execute',
             state: 'completed', result: null, createdAt: 1, startedAt: 1, completedAt: 2,

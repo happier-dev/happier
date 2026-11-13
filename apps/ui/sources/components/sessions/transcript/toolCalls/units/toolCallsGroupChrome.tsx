@@ -162,6 +162,7 @@ export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHead
                 ? props.outcomes?.refusalLabel ?? t('toolView.actionOutcome.refused')
                 : props.status === 'permission_denied'
                 ? t('errors.permissionDenied')
+                : props.status === 'stopped' ? t('machineGuard.session.stopped')
                 : null;
 
     return (
@@ -191,7 +192,7 @@ export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHead
                             testID={`tool-calls-group-status:${props.status}`}
                             label={terminalStatusLabel}
                             glyph={props.status === 'error' ? 'warning-circle' : 'minus-circle'}
-                            tone={props.status === 'refused' ? 'quiet' : 'danger'}
+                            tone={props.status === 'refused' || props.status === 'stopped' ? 'quiet' : 'danger'}
                         />
                     ) : (
                         <View testID={`tool-calls-group-status:${props.status}`} style={chromeStyles.statusIconRight}>

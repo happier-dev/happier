@@ -6,6 +6,7 @@ export type ToolStatusIndicatorKind =
     | 'permission_pending'
     | 'running'
     | 'completed'
+    | 'stopped'
     | 'error'
     | 'none';
 
@@ -109,6 +110,11 @@ export function resolveToolStatusIndicatorKind(
     if (permissionStatus === 'pending' && tool.state === 'running') return 'permission_pending';
 
     if (tool.state === 'running') return 'running';
+    const result: unknown = tool.result;
+    if (result && typeof result === 'object' && !Array.isArray(result)) {
+        const status = (result as Record<string, unknown>).status;
+        if (status === 'cancelled' || status === 'interrupted') return 'stopped';
+    }
     if (tool.state === 'error') return 'error';
     if (tool.state === 'unavailable') {
         return hasToolResultFailure(tool) ? 'error' : 'none';

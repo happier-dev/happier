@@ -34,6 +34,7 @@ function StatusIndicator({ tool, theme }: { tool: ToolCall; theme: Theme }) {
             // Waiting on the person's permission: needs-you, in the one attention amber.
             return <Icon name="lock" size={TOOL_STATUS_ICON_SIZE_PX} color={workStatusGlyphColor(theme.colors, 'attention')} />;
         case 'permission_blocked':
+        case 'stopped':
             return <Icon name="minus-circle" size={TOOL_STATUS_ICON_SIZE_PX} color={theme.colors.text.secondary} />;
         case 'running':
             return <ActivitySpinner size={iconMatchedSpinnerSize(TOOL_STATUS_ICON_SIZE_PX)} color={workStatusGlyphColor(theme.colors, 'neutral')} />;
