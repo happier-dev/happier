@@ -55,6 +55,8 @@ import { createUnavailablePluginServices } from '../../invocation/services/unava
 import { createContributionOwnedManagedServiceEndpointReadHostCache } from '@/session/external/contributionOwnedManagedServiceEndpointRead';
 import type { CreateAgentInvocationServices } from '../../invocation/services/types';
 import { logger } from '../../../../ui/logger';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { createProductionPluginInvocationServiceOwners } from '../../invocation/services/production';
 
 const providerBinding: AgentProviderBindingAdapter = {
     v: 1,
@@ -926,6 +928,53 @@ describe('contribution-owned External Sessions managed endpoint', () => {
 });
 
 describe('target Agent runtime registry', () => {
+    it('keeps hosted Session environments isolated in real Agent surface exec output', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'agent-surface-environment-'));
+        // Only executable/path resolution is supplied; service binding and child execution stay real.
+        const owners = createProductionPluginInvocationServiceOwners({
+            resolveRetirementSignal: () => TEST_RETIREMENT_SIGNAL,
+            exec: { resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => directory },
+        });
+        try {
+            const registry = await createTargetAgentRuntimeRegistry({
+                agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
+                activationTargets: [target()], targetRegistrations: [externalSessionsRegistration()],
+                isOccurrenceCurrent: () => true, retirementSignal: TEST_RETIREMENT_SIGNAL, onDuplicate: vi.fn(),
+                createAgentInvocationServices: async (input) => owners.createOperationServices({
+                    plugin: { id: input.pluginId, version: input.pluginVersion },
+                    contribution: { id: input.agentId, qualifiedId: `${input.pluginId}/agents/${input.agentId}` },
+                    occurrenceId: input.occurrenceId, correlationId: input.correlationId, surface: 'cli',
+                    signal: input.signal, isOccurrenceCurrent: input.isOccurrenceCurrent,
+                }, { hostAccessRequests: [], environment: input.environment, defaultCwd: input.cwd,
+                    filesystemRoots: { pluginData: directory, workspace: directory, projects: new Map() },
+                }),
+            });
+            const lease = registry.get('assistant');
+            if (!lease) throw new Error('Expected admitted Agent surface');
+            const hostHome = process.env.HOME;
+            const outcomes = await Promise.all(['session-a', 'session-b'].map((sessionId) => {
+                const home = join(directory, sessionId);
+                return runAddedHostedSession({ environment: { ...process.env, HOME: home }, workingDirectory: directory, end() {} }, async () => {
+                    const context = await lease.createAgentRuntimeSurfaceInvocationContext({ cwd: directory, happierSessionId: sessionId });
+                    const request = { executable: { kind: 'systemTool' as const, id: 'fixture.node' },
+                        args: ['-e', 'process.stdout.write(process.env.HOME ?? "")'] };
+                    const inherited = await context.services.exec.run(request);
+                    const explicit = await context.services.exec.run({ ...request, env: { HOME: directory } });
+                    return { home, inherited, explicit };
+                });
+            }));
+            for (const { home, inherited, explicit } of outcomes) {
+                expect(inherited.termination.observed).toMatchObject({ kind: 'exit', exitCode: 0 });
+                expect(explicit.termination.observed).toMatchObject({ kind: 'exit', exitCode: 0 });
+                expect(Buffer.from(inherited.stdout).toString()).toBe(home);
+                expect(Buffer.from(explicit.stdout).toString()).toBe(directory);
+            }
+            expect(process.env.HOME).toBe(hostHome);
+        } finally {
+            await owners.dispose();
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
     it('carries native observation facts through the daemon and registered facade until demand retirement', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'codex-observation-seam-'));
         const retirement = new AbortController();

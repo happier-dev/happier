@@ -304,6 +304,7 @@ async function prepareExecutionRunManagerStartParams(
   const prepared: Record<string, unknown> = {
     ...(params as unknown as Record<string, unknown>),
     ...(startProfilePatch ?? {}),
+    cwd,
     requesterWorkAttributionV1: params.requesterWorkAttributionV1,
   };
   delete prepared.replay;

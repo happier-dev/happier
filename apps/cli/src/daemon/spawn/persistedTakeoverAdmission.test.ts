@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+
 import {
   HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY,
   consumePersistedTakeoverAdmissionFromEnv,
@@ -8,6 +11,38 @@ import {
 } from './persistedTakeoverAdmission';
 
 describe('persisted takeover admission child handoff', () => {
+  it('consumes only each hosted Session admission published through the real handoff serializer', async () => {
+    const hostAdmission = serializePersistedTakeoverAdmissionForEnv({
+      mode: 'persisted', operationId: 'host-operation', attemptId: 'host-attempt',
+    });
+    const envScope = createEnvKeyScope([HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY]);
+    envScope.patch({ [HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY]: hostAdmission });
+    const admissions = (['persisted', 'external_linked'] as const).map((mode, index) => ({
+      mode, operationId: `operation-${index}`, attemptId: `attempt-${index}`,
+    }));
+    const environments = admissions.map(admission => ({
+      [HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY]: serializePersistedTakeoverAdmissionForEnv(admission),
+    }));
+    try {
+      const consumed = await Promise.all(environments.map(environment => runAddedHostedSession({
+        environment, workingDirectory: '/repo', end: () => undefined,
+      }, async () => {
+        await Promise.resolve();
+        const admission = consumePersistedTakeoverAdmissionFromEnv();
+        await Promise.resolve();
+        expect(consumePersistedTakeoverAdmissionFromEnv()).toBeNull();
+        return admission;
+      })));
+      expect(consumed).toEqual(admissions);
+      for (const environment of environments) {
+        expect(environment[HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY]).toBeUndefined();
+      }
+      expect(process.env[HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY]).toBe(hostAdmission);
+    } finally {
+      envScope.restore();
+    }
+  });
+
   it('round-trips bounded opaque correlation and consumes it exactly once', () => {
     const env: NodeJS.ProcessEnv = {
       [HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY]:

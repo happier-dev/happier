@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { randomUUID } from 'node:crypto';
 
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
@@ -1257,7 +1258,7 @@ function createLease(params: Readonly<{
             occurrenceId: params.occurrenceId,
             correlationId: randomUUID(),
             cwd,
-            environment: resolveNativeAgentLaunchEnvironment({ processEnv: process.env }).values,
+            environment: resolveNativeAgentLaunchEnvironment({ processEnv: sessionProcessEnvironment() }).values,
             ...(auxiliaryNativeOperation ? { auxiliaryNativeOperation } : {}),
             providerBindingActive:
                 params.registration.providerBinding !== undefined,

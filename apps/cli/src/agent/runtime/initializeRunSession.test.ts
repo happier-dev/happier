@@ -8,6 +8,7 @@ import * as daemonControl from '@/daemon/controlClient'
 import { createDeferredStartupBootstrap } from '@/agent/runtime/startup/createDeferredStartupBootstrap'
 
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession'
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope'
 import type { ApiSessionClient } from '@/api/session/sessionClient'
 import type { AgentState, Metadata, Session } from '@/api/types'
 import { SessionCreationPlacementError } from '@/api/session/sessionCreationPlacementError'
@@ -188,6 +189,43 @@ describe('initialize run session', () => {
     } finally {
       Object.defineProperty(configuration, 'happyHomeDir', home)
       dir.removeCallback()
+    }
+  })
+
+  it('reports each interleaved hosted Session creation refusal with its own startup nonce', async () => {
+    const envScope = createEnvKeyScope(['HAPPIER_SESSION_STARTUP_SPAWN_NONCE'])
+    envScope.patch({ HAPPIER_SESSION_STARTUP_SPAWN_NONCE: 'host-startup-attempt' })
+    const environments = ['a', 'b'].map(id => ({ HAPPIER_SESSION_STARTUP_SPAWN_NONCE: `attempt-${id}` }))
+    try {
+      const reports = await Promise.all(environments.map((environment, index) => runAddedHostedSession({
+        environment, workingDirectory: '/repo', end: () => undefined,
+      }, async () => {
+        let report: Readonly<{ spawnNonce: string; errorDetail: unknown }> | undefined
+        const failure = new SessionCreationCorrespondenceConflictError()
+        await Promise.resolve()
+        await expect(initializeBackendRunSession({
+          api: {
+            getOrCreateSession: async () => { await Promise.resolve(); throw failure },
+            sessionSyncClient: () => { throw new Error('Refused Session must not attach') },
+          },
+          sessionTag: `hosted-refusal-${index}`,
+          metadata: { startedBy: 'daemon' } as Metadata,
+          state: { controlledByUser: false },
+          uiLogPrefix: '[hosted refusal]',
+          startupMetadataOverrides: { permissionModeOverride: { mode: 'default', updatedAt: 1 } },
+        }, {
+          // The daemon report is the IPC boundary; refusal classification stays real.
+          reportSessionStartupFailureToDaemonIfRunningFn: async input => { report = input },
+        })).rejects.toBe(failure)
+        return report
+      })))
+      expect(reports).toEqual(environments.map(environment => ({
+        spawnNonce: environment.HAPPIER_SESSION_STARTUP_SPAWN_NONCE,
+        errorDetail: { kind: 'session_creation_correspondence_conflict', code: 'creation_conflict' },
+      })))
+      expect(process.env.HAPPIER_SESSION_STARTUP_SPAWN_NONCE).toBe('host-startup-attempt')
+    } finally {
+      envScope.restore()
     }
   })
 

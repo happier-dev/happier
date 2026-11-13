@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import {
   SESSION_DIRECTORY_KIND_ENV,
   SESSION_MACHINE_WORKSPACE_PATH_ENV,
@@ -175,7 +176,7 @@ export function resolveAbsentSessionControlEnvKeys(
  * Whitespace-only ambient values are absent, never an alternate attempt.
  */
 export function readSessionStartupSpawnNonceFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = sessionProcessEnvironment(),
 ): string | null {
   const value = typeof env[HAPPIER_SESSION_STARTUP_SPAWN_NONCE_ENV_KEY] === 'string'
     ? env[HAPPIER_SESSION_STARTUP_SPAWN_NONCE_ENV_KEY]!.trim()

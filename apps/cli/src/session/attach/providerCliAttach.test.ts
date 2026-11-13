@@ -14,6 +14,7 @@ import {
 
 import { createProviderCliAttachSurface, probeLocalSocket } from './providerCliAttach';
 import { createTerminalLauncherFixture } from '@/testkit/process/terminalLauncher';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 const launchFileBoundary = vi.hoisted(() => ({ beforeWrite: null as (() => void) | null }));
 // The real OS launch-file write is the await after exact managed-access resolution.
@@ -26,6 +27,40 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 });
 
 describe('createProviderCliAttachSurface', () => {
+    it.each(['session', 'explicit'] as const)('keeps hosted Session environments isolated in %s attach probes and native launches', async (environmentSource) => {
+        vi.stubEnv('ATTACH_SCOPE_MARKER', 'host-process');
+        try {
+            const outcomes = await Promise.all(['session-a', 'session-b'].map((sessionId) => {
+                const environment = { ...process.env, ATTACH_SCOPE_MARKER: sessionId };
+                const expected = environmentSource === 'explicit' ? 'explicit-attach' : sessionId;
+                const fixture = createTerminalLauncherFixture();
+                fixture.child.once('message', () => setImmediate(() => fixture.child.emit('exit', 0, null)));
+                const surface = createProviderCliAttachSurface({
+                    agentId: 'opencode', resolveTarget: () => ({ ok: true, value: {} }),
+                    createArgs: (_target, host) => ['attach', host.cliVersion ?? 'missing'],
+                    cliVersionArgs: ['-e', 'process.stdout.write(process.env.ATTACH_SCOPE_MARKER ?? "")'],
+                    // Executable resolution and HTTP/terminal launch are the native system boundaries.
+                    resolveLaunchSpec: () => ({ source: 'managed', resolvedPath: process.execPath, command: process.execPath, args: [] }),
+                    resolveReachability: (_target, host) => ({ kind: 'http', url: `https://fixture.test/${host.cliVersion}` }),
+                    fetchFn: async (input) => new Response(null, { status: String(input).endsWith(`/${expected}`) ? 200 : 503 }),
+                    spawnProcess: fixture.spawnProcess,
+                    ...(environmentSource === 'explicit' ? { env: { ...process.env, ATTACH_SCOPE_MARKER: expected } } : {}),
+                });
+                return runAddedHostedSession({ environment, workingDirectory: process.cwd(), end() {} }, async () => {
+                    const availability = await surface.evaluateAvailability!({ sessionId, metadata: {}, depth: 'live' });
+                    const attached = await surface.attach({ sessionId, metadata: {} });
+                    return { expected, availability, attached, native: fixture.readSpec() };
+                });
+            }));
+            for (const { expected, availability, attached, native } of outcomes) {
+                expect({ availability, attached, native }).toMatchObject({
+                    availability: { available: true }, attached: { ok: true },
+                    native: { args: ['attach', expected], env: { ATTACH_SCOPE_MARKER: expected } },
+                });
+            }
+            expect(process.env.ATTACH_SCOPE_MARKER).toBe('host-process');
+        } finally { vi.unstubAllEnvs(); }
+    });
     it('keeps Happier Herdr pane ownership out of the actual native attach launch', async () => {
         const fixture = createTerminalLauncherFixture();
         const inherited = Object.freeze({ PATH: '/bin', HERDR_ENV: '1', CLAUDECODE: '1', IS_SANDBOX: '1' });
@@ -230,7 +265,12 @@ describe('createProviderCliAttachSurface', () => {
             if (killFails) throw new Error('attach signal failed');
             return true;
         });
-        const { spawnProcess, child } = createTerminalLauncherFixture({ onSignal: (signal) => { kill(signal); } });
+        let acknowledgeForcedSignal = () => {};
+        const forcedSignal = new Promise<void>((resolve) => { acknowledgeForcedSignal = resolve; });
+        const { spawnProcess, child } = createTerminalLauncherFixture({ onSignal: (signal) => {
+            try { kill(signal); }
+            finally { if (signal === 'SIGKILL') acknowledgeForcedSignal(); }
+        } });
         const controller = new AbortController();
         const surface = createSurface<Record<string, never>>({
             agentId: 'codex',
@@ -253,18 +293,20 @@ describe('createProviderCliAttachSurface', () => {
         await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledTimes(1));
 
         try {
-            vi.useFakeTimers();
             controller.abort();
             await Promise.resolve();
             expect(kill).toHaveBeenCalledWith('SIGINT');
             if (killFails) {
-                await vi.runOnlyPendingTimersAsync();
+                // node:timers retains its real clock; await the exact launcher signal.
+                await forcedSignal;
                 expect(kill).toHaveBeenCalledWith('SIGKILL');
-                logger.flushSync();
-                const log = await readFile(logger.logFilePath, 'utf8');
-                expect(log).toContain('provider_attach_cleanup_signal_failed');
-                expect(log).toContain('SIGINT');
-                expect(log).toContain('SIGKILL');
+                await vi.waitFor(async () => {
+                    logger.flushSync();
+                    const log = await readFile(logger.logFilePath, 'utf8');
+                    expect(log).toContain('provider_attach_cleanup_signal_failed');
+                    expect(log).toContain('SIGINT');
+                    expect(log).toContain('SIGKILL');
+                });
             }
             child.emit('exit', 0, 'SIGINT');
             await expect(attachPromise).resolves.toEqual({
@@ -273,7 +315,6 @@ describe('createProviderCliAttachSurface', () => {
             });
         } finally {
             child.emit('exit', 0, 'SIGINT');
-            vi.useRealTimers();
             vi.unstubAllEnvs();
         }
     });

@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { setTimeout, clearTimeout } from 'node:timers';
 import { stat } from 'node:fs/promises';
 import { createConnection } from 'node:net';
@@ -358,7 +359,7 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
                 }
                 const reachability = resolveReachability(
                     target.value,
-                    await resolveHostFacts(params.env ?? process.env),
+                    await resolveHostFacts(params.env ?? sessionProcessEnvironment()),
                 );
                 if (!reachability) {
                     return {
@@ -427,7 +428,7 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
                 };
             }
 
-            const env = params.env ?? process.env;
+            const env = params.env ?? sessionProcessEnvironment();
             const managedServiceAccess = await resolveExactManagedServiceAccess(
                 sessionId,
                 target.value,

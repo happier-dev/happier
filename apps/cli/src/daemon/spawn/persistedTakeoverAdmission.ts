@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { StoredCredentials } from '@/persistence';
 import type { LoadedLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import type { ExternalSessionOperationAccountScope } from '@/session/actions/externalSessions/operationRecordStore';
@@ -212,7 +213,7 @@ export function serializePersistedTakeoverAdmissionForEnv(
 }
 
 export function consumePersistedTakeoverAdmissionFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = sessionProcessEnvironment(),
 ): HostPrivatePersistedTakeoverAdmission | null {
   const raw = env[HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY];
   if (raw === undefined) return null;
