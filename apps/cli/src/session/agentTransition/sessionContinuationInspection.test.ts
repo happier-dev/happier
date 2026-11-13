@@ -70,6 +70,21 @@ function inspectionDeps(params: Readonly<{ sessionMachineId: string }>) {
 }
 
 describe('sessionContinuationInspection', () => {
+  it.each(['pi', 'muse'])('resolves the exact qualified %s picker identity through the current catalog', async (agentId) => {
+    await expect(resolveSessionContinuationTargetAgent({
+      readAgentCatalogSnapshot,
+      agentId: `happier.agent.${agentId}/${agentId}`,
+    })).resolves.toMatchObject({ agentId });
+  });
+
+  it('recognizes the current Agent when the picker uses its qualified identity', async () => {
+    await expect(inspectSessionContinuation({
+      credentials,
+      request: { v: 1, sourceSessionId: 'source-session', selection: { v: 1, agentId: 'happier.agent.codex/codex' } },
+      deps: { ...inspectionDeps({ sessionMachineId: 'machine-1' }), readAgentCatalogSnapshot },
+    })).resolves.toEqual({ type: 'available', protocolVersion: 1, sameSessionTransition: false });
+  });
+
   beforeEach(() => {
     mocks.fetchAccountMachineReplacements.mockReset();
     mocks.fetchAccountMachineReplacements.mockResolvedValue([{ id: 'machine-1' }, { id: 'machine-2' }]);

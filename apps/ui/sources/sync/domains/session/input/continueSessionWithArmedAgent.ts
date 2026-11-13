@@ -1,5 +1,6 @@
 import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 import type {
     ComposerAgentContinuationIntentV1,
     SessionAgentTransitionInputV1,
@@ -265,7 +266,7 @@ function buildDisposition(params: Readonly<{
         return {
             draft: 'clear',
             arm: 'clear',
-            notice: null,
+            notice: message ? { tone: 'warning', message, recovery: 'none' } : null,
             send: 'allow',
             ...(params.awaitingRuntime === true ? { awaitingRuntime: true } as const : {}),
         };
@@ -430,15 +431,18 @@ export function reconcileArmedAgentContinuationDisposition(params: Readonly<{
             // `target_start_failed`, and canonical custody of the exact localId
             // answers it for the rest. Either way the message is the reader's to
             // wait on, so the draft goes and no sentence claims otherwise.
+            const failureMessage = result.errorDetail ? resolveSessionSpawnNewResultFailureMessage({
+                type: 'error', code: 'spawn_failed', retryable: false, launchError: result.errorDetail,
+            }) : '';
             return resultProvesInputQueuedBehindNoRuntime(result) || (facts !== null && facts.input !== 'absent')
                 ? buildDisposition({
                     depth: 'accepted',
-                    message: '',
+                    message: failureMessage,
                     awaitingRuntime: resolveAwaitingRuntime(result, facts),
                 })
                 : buildDisposition({
                     depth: 'current_view_committed',
-                    message: t('session.agentContinuation.transition.switched', {
+                    message: failureMessage || t('session.agentContinuation.transition.switched', {
                         agent: labels.targetAgentLabel,
                     }),
                     canResume,

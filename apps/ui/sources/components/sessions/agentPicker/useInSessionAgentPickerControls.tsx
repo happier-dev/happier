@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { resolveAgentRoutingId } from '@happier-dev/agents';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 
 import { buildAcpConfigOptionOverridesV1FromConfigOptions } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
@@ -36,6 +37,8 @@ import {
     type ServerAccountScope,
 } from '@/sync/domains/scope/serverAccountScope';
 import { useAgentUiSettings } from '@/agents/catalog/useAgentUiSettings';
+import { useProviderDefaultModelSelections } from '@/providers/hooks/useProviderSettings';
+import { readAgentDefaultModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
 import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
 import { getConnectedAccountCatalogValue } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
 
@@ -200,7 +203,7 @@ function InSessionAgentPickerDetailContent(props: Omit<
     return buildSessionAgentPickerDetailContent({ ...detail, accountScope, settings, connectedServices });
 }
 
-/** A target Agent starts at its own defaults, exactly as New Session starts it. */
+/** A target Agent with no Account default model starts at its own defaults. */
 const DEFAULT_TARGET_SELECTION: SessionAgentPickerSelection = {
     modelId: 'default',
     modelSelection: null,
@@ -208,6 +211,19 @@ const DEFAULT_TARGET_SELECTION: SessionAgentPickerSelection = {
     sessionModeId: null,
     configOverrides: {},
 };
+
+/**
+ * A target Agent starts on the Account's default model for that Agent (Settings
+ * › Agents), the same choice a child run takes when it names no model; with
+ * none set, the Agent's own default.
+ */
+function resolveDefaultTargetSelection(
+    entry: ResolvedBackendCatalogEntry,
+    defaultsByAgentTargetKey: unknown,
+): SessionAgentPickerSelection {
+    const selection = readAgentDefaultModelSelectionV1(defaultsByAgentTargetKey, entry.backendTarget);
+    return selection ? { ...DEFAULT_TARGET_SELECTION, modelId: selection.ref.modelId, modelSelection: selection } : DEFAULT_TARGET_SELECTION;
+}
 
 /**
  * `default` is the native Agent's "no model choice" sentinel, so it can only
@@ -225,7 +241,10 @@ function isNativeAutomaticSelection(selection: SessionAgentPickerSelection): boo
 function resolveContinuationAgentId(entry: ResolvedBackendCatalogEntry): string {
     return entry.backendTarget.kind === 'agent' && entry.backendTarget.definitionId
         ? `acp:${entry.backendTarget.definitionId}`
-        : entry.agentId;
+        : resolveAgentRoutingId(entry.agentCatalogEntry.qualifiedId, [{
+            id: entry.agentId,
+            identity: entry.agentCatalogEntry.identity,
+        }]) ?? entry.agentId;
 }
 
 function buildTargetSelection(
@@ -506,11 +525,15 @@ export function useInSessionAgentPickerControls(
     const [selectionByTargetKey, setSelectionByTargetKey] = React.useState<
         ReadonlyMap<string, SessionAgentPickerSelection>
     >(() => new Map());
+    const defaultModelsByAgentTargetKey = useProviderDefaultModelSelections(accountScope);
     const readTargetSelection = React.useCallback(
-        (backendTargetKey: string): SessionAgentPickerSelection => (
-            selectionByTargetKey.get(backendTargetKey) ?? DEFAULT_TARGET_SELECTION
-        ),
-        [selectionByTargetKey],
+        (backendTargetKey: string): SessionAgentPickerSelection => {
+            const authored = selectionByTargetKey.get(backendTargetKey);
+            if (authored) return authored;
+            const entry = entries.find(candidate => candidate.backendTargetKey === backendTargetKey);
+            return entry ? resolveDefaultTargetSelection(entry, defaultModelsByAgentTargetKey) : DEFAULT_TARGET_SELECTION;
+        },
+        [defaultModelsByAgentTargetKey, entries, selectionByTargetKey],
     );
     const targetSelectionByTargetKey = React.useMemo(() => new Map(
         targetEntries.map((entry) => [
@@ -550,10 +573,10 @@ export function useInSessionAgentPickerControls(
                 entry,
                 source,
                 inspection: readInspection(targetSelectionByTargetKey.get(entry.backendTargetKey)
-                    ?? buildTargetSelection(entry, DEFAULT_TARGET_SELECTION)),
+                    ?? buildTargetSelection(entry, readTargetSelection(entry.backendTargetKey))),
             }),
         }))
-    ), [readInspection, source, targetEntries, targetSelectionByTargetKey]);
+    ), [readInspection, readTargetSelection, source, targetEntries, targetSelectionByTargetKey]);
 
     // Pending targets keep the shared picker reachable before its first open;
     // only answered eligible targets can be armed.

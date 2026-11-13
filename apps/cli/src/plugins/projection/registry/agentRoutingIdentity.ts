@@ -1,9 +1,14 @@
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-key';
 
 import type {
-    ResolvedAgentContribution,
     ResolvedContributionProvenance,
 } from './types';
+
+export {
+    indexAgentRoutingIdsByContributionIdentity,
+    readAgentRoutingIdForContributionIdentity,
+    resolveAgentRoutingId,
+} from '@happier-dev/agents';
 
 /**
  * Resolves the host routing id for one contributed Agent.
@@ -49,35 +54,4 @@ export function resolveAgentContributionQualifiedId(params: Readonly<{
     localId: string;
 }>): string {
     return `${params.pluginId}/agents/${encodeURIComponent(params.localId)}`;
-}
-
-/**
- * Indexes selected Agent contributions by their durable `{pluginId, localId}`
- * identity so identity-addressed consumers resolve the same routing id the
- * projection assigned, instead of re-deriving one.
- */
-export function indexAgentRoutingIdsByContributionIdentity(
-    agents: readonly Pick<ResolvedAgentContribution, 'id' | 'identity' | 'pluginId'>[],
-): ReadonlyMap<string, string> {
-    const routingIdsByIdentityKey = new Map<string, string>();
-    for (const agent of agents) {
-        const pluginId = agent.identity?.pluginId ?? agent.pluginId;
-        if (!pluginId) continue;
-        routingIdsByIdentityKey.set(
-            buildQualifiedPluginContributionKey({
-                pluginId,
-                localId: agent.identity?.localId ?? agent.id,
-            }),
-            agent.id,
-        );
-    }
-    return routingIdsByIdentityKey;
-}
-
-/** Resolves the routing id one durable Agent identity currently addresses. */
-export function readAgentRoutingIdForContributionIdentity(
-    routingIdsByIdentityKey: ReadonlyMap<string, string>,
-    identity: Readonly<{ pluginId: string; localId: string }>,
-): string | null {
-    return routingIdsByIdentityKey.get(buildQualifiedPluginContributionKey(identity)) ?? null;
 }

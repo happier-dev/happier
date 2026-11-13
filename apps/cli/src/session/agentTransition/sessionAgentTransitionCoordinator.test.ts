@@ -313,14 +313,14 @@ describe('runSessionAgentTransition — pre-stop failures leave the source untou
     expect(harness.deps.requestSessionStop).not.toHaveBeenCalled();
   });
 
-  it('rejects the same Agent as a no-op only when the caller also expected it', async () => {
+  it.each(['claude', 'happier.agent.claude/claude'])('rejects the same Agent %s as a no-op only when the caller also expected it', async (agentId) => {
     const harness = createTransitionDepsHarness();
 
     const result = await runSessionAgentTransition({
       credentials: TEST_CREDENTIALS,
       request: buildTransitionRequest({
         expectedCurrentAgentId: 'claude',
-        selection: { v: 1, agentId: 'claude' },
+        selection: { v: 1, agentId },
       }),
       deps: harness.deps,
     });
@@ -466,7 +466,7 @@ describe('runSessionAgentTransition — exact input admission by localId (QA-T-0
     });
   });
 
-  it('retrying after outcome_unknown admits the same localId exactly once', async () => {
+  it.each(['codex', 'happier.agent.codex/codex'])('retrying %s after outcome_unknown admits the same localId exactly once with an unloaded target', async (agentId) => {
     // First pass: the cutover transport is ambiguous, so the daemon cannot name
     // an effect and never reaches admission.
     const first = createTransitionDepsHarness({
@@ -488,6 +488,7 @@ describe('runSessionAgentTransition — exact input admission by localId (QA-T-0
     // the retry reconciles instead of switching again, and admits the SAME
     // localId once.
     const retry = createTransitionDepsHarness({
+      readAgentCatalogSnapshot: (() => ({ agentDefinitionsById: new Map(), catalogEntriesById: {}, executionRunProfiles: [], pluginEnablementById: {} })) as never,
       findTranscriptMessageByLocalId: vi.fn(async () => ({
         type: 'found' as const,
         message: {
@@ -524,7 +525,7 @@ describe('runSessionAgentTransition — exact input admission by localId (QA-T-0
 
     const retryResult = await runSessionAgentTransition({
       credentials: TEST_CREDENTIALS,
-      request: buildTransitionRequest(),
+      request: buildTransitionRequest({ selection: { v: 1, agentId } }),
       deps: retry.deps,
     });
 

@@ -37,6 +37,7 @@ import {
 } from '../../src/testkit/providers/scenarios/sessionRuntime';
 import { repoRootDir } from '../../src/testkit/paths';
 import { createRunDirs } from '../../src/testkit/runDir';
+import { runCliJson } from '../../src/testkit/uiE2e/cliJson';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { fetchAllMessages, fetchSessionV2, type SessionMessageRow } from '../../src/testkit/sessions';
 import { waitFor } from '../../src/testkit/timing';
@@ -46,8 +47,8 @@ import { waitFor } from '../../src/testkit/timing';
  * end to end through a real server + daemon + CLI loop with FAKE Agents. No
  * stack, no Agent credentials, no paid traffic.
  *
- * The Agent pair is fake-Claude -> fake-Gemini(ACP) because both already run
- * under one daemon from one spawn environment. The deciding property is
+ * The targets are fake-Gemini(ACP) and a qualified fake-Pi native runtime,
+ * each replacing fake-Claude under the same daemon. The deciding property is
  * Agent-agnostic: the same Session row keeps its identity while its runtime
  * Agent is replaced, exactly one divider is appended, and the submitted localId
  * is admitted exactly once.
@@ -197,6 +198,42 @@ await connection.closed;
     await chmod(params.fakeGeminiPath, 0o755);
 }
 
+/** Pi's native JSON-stream process is the provider boundary; the host runtime stays real. */
+async function writeFakePiCli(path: string, logPath: string): Promise<void> {
+    const source = `
+const { appendFileSync } = require('node:fs');
+const { createInterface } = require('node:readline');
+if (process.argv.includes('--version')) { console.log('0.82.1'); process.exit(0); }
+if (process.argv.includes('--help')) { console.log('fake Pi --mode rpc'); process.exit(0); }
+const logPath = ${JSON.stringify(logPath)};
+const send = record => process.stdout.write(JSON.stringify(record) + '\\n');
+const state = { sessionId: 'qualified-pi-session', isStreaming: false, isCompacting: false,
+  model: { id: 'fake-model', provider: 'openai', name: 'Fake Pi model' } };
+createInterface({ input: process.stdin }).on('line', line => {
+  if (!line.trim()) return;
+  const request = JSON.parse(line);
+  const data = request.type === 'get_state' ? state : request.type === 'get_commands' ? { commands: [] } : {};
+  send({ type: 'response', id: request.id, command: request.type, success: true, data });
+  if (request.type !== 'prompt') return;
+  appendFileSync(logPath, JSON.stringify({ ts: Date.now(), kind: 'prompt', text: request.message }) + '\\n');
+  const message = { role: 'assistant', content: [{ type: 'text', text: 'FAKE_PI_OK_' + Date.now() }],
+    api: 'openai-responses', provider: 'openai', model: 'fake-model', stopReason: 'stop', timestamp: Date.now() };
+  send({ type: 'agent_start' });
+  send({ type: 'message_start', message });
+  send({ type: 'message_end', message });
+  send({ type: 'agent_end', messages: [message] });
+});
+`;
+    if (process.platform === 'win32') {
+        const scriptPath = `${path}.cjs`;
+        await writeFile(scriptPath, source, 'utf8');
+        await writeFile(`${path}.cmd`, `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`, 'utf8');
+    } else {
+        await writeFile(path, `#!${process.execPath}\n${source}`, 'utf8');
+        await chmod(path, 0o755);
+    }
+}
+
 function decodeRow(row: SessionMessageRow, secret: Uint8Array): unknown {
     const ciphertext = (row as unknown as { content?: { c?: unknown } }).content?.c;
     if (typeof ciphertext !== 'string') return null;
@@ -267,7 +304,10 @@ describe('core e2e: same-Session cross-Agent transition', () => {
         server = null;
     });
 
-    it('keeps the Session, appends exactly one divider, and admits the exact localId once', async () => {
+    it.each([
+        { selectedAgentId: 'gemini', runtimeAgentId: 'gemini', reply: 'FAKE_GEMINI_OK_' },
+        { selectedAgentId: 'happier.agent.pi/pi', runtimeAgentId: 'pi', reply: 'FAKE_PI_OK_' },
+    ])('keeps the Session, appends exactly one divider, and admits the exact localId once ($selectedAgentId)', async target => {
         const testDir = run.testDir(`agent-transition-${randomUUID()}`);
         server = await startServerLight({ testDir, dbProvider: 'sqlite' });
         const auth = await createTestAuth(server.baseUrl);
@@ -291,6 +331,9 @@ describe('core e2e: same-Session cross-Agent transition', () => {
         const fakeGeminiPath = resolve(join(fakeBinDir, 'gemini'));
         const fakeGeminiLogPath = resolve(join(testDir, 'fake-gemini.jsonl'));
         await writeFakeGeminiAcpCli({ fakeGeminiPath, fakeGeminiLogPath });
+        const fakePiLogPath = resolve(join(testDir, 'fake-pi.jsonl'));
+        await writeFakePiCli(resolve(join(fakeBinDir, 'pi')), fakePiLogPath);
+        const targetLogPath = target.runtimeAgentId === 'pi' ? fakePiLogPath : fakeGeminiLogPath;
 
         const providerEnv = createProviderEnv({
             daemonHomeDir,
@@ -301,6 +344,11 @@ describe('core e2e: same-Session cross-Agent transition', () => {
             fakeGeminiLogPath,
             serverBaseUrl: server.baseUrl,
         });
+        if (target.runtimeAgentId === 'pi') {
+            providerEnv.PI_CODING_AGENT_DIR = resolve(join(testDir, 'pi-agent'));
+            providerEnv.OPENAI_API_KEY = 'e2e-fake-pi-api-key';
+            await mkdir(providerEnv.PI_CODING_AGENT_DIR, { recursive: true });
+        }
         daemon = await startTestDaemon({
             testDir,
             happyHomeDir: daemonHomeDir,
@@ -378,22 +426,21 @@ describe('core e2e: same-Session cross-Agent transition', () => {
 
         const submittedLocalId = `transition-${randomUUID()}`;
         const transitionText = `AGENT_TRANSITION_TARGET_${randomUUID()}`;
-        const result = await callEncryptedMachineRpc({
-            ui,
-            machineId,
-            method: RPC_METHODS.SESSION_AGENT_TRANSITION,
-            req: {
-                v: 1,
+        const transitioned = await runCliJson({
+            testDir, cliHomeDir: daemonHomeDir, serverUrl: server.baseUrl, webappUrl: server.baseUrl,
+            env: { ...process.env, ...providerEnv }, label: 'transition',
+            launchOptions: { preferSourceEntrypoint: true },
+            args: ['actions', 'invoke', 'session.agent.transition', '--machine-id', machineId, '--yes', '--json',
+                '--input-json', JSON.stringify({
                 sessionId,
                 expectedCurrentAgentId: 'claude',
-                selection: { v: 1, agentId: 'gemini' },
+                selection: { v: 1, agentId: target.selectedAgentId },
                 input: { text: transitionText, localId: submittedLocalId, meta: {} },
-            },
-            secret,
-            schema: SessionAgentTransitionResultV1Schema,
+            })],
             timeoutMs: 300_000,
         });
-
+        expect(transitioned.ok).toBe(true);
+        const result = SessionAgentTransitionResultV1Schema.parse(transitioned.data);
         expect(result).toEqual({ type: 'accepted', localId: submittedLocalId });
 
         // REQ-PRODUCT-01: the Session row itself is untouched.
@@ -411,7 +458,7 @@ describe('core e2e: same-Session cross-Agent transition', () => {
         // while the Session still declares `claude` — checked against the real
         // projector, which is why this asserts the key the transition owns.
         const metadataAfter = decryptLegacyBase64(afterTransition.metadata, secret) as Record<string, unknown>;
-        expect(metadataAfter.flavor).toBe('gemini');
+        expect(metadataAfter.flavor).toBe(target.runtimeAgentId);
 
         // Exactly one divider, at the deterministic reserved local ID, carrying the sidecar.
         const messagesAfter = await fetchAllMessages(server.baseUrl, auth.token, sessionId);
@@ -431,7 +478,7 @@ describe('core e2e: same-Session cross-Agent transition', () => {
         expect(dividerSidecar).toEqual({
             v: 1,
             fromAgentId: 'claude',
-            toAgentId: 'gemini',
+            toAgentId: target.runtimeAgentId,
             // The departure seq is part of the sidecar, not an optional extra: it is the
             // ONE input that survives the transition, and the bounded away-delta a
             // returning Agent is seeded with is derived from it. Asserting the payload
@@ -464,7 +511,7 @@ describe('core e2e: same-Session cross-Agent transition', () => {
             token: auth.token,
             sessionId,
             secret,
-            requiredSubstring: 'FAKE_GEMINI_OK_',
+            requiredSubstring: target.reply,
             afterSeqStart: divider.seq,
             timeoutMs: 180_000,
         });
@@ -476,7 +523,7 @@ describe('core e2e: same-Session cross-Agent transition', () => {
         // reply proves only that something ran. These assertions read the target Agent's
         // own recorded prompts and the two logs' timestamps.
 
-        const targetEvents = await readJsonlEvents(fakeGeminiLogPath);
+        const targetEvents = await readJsonlEvents(targetLogPath);
         const targetPrompts = targetEvents.filter((event) => event.kind === 'prompt');
         expect(targetPrompts.length).toBeGreaterThan(0);
         const targetPromptText = targetPrompts
@@ -525,7 +572,7 @@ describe('core e2e: same-Session cross-Agent transition', () => {
         // divider precedes the target's first output.
         const messagesFinal = await fetchAllMessages(server.baseUrl, auth.token, sessionId);
         const targetReplyRow = messagesFinal.find(
-            (row) => JSON.stringify(decodeRow(row, secret) ?? '').includes('FAKE_GEMINI_OK_'),
+            (row) => JSON.stringify(decodeRow(row, secret) ?? '').includes(target.reply),
         );
         expect(targetReplyRow).toBeDefined();
         expect(targetReplyRow!.seq).toBeGreaterThan(divider.seq);

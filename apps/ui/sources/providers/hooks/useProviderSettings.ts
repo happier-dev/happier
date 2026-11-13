@@ -11,13 +11,21 @@ import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountS
 const emptyDefaults = Object.freeze({});
 const readData = (snapshot: ProviderCatalogSnapshot | null) => snapshot?.data ?? DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1;
 
-/** Transient display view only: effect owners must demand the complete row snapshot. */
-export function useProviderSettings(scope?: ServerAccountScope | null) {
+/**
+ * The Account's default model per Agent target, for the given Account scope
+ * only. A setting read: it observes no Provider catalog.
+ */
+export function useProviderDefaultModelSelections(scope?: ServerAccountScope | null) {
     const active = useAccountSettingsScope();
-    const data = useProviderCatalogSelection(readData, scope);
     const defaults = useSetting('providerDefaultModelSelectionsByAgentTargetKeyV1');
     const captured = scope === undefined ? active : scope;
-    const scopedDefaults = captured && areServerAccountScopesEqual(captured, active) ? defaults : emptyDefaults;
+    return captured && areServerAccountScopesEqual(captured, active) ? defaults : emptyDefaults;
+}
+
+/** Transient display view only: effect owners must demand the complete row snapshot. */
+export function useProviderSettings(scope?: ServerAccountScope | null) {
+    const data = useProviderCatalogSelection(readData, scope);
+    const scopedDefaults = useProviderDefaultModelSelections(scope);
     return React.useMemo(() => composeProviderSettingsV1(data, scopedDefaults), [data, scopedDefaults]);
 }
 export function useProviderSettingsForServer(serverId?: string | null) {

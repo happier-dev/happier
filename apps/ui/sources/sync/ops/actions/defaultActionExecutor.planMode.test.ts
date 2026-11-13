@@ -1222,7 +1222,7 @@ describe('default Action executor mode and catalog contracts', () => {
     expect(outgoing).toEqual([{ method: `machine-a:${RPC_METHODS.SESSION_CONTINUATION_INSPECT}`,
       params: { v: 1, sourceSessionId: 'inspect-session', selection } }]);
   });
-  it.each(['accepted', 'rejected', 'credential_scope_denied', 'action_outcome_unknown'] as const)('switches through the same Session daemon without replacing the exact first input (%s)', async outcomeKind => {
+  it.each(['accepted', 'rejected', 'agent_signed_out', 'credential_scope_denied', 'action_outcome_unknown'] as const)('switches through the same Session daemon without replacing the exact first input (%s)', async outcomeKind => {
     installSession('switch-session', { path: '/repo', machineId: 'machine-a', flavor: 'claude' });
     const machine = createMachineFixture({ id: 'machine-a', storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
     storage.setState({ machines: { 'machine-a': machine }, machineListByServerId: { [serverId]: [machine] } });
@@ -1238,7 +1238,10 @@ describe('default Action executor mode and catalog contracts', () => {
       execute: (input, { invocation }) => {
         expect(invocation).toMatchObject({ caller: { kind: 'host' }, surface: 'ui', authority: 'present_user' });
         transitionInput = input;
-        return outcomeKind === 'accepted' ? { type: 'accepted', localId: 'retained-input' }
+        return outcomeKind === 'agent_signed_out' ? { type: 'partially_applied', localId: 'retained-input', applied: 'current_view_committed',
+          code: 'target_start_failed', errorDetail: { kind: 'launch_error', code: 'agent_signed_out', message: 'Sign in',
+            failureCause: { requestId: 'retained-input', phase: 'authentication', failureReason: 'authentication_required' } } }
+          : outcomeKind === 'accepted' ? { type: 'accepted', localId: 'retained-input' }
           : { type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' };
       } });
     homes.answer(serverId, '/v1/machines', { body: [boundary.machine] });
@@ -1266,6 +1269,15 @@ describe('default Action executor mode and catalog contracts', () => {
       sourceAgentLabel: 'Claude', targetAgentLabel: 'Codex', input: request.input,
       intent: { v: 1, mode: 'same_session', sourceAgentId: 'claude', selection: { v: 1, agentId: 'codex' } },
     } });
+    expect(outgoing.map(rpc => rpc.method)).toEqual([`machine-a:${RPC_METHODS.SESSION_CONTINUATION_INSPECT}`]);
+    expect(transitionInput).toEqual(request);
+    expect(storage.getState().sessions['switch-session']?.metadata?.flavor).toBe('claude');
+    if (outcomeKind === 'agent_signed_out') {
+      expect(switched.result).toMatchObject({ type: 'partially_applied', code: 'target_start_failed',
+        errorDetail: { code: 'agent_signed_out' } });
+      expect(switched.disposition.notice?.message).toContain('agent_signed_out');
+      return;
+    }
     expect(switched.result).toEqual(outcomeKind === 'accepted' ? { type: 'accepted', localId: 'retained-input' }
       : outcomeKind === 'rejected' ? { type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' }
       : outcomeKind === 'action_outcome_unknown' ? { type: 'outcome_unknown', localId: 'retained-input' } : null);
@@ -1276,9 +1288,6 @@ describe('default Action executor mode and catalog contracts', () => {
       expect(switched.disposition.notice?.message).toBe(resolveActionExecutionFailureMessage(
         { ok: false, errorCode: outcomeKind, error: outcomeKind }, outcomeKind));
     }
-    expect(outgoing.map(rpc => rpc.method)).toEqual([`machine-a:${RPC_METHODS.SESSION_CONTINUATION_INSPECT}`]);
-    expect(transitionInput).toEqual(request);
-    expect(storage.getState().sessions['switch-session']?.metadata?.flavor).toBe('claude');
   });
   it.each([
     { active: false, listOnly: false },

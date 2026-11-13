@@ -7,6 +7,12 @@ export const CANONICAL_AGENTS_CORE = CANONICAL_AGENTS_CORE_FROM_MANIFEST;
 export const CANONICAL_AGENT_MODEL_CONFIG = CANONICAL_AGENT_MODEL_CONFIG_FROM_MODELS;
 export const CANONICAL_AGENT_CLI_RUNTIME_SPECS = CANONICAL_AGENT_CLI_RUNTIME_SPECS_FROM_RUNTIME;
 export { readReleasedOutputNonTranscriptRecordTypes } from './definitions/releasedOutputTranscriptRecordReader.js';
+export {
+  indexAgentRoutingIdsByContributionIdentity,
+  readAgentRoutingIdForContributionIdentity,
+  resolveAgentRoutingId,
+  type AgentRoutingIdentityEntry,
+} from './agentRoutingIdentity.js';
 
 export { isNonSteerablePromptPayload, parseSpecialCommand } from '@happier-dev/protocol/sessions/messages/special-commands';
 

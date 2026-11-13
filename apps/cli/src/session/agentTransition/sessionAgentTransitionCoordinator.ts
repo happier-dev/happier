@@ -10,8 +10,11 @@ import type { SessionAgentTransitionCurrentViewCommitted, SessionAgentTransition
 import {
   parsePermissionIntentAlias,
   projectCurrentAgentSessionView,
+  resolveAgentRoutingId,
   type AgentId,
 } from '@happier-dev/agents';
+import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES, isBundledAgentId } from '@happier-dev/agents/agent-ids';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import {
   applyAcpConfigOptionIntentSessionMetadata,
   applyAcpSessionModeIntentSessionMetadata,
@@ -719,7 +722,8 @@ export async function runSessionAgentTransition(
   params: SessionAgentTransitionParams,
 ): Promise<SessionAgentTransitionResultV1> {
   const deps = resolveDeps(params.deps);
-  const { credentials, request } = params;
+  const { credentials } = params;
+  let request = params.request;
   const externalAction = params.externalAction;
   const root = externalAction?.context.externalActionExecutionAuthorization;
   const effectTarget = externalAction?.context.externalActionTarget;
@@ -836,10 +840,35 @@ export async function runSessionAgentTransition(
     readAgentCatalogSnapshot: deps.readAgentCatalogSnapshot,
     agentId: request.selection.agentId,
   });
-  const currentAgentId = resolveSessionContinuationCurrentAgentId(sourceMetadata);
+  const catalog = deps.readAgentCatalogSnapshot().agentDefinitionsById;
+  const resolveCurrentAgentId = (metadata: Record<string, unknown>) => {
+    const recorded = resolveSessionContinuationCurrentAgentId(metadata);
+    return recorded === null ? null : resolveAgentRoutingId(recorded, catalog.values()) ?? recorded;
+  };
+  const currentAgentId = resolveCurrentAgentId(sourceMetadata);
+  // The committed current view remains identity evidence after its runtime is
+  // unloaded. Resolve an exact qualified address against that view too, so a
+  // retry can reconcile its existing divider without requiring launchability.
+  const currentAgent = currentAgentId === null ? [] : [{
+    id: currentAgentId,
+    identity: isBundledAgentId(currentAgentId)
+      ? BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[currentAgentId]
+      : parseQualifiedPluginContributionKey(currentAgentId),
+  }];
+  request = {
+    ...request,
+    expectedCurrentAgentId: resolveAgentRoutingId(request.expectedCurrentAgentId, currentAgent)
+      ?? resolveAgentRoutingId(request.expectedCurrentAgentId, catalog.values())
+      ?? request.expectedCurrentAgentId,
+    selection: {
+      ...request.selection,
+      agentId: resolveAgentRoutingId(request.selection.agentId, currentAgent)
+        ?? target?.agentId ?? request.selection.agentId,
+    },
+  };
 
   // Whether the Session already IS the requested target is a fact about the
-  // committed current view, so it is decided against the REQUESTED selection,
+  // committed current view, so it is decided against the identity-addressed selection,
   // not against what this daemon can currently launch. Gating it on catalog
   // resolution would send a retry whose target Agent has since been unloaded
   // back through `stale_selection` — promising an untouched source although the
@@ -980,7 +1009,7 @@ export async function runSessionAgentTransition(
   });
   if (
     !preStopMetadata
-    || resolveSessionContinuationCurrentAgentId(preStopMetadata) !== sourceAgentId
+    || resolveCurrentAgentId(preStopMetadata) !== sourceAgentId
     || ((preStop.rawSession as { archivedAt?: unknown }).archivedAt ?? null) !== null
   ) {
     return await fenced.rejected('stale_selection');
@@ -1061,7 +1090,7 @@ export async function runSessionAgentTransition(
     accountEncryptionMode: stoppedSession.accountEncryptionCurrentness.mode,
   });
   if (!stoppedMetadata) return stopped.sourceStopped('context_unavailable');
-  if (resolveSessionContinuationCurrentAgentId(stoppedMetadata) !== sourceAgentId) {
+  if (resolveCurrentAgentId(stoppedMetadata) !== sourceAgentId) {
     return stopped.sourceStopped('cutover_conflict');
   }
   if (((stoppedSession.rawSession as { archivedAt?: unknown }).archivedAt ?? null) !== null) {
@@ -1191,7 +1220,7 @@ export async function runSessionAgentTransition(
     if (
       !refreshed?.ok
       || !refreshedMetadata
-      || resolveSessionContinuationCurrentAgentId(refreshedMetadata) !== sourceAgentId
+      || resolveCurrentAgentId(refreshedMetadata) !== sourceAgentId
       || ((refreshed.rawSession as { archivedAt?: unknown }).archivedAt ?? null) !== null
     ) {
       return stopped.sourceStopped('cutover_conflict');

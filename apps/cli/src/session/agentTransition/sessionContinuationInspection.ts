@@ -5,7 +5,7 @@ import { isCustomAcpAgentContributionIdentityV1 } from '@happier-dev/protocol/ag
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import type { SessionAgentTransitionSelectionV1, SessionContinuationInspectionBatchRequestV1, SessionContinuationInspectionBatchResultV1, SessionContinuationInspectionRequestV1, SessionContinuationInspectionUnavailableReasonV1, SessionContinuationInspectionV1 } from '@happier-dev/protocol';
-import { resolveAgentIdFromSessionMetadata, type AgentId } from '@happier-dev/agents';
+import { resolveAgentIdFromSessionMetadata, resolveAgentRoutingId, type AgentId } from '@happier-dev/agents';
 
 import { logger } from '@/ui/logger';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -114,7 +114,9 @@ export async function resolveSessionContinuationTargetAgent(params: Readonly<{
       configuredBackend: { backendId: configuredBackendId, title: launch.configuredBackend.title },
     };
   }
-  const contribution = params.readAgentCatalogSnapshot().agentDefinitionsById.get(params.agentId);
+  const definitions = params.readAgentCatalogSnapshot().agentDefinitionsById;
+  const routingId = resolveAgentRoutingId(params.agentId, definitions.values());
+  const contribution = routingId === null ? null : definitions.get(routingId);
   if (!contribution?.identity) return null;
   if (isCustomAcpAgentContributionIdentityV1(contribution.identity)) return null;
   if (!readAgentSessionCapabilities(contribution.richDefinition?.definition)) return null;
@@ -203,7 +205,9 @@ async function loadSessionContinuationSource(params: Readonly<{
   // actually own, including Sessions legitimately moved to this host.
   const sourceAgentId = resolveSessionContinuationCurrentAgentId(metadata);
   if (sourceAgentId === null) return { type: 'unavailable', reason: 'unsupported_session' };
-  return { type: 'available', sourceAgentId };
+  return { type: 'available', sourceAgentId: resolveAgentRoutingId(
+    sourceAgentId, params.deps.readAgentCatalogSnapshot().agentDefinitionsById.values(),
+  ) ?? sourceAgentId };
 }
 
 async function inspectSessionContinuationSelection(params: Readonly<{
@@ -229,7 +233,7 @@ async function inspectSessionContinuationSelection(params: Readonly<{
   return {
     type: 'available',
     protocolVersion: 1,
-    sameSessionTransition: params.source.sourceAgentId !== params.selection.agentId,
+    sameSessionTransition: params.source.sourceAgentId !== target.agentId,
   };
 }
 

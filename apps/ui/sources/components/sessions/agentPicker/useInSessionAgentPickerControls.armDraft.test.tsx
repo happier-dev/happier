@@ -249,6 +249,23 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         expect(second.getCurrent().agentPickerSelectedOptionId).toBe('agent:happier.agent.codex/codex');
     });
 
+    it('preserves the qualified installed Agent through inspection and the armed selection', async () => {
+        const pi = entry('pi');
+        const agentId = 'happier.agent.pi/pi';
+        const hook = await renderControls({ entries: [entry('claude'), {
+            ...pi,
+            agentId,
+            agentCatalogEntry: { ...pi.agentCatalogEntry, agentId },
+        }] });
+        await armTarget(hook, pi.backendTargetKey);
+
+        expect(machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
+            payload: expect.objectContaining({ selections: [expect.objectContaining({ agentId })] }),
+        }));
+        expect(hook.getCurrent().armedContinuation?.selection.agentId).toBe(agentId);
+        await hook.unmount();
+    });
+
     // The identity is the daemon's dedupe key and the divider correlation key.
     // Re-minting it on a remount is how a retry of ONE armed switch committed a
     // second message and a second divider for a cutover that may already have
