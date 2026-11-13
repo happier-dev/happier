@@ -63,6 +63,11 @@ export const AutomationEventSourcesInvalidatedHostEventV1Schema = lazyZodSchema(
   reason: z.optional(z.literal('reconnect')),
   /** False for credential/settings wakes; absent means definitions may have changed. */
   definitionsChanged: z.optional(z.boolean()),
+  /**
+   * Present when only these plugins' admitted definitions can have changed (a
+   * plugin availability/webhook change). Observers of other plugins ignore it.
+   */
+  pluginIds: z.optional(z.array(z.string().check(z.minLength(1))).check(z.minLength(1))),
 }));
 export type AutomationEventSourcesInvalidatedHostEventV1 = z.infer<
   typeof AutomationEventSourcesInvalidatedHostEventV1Schema

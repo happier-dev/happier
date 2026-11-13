@@ -533,6 +533,57 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         } finally { held?.resolve(); await client.shutdown(); }
     });
 
+    it('does not re-read its own Machine for the change row of a write it already holds', async () => {
+        const machine: Machine = { id: 'own-echo-machine', encryptionMode: 'plain', metadata: null,
+            metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
+        let acknowledged = 10;
+        let changes: ChangeEntry[] = [];
+        let machineReads = 0;
+        let changeReads = 0;
+        readAccountChangesCursor.mockImplementation(async () => acknowledged);
+        writeAccountChangesCursor.mockImplementation(async (_accountId, cursor) => { acknowledged = cursor; });
+        mockAccountGet(async url => {
+            if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'own-echo-account' } };
+            if (url.includes('/v2/changes')) {
+                changeReads += 1;
+                return { status: 200, data: { changes, nextCursor: changes.at(-1)?.cursor ?? acknowledged } };
+            }
+            throw new Error(`Unexpected own-echo read: ${new URL(url).pathname}`);
+        });
+        const socket = createMachineSocket();
+        bindApiSessionSocketMock(mockIo, socket);
+        // The Machine read is the Home HTTP boundary the lifecycle owner injects.
+        const client = new ApiMachineClient('token', machine, undefined, {
+            loadMachine: async () => { machineReads += 1; return { ...machine }; },
+        });
+        client.onConnectedServicesProjection(async () => {});
+        const retryOwner = (client as unknown as { connectedServicesProjectionRetry: { waitForIdle(): Promise<void> } }).connectedServicesProjectionRetry;
+        const machineChange = (cursor: number): ChangeEntry => ({ cursor, kind: 'machine', entityId: machine.id, changedAt: cursor, hint: null });
+        try {
+            client.connect();
+            await vi.waitFor(() => expect(changeReads).toBe(1));
+            await retryOwner.waitForIdle();
+            machineReads = 0;
+            // The Home wakes the Account, then delivers this daemon's own write on its socket.
+            changes = [machineChange(11)];
+            socket.trigger('update', { id: 'own-wake', seq: 11, createdAt: 11,
+                body: { t: 'account-change', changeKinds: ['machine'], entityIds: [machine.id] } });
+            socket.trigger('update', { id: 'own-state', seq: 11, createdAt: 11,
+                body: { t: 'update-machine', machineId: machine.id, daemonState: { value: null, version: 1 } } });
+            await vi.waitFor(() => expect(acknowledged).toBe(11));
+            await retryOwner.waitForIdle();
+            expect({ machineReads }).toEqual({ machineReads: 0 });
+
+            // A change this daemon has not received still refreshes the Machine.
+            changes = [machineChange(12)];
+            socket.trigger('update', { id: 'foreign-wake', seq: 12, createdAt: 12,
+                body: { t: 'account-change', changeKinds: ['machine'], entityIds: [machine.id] } });
+            await vi.waitFor(() => expect(acknowledged).toBe(12));
+            await retryOwner.waitForIdle();
+            expect({ machineReads }).toEqual({ machineReads: 1 });
+        } finally { await client.shutdown(); }
+    });
+
     it('wakes managed policy for exact Pending and Run controller targets, ignoring raw domain traffic', async () => {
         const machine: Machine = { id: 'accepted-policy-controller', encryptionMode: 'plain', metadata: null,
             metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
@@ -876,7 +927,8 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
     it('invalidates Automation source observers from durable changes and completeness recovery', async () => {
         const machine: Machine = { id: 'source-observer-machine', encryptionMode: 'plain', metadata: null,
             metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
-        let changes: Array<{ cursor: number; kind: 'automation' | 'account'; entityId: string; changedAt: number; hint: null }> = [];
+        let changes: Array<{ cursor: number; kind: 'automation' | 'account' | 'pluginDomain'; entityId: string; changedAt: number;
+            hint: null | Readonly<{ pluginDomain: 'availability' | 'webhook'; pluginId: string }> }> = [];
         let cursorGone = false;
         mockAccountGet(async (url: string) => {
             if (url.includes('/v1/account/profile')) return { status: 200, data: { id: 'source-observer-account' } };
@@ -903,15 +955,31 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         changes = [{ cursor: 1, kind: 'automation', entityId: 'automation-a', changedAt: 1, hint: null }];
         await sync('live');
         expect(notified).toHaveBeenCalledTimes(1);
+        expect(notified).toHaveBeenLastCalledWith({});
+        // A plugin's availability/webhook change can change only that plugin's
+        // admitted definitions (first-boot claims emit one per bundled plugin).
+        changes = [
+            { cursor: 1, kind: 'pluginDomain', entityId: 'pluginDomain/example.a/availability', changedAt: 1,
+                hint: { pluginDomain: 'availability', pluginId: 'example.a' } },
+            { cursor: 1, kind: 'pluginDomain', entityId: 'pluginDomain/example.b/webhook', changedAt: 1,
+                hint: { pluginDomain: 'webhook', pluginId: 'example.b' } },
+        ];
+        await sync('live');
+        expect(notified).toHaveBeenLastCalledWith({ pluginIds: ['example.a', 'example.b'] });
+        // Mixed with an Automation definition change the invalidation stays Account-wide.
+        changes = [...changes, { cursor: 1, kind: 'automation', entityId: 'automation-b', changedAt: 1, hint: null }];
+        await sync('live');
+        expect(notified).toHaveBeenLastCalledWith({});
+        notified.mockClear();
         changes = [];
         await sync('reconnect');
-        expect(notified).toHaveBeenCalledTimes(2);
+        expect(notified).toHaveBeenCalledTimes(1);
         // An empty reconnect page must retain its recovery origin; catalog
         // edits alone cannot reset a heartbeat waiting for its first receipt.
         expect(notified).toHaveBeenLastCalledWith({ reason: 'reconnect' });
         cursorGone = true;
         await sync('live');
-        expect(notified).toHaveBeenCalledTimes(3);
+        expect(notified).toHaveBeenCalledTimes(2);
     });
 
     it('publishes observer currentness only after a supported changes read on the live transport', async () => {

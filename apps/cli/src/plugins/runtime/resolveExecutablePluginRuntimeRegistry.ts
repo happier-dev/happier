@@ -558,6 +558,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
             signal?: AbortSignal,
         ) => Promise<CurrentMachineExecutionOriginContext | null>;
         resolveSessionResourceAccess?: ResolveSessionResourceAccess;
+        /** The daemon's server-verified Account id, owned by its Machine connection. */
+        resolveAuthenticatedAccountId?: (signal?: AbortSignal) => Promise<string>;
         pluginIds?: readonly string[];
         generationAuthority?: PluginRuntimeGenerationAuthority;
         resolveDevelopmentSourceAuthority?: Parameters<
@@ -3442,6 +3444,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 ...(params?.resolveCurrentMachineExecutionOriginContext ? { resolveCurrentPluginExecutionOrigin } : {}),
             }),
             resolveAutomationEventAdoptedDefinitionSet,
+            ...(params?.resolveAuthenticatedAccountId
+                ? { resolveAuthenticatedAccountId: params.resolveAuthenticatedAccountId } : {}),
             acquireAutomationEventObservationRegistry: async () => {
                 const lease = runtimeRegistryController?.tryAcquireRuntimeRegistry();
                 if (lease) return lease;
@@ -3961,7 +3965,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const automationCatalogSubscription = invocationServiceOwners.stableEventsBroker.subscribeHost({
         target: { eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' } },
         listener(event) {
-            if (event.payload.definitionsChanged !== false) automationAssembly.invalidateSourceDefinitions();
+            if (event.eventId !== '@happier/automation/event-sources-invalidated') return;
+            if (event.payload.definitionsChanged !== false) automationAssembly.invalidateSourceDefinitions(event.payload.pluginIds);
         },
         isCurrent: () => consumerAssembly.isOccurrenceCurrent(),
     });
@@ -8114,7 +8119,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 subscribeAutomationEventSources(listener) {
                     const subscription = invocationServiceOwners.stableEventsBroker.subscribeHost({
                         target: { eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' } },
-                        listener,
+                        listener: event => {
+                            if (event.eventId === '@happier/automation/event-sources-invalidated') listener(event.payload.pluginIds);
+                        },
                         isCurrent: () => declaredEventSubscriptionsPublished && consumerAssembly.isOccurrenceCurrent(),
                     });
                     return () => { void subscription.dispose(); };

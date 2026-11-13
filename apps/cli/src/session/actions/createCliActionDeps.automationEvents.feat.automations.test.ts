@@ -53,12 +53,12 @@ describe('createCliActionDeps Automation Event bindings', () => {
       credentials,
       revalidateCallerMaterialization: revalidatePluginActionCallerMaterialization,
     });
-    expect(createAutomationEventActionExecutor).toHaveBeenCalledWith({
+    expect(createAutomationEventActionExecutor).toHaveBeenCalledWith(expect.objectContaining({
       credentials,
       revalidateCallerMaterialization: revalidatePluginActionCallerMaterialization,
       revalidateCallerOccurrence: revalidatePluginActionCallerOccurrence,
       resolveAdoptedDefinitionSet: resolveAutomationEventAdoptedDefinitionSet,
-    });
+    }));
   });
 
   it('activates Event source Actions only when the runtime supplies the adopted-definition owner', async () => {
@@ -86,10 +86,10 @@ describe('createCliActionDeps Automation Event bindings', () => {
     createAutomationEventActionExecutor.mockReturnValue(automationEventAction);
     const deps = createCliActionDeps(params);
 
-    expect(createAutomationEventActionExecutor).toHaveBeenCalledWith({
+    expect(createAutomationEventActionExecutor).toHaveBeenCalledWith(expect.objectContaining({
       credentials,
       resolveAdoptedDefinitionSet: resolveAutomationEventAdoptedDefinitionSet,
-    });
+    }));
     const listSourcesRequest = {
       actionId: 'automation.event.sources.list',
       input: { transport: { kind: 'checkpointedPull' }, pageSize: 100 },

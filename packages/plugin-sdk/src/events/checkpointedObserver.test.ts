@@ -675,6 +675,26 @@ describe('checkpointed observer ownership', () => {
         }
     });
 
+    it('ignores a definitions invalidation scoped to other plugins and re-reads for its own', async () => {
+        const f = fixture();
+        const sleep = vi.fn((_delay: number, signal: AbortSignal) => new Promise<void>(resolve => {
+            signal.addEventListener('abort', () => resolve(), { once: true });
+        }));
+        const running = runCheckpointedPluginEventObserverV1({ context: f.context, source: f.source, sleep, now: () => 1000 });
+        const lists = () => f.executions.filter(id => id === 'automation.event.sources.list').length;
+        try {
+            await vi.waitFor(() => expect(sleep).toHaveBeenCalledOnce());
+            for (let n = 0; n < 5; n += 1) f.invalidate({ pluginIds: ['com.example.other'] });
+            await new Promise<void>(resolve => setTimeout(resolve, 20));
+            expect(lists()).toBe(1);
+            f.invalidate({ pluginIds: ['com.example.other', materialization.pluginId] });
+            await vi.waitFor(() => expect(lists()).toBe(2));
+        } finally {
+            f.controller.abort();
+            await running;
+        }
+    });
+
     it('does not re-confirm adopted definitions on provider deadlines or wakes', async () => {
         const f = fixture();
         let clock = 1000;

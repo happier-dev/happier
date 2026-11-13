@@ -161,6 +161,8 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   approvalStore?: Pick<ReturnType<typeof createCliApprovalsArtifactStore>, 'readPluginChangeApprovalRetirement'>;
   /** Canonical Account-change exact Session-access proof for Resource admission. */
   resolveSessionResourceAccess?: ResolveSessionResourceAccess;
+  /** The Machine connection's server-verified Account id; the one identity owner. */
+  resolveAuthenticatedAccountId?: (signal?: AbortSignal) => Promise<string>;
   /** Process-owned Account/system boundary dependencies for the canonical host. */
   accountStorageDependencies?: AccountPluginDataStorageHostDependencies;
   /**
@@ -326,6 +328,9 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       : {}),
     ...(params.resolveSessionResourceAccess
       ? { resolveSessionResourceAccess: params.resolveSessionResourceAccess }
+      : {}),
+    ...(params.resolveAuthenticatedAccountId
+      ? { resolveAuthenticatedAccountId: params.resolveAuthenticatedAccountId }
       : {}),
     accountStorageDependencies,
     ...(params.resolveServerFeaturesSnapshot
@@ -877,6 +882,9 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
               : {}),
             ...(params.resolveSessionResourceAccess
               ? { resolveSessionResourceAccess: params.resolveSessionResourceAccess }
+              : {}),
+            ...(params.resolveAuthenticatedAccountId
+              ? { resolveAuthenticatedAccountId: params.resolveAuthenticatedAccountId }
               : {}),
             accountStorageDependencies,
             ...(params.resolveServerFeaturesSnapshot

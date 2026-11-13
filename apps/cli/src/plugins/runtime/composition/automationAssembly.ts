@@ -160,9 +160,12 @@ export async function assembleAutomationRuntime(input: Readonly<{
         });
     };
     return Object.freeze({
-        invalidateSourceDefinitions() {
+        /** Absent `pluginIds` dirties every adopted catalog; present, only those plugins'. */
+        invalidateSourceDefinitions(pluginIds?: readonly string[]) {
             healthSources = null;
-            for (const { owner } of adoptedOwners) owner.invalidate();
+            for (const { caller, owner } of adoptedOwners) {
+                if (pluginIds === undefined || pluginIds.includes(caller.pluginId)) owner.invalidate();
+            }
         },
         readHealthAlertSource,
         refreshActivatedPlugin,

@@ -13,7 +13,8 @@ export async function observePluginConfigurationActivation(params: Readonly<{
     targets: readonly ActivationTarget[];
     accountStorage: AccountPluginDataStorageHost;
     readAutomationEventSourceDemand(pluginId: string, signal: AbortSignal): Promise<boolean>;
-    subscribeAutomationEventSources(listener: () => void): () => void;
+    /** `pluginIds` scopes an invalidation to those plugins' definitions; absent means every plugin. */
+    subscribeAutomationEventSources(listener: (pluginIds?: readonly string[]) => void): () => void;
     activate(demands: readonly PluginContributionActivationDemand[]): Promise<unknown>;
     isActivated(pluginId: string): boolean;
     isTargetCurrent(pluginId: string): boolean;
@@ -113,8 +114,9 @@ export async function observePluginConfigurationActivation(params: Readonly<{
     };
     params.signal.addEventListener('abort', dispose, { once: true });
     if (targets.some(target => target.manifest.activation?.configuration?.automationEventSources)) {
-        disposers.push(params.subscribeAutomationEventSources(() => enqueue(targets.filter(target =>
-            target.manifest.activation?.configuration?.automationEventSources))));
+        disposers.push(params.subscribeAutomationEventSources(pluginIds => enqueue(targets.filter(target =>
+            target.manifest.activation?.configuration?.automationEventSources
+            && (pluginIds === undefined || pluginIds.includes(target.pluginId))))));
     }
     try {
         await flush();

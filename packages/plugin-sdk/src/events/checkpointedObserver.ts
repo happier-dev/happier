@@ -208,6 +208,8 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
     let pendingWake: Readonly<{ promise: Promise<void>; resolve(): void; reject(error: unknown): void }> | undefined;
     const wokenSources = new Set<string | undefined>();
     const invalidated = (event: HostEventEnvelope<'@happier/automation/event-sources-invalidated'>) => {
+        // Scoped to other plugins' definitions (their availability/webhook change): nothing here changed.
+        if (event.payload.pluginIds !== undefined && !event.payload.pluginIds.includes(context.plugin.id)) return;
         if (event.payload.definitionsChanged !== false) {
             definitionsInvalidated = true;
             catalogRefresh = { kind: 'refresh' };
