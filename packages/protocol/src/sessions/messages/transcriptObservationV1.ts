@@ -9,11 +9,24 @@ import { SessionStoredMessageContentSchema } from './sessionStoredMessageContent
 import { SessionTranscriptSourceTimestampMsSchema } from './transcriptSourceTimestampV1.js';
 import { SessionSurfaceItemIdSchema } from '../board/ids.js';
 import { SessionSystemRecordRevisionSchema } from '../system/records/sessionSystemRecordRevision.js';
+import { EXTERNAL_ACTION_SOCKET_MIN_BUFFER_BYTES_V2 } from '../../actions/externalActionLimits.js';
 
 export const SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1 = 'session-transcript-observation-v1' as const;
 export const SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V2 = 'session-transcript-observation-v2' as const;
 export const SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1 = 'transcript-observation-capability-v1' as const;
 export const SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1 = 'transcript-observation-v1' as const;
+/**
+ * Ordered transcript observations from one publisher in one frame. Home observes them in order
+ * through the same per-observation write and stops at the first refusal, so a refused observation
+ * never lets a later one commit ahead of it.
+ */
+export const SESSION_TRANSCRIPT_OBSERVATION_BATCH_EVENT_V1 = 'transcript-observation-batch-v1' as const;
+/**
+ * A batch frame must fit Home's Socket.IO receive buffer. Home refuses to start with a buffer
+ * below this floor, so a batch whose `[event, payload]` encoding stays under it always arrives.
+ * The reserve covers the Socket.IO packet prefix (packet type, namespace and ack id).
+ */
+export const SESSION_TRANSCRIPT_OBSERVATION_BATCH_MAX_ENCODED_BYTES_V1 = EXTERNAL_ACTION_SOCKET_MIN_BUFFER_BYTES_V2 - 64;
 
 const NonBlankStringSchema = lazyZodSchema(() => z.string().check(z.refine((value) => value.trim().length > 0, {
   message: 'Expected a non-blank string',
@@ -194,3 +207,16 @@ export const SessionTranscriptObservationAckV1Schema = lazyZodSchema(() => z.uni
 
 export type SessionTranscriptObservationCapabilityAckV1 = z.infer<typeof SessionTranscriptObservationCapabilityAckV1Schema>;
 export type SessionTranscriptObservationAckV1 = z.infer<typeof SessionTranscriptObservationAckV1Schema>;
+
+export const SessionTranscriptObservationBatchInputV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  sessionId: NonBlankStringSchema,
+  observations: z.array(z.unknown()).check(z.minLength(1)),
+}));
+
+/** Acks for the observed prefix, in order; the last one is the refusal when Home stopped early. */
+export const SessionTranscriptObservationBatchAckV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ ok: z.literal(true), acks: z.array(SessionTranscriptObservationAckV1Schema) }),
+  z.strictObject({ ok: z.literal(false), error: z.enum(['forbidden', 'invalid_observation', 'internal']) }),
+]));
+export type SessionTranscriptObservationBatchAckV1 = z.infer<typeof SessionTranscriptObservationBatchAckV1Schema>;

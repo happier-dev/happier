@@ -8,6 +8,7 @@ import type {
 } from './sessionClientDurableMutationTypes';
 import { createRegisteredSessionStateFieldMutation } from './sessionClientDurableMutationTypes';
 import {
+    SESSION_TRANSCRIPT_OBSERVATION_BATCH_EVENT_V1,
     SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
     SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
     SessionTranscriptObservationInputSchema,
@@ -184,11 +185,39 @@ function createDeferred(): Readonly<{
     return { promise, resolve };
 }
 
+/**
+ * Home's batch event observes each member through the single-observation path in order and stops
+ * at the first refusal. Boundary fakes answer it the same way from their own single answer.
+ */
+function answeringTranscriptBatches(
+    emitWithAck: (event: string, payload: unknown) => Promise<unknown>,
+): (event: string, payload: unknown) => Promise<unknown> {
+    return async (event, payload) => {
+        if (event !== SESSION_TRANSCRIPT_OBSERVATION_BATCH_EVENT_V1) return await emitWithAck(event, payload);
+        const acks: unknown[] = [];
+        for (const observation of (payload as { observations: unknown[] }).observations) {
+            const ack = await emitWithAck(SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1, observation);
+            acks.push(ack);
+            if ((ack as { ok?: unknown } | null)?.ok !== true) break;
+        }
+        return { ok: true, acks };
+    };
+}
+
+/** Transcript rows Home observed through either the single or the batch event. */
+function readObservedTranscriptLocalIds(calls: ReadonlyArray<readonly unknown[]>): string[] {
+    return calls.flatMap(([event, payload]) => event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1
+        ? [String((payload as { localId: string }).localId)]
+        : event === SESSION_TRANSCRIPT_OBSERVATION_BATCH_EVENT_V1
+            ? (payload as { observations: Array<{ localId: string }> }).observations.map(observation => observation.localId)
+            : []);
+}
+
 function createConnectedSocket() {
     return {
         connected: true,
         emit: () => undefined,
-        emitWithAck: async (event: string, payload: unknown) => {
+        emitWithAck: answeringTranscriptBatches(async (event: string, payload: unknown) => {
             if (event === SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1) {
                 return { ok: true, capability: 'session-transcript-observation-v1' };
             }
@@ -204,7 +233,7 @@ function createConnectedSocket() {
                 didWrite: true,
                 ingestedAt: 200,
             };
-        },
+        }),
     };
 }
 
@@ -259,7 +288,7 @@ describe('createRuntimeSessionClientDurableMutationOutbox', () => {
         const releaseFirst = createDeferred();
         const normal = createConnectedSocket();
         const sent: string[] = [];
-        const socket = { ...normal, emitWithAck: async (event: string, payload: unknown) => {
+        const socket = { ...normal, emitWithAck: answeringTranscriptBatches(async (event: string, payload: unknown) => {
             if (event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1 && payload && typeof payload === 'object' && 'localId' in payload) {
                 const localId = String(payload.localId);
                 sent.push(localId);
@@ -269,7 +298,7 @@ describe('createRuntimeSessionClientDurableMutationOutbox', () => {
                 }
             }
             return normal.emitWithAck(event, payload);
-        } };
+        }) };
         const outbox = createRuntimeSessionClientDurableMutationOutbox({ token: 'token', sessionId: 'session-1',
             flushOnReady: false, getSocket: () => socket, requestReconnect: () => undefined });
         await outbox.setSessionSyncPendingInputServerContract(serverContract('session_sync_v2_pending_input_v1'));
@@ -293,25 +322,77 @@ describe('createRuntimeSessionClientDurableMutationOutbox', () => {
             await outbox.close();
         }
     });
-    it('returns each acknowledged transcript without waiting for later publications in the shared flush', async () => {
+    it('drains lines queued behind an in-flight line in one ordered round trip, not one per line', async () => {
         const firstStarted = createDeferred();
         const releaseFirst = createDeferred();
+        const observed: string[] = [];
+        let roundTrips = 0;
+        // Home's socket boundary: one ack per observation, in order, for the single and batch events.
+        const ackFor = (payload: unknown) => {
+            const localId = String((payload as { localId: string }).localId);
+            observed.push(localId);
+            return { ok: true, status: 'observed', id: `id-${localId}`, seq: observed.length, localId, didWrite: true, ingestedAt: 200 };
+        };
+        const socket = { connected: true, emit: () => undefined, emitWithAck: async (event: string, payload: unknown) => {
+            if (event === SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1) return { ok: true, capability: 'session-transcript-observation-v1' };
+            if (event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1) {
+                roundTrips += 1;
+                if ((payload as { localId: string }).localId === 'line-0') { firstStarted.resolve(); await releaseFirst.promise; }
+                return ackFor(payload);
+            }
+            if (event === SESSION_TRANSCRIPT_OBSERVATION_BATCH_EVENT_V1) {
+                roundTrips += 1;
+                return { ok: true, acks: (payload as { observations: unknown[] }).observations.map(ackFor) };
+            }
+            return { ok: false };
+        } };
+        const outbox = createRuntimeSessionClientDurableMutationOutbox({ token: 'token', sessionId: 'session-1',
+            flushOnReady: false, getSocket: () => socket, requestReconnect: () => undefined });
+        await outbox.setSessionSyncPendingInputServerContract(serverContract('session_sync_v2_pending_input_v1'));
+        const publish = (index: number) => outbox.enqueueTranscriptMessage(createTranscriptMutation({
+            localId: `line-${index}`, sidechainId: null, text: `Tool line ${index}`,
+        }));
+        const first = publish(0);
+        await firstStarted.promise;
+        const later = Array.from({ length: 20 }, (_, index) => publish(index + 1));
+        await drainAsyncWork();
+        releaseFirst.resolve();
+        try {
+            const results = await Promise.all([first, ...later]);
+            expect({
+                delivered: results.filter(result => result.delivered).length,
+                roundTrips,
+                inOrder: observed.join() === Array.from({ length: 21 }, (_, index) => `line-${index}`).join(),
+            }).toEqual({ delivered: 21, roundTrips: 2, inOrder: true });
+        } finally {
+            await outbox.close();
+        }
+    });
+    it('returns each acknowledged transcript with its own frame without waiting for later frames of the shared flush', async () => {
+        const firstStarted = createDeferred();
+        const releaseFirst = createDeferred();
+        const frameStarted = createDeferred();
+        const releaseFrame = createDeferred();
         const laterStarted = createDeferred();
         const releaseLater = createDeferred();
         const ordinarySocket = createConnectedSocket();
-        const socket = { ...ordinarySocket, emitWithAck: async (event: string, payload: unknown) => {
+        const socket = { ...ordinarySocket, emitWithAck: answeringTranscriptBatches(async (event: string, payload: unknown) => {
             if (event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1 && payload && typeof payload === 'object' && 'localId' in payload) {
                 if (payload.localId === 'report-1') {
                     firstStarted.resolve();
                     await releaseFirst.promise;
                 }
-                if (payload.localId === 'report-3') {
+                if (payload.localId === 'report-2') {
+                    frameStarted.resolve();
+                    await releaseFrame.promise;
+                }
+                if (payload.localId === 'report-4') {
                     laterStarted.resolve();
                     await releaseLater.promise;
                 }
             }
             return ordinarySocket.emitWithAck(event, payload);
-        } };
+        }) };
         const outbox = createRuntimeSessionClientDurableMutationOutbox({
             token: 'token', sessionId: 'session-1', flushOnReady: false,
             getSocket: () => socket, requestReconnect: () => undefined,
@@ -324,16 +405,21 @@ describe('createRuntimeSessionClientDurableMutationOutbox', () => {
         await firstStarted.promise;
         let secondAcknowledged = false;
         const second = publish(2).then(result => { secondAcknowledged = result.delivered; return result; });
-        const later = [publish(3), publish(4), publish(5)];
+        const third = publish(3);
         await drainAsyncWork();
         releaseFirst.resolve();
+        await frameStarted.promise;
+        // Published while the 2-3 frame is in flight: they belong to a later frame of the shared flush.
+        const later = [publish(4), publish(5)];
+        await drainAsyncWork();
+        releaseFrame.resolve();
         try {
             await laterStarted.promise;
             await drainAsyncWork();
             expect(secondAcknowledged).toBe(true);
         } finally {
             releaseLater.resolve();
-            await Promise.all([first, second, ...later]);
+            await Promise.all([first, second, third, ...later]);
             await outbox.close();
         }
     });
@@ -697,7 +783,7 @@ describe('createRuntimeSessionClientDurableMutationOutbox', () => {
         const socket = {
             connected: true,
             emit: vi.fn(),
-            emitWithAck: vi.fn(async (event: string, payload: unknown) => {
+            emitWithAck: vi.fn(answeringTranscriptBatches(async (event: string, payload: unknown) => {
                 if (event === SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1) {
                     return { ok: true, capability: 'session-transcript-observation-v1' };
                 }
@@ -713,7 +799,7 @@ describe('createRuntimeSessionClientDurableMutationOutbox', () => {
                     didWrite: true,
                     ingestedAt: 200,
                 };
-            }),
+            })),
         };
         const { createRuntimeSessionClientDurableMutationOutbox } = await import(
             './createRuntimeSessionClientDurableMutationOutbox'
@@ -754,9 +840,7 @@ describe('createRuntimeSessionClientDurableMutationOutbox', () => {
         expect(socket.emitWithAck.mock.calls.filter(([event]) => (
             event === SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1
         ))).toHaveLength(1);
-        expect(socket.emitWithAck.mock.calls.filter(([event]) => (
-            event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1
-        ))).toHaveLength(3);
+        expect(readObservedTranscriptLocalIds(socket.emitWithAck.mock.calls)).toHaveLength(3);
         expect(persistenceMocks.save.mock.calls.at(-1)?.[1]).toEqual([]);
 
         outbox.deactivateDelivery();
@@ -770,9 +854,7 @@ describe('createRuntimeSessionClientDurableMutationOutbox', () => {
         expect(socket.emitWithAck.mock.calls.filter(([event]) => (
             event === SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1
         ))).toHaveLength(1);
-        expect(socket.emitWithAck.mock.calls.filter(([event]) => (
-            event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1
-        ))).toHaveLength(4);
+        expect(readObservedTranscriptLocalIds(socket.emitWithAck.mock.calls)).toHaveLength(4);
         expect(persistenceMocks.save.mock.calls.at(-1)?.[1]).toEqual([]);
         await outbox.close();
     });
@@ -811,6 +893,38 @@ describe('createRuntimeSessionClientDurableMutationOutbox', () => {
                 ]);
             }
         } finally { controller.abort(); await outbox.close(); }
+    });
+
+    it('records each failed transcript delivery attempt in the Session runner log', async () => {
+        persistenceMocks.save.mockResolvedValue(undefined);
+        const { logger } = await import('@/ui/logger');
+        const infoFile = vi.spyOn(logger, 'infoFile');
+        const socket = createConnectedSocket();
+        const acknowledge = socket.emitWithAck;
+        let fail = true;
+        socket.emitWithAck = async (event, payload) => {
+            if (event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1 && fail) throw new Error('transport disconnected');
+            return await acknowledge(event, payload);
+        };
+        const outbox = createRuntimeSessionClientDurableMutationOutbox({
+            token: 'token', sessionId: 'session-1', flushOnReady: false,
+            getSocket: () => socket, requestReconnect: () => undefined,
+        });
+        const failures = () => infoFile.mock.calls.filter(([message]) => message === '[API] Durable session mutation delivery failed').length;
+        try {
+            await outbox.setSessionSyncPendingInputServerContract(serverContract('session_sync_v2_pending_input_v1'));
+            const pending = outbox.enqueueTranscriptMessage(createTranscriptMutation({
+                localId: 'logged-output', sidechainId: null, text: 'retained',
+            }), { awaitDelivery: false });
+            await pending;
+            await vi.waitFor(() => expect(failures()).toBe(1));
+            fail = false;
+            await outbox.flush('flush');
+            expect(failures()).toBe(1);
+        } finally {
+            infoFile.mockRestore();
+            await outbox.close();
+        }
     });
 
     it('waits for exact transcript delivery through a failed flush before allowing ordered input acceptance', async () => {

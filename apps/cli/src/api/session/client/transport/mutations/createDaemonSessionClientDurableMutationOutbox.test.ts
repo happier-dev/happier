@@ -508,7 +508,8 @@ describe('daemon session client durable mutation outbox', () => {
             await outbox.flush('flush');
             await outbox.flush('flush');
 
-            expect(infoFileSpy).toHaveBeenCalledTimes(1);
+            expect(infoFileSpy.mock.calls.filter(([message]) =>
+                message === '[API] Authoritative session mutation remains queued and is blocking later mutations')).toHaveLength(1);
             expect(infoFileSpy).toHaveBeenCalledWith(
                 '[API] Authoritative session mutation remains queued and is blocking later mutations',
                 expect.objectContaining({
