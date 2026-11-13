@@ -140,7 +140,9 @@ describe('signed exact Execution Run preflight', () => {
       retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
     }, { surface: 'rpc', authority: 'present_user', serverId: 'session-home', executionRunTargetMachineId: 'machine',
       externalActionExecutionAuthorization: options.externalActionExecutionAuthorization }))
-      .resolves.toMatchObject({ ok: false, errorCode: 'not_authenticated', details: {
+      .resolves.toMatchObject({ ok: false, errorCode: 'not_authenticated', failureCause: {
+        phase: 'capabilities.describe', errorCode: 'not_authenticated',
+      }, details: {
         executionRunPreflight: { phase: 'capabilities.describe', cause: { code: 'not_authenticated' } },
         executionRunStart: { runCreation: 'noRunCreated' },
       } });
@@ -158,14 +160,18 @@ describe('signed exact Execution Run preflight', () => {
 
   it('retains a typed transport refusal while excluding arbitrary exception content', async () => {
     const { deps, options, invoke } = await fixture();
-    invoke.mockRejectedValueOnce(new RpcError('private receiver content', RPC_ERROR_CODES.FORBIDDEN));
+    const failureCause = { phase: 'rpc.admission', errorClass: 'Error' as const,
+      errorCode: RPC_ERROR_CODES.FORBIDDEN, httpStatus: null };
+    invoke.mockRejectedValueOnce(Object.assign(new RpcError('private receiver content', RPC_ERROR_CODES.FORBIDDEN), { failureCause }));
     await expect(deps.executionRunCheckProtocolV2?.(null, requirement, options)).resolves.toEqual({
       ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN, error: RPC_ERROR_CODES.FORBIDDEN,
+      failureCause,
       details: { executionRunPreflight: { phase: 'capabilities.describe', cause: { code: RPC_ERROR_CODES.FORBIDDEN } } },
     });
     invoke.mockRejectedValueOnce(Object.assign(new Error('private receiver content'), { code: 'private receiver code' }));
     await expect(deps.executionRunCheckProtocolV2?.(null, requirement, options)).resolves.toEqual({
       ok: false, errorCode: 'execution_run_target_unavailable', error: 'execution_run_target_unavailable',
+      failureCause: { phase: 'capabilities.describe', errorClass: 'Error', errorCode: null, httpStatus: null },
       details: { executionRunPreflight: { phase: 'capabilities.describe', cause: { code: null } } },
     });
     expect(invoke).toHaveBeenCalledTimes(2);

@@ -24,6 +24,23 @@ async function importRpcPolicy() {
 }
 
 describe('MachineRpcRoutePolicyV1', () => {
+  it.each(['execution.run.start', 'execution.run.ensure', 'execution.run.ensure_or_start'] as const)(
+    'retains %s only for passive preflight on its installed Machine', async actionId => {
+      const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
+      const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'run-root', binding: {
+        accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+        serverIdentityId: 'home', machineId: 'machine', installationId: 'installation', actionId,
+        requestId: 'start', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+      } }).binding;
+      expect(resolve(RPC_METHODS.CAPABILITIES_DESCRIBE, binding,
+        { machineId: 'machine', installationId: 'installation' })).toBe(actionId);
+      expect(resolve(RPC_METHODS.CAPABILITIES_DESCRIBE)).toBeNull();
+      expect(resolve(RPC_METHODS.CAPABILITIES_DESCRIBE, binding,
+        { machineId: 'other', installationId: 'installation' })).toBeNull();
+      expect(resolve(RPC_METHODS.CAPABILITIES_DESCRIBE, binding,
+        { machineId: 'machine', installationId: 'other' })).toBeNull();
+      expect(resolve(RPC_METHODS.CAPABILITIES_DETECT, binding)).not.toBe(actionId);
+    });
   it('retains the exact model-list requester on selected-account catalog discovery', async () => {
     const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
     const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'models-root', binding: {

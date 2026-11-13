@@ -13,7 +13,7 @@ import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '../../../../actions/projec
 import { PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '../../../../actions/projectDefinitionActionIdsV1.js';
 import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSourcesActionIdsV1.js';
 import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS } from '../../../../local/services/actionIdsV1.js';
-import { ACTION_INVOKE_ACTION_ID_V1, isWorkspaceSyncRelationshipWriteActionId, WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS, type WorkflowActionIdV1 } from '../../../../actions/actionIds.js';
+import { ACTION_INVOKE_ACTION_ID_V1, isExecutionRunStartActionIdV1, isWorkspaceSyncRelationshipWriteActionId, WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS, type WorkflowActionIdV1 } from '../../../../actions/actionIds.js';
 import { AGENT_SIGN_IN_STATUS_RPC_METHOD } from '../../../../daemon/agentSignIn.js';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '../../../../rpc/methods.js';
 import { readExternalActionBindingAuthority } from '../../../../actions/externalActionBindingAuthority.js';
@@ -1132,6 +1132,13 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
   binding?: ExternalActionExecutionAuthorizationV1['binding'],
   selectedTarget?: Readonly<{ machineId: string; installationId: string }>,
   reviewedChild?: ReviewedActionChildHttpProofV1): string | null {
+  if (method === RPC_METHODS.CAPABILITIES_DESCRIBE && binding && isExecutionRunStartActionIdV1(binding.actionId)) {
+    // Passive preflight spends the existing Run root on its exact installation;
+    // it grants neither capability detection nor a different Machine effect.
+    return binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
+      && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId)
+      ? binding.actionId : null;
+  }
   const readiness = readSessionAgentReadinessChildActionV1(binding, reviewedChild, selectedTarget);
   if (readiness) {
     if (readiness === SESSION_AGENT_READINESS_CHILDREN_V1.inventory.action) {

@@ -1025,6 +1025,11 @@ export type RuntimeActionIdV1 = z.infer<typeof RuntimeActionIdV1Schema>;
 
 const RUNTIME_ACTION_ID_V1_SET: ReadonlySet<string> = new Set(RUNTIME_ACTION_IDS_V1);
 
+/** Run creation/recovery Actions that perform passive protocol preflight. */
+export function isExecutionRunStartActionIdV1(value: string): boolean {
+  return value === 'execution.run.start' || value === 'execution.run.ensure' || value === 'execution.run.ensure_or_start';
+}
+
 export function isRuntimeActionIdV1(value: string): value is RuntimeActionIdV1 {
   return RUNTIME_ACTION_ID_V1_SET.has(value);
 }

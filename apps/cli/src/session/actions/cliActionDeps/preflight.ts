@@ -3,6 +3,8 @@ import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/act
 import { readRpcErrorCode, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { ExecutionRunStartFailureDetailsV1 } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { CliMachineActionCall } from './machineTransport';
 import type { ExecutionRunActionTransportOptions, ExecutionRunProtocolV2Requirement } from './types';
 
@@ -18,11 +20,12 @@ export async function describeExecutionRunProtocolV2(
   opts?: ExecutionRunActionTransportOptions,
 ): Promise<
   | Readonly<{ ok: true; exactMachineId: string }>
-  | Readonly<{ ok: false; errorCode: string; error: string; details?: PreflightFailureDetails }>
+  | Readonly<{ ok: false; errorCode: string; error: string; details?: PreflightFailureDetails; failureCause?: ActionFailureCauseV1 }>
 > {
   let observation: ExecutionRunCapabilityObservation;
   let causeCode: string | null = null;
   let refusalCode: string | null = null;
+  let failureCause: ActionFailureCauseV1 | undefined;
   try {
     const response = await callMachineAction({
       machineId,
@@ -39,6 +42,7 @@ export async function describeExecutionRunProtocolV2(
     });
     observation = { supported: true, response };
   } catch (error) {
+    failureCause = normalizeActionExecutorThrownError(error, 'capabilities.describe').failureCause;
     observation = { supported: false, reason: 'error', error };
     const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
     const rpcCode = readRpcErrorCode(error);
@@ -56,5 +60,6 @@ export async function describeExecutionRunProtocolV2(
   const errorCode = support.errorCode === 'execution_run_target_unavailable' && refusalCode
     ? refusalCode : support.errorCode;
   return { ok: false, errorCode, error: errorCode,
+    failureCause,
     details: { executionRunPreflight: { phase: 'capabilities.describe', cause: { code: causeCode } } } };
 }
