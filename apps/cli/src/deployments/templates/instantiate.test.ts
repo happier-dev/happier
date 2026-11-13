@@ -3,7 +3,7 @@ import axios from 'axios';
 import { readFile } from 'node:fs/promises';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createDeploymentEnvironmentDetailV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DeploymentEnvironmentContentV1Schema, readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployment-protocol';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { listActionSpecsForSurface } from '@happier-dev/protocol/actions/actionSpecs';
@@ -23,7 +23,7 @@ import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secret
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { createAccountArtifactStore, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { readDeploymentCreationDefaultInputsForHost } from '../readCreationDefaultsForHost';
 import { MachineVitalsSampleV1Schema } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
 import { createCombinedMachineSetupActionDeps } from '@/machines/setup/composeMachineSetup';
@@ -42,6 +42,13 @@ import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSet
 import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
 import { PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
+import { prepareDeploymentTemplateInstantiationV1 } from '@happier-dev/deployments';
+
+/** These fixtures store inline JSON bodies; a blob reference would be a different contract. */
+function parseInlineBody(document: Readonly<{ body?: unknown }> | null | undefined): unknown {
+    if (typeof document?.body !== 'string') throw new Error('Expected an inline Artifact body');
+    return JSON.parse(document.body);
+}
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -177,7 +184,7 @@ it.each([false, true])('persists independent generated credentials from a bundle
             env: { DATABASE_URL: 'postgres://${DB_USER_2}:${DB_PASSWORD_2}@database-2:5432/${DB_NAME_2}' } });
         expect(fixture.writes).toHaveLength(2);
         expect(fixture.writes[0]).toMatchObject({ accountGrants: [], teamGrants: [], groupGrants: [] });
-        expect(fixture.opened(fixture.writes[0]!)?.value === fixture.opened(fixture.writes[1]!)?.value).toBe(false);
+        expect(fixture.openedValue(fixture.writes[0]!) === fixture.openedValue(fixture.writes[1]!)).toBe(false);
     } finally { await fixture.close(); }
 });
 
@@ -300,7 +307,7 @@ it.each(['template', 'environment', 'admittedTemplate'] as const)('retains gener
         expect.soft(fixture.writes).toHaveLength(secretKeys.length);
         for (const write of fixture.writes) {
             expect(write.teamGrants).toEqual(['team-reviewed']);
-            const value = fixture.opened(write)?.value;
+            const value = fixture.openedValue(write);
             expect(value).toMatch(/^[a-f0-9]{64}$/u);
             expect(JSON.stringify(result)).not.toContain(value);
         }
@@ -400,18 +407,29 @@ it('keeps reloaded template pins usable and retains a refused first content writ
     } finally { await runtime.dispose(); }
 });
 
-it('prepares a catalog upgrade from the recorded pin and keeps local edits and bound secrets before storage', async () => {
+it.each([false, true])('prepares a catalog upgrade and keeps local edits and bound secrets (mutable catalog=%s)', async mutable => {
     const identity = await readOrCreateInstallationIdentity();
     const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };
     const scopeKey = runWithServerHttpBaseUrl('https://home.test', () => resolveAccountSettingsScopeKey(credentials));
     const custody = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl: 'https://home.test',
         snapshot: { source: 'network', settings: accountSettingsParse({}), settingsVersion: 1, loadedAtMs: 1,
             scopeKey, settingsSecretsReadKeys: [] }, isCurrent: async () => true });
-    const source: RegistrySourceDescriptorV1 = { id: 'upgrade-apps', title: 'Apps', format: 'coolify-templates', kinds: ['app'],
-        url: 'https://github.com/example/upgrade-apps', enabled: true, addedAt: 1, origin: { kind: 'user' }, removable: true };
+    const source: RegistrySourceDescriptorV1 = { id: 'upgrade-apps', title: 'Apps', format: mutable ? 'happier-catalog' : 'coolify-templates', kinds: ['app'],
+        url: mutable ? 'https://apps.test/catalog.json' : 'https://github.com/example/upgrade-apps', enabled: true, addedAt: 1, origin: { kind: 'user' }, removable: true };
     const oldCommit = 'a'.repeat(40), newCommit = 'b'.repeat(40);
     let baselineAvailable = true;
+    let catalogVersion = '1';
+    const catalog = () => ({ schemaVersion: 1, apps: [{ itemId: 'app', app: DeploymentTemplateV1Schema.parse({
+        schemaVersion: 1, title: 'App', compose: { document: JSON.stringify({ services: { web: {
+            image: `nginx:${catalogVersion}`, environment: { PASSWORD: '${SERVICE_PASSWORD_APP}' },
+        } } }), profiles: [], services: ['web'], primaryService: 'web', publicFiles: [
+            { path: 'files/app.conf', content: `upstream=${catalogVersion}` },
+        ] }, variables: [{ key: 'SERVICE_PASSWORD_APP', label: 'Password', required: true, secret: true,
+            valueKind: 'string', sites: [{ service: 'web', path: ['environment', 'PASSWORD'] }] }],
+        generatedSecrets: [], domains: [], volumes: [],
+    }) }] });
     const read = (url: string): { status: number; body: unknown } => {
+        if (mutable && url === source.url) return { status: 200, body: catalog() };
         const commit = url.split('/').find(part => part === oldCommit || part === newCommit);
         if (commit === oldCommit && !baselineAvailable) return { status: 404, body: null };
         if (commit && url.includes('/commits/')) return { status: 200, body: { sha: commit } };
@@ -427,13 +445,15 @@ it('prepares a catalog upgrade from the recorded pin and keeps local edits and b
             ? { ok: true, value: result.body, fetchedAt: 1 } : { ok: false, status: { state: 'invalid_source' } }; },
         getBytes: async () => { throw new Error('No binary catalog read'); },
     } });
-    const selection = async (version: string) => {
+    const selection = async (version?: string) => {
         const item = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await registry.execute('registries.items.read', {
             sourceId: source.id, kind: 'app', itemId: 'app', version })).item;
         if (item.payload.kind !== 'app' || item.payload.state !== 'ready') throw new Error('Expected canonical ready app');
-        return { app: item.payload.app, ref: { sourceId: source.id, itemId: 'app', version, ref: item.payload.ref } };
+        return { app: item.payload.app, ref: { sourceId: source.id, itemId: 'app', version: item.summary.version!, ref: item.payload.ref } };
     };
-    const old = await selection(oldCommit), next = await selection(newCommit);
+    const old = await selection(mutable ? undefined : oldCommit);
+    catalogVersion = '2';
+    const next = await selection(mutable ? undefined : newCommit);
     const { origin: _origin, removable: _removable, ...sourceRow } = source;
     const rows = PromptLibraryRowsListResponseV1Schema.parse({ status: 'listed', rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({
         key, revision: 1, content: key === 'registry-sources' ? { t: 'plain', v: { key,
@@ -448,6 +468,14 @@ it('prepares a catalog upgrade from the recorded pin and keeps local edits and b
         if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
         if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
         if (url.endsWith('/v1/account/entity-rows/prompt-library')) return { status: 200, data: rows };
+        if (url.endsWith(`/v1/artifacts/${current.environment.contentArtifactId}`)) return { status: 200, data: {
+            id: current.environment.contentArtifactId, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
+            encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            header: encodePlainArtifactStoredContent({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'App' }),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify(current.content) }),
+            headerVersion: current.environment.contentHeaderVersion, bodyVersion: current.environment.contentBodyVersion,
+            seq: 1, createdAt: 1, updatedAt: 1,
+        } };
         throw new Error('Unexpected Account read');
     });
     vi.spyOn(axios, 'request').mockImplementation(async request => {
@@ -463,17 +491,31 @@ it('prepares a catalog upgrade from the recorded pin and keeps local edits and b
     local.services.web.labels = { team: 'operations' };
     local.services.cache = { image: 'redis:7' };
     const definition = { kind: 'stored' as const, contentRevision: 2, composeDigest: `sha256:${'c'.repeat(64)}`,
-        document: JSON.stringify(local), profiles: [], services: ['web', 'cache'], primaryService: 'web' };
+        document: JSON.stringify(local), profiles: [], services: ['web', 'cache'], primaryService: 'web',
+        ...(mutable ? { publicFiles: [{ path: 'files/app.conf', content: 'upstream=1' },
+            { path: 'files/local.conf', content: 'keep local' }] } : {}) };
     const binding = createDeploymentSecretVariableBindingV1({ name: 'SERVICE_PASSWORD_APP', phase: 'runtime', resourceId: 'password', resourceRevision: 1 });
+    const appliedDefinition = { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'d'.repeat(64)}` };
+    const legacyProvenance = { templateRef: old.ref, services: ['web'], definition: appliedDefinition };
+    // Retain the real install producer's private metadata through the Artifact/Home content parser.
+    const installed = mutable ? prepareDeploymentTemplateInstantiationV1({ template: old.app, templateRef: old.ref,
+        source: await parseNativeComposeSource(old.app.compose.document), bindings: [binding] }) : undefined;
     current.content = DeploymentEnvironmentContentV1Schema.parse({ ...current.content, definition, bindings: [binding],
-        template: { templateRef: old.ref, services: ['web'], definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'d'.repeat(64)}` } } });
+        template: installed ? { ...installed.template, definition: appliedDefinition } : legacyProvenance });
     const link = current.targetLinks[0]!.targetLink;
     link.machines = ['target']; link.members = [{ machineId: 'target', installationId: identity.installationId, state: 'active' }];
     const proposed: unknown[] = [];
+    const artifacts = createCredentialedAccountArtifactStore(credentials);
     const templates = createDeploymentTemplateInstantiationForHost({ credentials, serverId: 'home', machineId: 'target',
         readInstallation: async () => identity.installationId,
         serverHttpBaseUrl: 'https://home.test', savedSecretOperationContext: custody, assertCurrent: async () => {}, headers: async () => ({}),
-        storage: async () => { throw new Error('Interrupted before storage'); }, readEnvironment: async () => current,
+        storage: async () => { throw new Error('Interrupted before storage'); },
+        readEnvironment: async () => {
+            const opened = readDeploymentEnvironmentArtifactV1(current.environment, await runWithServerHttpBaseUrl('https://home.test',
+                () => artifacts.read(current.environment.contentArtifactId, { prepareRecipients: false, includeSharedAudience: false })));
+            if (!opened.ok) throw new Error(opened.error);
+            return { ...current, content: opened.content };
+        },
         readCreationDefaultInputs: async () => { throw new Error('Existing app does not use creation defaults'); },
         createContent: async value => { proposed.push(value); throw new Error('Artifact boundary interrupted'); },
     });
@@ -499,11 +541,19 @@ it('prepares a catalog upgrade from the recorded pin and keeps local edits and b
     expect(JSON.parse(prepared.definition.document).services).toEqual({ ...local.services,
         web: { ...local.services.web, image: 'nginx:2' } });
     expect(prepared.bindings).toEqual([binding]);
-    expect(requests.some(url => url.includes(`/${oldCommit}/templates/compose/app.yaml`))).toBe(true);
-    expect(requests.some(url => url.includes(`/${newCommit}/templates/compose/app.yaml`))).toBe(true);
-    baselineAvailable = false;
-    expect(await executor.execute('deployments.templates.instantiate', input, context)).toMatchObject({ ok: false, errorCode: 'template_source_unavailable' });
-    expect(proposed).toHaveLength(1);
+    if (mutable) {
+        expect(prepared.definition.publicFiles).toEqual([{ path: 'files/app.conf', content: 'upstream=2' },
+            { path: 'files/local.conf', content: 'keep local' }]);
+        // Historical records without a retained pristine source cannot infer one from hand-edited content.
+        current.content.template = legacyProvenance;
+    } else {
+        expect(requests.some(url => url.includes(`/${oldCommit}/templates/compose/app.yaml`))).toBe(true);
+        expect(requests.some(url => url.includes(`/${newCommit}/templates/compose/app.yaml`))).toBe(true);
+        baselineAvailable = false;
+    }
+    const writesBeforeUnavailable = proposed.length;
+    expect(await executor.execute('deployments.templates.instantiate', input, { ...context, actionRequestId: 'legacy-upgrade-app' })).toMatchObject({ ok: false, errorCode: 'template_source_unavailable' });
+    expect(proposed).toHaveLength(writesBeforeUnavailable);
 });
 
 it('applies admitted Project defaults and preserves Team content audience through template create and apply', async ({ onTestFailed }) => {
@@ -562,8 +612,21 @@ it('applies admitted Project defaults and preserves Team content audience throug
             headerVersion: 1, bodyVersion: defaultsRevision, seq: 1, createdAt: 1, updatedAt: 1 } };
         throw new Error('Unexpected Account transport');
     });
+    const setupPreset = { kind: 'accountPresetOpaque' as const, presetId: 'app-preset', presetRevision: 4,
+        contentEncryptionMode: 'plain' as const };
+    const setupApp = { kind: 'app' as const, definition: {
+        name: 'App', project: { kind: 'existing' as const, projectSourceId: 'project' },
+        definition: { from: 'catalogApp' as const, templateRef: { sourceId: 'apps', itemId: 'app', version: selected.summary.version!, ref: selected.payload.ref } }, bindings: [],
+    } };
     let mutationRequests = 0;
     vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+        // Home is the boundary: the real Setup owner opens this caller-relative content.
+        if (url.endsWith('/v1/machines/setup/resolve')) return { status: 200, data: { sources: [
+            { kind: 'direct', setup: {} }, { ...setupPreset, presetContent: {
+                content: { t: 'plain', v: { v: 1, name: 'App preset', setup: { items: [setupApp] } } },
+                recipientEnvelope: null,
+            } },
+        ] } };
         if (url.endsWith('/v1/plugins/availability/intents/list')) {
             const { knownPluginIds: pluginIds = [] } = PluginAvailabilityIntentsListActionInputV1Schema.parse(body);
             return { status: 200, data: PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
@@ -648,7 +711,11 @@ it('applies admitted Project defaults and preserves Team content audience throug
         // A routing host has no target P45 preparer; only its target Plan does.
         readDeps: createUnavailableActionTransportDeps,
         // App-root review rechecks the target Plan against persisted Machine state.
-        targetPlan: createMachineSetupPlanAction({ homeId: 'home', machineId: 'target', apiMachine: {
+        targetPlan: createMachineSetupPlanAction({ homeId: 'home', machineId: 'target',
+            installation: { installationId: identity.installationId, privateKey: identity.privateKey }, apiMachine: {
+            resolveMachineSetupRuntime: async () => ({ serverId: 'home', machineId: 'target', accountId: 'owner',
+                credentials, serverHttpBaseUrl: 'https://home.test', isCurrent: async () => true,
+                isCustodyCurrent: async () => true }),
             getMachineSetupDesiredSnapshot: () => getMachineSetupDesiredV1({
                 read: async () => ({ status: 'ready', metadata: {}, metadataVersion: 0 }),
                 compareAndSwap: async () => { mutationRequests += 1; throw new Error('Review cannot write Machine metadata'); },
@@ -667,10 +734,7 @@ it('applies admitted Project defaults and preserves Team content audience throug
     const setupInput = MachineSetupApplyInputV1Schema.parse({ homeId: 'home', machineId: 'routing-host', targets: [{
         homeId: 'home', machineId: 'target', desiredRevision: 0, recipePlans: [], exclusions: [],
         sources: [{ kind: 'direct', setup: {} },
-            { kind: 'accountPreset', presetId: 'app-preset', presetRevision: 4, setup: { items: [{ kind: 'app', definition: {
-            name: 'App', project: { kind: 'existing', projectSourceId: 'project' },
-            definition: { from: 'catalogApp', templateRef: input.templateRef }, bindings: [],
-        } }] } }], appChildren: [{ sourceIndex: 1, itemIndex: 0, actionId: 'deployments.templates.instantiate',
+            setupPreset], appChildren: [{ sourceIndex: 1, itemIndex: 0, actionId: 'deployments.templates.instantiate',
             input: DeploymentTemplateInstantiateInputV1Schema.parse({ ...input, deploy: { requestKey: 'setup-app-deploy' } }) }],
     }] });
     phase = 'setup_review';
@@ -948,7 +1012,7 @@ it('applies admitted Project defaults and preserves Team content audience throug
                 // This HTTP fixture authors plain Account artifacts above.
                 getAccountEncryptionMode: async () => 'plain' })
                 .read(environment.environment.contentArtifactId));
-            const stored = DeploymentEnvironmentContentV1Schema.parse(JSON.parse(opened!.body!));
+            const stored = DeploymentEnvironmentContentV1Schema.parse(parseInlineBody(opened));
             expect(stored.template?.data).toEqual([{ engine: 'postgres', service: 'postgres', port: 5432 }]);
             expect(stored.definition.kind === 'stored' && stored.definition.services).toEqual(['postgres', 'web']);
         }

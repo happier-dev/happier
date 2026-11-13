@@ -145,6 +145,7 @@ export function resolveDeploymentTemplateInstantiationBaselineRefV1(
 
 /** One inert plan for preview/apply. P41 admits the output; Actions alone create refs and write content. */
 export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTemplateInstantiationPreparationInputV1): PreparedDeploymentTemplateInstantiationV1 {
+    const pristineCompose = structuredClone(input.template.compose);
     input = prepareDeploymentTemplateAdditionV1(prepareVolumeBindings(prepareCompanions(input)));
     const { template } = input;
     const source = structuredClone(input.source);
@@ -206,7 +207,7 @@ export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTempla
     if (unknownDomain) return refuse('template_domain_unknown', { key: unknownDomain.templateDomainId });
     const domains = template.domains.flatMap(domain => {
         const selected = input.domainBindings?.find(binding => binding.templateDomainId === domain.key);
-        if (!selected) return domain.required ? refuse('template_domain_required') : [];
+        if (!selected) return domain.required ? refuse('template_domain_required', { key: domain.key }) : [];
         // The existing own-server Domain route and probe contract is HTTP only.
         if (domain.protocol === 'tcp') return refuse('template_needs_review');
         // Literal DNS labels only: IDNs arrive as punycode, never URL syntax or Caddy placeholders.
@@ -316,7 +317,7 @@ export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTempla
     const templateServices = [...new Set([...(previousTemplate?.services ?? []), ...selectedServices])]
         .filter(service => Object.hasOwn(mergedServices, service));
     return { connectToServices: input.current ? Object.keys(record(input.current.source.services)) : [], document: JSON.stringify(document), ...(publicFiles.length ? { publicFiles } : {}), profiles, services, ...(primaryService ? { primaryService } : {}), bindings, generatedSecrets, domains, capacity,
-        template: { templateRef: input.templateRef, services: templateServices,
+        template: { templateRef: input.templateRef, compose: pristineCompose, services: templateServices,
             ...(health.length ? { health } : {}),
             ...(volumes.length ? { volumes } : {}),
             ...(data.length ? { data } : {}), ...(template.exports ? { exports: template.exports } : {}),

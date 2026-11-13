@@ -209,12 +209,13 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             ...(repositoryPublicFiles ? { publicFiles: repositoryPublicFiles } : {}) } : undefined;
         const recorded = resolveDeploymentTemplateInstantiationBaselineRefV1({ templateRef: input.templateRef, source: sourceDocument, current: currentInput,
             intent: input.intent });
-        const baselineTemplate = recorded ? await readPinnedTemplate({ templateRef: recorded }, context).catch(error => {
+        const retainedCompose = currentInput?.content.template?.compose;
+        const baselineCompose = recorded ? retainedCompose ?? (await readPinnedTemplate({ templateRef: recorded }, context).catch(error => {
                 if (error instanceof RegistryFetchErrorV1 && error.code !== 'auth_failed') return refuse('template_source_unavailable');
                 throw error;
-            }) : undefined;
-        const baseline = recorded && baselineTemplate ? { templateRef: recorded,
-            source: await parseNativeComposeSource(baselineTemplate.compose.document), publicFiles: baselineTemplate.compose.publicFiles } : undefined;
+            })).compose : undefined;
+        const baseline = recorded && baselineCompose ? { templateRef: recorded,
+            source: await parseNativeComposeSource(baselineCompose.document), publicFiles: baselineCompose.publicFiles } : undefined;
         if (input.destination.kind === 'repositoryPullRequest' && repositoryFiles && repositoryCwd && currentInput) {
             const destination = input.destination;
             const paths = [...new Set([...(template.compose.publicFiles ?? []), ...(baseline?.publicFiles ?? [])].map(file => file.path))];

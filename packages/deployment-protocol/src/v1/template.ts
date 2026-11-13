@@ -8,9 +8,11 @@ import { DeploymentRevisionV1Schema } from '@happier-dev/protocol/deployments/de
 // Normalize that stored input once; every live consumer receives the same service inventory.
 const databaseInventory = z.union([z.array(DeploymentTemplateDataV1Schema), DeploymentTemplateDataV1Schema]);
 
-/** Private provenance only. Definition owns Compose; bindings own all credential references. */
+/** Private provenance only. Definition owns applied Compose; bindings own all credential references. */
 export const DeploymentEnvironmentTemplateProvenanceV1Schema = z.strictObject({
     templateRef: DeploymentTemplateRefV1Schema,
+    /** Pristine selected source for the next three-way merge, before bindings and local edits. */
+    compose: z.optional(DeploymentTemplateV1Schema.shape.compose),
     definition: z.union([
         z.strictObject({ kind: z.literal('stored'), contentRevision: DeploymentRevisionV1Schema, composeDigest: DeploymentDigestV1Schema }),
         DeploymentRepositoryDefinitionV1Schema,
