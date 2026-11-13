@@ -128,8 +128,10 @@ it('opens the Share card whole above its persistent menu trigger when only that 
         expect(trigger.isConnected).toBe(true);
         const popover = document.querySelector('[data-testid="anchor-share-body"]')!.closest<HTMLElement>('[id^="popover-"]')!;
         // In this 900 window the 450 card ends at 972 below the trigger (482-514) and starts at 24 above it.
-        await vi.waitFor(() => expect(popover.style.bottom).not.toBe(''));
-        const cardBottom = 900 - Number.parseFloat(popover.style.bottom) - (Number.parseFloat(popover.style.paddingBottom) || 0);
+        await vi.waitFor(() => expect(popover.style.top || popover.style.bottom).not.toBe(''));
+        const cardBottom = popover.style.top
+            ? Number.parseFloat(popover.style.top) + (Number.parseFloat(popover.style.paddingTop) || 0) + 450
+            : 900 - Number.parseFloat(popover.style.bottom) - (Number.parseFloat(popover.style.paddingBottom) || 0);
         expect(cardBottom).toBeLessThanOrEqual(482);
         expect(cardBottom - 450).toBeGreaterThanOrEqual(8);
         const card = document.querySelector<HTMLElement>('[data-testid="anchor-share"]')!;

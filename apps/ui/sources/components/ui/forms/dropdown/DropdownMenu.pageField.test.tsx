@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
+import type { DropdownMenuItemTriggerConfig } from './DropdownMenu';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -44,7 +45,7 @@ const STRATEGIES = [
     { id: 'retired', title: 'Least used', disabled: true },
 ];
 
-type TriggerOverrides = Readonly<{ showSelectedDetail?: boolean; subtitle?: string; itemProps?: Readonly<{ accessoryLayout?: 'inline' | 'stacked' | 'adaptive' }> }>;
+type TriggerOverrides = Pick<DropdownMenuItemTriggerConfig, 'showSelectedDetail' | 'subtitle' | 'itemProps' | 'detailFormatter'>;
 
 async function renderField(params: Readonly<{
     presentation?: 'page' | 'grouped';
@@ -122,6 +123,16 @@ describe('DropdownMenu page field', () => {
         expect(texts).not.toContain('Choose…');
         // The field carries the value; the description does not say it a second time.
         expect(texts.filter((text) => text === 'Round robin')).toHaveLength(1);
+    });
+
+    it.each(['page', 'grouped'] as const)('keeps the formatted stored value when choices omit it in %s presentation', async presentation => {
+        const { texts } = await renderField({
+            presentation,
+            selectedId: 'folded-selection',
+            trigger: { showSelectedDetail: false, subtitle: 'Stored selection', detailFormatter: () => 'Stored selection' },
+        });
+        expect(texts).not.toContain('Choose…');
+        expect(texts.filter(text => text === 'Stored selection')).toHaveLength(1);
     });
 
     it('shows a selected option that can no longer be chosen instead of an empty field', async () => {

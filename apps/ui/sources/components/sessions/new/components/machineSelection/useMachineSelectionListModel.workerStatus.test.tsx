@@ -55,11 +55,17 @@ const { getServerProfileById, setServerProfileIdentityForUrl, resolveServerProfi
 let serverId = '';
 let homeProfileId = '';
 
+async function seedAnsweredMachines(machines: Machine[]) {
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, machines);
+    for (const machine of machines) {
+        const admitted = storage.getState().machineRecordsByServerId[serverId]?.[machine.id];
+        if (!admitted) throw new Error('expected an admitted Machine fixture');
+        linkMachineActivity(admitted, machine);
+    }
+}
+
 async function seedAnsweredScopedMachine(machine: Machine) {
-    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine]);
-    const admitted = storage.getState().machineRecordsByServerId[serverId]?.[machine.id];
-    if (!admitted) throw new Error('expected an admitted Machine fixture');
-    linkMachineActivity(admitted, machine);
+    await seedAnsweredMachines([machine]);
     const row = { ...machine, serverId, serverName: 'Worker picker' };
     linkMachineActivity(machine, row);
     return row;
@@ -101,6 +107,7 @@ describe('worker destination list demand', () => {
     it('does zero worker-row inventory work for unrelated operation and relationship pushes at scale', async () => {
         const scope = { serverId, accountId: 'owner' };
         const machine = createMachineFixture({ id: 'demanded-worker', active: true, activeAt: Date.now() });
+        await seedAnsweredMachines([machine]);
         const source = { id: 'checkout', serverId, machineId: 'source', rootPath: '/source', createdAtMs: 1 };
         const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
         const refs = Array.from({ length: 300 }, (_, index) => ({ ...source, id: `copy-${index}`, machineId: index === 299 ? machine.id : `other-${index}` }));
@@ -188,6 +195,7 @@ describe('worker destination list demand', () => {
     });
     it('refreshes a missing-copy worker from the pushed copy relationship without polling or unrelated rereads', async () => {
         const machine = createMachineFixture({ id: 'fresh-worker', active: true, activeAt: Date.now() });
+        await seedAnsweredMachines([machine]);
         const scope = { serverId, accountId: 'owner' };
         const source = { id: 'checkout', serverId, machineId: 'source', rootPath: '/source', createdAtMs: 1 };
         const target = { id: 'copy', serverId, machineId: machine.id, rootPath: '/worker', createdAtMs: 1 };
@@ -228,6 +236,7 @@ describe('worker destination list demand', () => {
     it.each([{ testID: 'run-picker', otherHome: false }, { testID: 'workers-picker', otherHome: true }])(
         '$testID keeps a missing-copy worker disabled and opens its existing copy step once', async ({ testID, otherHome }) => {
         const machine = createMachineFixture({ id: 'fresh-worker', active: true, activeAt: Date.now() });
+        await seedAnsweredMachines([machine]);
         const workspace = { serverId, workspaceId: 'checkout', machineId: 'source', rootPath: '/source' };
         const onChoose = vi.fn();
         rpc.machine.mockResolvedValue({ eligible: false, candidate: null, load: { kind: 'unknown' },
@@ -265,6 +274,7 @@ describe('worker destination list demand', () => {
         const machines = Array.from({ length: 100 }, (_, index) => createMachineFixture({
             id: `worker-${index}`, active: true, activeAt: Date.now(), metadataVersion: 1,
         }));
+        await seedAnsweredMachines(machines);
         rpc.machine.mockImplementation(async ({ machineId }: { machineId: string }) => ({
             eligible: true, candidate: { serverId, machineId },
             load: { kind: 'known', running: 1, queued: 0, accepting: true, runAtMost: 2 }, explanation: 'eligible',
@@ -309,6 +319,7 @@ describe('worker destination list demand', () => {
     it('retains another candidate in flight and refreshes only the changed candidate on metadata and lifecycle facts', async () => {
         const machines = ['worker-a', 'worker-b'].map(id => createMachineFixture({ id, active: true,
             activeAt: Date.now(), metadataVersion: 1 }));
+        await seedAnsweredMachines(machines);
         const status = (machineId: string, running: number): ProjectWorkerStatusResultV1 => ({
             eligible: true, candidate: { serverId, machineId },
             load: { kind: 'known', running, queued: 0, accepting: true, runAtMost: 3 }, explanation: 'eligible',
@@ -375,7 +386,7 @@ describe('worker destination list demand', () => {
                 controller: { machineId: 'controller', installationId: 'installation' } } } : {}),
             observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained' } });
         homes.answer(homeProfileId, '/v1/machines/managed/actions/list', { body: { machines: [managed] } });
-        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [controller, guest]);
+        await seedAnsweredMachines([controller, guest]);
         const hook = await renderHook(() => useMachineSelectionListModel<Machine>({
             purpose: 'finite', workerPlacement: { workspace: { serverId, refId: 'checkout' } },
             groups: [{ serverId, serverName: 'Worker picker', loading: false, signedOut: false,
@@ -416,6 +427,7 @@ describe('worker destination list demand', () => {
             managedMachineRef: { homeId: 'srv_worker_home', managedId: 'managed' },
             access: { role: 'use', resourceMode: 'plain', accessState: 'ready', custodian: { accountId: 'owner' } } }),
             managedInputRuntime: { nativeReady: false, wakeState: wakeOnAcceptedMessage ? 'asleep' as const : null, state: 'asleep' as const, newSessionWake } };
+        await seedAnsweredMachines([machine]);
         const hook = await renderHook(() => useMachineSelectionListModel<Machine>({
             groups: [{ serverId, serverName: 'Worker picker', loading: false, signedOut: false,
                 machines: [{ ...machine, serverId, serverName: 'Worker picker' }] }],
@@ -457,6 +469,7 @@ describe('worker destination list demand', () => {
             const locked = createMachineFixture({ id: 'locked', active: false, activeAt: 0, availability: { kind: 'locked', reason: 'recipient_key_pending' } });
             const pending = createMachineFixture({ id: 'pending', active: false, activeAt: 0, isShared: true,
                 access: { custodian: { accountId: 'ben', displayName: 'Ben' }, role: 'use', resourceMode: 'plain', accessState: 'key_pending' } } as Partial<Machine>);
+            await seedAnsweredMachines([plain, locked, pending]);
             const hook = await renderHook(() => useMachineSelectionListModel(paramsFor([plain, locked, pending])));
             try {
                 await flushHookEffects({ cycles: 20 });
@@ -469,6 +482,7 @@ describe('worker destination list demand', () => {
 
         it('re-classifies when a request-reachability failure arrives without any Machine row change', async () => {
             const machine = createMachineFixture({ id: 'worker', active: true, activeAt: Date.now() });
+            await seedAnsweredMachines([machine]);
             rpc.machine.mockResolvedValue({ eligible: true, candidate: { serverId, machineId: machine.id },
                 load: { kind: 'known', running: 0, queued: 0, accepting: true, runAtMost: null }, explanation: 'eligible' });
             const hook = await renderHook(() => useMachineSelectionListModel(paramsFor([machine])));
@@ -509,6 +523,7 @@ describe('worker destination list demand', () => {
 
     it('withdraws status from an older workspace demand, while eligible unknown load stays selectable', async () => {
         const machine = createMachineFixture({ id: 'worker', active: true, activeAt: Date.now() });
+        await seedAnsweredMachines([machine]);
         let finishOld!: (status: unknown) => void;
         const unknown = { eligible: true, candidate: { serverId, machineId: machine.id },
             load: { kind: 'unknown' }, explanation: 'load_unknown' };
@@ -539,6 +554,7 @@ describe('worker destination list demand', () => {
 
     it('rechecks the same exact candidate after its admitted metadata version changes, not a wrapper-only render', async () => {
         const machine = createMachineFixture({ id: 'worker', active: true, activeAt: Date.now(), metadataVersion: 1 });
+        await seedAnsweredMachines([machine]);
         rpc.machine.mockResolvedValueOnce({ eligible: true, candidate: { serverId, machineId: machine.id },
             load: { kind: 'unknown' }, explanation: 'load_unknown' });
         rpc.machine.mockResolvedValue({ eligible: false, candidate: null,
@@ -570,6 +586,7 @@ describe('worker destination list demand', () => {
 
     it('refreshes exact load on matching lifecycle and admission phase pushes, not unrelated scopes or label-only revisions', async () => {
         const machine = createMachineFixture({ id: 'worker', active: true, activeAt: Date.now(), metadataVersion: 1 });
+        await seedAnsweredMachines([machine]);
         const snapshot = (operationId: string, accountId = 'owner', machineId = machine.id): ActionOperationSnapshotV1 => ({
             version: 1, operationId, revision: 1, actionId: 'projects.script.run', state: 'running',
             scope: { accountId, machineId }, title: 'Run script', createdAt: 1, startedAt: 2, cancellation: 'supported',

@@ -33,7 +33,12 @@ beforeEach(async () => {
     await harness.reset(); resetScopedHomeActionExecutorsForTests(); nativeBoundary.rpc.mockReset();
     clearDaemonMergedProjectionCacheForTests(); resetMachineProjectionReadsForTests();
 });
-afterEach(() => standardCleanup());
+afterEach(async () => {
+    standardCleanup();
+    // Retire the exact Home/Account while its fixture still exists, before the
+    // global setup replaces local storage for the next case.
+    await harness.reset();
+});
 
 describe('ordinary managed machine picker demand', () => {
     it('opens a pool-backed preset directly and carries its preset selection without resolving or reading a controller', async () => {
@@ -132,7 +137,8 @@ describe('ordinary managed machine picker demand', () => {
         // The demanded reader must be mounted. This fails directly when the picker
         // has no producer, before waiting for the genuine network result to render.
         expect(harness.requestsFor('/v2/account/settings').length).toBeGreaterThan(0);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('mixed-picker-managed-machine:srv_compute:preset:launch:2')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('mixed-picker-managed-machine:srv_compute:preset:launch:2'),
+            JSON.stringify({ requests: harness.requests.map(request => request.path), content: screen.getTextContent() })).not.toBeNull());
         expect(screen.findByTestId('mixed-picker-managed-machine:srv_compute:preset:launch:2')?.props.accessibilityState).toMatchObject({ selected: true });
         expect(screen.findByTestId('mixed-picker-managed-machine:srv_compute:one-off')).not.toBeNull();
         expect(screen.findByTestId('mixed-picker-managed-machine:srv_compute:preset:archived:2')).toBeNull();
@@ -183,7 +189,8 @@ describe('ordinary managed machine picker demand', () => {
             onSelectMachine={vi.fn()} onSelectScopedMachine={vi.fn()} onSelectManagedMachine={vi.fn()}
             testIdPrefix="switch-picker" showSearch={false} />);
         await vi.dynamicImportSettled();
-        await waitForHomeGovernance(() => expect(screen.findByTestId('switch-picker-managed-machine:srv_compute:preset:private-launch:2')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('switch-picker-managed-machine:srv_compute:preset:private-launch:2'),
+            JSON.stringify({ requests: harness.requests.map(request => request.path), content: screen.getTextContent() })).not.toBeNull());
         const previousSettingsReads = harness.requestsFor('/v2/account/settings').length;
         const previousPresetReads = harness.requestsFor('/v1/machines/presets/list').length;
         let releaseSettings!: () => void;

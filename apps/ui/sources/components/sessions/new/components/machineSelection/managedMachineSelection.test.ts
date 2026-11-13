@@ -10,6 +10,7 @@ import {
 } from './managedMachineSelection';
 import { buildMachineDestinationModel } from './buildMachineDestinationModel';
 import { createMachineFixture } from '@/dev/testkit';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 
 const selection = { kind: 'preset', homeId: 'home-a', id: 'preset-a', revision: 3 } as const;
 const receipt = {
@@ -69,6 +70,7 @@ describe('managed machine selection draft', () => {
     });
     it('counts new-machine offers and waits for their projection before taking a sole-machine shortcut', () => {
         const machine = { ...createMachineFixture({ id: 'host' }), active: true, activeAt: Date.now() };
+        publishMachineActivityForTest([machine]);
         const params = {
             groups: [{ serverId: 'home-a', machines: [machine], loading: false, signedOut: false }],
             scopesByServerId: new Map([['home-a', { serverId: 'home-a', accountId: 'account-a' }]]),

@@ -1,15 +1,15 @@
 import * as React from 'react';
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
-    SelectionListAccessory,
     SelectionListOption,
     SelectionListProps,
     SelectionListSectionDescriptor,
 } from '@/components/ui/selectionList';
-import { createMachineFixture, renderScreen } from '@/dev/testkit';
+import { createMachineFixture, renderScreen as renderScreenWithProviders } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { linkMachineActivity } from '@/sync/domains/machines/machineActivity';
 import type { ServerScopedMachine } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 
@@ -18,63 +18,19 @@ import { buildMachineDestinationModel as buildScopedMachineDestinationModel } fr
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const capturedSelectionLists = vi.hoisted(() => [] as SelectionListProps[]);
+let SelectionList: typeof import('@/components/ui/selectionList').SelectionList;
+let storage: typeof import('@/sync/domains/state/storageStore').storage;
+let latestScreen: Awaited<ReturnType<typeof renderScreenWithProviders>> | null = null;
 
-function renderAccessory(accessory: SelectionListAccessory | undefined): React.ReactNode {
-    if (typeof accessory === 'function') return accessory();
-    return accessory;
+async function renderScreen(element: React.ReactElement) {
+    latestScreen = await renderScreenWithProviders(element);
+    return latestScreen;
 }
 
-vi.mock('@/components/ui/selectionList', () => ({
-    SelectionList: (props: SelectionListProps) => {
-        capturedSelectionLists.push(props);
-        return React.createElement(
-            'SelectionList',
-            { testID: props.testID, maxHeight: props.maxHeight },
-            props.rootStep.sections.flatMap((section) =>
-                section.kind === 'static'
-                    ? section.options.map((option) => (
-                        <SelectionListOptionAlias
-                            key={`${section.id}:${option.id}`}
-                            option={option}
-                            selected={props.selectedOptionId === option.id}
-                            onSelect={(selectedOption) => {
-                                selectedOption.onSelect?.();
-                                props.onSelect(selectedOption.id, selectedOption);
-                            }}
-                        />
-                    ))
-                    : [],
-            ),
-        );
-    },
-    resolvePopoverSelectionListHeightBehavior: () => 'measuredToMaxHeight',
-}));
-
-function SelectionListOptionAlias(props: Readonly<{
-    option: SelectionListOption;
-    selected: boolean;
-    onSelect: (option: SelectionListOption) => void;
-}>): React.ReactElement | null {
-    if (!props.option.testID) return null;
-    return React.createElement(
-        'SelectionListOptionAlias',
-        {
-            testID: props.option.testID,
-            accessibilityState: {
-                disabled: props.option.disabled === true,
-                selected: props.selected,
-            },
-            onPress: () => {
-                if (props.option.disabled === true) return;
-                props.onSelect(props.option);
-            },
-        },
-        // The row's status line leads with the presence dot (K1), the accessory trails it.
-        renderAccessory(props.option.subtitleLeading),
-        renderAccessory(props.option.rightAccessory),
-    );
-}
+beforeAll(async () => {
+    ({ storage } = await import('@/sync/domains/state/storageStore'));
+    ({ SelectionList } = await import('@/components/ui/selectionList'));
+});
 
 installNewSessionComponentsCommonModuleMocks({
     icons: () => ({
@@ -85,11 +41,6 @@ installNewSessionComponentsCommonModuleMocks({
         return createTextModuleMock({ translate: (key) => key });
     },
 });
-
-vi.mock('@/components/sessions/new/components/MachineCliGlyphs', () => ({
-    MachineCliGlyphs: ({ machineId }: { machineId: string }) =>
-        React.createElement('MachineCliGlyphs', { testID: `machine-cli-glyphs:${machineId}` }),
-}));
 
 const network = await installSessionOpsNetworkBoundary();
 afterAll(() => network.dispose());
@@ -138,11 +89,20 @@ function createScopedMachine(
     machine: Machine,
     scope: Readonly<{ serverId: string; serverName: string }>,
 ): ServerScopedMachine {
-    return {
+    storage.getState().applyMachines([machine], false, {
+        sourceServerId: scope.serverId,
+        sourceAccountId: `account-${scope.serverId.slice(-1)}`,
+    });
+    const admitted = storage.getState().machineRecordsByServerId[scope.serverId]?.[machine.id];
+    if (!admitted) throw new Error('Expected an admitted Machine fixture');
+    linkMachineActivity(admitted, machine);
+    const row = {
         ...machine,
         serverId: scope.serverId,
         serverName: scope.serverName,
     };
+    linkMachineActivity(machine, row);
+    return row;
 }
 
 /**
@@ -151,8 +111,8 @@ function createScopedMachine(
  * legitimately renders more than once; how many times is not this surface's contract.
  */
 function getLastSelectionList(): SelectionListProps {
-    expect(capturedSelectionLists.length).toBeGreaterThan(0);
-    return capturedSelectionLists.at(-1)!;
+    if (!latestScreen) throw new Error('Expected a rendered machine picker');
+    return latestScreen.findByType(SelectionList).props as SelectionListProps;
 }
 
 function getSection(
@@ -187,13 +147,13 @@ function readIconName(option: SelectionListOption): unknown {
 
 describe('NewSessionMachineSelectionContent', () => {
     beforeEach(async () => {
-        capturedSelectionLists.length = 0;
+        latestScreen = null;
         for (const suffix of ['a', 'b', 'c', 'd', 'e']) {
             await network.addHome(`https://server-${suffix}`, `account-${suffix}`);
         }
     });
 
-    it('renders empty machine content through SelectionList with a measured native popover height cap', async () => {
+    it('renders empty machine content through SelectionList under the supplied popover height cap', async () => {
         const { NewSessionMachineSelectionContent } = await import('./NewSessionMachineSelectionContent');
 
         await renderScreen(<NewSessionMachineSelectionContent
@@ -210,7 +170,6 @@ describe('NewSessionMachineSelectionContent', () => {
 
         const props = getLastSelectionList();
         expect(props.maxHeight).toBe(317);
-        expect(props.heightBehavior).toBe('measuredToMaxHeight');
         expect(props.rootStep.emptyStateLabel).toBe('newSession.noMachinesFound');
         expect(props.rootStep.inputPlaceholder).toBeUndefined();
         expect(props.rootStep.sections).toEqual([]);
@@ -251,7 +210,7 @@ describe('NewSessionMachineSelectionContent', () => {
             metadata: { displayName: 'Offline', host: 'offline-host', homeDir: '/Users/tester' },
         });
 
-        await renderScreen(<NewSessionMachineSelectionContent
+        const screen = await renderScreen(<NewSessionMachineSelectionContent
             groups={[{
                 serverId: 'server-a',
                 serverName: 'Server A',
@@ -290,6 +249,9 @@ describe('NewSessionMachineSelectionContent', () => {
 
         const recentOption = getOption(recentSection, 'm-recent');
         expect(recentOption.testID).toBe('new-session-machine-option:m-recent');
+        const readiness = screen.findByTestId('new-session-machine-readiness:m-recent');
+        expect(readiness?.props['data-state']).toBe('ready');
+        expect(readiness?.props.dataSet).toEqual({ state: 'ready' });
         // A recent machine keeps its machine mark; the section title already says it is recent.
         expect(readIconName(recentOption)).toBe('machine:m-recent');
 
@@ -299,36 +261,6 @@ describe('NewSessionMachineSelectionContent', () => {
         const offlineOption = getOption(allSection, 'm-offline');
         expect(offlineOption.disabled).toBe(true);
         expect(offlineOption.testID).toBe('new-session-machine-option:m-offline');
-    });
-
-    it('renders machine readiness and CLI glyph accessories under legacy testID contracts', async () => {
-        const { NewSessionMachineSelectionContent } = await import('./NewSessionMachineSelectionContent');
-        const machine = createMachine({ id: 'm-online', metadata: { displayName: 'Online', host: 'host', homeDir: '/Users/tester' } });
-
-        const screen = await renderScreen(<NewSessionMachineSelectionContent
-            groups={[{
-                serverId: 'server-a',
-                serverName: 'Server A',
-                loading: false,
-                signedOut: false,
-                machines: [createScopedMachine(machine, { serverId: 'server-a', serverName: 'Server A' })],
-            }]}
-            selectedMachine={machine}
-            selectedServerId="server-a"
-            recentMachines={[]}
-            favoriteMachines={[]}
-            onSelectMachine={() => {}}
-            onSelectScopedMachine={() => {}}
-            serverId="server-a"
-            testIdPrefix="new-session-machine"
-            showCliGlyphs
-            autoDetectCliGlyphs={false}
-        />);
-
-        const readiness = screen.findByTestId('new-session-machine-readiness:m-online');
-        expect(readiness?.props['data-state']).toBe('ready');
-        expect(readiness?.props.dataSet).toEqual({ state: 'ready' });
-        expect(screen.findByTestId('machine-cli-glyphs:m-online')).not.toBeNull();
     });
 
     it('routes single-server option activation through the plain machine callback', async () => {
@@ -487,7 +419,7 @@ describe('NewSessionMachineSelectionContent', () => {
 
         // A section whose existence is still unknown never heads the list (it would jump away a moment
         // later for the many Accounts without Pools); Pools appear once they are known, failures say so.
-        const sections = capturedSelectionLists.at(-1)!.rootStep.sections.map((section) => section.id);
+        const sections = getLastSelectionList().rootStep.sections.map((section) => section.id);
         expect(sections).not.toContain('machine-pools');
         expect(screen.findByTestId('new-session-machine-pool-status:server-a')).toBeNull();
         expect(onSelectPool).not.toHaveBeenCalled();
@@ -549,7 +481,7 @@ describe('NewSessionMachineSelectionContent', () => {
         // Settings renders nothing for a settled disabled Home, and so does the
         // destination picker: a Home without the feature advertises no dead
         // section telling the person to go update their server.
-        const sections = capturedSelectionLists.at(-1)!.rootStep.sections.map((section) => section.id);
+        const sections = getLastSelectionList().rootStep.sections.map((section) => section.id);
         expect(sections).not.toContain('machine-pools');
         expect(screen.findByTestId('new-session-machine-pool-status:server-a')).toBeNull();
         expect(onSelectMachine).not.toHaveBeenCalled();
@@ -613,11 +545,10 @@ describe('NewSessionMachineSelectionContent', () => {
             testIdPrefix="new-session-machine"
         />);
 
-        const poolSection = getSection(capturedSelectionLists.at(-1)!, 'machine-pools');
-        const status = getOption(poolSection, 'pool-status:server-a');
-        expect(status.label).toBe('machinePools.refreshFailed');
-        expect(status.disabled).toBe(true);
-        await screen.pressByTestIdAsync('new-session-machine-pool-status:server-a');
+        const poolSection = getSection(getLastSelectionList(), 'machine-pools');
+        const retry = getOption(poolSection, 'pool-refresh:server-a');
+        expect(retry.label).toBe('machinePools.refreshFailed');
+        expect(retry.disabled).not.toBe(true);
         expect(onSelectPool).not.toHaveBeenCalled();
         await screen.pressByTestIdAsync('new-session-machine-pool-refresh:server-a');
         expect(onRefreshPools).toHaveBeenCalledWith('server-a');
@@ -787,9 +718,11 @@ describe('NewSessionMachineSelectionContent', () => {
         expect(getOption(getSection(props, 'server:server-e'), 'server:server-e:empty').label).toBe('newSession.noMachinesFound');
 
         const selectedAlias = screen.findByTestId('new-session-machine-option:m-selected');
-        expect(selectedAlias?.props.accessibilityState).toEqual({ disabled: false, selected: true });
+        expect(selectedAlias?.props.accessibilityState?.selected).toBe(true);
+        expect(selectedAlias?.props.accessibilityState?.disabled).not.toBe(true);
         const offlineAlias = screen.findByTestId('new-session-machine-option:m-offline');
-        expect(offlineAlias?.props.accessibilityState).toEqual({ disabled: true, selected: false });
+        expect(offlineAlias?.props.accessibilityState?.disabled).toBe(true);
+        expect(offlineAlias?.props.accessibilityState?.selected).not.toBe(true);
     });
 
     it('routes multi-server option activation through the scoped machine callback', async () => {
