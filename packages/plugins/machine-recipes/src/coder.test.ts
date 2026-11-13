@@ -3,12 +3,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, onTestFinished } from 'vitest';
-import { PLUGIN_MANIFEST } from './manifest.js';
+import { coder as recipe } from './coder.js';
 import { createMachineSetupNativeBackend, checkMachineSetupEffectPlan, applyMachineSetupEffectPlan } from '@happier-dev/cli-common/machineSetup';
 import { MachineRecipeStepV1Schema, resolveMachineRecipeStepInputsV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 
 it.skipIf(process.platform === 'win32').each([false, true])('installs Coder idempotently and preserves installer failures (failure=%s)', async fail => {
-  const recipe = PLUGIN_MANIFEST.contributes?.machineRecipes?.find(entry => entry.id === 'coder');
   expect(recipe).toBeDefined();
   const authored = recipe?.steps.find(step => step.id === 'install');
   if (!authored || authored.kind !== 'script') throw new Error('Missing Coder installer');
@@ -45,7 +44,6 @@ ${fail ? '' : `printf installed > '${installed}'`}`);
 });
 
 it('renders the external URL through the recipe input owner', () => {
-  const recipe = PLUGIN_MANIFEST.contributes?.machineRecipes?.find(entry => entry.id === 'coder');
   const config = recipe?.steps.find(step => step.id === 'config');
   if (!config) throw new Error('Missing Coder configuration');
   expect(resolveMachineRecipeStepInputsV1(config, { accessUrl: 'https://coder.example.com' })).toMatchObject({
