@@ -1,5 +1,7 @@
+import { QualifiedConnectedAccountPurposeV1Schema } from '../connect/connectedAccountPurposeIdentity.js';
 import { z } from '../zodRuntimePolicy.js';
 import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
+import type { AgentModelsProbeObservation } from '../capabilities/agentProbeObservation.js';
 
 import { ProviderManagedPurposeOperationRestrictionV1Schema } from '../providers/managedPurposeOperationRestrictionV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -159,6 +161,10 @@ export const DaemonProviderTeamCredentialBrokerEligibilityRequestV1Schema = lazy
   })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(DaemonProviderTeamCredentialBrokerEligibilityRequestBaseV1Schema, {
     scope: z.literal('source_any'),
+  })),
+  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(DaemonProviderTeamCredentialBrokerEligibilityRequestBaseV1Schema, {
+    scope: z.literal('action_purpose'),
+    purpose: QualifiedConnectedAccountPurposeV1Schema,
   })),
 ]));
 export type DaemonProviderTeamCredentialBrokerEligibilityRequestV1 = z.infer<
@@ -942,6 +948,16 @@ export const DaemonProviderModelProjectionRowV1Schema = lazyZodSchema(() => z.st
   visibility: z.enum(['visible', 'hidden_agent', 'hidden_all_agents', 'hidden_current_selection']),
 }));
 export type DaemonProviderModelProjectionRowV1 = z.infer<typeof DaemonProviderModelProjectionRowV1Schema>;
+
+/** Shared membership rule for Provider and native Agent catalog publication. */
+export function isProviderSourceModelCatalogConfidenceUsable(confidence: DaemonProviderModelProjectionRowV1['confidence'] | undefined): boolean {
+  return confidence !== 'account_unverified';
+}
+
+/** Exact-account callers supply their scoped observation; static or absent evidence is diagnostic only. */
+export function getConnectedAccountModelObservationConfidence(source: AgentModelsProbeObservation['source']): DaemonProviderModelProjectionRowV1['confidence'] {
+  return source === 'dynamic' ? 'probe' : 'account_unverified';
+}
 
 export const DaemonProviderModelProjectionGroupV1Schema = lazyZodSchema(() => z.strictObject({
   connectionId: ProviderConnectionIdSchema,

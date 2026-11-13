@@ -21,11 +21,13 @@ import { composeProviderBindingMaterialization } from '@/providers/spawn/compose
 import { resolveProviderCompatibilityConfirmation } from '@/providers/catalog/compatibility';
 import type { ProviderSettingsV1 } from '@happier-dev/protocol';
 import { createProviderLaunchResourceScope } from './resourceScope';
+import type { ProviderRuntimeModelProjectionReader } from '@/providers/spawn/runtimeCatalog';
 
 export type ManagedPurposeLaunchContext = Readonly<{
   lease: PluginRuntimeRegistryLease;
   happyHomeDir: string;
   readProviderSettings?: () => ProviderSettingsV1 | null | Promise<ProviderSettingsV1 | null>;
+  readModelProjection?: ProviderRuntimeModelProjectionReader;
   accountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
   signal?: AbortSignal;
   resolveManagedPurposeBindingIntentSelection?: ResolveManagedProviderPurposeBindingIntentSelection;
@@ -82,6 +84,7 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
   if (!adapter) return refuse('provider_incompatible_with_agent');
   const admitted = [];
   let unconfirmed = false;
+  let catalogError: ProviderErrorV1 | undefined;
   for (const candidate of candidates) {
     const route = candidate.declaration.managedProviderEndpoint!;
     const provider = getProviderContribution(registry, buildQualifiedPluginContributionKey(route.provider));
@@ -89,7 +92,8 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
     const catalog = await readConnectedAccountModelCatalog({ registry, provider, purpose: route.purpose,
       request: { machineId: input.machineId, agentTargetKey: agentTargetKey,
         connectedAccountTarget: candidate.binding.target, mode: 'management', includeDirectMaterialization: true },
-      resolveSelection: input.resolveManagedPurposeBindingIntentSelection, signal });
+      resolveSelection: input.resolveManagedPurposeBindingIntentSelection, readModelProjection: input.readModelProjection, signal });
+    if (catalog.error) { catalogError ??= catalog.error; continue; }
     const selectedModelId = canonicalSelection.ref.modelId;
     const modelId = route.modelIdPrefix && selectedModelId.startsWith(route.modelIdPrefix)
       ? selectedModelId.slice(route.modelIdPrefix.length) : selectedModelId;
@@ -114,7 +118,8 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
     }
   }
   const chosen = admitted[0];
-  if (!chosen) return refuse(unconfirmed ? 'provider_compatibility_unverified' : 'provider_model_not_found');
+  if (!chosen) return catalogError ? { ok: false, error: catalogError }
+    : refuse(unconfirmed ? 'provider_compatibility_unverified' : 'provider_model_not_found');
   // A single Agent binding consumes one endpoint. Provider endpoint declaration
   // order resolves equivalent accepted protocols, as it does for catalog routing.
   const { candidate, provider, group, row, selection, catalog, transport, compatibility } = chosen;

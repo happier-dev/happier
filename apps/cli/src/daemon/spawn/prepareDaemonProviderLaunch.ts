@@ -167,7 +167,7 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
             return parsed.success ? parsed.data : null;
         })(),
         featureEnabled: input.resolveProvidersFeatureEnabled ?? (() => false),
-        managedPurposeContext: { lease: appliedPluginRuntimeLease,
+        managedPurposeContext: { lease: appliedPluginRuntimeLease, readModelProjection: input.readModelProjection,
             readProviderSettings: () => prepareProviderSettingsForCli({
                 readSnapshot: input.readAccountSettingsSnapshot ?? (() => input.accountSettingsSnapshot ?? getActiveAccountSettingsSnapshot()),
                 operationContext: input.savedSecretOperationContext, signal: input.signal,

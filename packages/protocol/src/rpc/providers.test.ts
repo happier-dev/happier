@@ -37,6 +37,21 @@ import {
 } from './providers.js';
 import { RPC_METHODS } from './methods.js';
 
+
+it('admits content-free Action-purpose source eligibility without a model application', () => {
+  const request = {
+    machineId: 'machine-1', teamId: 'team-1', resourceId: 'resource-1', expectedResourceRevision: 3,
+    source: { v: 1, kind: 'connected_account', target: { kind: 'account',
+      account: { service: { pluginId: 'example.cloud', localId: 'cloud' }, accountId: 'cloud-account' } },
+      credentialIncarnation: 'credential-1' },
+    scope: 'action_purpose',
+    purpose: { consumer: { pluginId: 'example.cloud', localId: 'machine' }, purpose: 'cloud-api' },
+  };
+  expect(DaemonProviderTeamCredentialBrokerEligibilityRequestV1Schema.safeParse(request).success).toBe(true);
+  expect(DaemonProviderTeamCredentialBrokerEligibilityRequestV1Schema.safeParse({ ...request, purpose: undefined }).success).toBe(false);
+  expect(DaemonProviderTeamCredentialBrokerEligibilityRequestV1Schema.safeParse({ ...request, modelId: 'unrelated-model' }).success).toBe(false);
+});
+
 it('binds optional inference metadata to its exact source catalog model row', () => {
   const row = { id: 'exact-model', source: 'static', stale: false, loadState: 'unknown', visibility: 'visible',
     descriptor: { id: 'exact-model', name: 'Exact model', contextWindowTokens: 32,
@@ -991,7 +1006,7 @@ describe('provider machine RPC contracts', () => {
         modelLoadAction: 'descriptor_absent',
         modelLoadPreflightPolicy: null,
         authorization: { authorized: true }, manualModelPolicy: 'allowed', supportsFreeformModelIds: true,
-        suppressedConnectedServiceIds: ['openai-codex'],
+        suppressedConnectedServiceIds: ['happier.agent.codex/openai-codex'],
         rows: [{
           ref: { agentTargetKey: 'backend:codex', providerConnectionId: 'pc_1', modelId: 'same-id' },
           descriptor: { id: 'same-id', name: 'Same' },

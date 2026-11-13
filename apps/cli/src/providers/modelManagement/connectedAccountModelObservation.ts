@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { AgentModelsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
+import { getConnectedAccountModelObservationConfidence, isProviderSourceModelCatalogConfidenceUsable } from '@happier-dev/protocol/rpc/providers';
 import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 import { qualifiedConnectedAccountPreferenceServiceKey } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-key';
 
 import type { CapabilitiesInvokeRequest } from '@/capabilities/types';
-import { resolveContributedAgentRoutingId } from '@/plugins/projection/registry/agentRoutingIdentity';
+import { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';
 import type { AgentProviderCatalogObservationResult, AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 import type { ProviderContributionRegistryView } from '@/providers/registry';
 import type { ResolveContributedProviderCatalogParsers } from '@/providers/probe/runtimeServices';
@@ -60,11 +61,11 @@ export function createConnectedAccountModelObserver(input: Readonly<{
         isCurrent: () => !signal.aborted, signal });
     }
     if (!input.invoke) return null;
-    const agent = (['external', 'first_party'] as const).map(provenance => input.registry.agentDefinitionsById?.get(
-      resolveContributedAgentRoutingId({ ...declared.agent, provenance }),
-    )).find(agent => agent?.identity?.pluginId === declared.agent.pluginId && agent.identity.localId === declared.agent.localId);
-    if (!agent) return null;
-    const agentId = agent.id;
+    const agentId = readAgentRoutingIdForContributionIdentity(
+      indexAgentRoutingIdsByContributionIdentity([...(input.registry.agentDefinitionsById?.values() ?? [])]),
+      declared.agent,
+    );
+    if (!agentId) return null;
     const serviceKey = qualifiedConnectedAccountPreferenceServiceKey(account.service);
     const response = await input.invoke({ id: `cli.${agentId}`, method: 'probeModels', params: {
       connectedServices: { v: 2, bindingsByServiceId: {
@@ -76,7 +77,9 @@ export function createConnectedAccountModelObserver(input: Readonly<{
     const parsed = AgentModelsProbeObservationSchema.safeParse(response.result);
     if (!parsed.success || parsed.data.agentId !== agentId) return null;
     const observation = parsed.data;
-    if (observation.source !== 'dynamic') return { source: 'static', models: [], stale: false };
+    if (!isProviderSourceModelCatalogConfidenceUsable(getConnectedAccountModelObservationConfidence(observation.source))) {
+      return { source: 'static', models: [], stale: false };
+    }
     const ids = new Set<string>();
     const models = observation.availableModels.filter(model => model.id !== 'default'
       && (!declared.modelIdPrefix || model.id.startsWith(declared.modelIdPrefix))).map(model => {
@@ -89,7 +92,7 @@ export function createConnectedAccountModelObserver(input: Readonly<{
       ids.add(descriptor.id);
       return descriptor;
     });
-    return { source: observation.source, models, stale: observation.refreshError === true || observation.spawnFailure !== undefined,
+    return { source: 'dynamic', models, stale: observation.refreshError === true || observation.spawnFailure !== undefined,
       ...(observation.observedAt === undefined ? {} : { observedAt: observation.observedAt }),
       ...(observation.refreshError === undefined ? {} : { refreshError: observation.refreshError }) };
   };
@@ -97,6 +100,6 @@ export function createConnectedAccountModelObserver(input: Readonly<{
 
 /** A successful empty dynamic list stays empty; static fallback is not merged. */
 export function observedConnectedAccountDescriptors(observation: AgentProviderCatalogObservationResult | null) {
-  if (observation?.source !== 'dynamic') return null;
+  if (!observation || !isProviderSourceModelCatalogConfidenceUsable(getConnectedAccountModelObservationConfidence(observation.source))) return null;
   return { descriptors: observation.models, stale: observation.stale };
 }

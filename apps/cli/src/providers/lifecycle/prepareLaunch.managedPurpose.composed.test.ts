@@ -14,6 +14,8 @@ import { prepareDaemonSpawnChildEnvironment } from '@/daemon/spawn/prepareDaemon
 import { createProviderLaunchResourceScope } from './resourceScope';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { ProviderContributionV1Schema } from '@happier-dev/protocol';
+import { createRuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
 import { serializeProviderBindingLaunchHandoffForEnv, consumeProviderBindingLaunchHandoffFromEnvironments,
   HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY } from '@/plugins/runtime/providerBindings/handoff';
 const service = { pluginId: 'acme.shared-registry', localId: 'accounts' };
@@ -39,7 +41,8 @@ describe('Agent managed Connected Account purpose launch', () => {
   it('carries an explicit bare model through real daemon admission and late child materialization', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'purpose-daemon-' }, async ({ homeDir }) => {
       const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
-        controller: pluginReloadController, physicalGateway: true, connectedAccountModels: [{ id: 'example', name: 'Example' }],
+        controller: pluginReloadController, physicalGateway: true, sourceEnvelopeTransport: 'cpx-v1', connectedAccountModels: [
+          { id: 'example', name: 'Example' }, { id: 'key-only', name: 'Key only' }],
         connectedAccounts: [{ purpose: 'inference', service, materializationKinds: ['httpHeaders'],
           managedProviderEndpoint: { provider, purpose: 'upstream', modelIdPrefix: 'native/' } }] });
       const resources = createProviderLaunchResourceScope();
@@ -47,7 +50,41 @@ describe('Agent managed Connected Account purpose launch', () => {
       const backendTarget = { kind: 'backend' as const, backendId: fixture.agentId };
       const selection = { v: 1 as const, updatedAt: 1, ref: {
         agentTargetKey: fixture.agentTargetKey, providerConnectionId: null, modelId: 'example' } };
+      const registry = { ...fixture.lease.registry, contributes: { ...fixture.lease.registry.contributes,
+        providersByContributionKey: new Map([...fixture.lease.registry.contributes.providersByContributionKey].map(([key, row]) => [key, {
+          ...row, definition: ProviderContributionV1Schema.parse({ ...row.definition, managedRuntime: {
+            ...row.definition.managedRuntime, connectedAccounts: row.definition.managedRuntime?.connectedAccounts.map(family => ({
+              ...family, catalogObservation: { agent: fixture.lease.registry.contributes.agentDefinitionsById.get(fixture.agentId)!.identity },
+            })),
+          } }),
+        }])),
+      } };
+      const lease = { ...fixture.lease, registry };
+      let offeredModels = [{ id: 'example', name: 'Example' }, { id: 'key-only', name: 'Key only' }];
+      const catalogs = createRuntimeProviderModelManagementServices({ machineId: fixture.machineId,
+        acquireRuntimeLease: async () => lease, featureGate: { isEnabled: () => true },
+        getAccountSettingsSnapshot: () => fixture.snapshot,
+        resolveManagedPurposeBindingIntentSelection: fixture.gateway!.purposeBindingOwner.resolveBindingIntentSelection,
+        // Installed native model invocation is the external boundary. Admission, source
+        // observation and both catalog readers below use their real production owners.
+        invokeConnectedAccountNativeModels: async () => ({ ok: true, result: { agentId: fixture.agentId,
+          source: 'dynamic', supportsFreeform: false, availableModels: offeredModels } }),
+        modelSettingsMutation: async () => { throw new Error('Unexpected catalog mutation'); },
+      });
       try {
+        const connectedAccountTarget = { kind: 'account' as const, account: { service, accountId: 'upstream-account' } };
+        const before = await catalogs.projectModels({ machineId: fixture.machineId, agentTargetKey: fixture.agentTargetKey,
+          connectedAccountTarget, sourceCatalog: true });
+        if (before.status !== 'success') throw new Error(JSON.stringify(before));
+        const group = before.groups[0]!;
+        const oldRow = group.rows.find(row => row.descriptor.id === 'key-only')!;
+        offeredModels = [{ id: 'example', name: 'Example' }];
+        const confirmation = await catalogs.mutateModelSettings({ action: 'confirmExperimental',
+          machineId: fixture.machineId, agentTargetKey: fixture.agentTargetKey, connectedAccountTarget,
+          connectionId: group.connectionId, catalogSourceKey: oldRow.confirmationSource!.catalogSourceKey,
+          expectedConnectionRevision: group.connectionRevision, modelId: oldRow.descriptor.id,
+          compatibilityFingerprint: oldRow.compatibility.compatibilityFingerprint });
+        expect.soft(confirmation).toMatchObject({ status: 'error', error: { code: 'provider_model_not_found' } });
         const prepared = await prepareDaemonProviderLaunch({
           options: { directory: homeDir, backendTarget, machineId: fixture.machineId,
             connectedServices: { v: 2, bindingsByServiceId: { 'acme.shared-registry/accounts': { source: 'connected', profileId: 'upstream-account' } } } },
@@ -56,10 +93,22 @@ describe('Agent managed Connected Account purpose launch', () => {
           normalizedExistingSessionId: '', processEnv: {}, accountSettingsSnapshot: fixture.snapshot,
           providerRuntimeHomeDir: homeDir, resolveProvidersFeatureEnabled: () => true,
           resolveManagedPurposeBindingIntentSelection: fixture.gateway!.purposeBindingOwner.resolveBindingIntentSelection,
-          pluginRuntimeLease: { currentRegistry: fixture.lease.registry, acquire: async () => fixture.lease, release: async () => {} },
+          readModelProjection: (request, signal) => catalogs.projectModels(request, signal),
+          pluginRuntimeLease: { currentRegistry: registry, acquire: async () => lease, release: async () => {} },
           launchResourceScope: resources });
         expect(prepared).toMatchObject({ ok: true, managedPurpose: { kind: 'managedPurpose' }, attempt: null });
         if (!prepared.ok || !prepared.managedPurpose) throw new Error('Expected declared source admission');
+        const refused = await prepareDaemonProviderLaunch({ options: { ...prepared.options },
+          modelSelection: { ...selection, ref: { ...selection.ref, modelId: 'key-only' } },
+          effectiveBackendTarget: backendTarget, catalogAgentId: fixture.agentId,
+          profileEnvironmentVariables: {}, daemonSpawnHooks: null, persistedProviderBinding: null,
+          normalizedExistingSessionId: '', processEnv: {}, accountSettingsSnapshot: fixture.snapshot,
+          providerRuntimeHomeDir: homeDir, resolveProvidersFeatureEnabled: () => true,
+          resolveManagedPurposeBindingIntentSelection: fixture.gateway!.purposeBindingOwner.resolveBindingIntentSelection,
+          readModelProjection: (request, signal) => catalogs.projectModels(request, signal),
+          pluginRuntimeLease: { currentRegistry: registry, acquire: async () => lease, release: async () => {} },
+          launchResourceScope: resources });
+        expect(refused).toMatchObject({ ok: false, result: { errorDetail: { providerError: { code: 'provider_model_not_found' } } } });
         await expect(readFile(join(homeDir, 'fixture', 'gateway-starts'))).rejects.toMatchObject({ code: 'ENOENT' });
         const child = await prepareDaemonSpawnChildEnvironment({
           options: { ...prepared.options, existingSessionId: 'committed-source-session' },

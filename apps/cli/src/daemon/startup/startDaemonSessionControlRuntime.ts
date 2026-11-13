@@ -1450,6 +1450,8 @@ export async function startDaemonSessionControlRuntime(
     processActionOwnerAdapters: ReturnType<typeof createProcessActionOwnerAdapters>;
     readManagedServiceCurrentLogPaths: () => Promise<readonly string[]>;
     retryOrphanedManagedServices: () => Promise<void>;
+    /** An owner ended: the next heartbeat's managed-service recovery re-reads native ownership. */
+    requestManagedServiceRecovery: () => void;
     managedMachinePolicyAdapter: ReturnType<
       typeof createDaemonManagedMachineActionAdapter
     >;
@@ -6757,6 +6759,13 @@ export async function startDaemonSessionControlRuntime(
                 AbortSignal.any([signal, shutdownCancellationDomains.daemonWorkSignal]), accountSource),
               signal: AbortSignal.any([signal, shutdownCancellationDomains.daemonWorkSignal]),
               isSessionAccountCurrent: isForegroundAccountCurrent,
+              readModelProjection: createAccountScopedProviderModelProjectionReader({
+                serverUrl: requester?.bootstrap.serverHttpBaseUrl ?? params.serverBaseUrl,
+                readCredentials: async () => requester?.bootstrap.credentials ?? params.credentials,
+                readAccountSettingsSnapshot: async () => requester
+                  ? requester.readAccountSettingsSnapshot() : getActiveAccountSettingsSnapshot(),
+                isCurrent: isForegroundAccountCurrent,
+              }),
               ...(requester
                 ? {
                     requesterSessionBootstrap: requester.bootstrap,
@@ -7330,6 +7339,7 @@ export async function startDaemonSessionControlRuntime(
     },
     ownerRemainder,
     spareHeldAgent: tracked => sparedHeldAgents.spare(tracked),
+    endStrandedHeldAgent: tracked => sparedHeldAgents.endStranded(tracked),
     trackedSessionsByKey: params.trackedSessionsByKey,
     spawnResourceCleanupByKey: params.spawnResourceCleanupByKey,
     sessionAttachCleanupByKey: params.sessionAttachCleanupByKey,
@@ -15549,6 +15559,7 @@ export async function startDaemonSessionControlRuntime(
       const retiredPids = await managedServiceDurabilityOwner!.retireEndedSessionRunnerOwnedProjections({ processOwnership: processOwnershipRuntime });
       if (retiredPids.length) logger.infoFile('[DAEMON RUN] Retired retained managed services of ended owners', { retiredPids });
     },
+    requestManagedServiceRecovery: () => managedServiceDurabilityOwner?.requestRecovery(),
     guardSources: {
       readBrowsers: () => devicesBrowserResources()?.readResourceTargets?.() ?? [],
       readServices: (signal?: AbortSignal) => localServicesRuntime.refreshInventoryNow({ stage: 'native', signal }),

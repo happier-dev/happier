@@ -21,6 +21,7 @@ import { projectProviderModelReasoningForAgent } from '@happier-dev/protocol/pro
 import { observedConnectedAccountDescriptors, type ObserveConnectedAccountModels } from './connectedAccountModelObservation';
 import type { ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { ProviderSourceModelCatalog } from './sourceCatalog';
+import type { ProviderRuntimeModelProjectionReader } from '@/providers/spawn/runtimeCatalog';
 import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 export type ResolveManagedProviderPurposeBindingIntentSelection = ConnectedAccountPurposeBindingOwner['resolveBindingIntentSelection'];
@@ -83,6 +84,7 @@ type ConnectedAccountCatalogInput = Readonly<{
   providerSettings: ProviderSettingsV1;
   resolveSelection: ResolveManagedProviderPurposeBindingIntentSelection;
   observeModels?: ObserveConnectedAccountModels;
+  readModelProjection?: ProviderRuntimeModelProjectionReader;
   provider?: ResolvedProviderContribution;
   purpose?: string;
   agentPurpose?: ConnectedAccountPurposeDeclarationV1;
@@ -128,18 +130,36 @@ export async function readConnectedAccountModelCatalog(input: Omit<ConnectedAcco
       if (!application || (input.request.application && !pluginJsonValuesEqual(application, input.request.application))) continue;
       if (!input.request.application && !input.provider && !isCpxBrokerApplication(input.registry, application)) continue;
       selections.add(selection);
-      if (!observations.has(selection)) {
-        const observation = input.observeModels
-          ? await input.observeModels({ account: selection.resolved.account, machineId: input.request.machineId, source,
-              currentOnly: input.request.refreshPolicy === 'current_only',
-              refresh: input.request.forceRefresh === true, signal }) : null;
-        if (signal.aborted || !await selection.isCurrent(signal)) continue;
-        observations.set(selection, observedConnectedAccountDescriptors(observation));
-      }
-      const observed = observations.get(selection) ?? null;
       const connectionId = ProviderConnectionIdSchema.parse(`connected-source:${computeCanonicalDomainSeparatedDigest(
         'happier.connected-source-model-projection.v1', [JSON.stringify(application), JSON.stringify(target)],
       )}`);
+      if (!observations.has(selection)) {
+        let observed: ReturnType<typeof observedConnectedAccountDescriptors> = null;
+        if (input.observeModels) {
+          observed = observedConnectedAccountDescriptors(await input.observeModels({
+            account: selection.resolved.account, machineId: input.request.machineId, source,
+            currentOnly: input.request.refreshPolicy === 'current_only',
+            refresh: input.request.forceRefresh === true, signal,
+          }));
+        } else if (family.catalogObservation && input.readModelProjection && input.request.agentTargetKey) {
+          // Launch has no Account-bound native capability transport. Resolve the
+          // same source-only projection used by the picker through its admitted port.
+          const projection = await input.readModelProjection({ machineId: input.request.machineId,
+            agentTargetKey: input.request.agentTargetKey, connectedAccountTarget: target,
+            application, sourceCatalog: true, refreshPolicy: input.request.refreshPolicy,
+            forceRefresh: input.request.forceRefresh }, signal);
+          if (projection.status === 'error') return { groups: [], error: projection.error, isCurrent: async () => !signal.aborted };
+          const group = projection.groups.find(group => group.connectionId === connectionId && group.catalogObserved);
+          if (group) observed = { descriptors: group.rows.map(row => row.descriptor),
+            stale: group.rows.some(row => row.catalog.stale) };
+        }
+        if (signal.aborted || !await selection.isCurrent(signal)) continue;
+        if (!observed && family.catalogObservation) return { groups: [],
+          error: createProviderErrorV1('provider_catalog_unavailable', { machineId: input.request.machineId, connectionId }),
+          isCurrent: async () => !signal.aborted };
+        observations.set(selection, observed);
+      }
+      const observed = observations.get(selection) ?? null;
       const sourceFacts = ProviderModelBindingSourceV1Schema.parse({ endpoint: {
         id: endpoint.id, protocol: endpoint.protocol, capabilities: endpoint.capabilities,
         ...(endpoint.modelIdPattern !== undefined ? { modelIdPattern: endpoint.modelIdPattern } : {}),
@@ -228,6 +248,16 @@ export async function projectConnectedAccountCatalog(input: ConnectedAccountCata
     const { application: _sourceApplication, source: _source, ...presentation } = group;
     return [{ ...presentation, rows, suppressedConnectedServiceIds: input.support?.authIsolation.suppressConnectedServiceIds ?? [] }];
   });
+  const current = input.request.currentSelection;
+  if (!source.error && current?.providerConnectionId
+    && groups.some(group => group.connectionId === current.providerConnectionId)
+    && !groups.some(group => group.connectionId === current.providerConnectionId
+      && group.rows.some(row => row.ref.modelId === current.modelId || row.descriptor.id === current.modelId
+        || row.descriptor.aliases?.includes(current.modelId)))) {
+    return { ...source, groups, error: createProviderErrorV1('provider_model_not_found', {
+      machineId: input.request.machineId, connectionId: current.providerConnectionId,
+    }) };
+  }
   if (!input.agentPurpose) return { ...source, groups };
   // An Agent selection consumes one endpoint. Keep declaration order
   // among equally admitted rows, as launch does, without duplicating model refs.

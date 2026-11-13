@@ -189,6 +189,7 @@ export type PrepareForegroundAgentRuntimeAdmissionDependencies = Readonly<{
   subscribeAccountSettingsSnapshot?: RequesterSessionRuntimeContext['subscribeAccountSettingsSnapshot'];
   resolveManagedPurposeBindingIntent?: RequesterSessionRuntimeContext['resolveManagedPurposeBindingIntent'];
   resolveManagedPurposeBindingIntentSelection?: RequesterSessionRuntimeContext['resolveManagedPurposeBindingIntentSelection'];
+  readModelProjection?: import('@/providers/spawn/runtimeCatalog').ProviderRuntimeModelProjectionReader;
   managedProviderAccountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
   isSessionAccountCurrent?: (canonicalSessionId?: string) => Promise<boolean>;
   refreshSavedSecretCatalogForOperation?: typeof refreshSavedSecretCatalogForOperation;
@@ -418,7 +419,7 @@ async function prepareForegroundProviderLaunch(input: Readonly<{
     confirmation: null,
     connectedServices: request.connectedServices ?? null,
     featureEnabled,
-    managedPurposeContext: { lease, signal: dependencies.signal,
+    managedPurposeContext: { lease, signal: dependencies.signal, readModelProjection: dependencies.readModelProjection,
       readProviderSettings: () => prepareProviderSettingsForCli({
         readSnapshot: () => readForegroundAccountSnapshot(dependencies),
         operationContext: requester?.savedSecretOperationContext, signal: dependencies.signal,

@@ -1482,7 +1482,9 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
           machineId: request.machineId,
           agentTargetKey: request.agentTargetKey,
           ...(request.connectedAccountTarget
-            ? { connectedAccountTarget: request.connectedAccountTarget, refreshPolicy: 'current_only' as const }
+            ? { connectedAccountTarget: request.connectedAccountTarget, refreshPolicy: 'current_only' as const,
+              ...(request.modelId === null ? {} : { currentSelection: { agentTargetKey: request.agentTargetKey,
+                providerConnectionId: request.connectionId, modelId: request.modelId } }) }
             : { sourceConnectionId: request.connectionId }),
           mode: 'management',
         }, undefined, signal);

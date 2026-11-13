@@ -622,7 +622,7 @@ describe('runtime provider model-management composition', () => {
       });
       const request = { machineId: fixture.machineId, agentTargetKey: fixture.agentTargetKey,
         connectedServices: { v: 2 as const, bindingsByServiceId: {
-          'acme.managed-run/accounts': { source: 'connected' as const, profileId: 'selected-account' },
+          'acme.managed-run/accounts': { source: 'connected' as const, selection: 'profile' as const, profileId: 'selected-account' },
         } } };
       const result = await services.projectModels(request);
       expect(result.status).toBe('success');
@@ -716,10 +716,7 @@ describe('runtime provider model-management composition', () => {
         resolveManagedPurposeBindingIntentSelection: purposes.resolveBindingIntentSelection,
         signal: new AbortController().signal, isCurrent: () => true,
       });
-      expect(scoped.status).toBe('success');
-      if (scoped.status !== 'success') throw new Error('Expected declaration fallback');
-      expect(scoped.groups.every(group => group.rows[0]?.descriptor.id === 'gpt-5.5'
-        && group.rows[0]?.confidence === 'account_unverified')).toBe(true);
+      expect(scoped).toMatchObject({ status: 'error', error: { code: 'provider_catalog_unavailable' } });
       expect(nativeReads).toBe(1);
       const source = await services.readSourceModelCatalogs({ machineId: fixture.machineId,
         source: { v: 1, kind: 'connected_account', target: request.connectedAccountTarget, credentialIncarnation: 'source-incarnation' },

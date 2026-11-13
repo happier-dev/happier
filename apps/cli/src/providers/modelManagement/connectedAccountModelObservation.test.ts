@@ -3,7 +3,7 @@ import { PluginConnectedAccountAuthenticationV2Schema, ProviderContributionV1Sch
 import { createPurposeTargetResolver } from '@happier-dev/cli-common/connectedAccounts';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
-import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { createResolvedContributionRegistry, resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 
 import { createConnectedAccountPurposeBindingOwner, type ConnectedAccountPurposeBindingOwnerDependencies } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createBrokerProviderRegistry } from '@/providers/broker/providerBroker.testkit';
@@ -16,6 +16,57 @@ import { createDaemonQualifiedRequestAuthCallbacks } from '@/daemon/connectedSer
 
 import { readConnectedAccountModelCatalog } from './connectedAccountCatalog';
 import { createConnectedAccountModelObserver } from './connectedAccountModelObservation';
+
+it.each([
+  { identity: { pluginId: 'happier.agent.ohmypi', localId: 'ohmypi' }, routingId: 'ohMyPi' },
+  { identity: { pluginId: 'acme.other', localId: 'ohmypi' }, routingId: 'acme.other/ohmypi' },
+])('observes the assigned native Agent routing id $routingId despite a shared local id', async ({ identity, routingId }) => {
+  const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ coldStart: true,
+    plugins: [{ manifest: { schemaVersion: 2, id: 'acme.other', version: '1.0.0', displayName: 'Other Agent',
+      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+      contributes: { agents: [{ id: 'ohmypi', title: 'Other Agent', runtime: { kind: 'custom' }, primary: 'sessions',
+        capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } }] } },
+      files: { 'daemon.mjs': 'export function activate() {}' } }],
+    resolveContributes: happyHomeDir => resolveMergedContributionRegistry({ happyHomeDir }),
+  });
+  try {
+    expect(fixture.registry.contributes.agentDefinitionsById.get(routingId)?.identity).toEqual(identity);
+    const service = { pluginId: 'happier.agent.ohmypi', localId: 'anthropic' };
+    const account = { service, accountId: 'selected' };
+    const base = createBrokerProviderRegistry();
+    const registry = { ...base, agentDefinitionsById: fixture.registry.contributes.agentDefinitionsById,
+      providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => [key, {
+        ...provider, definition: ProviderContributionV1Schema.parse({ ...provider.definition, managedRuntime: {
+          ...provider.definition.managedRuntime,
+          connectedAccounts: [{ purpose: 'native-models', service, catalogObservation: { agent: identity },
+            endpointTemplateIds: provider.definition.endpointTemplates.map(endpoint => endpoint.id),
+            staticModels: [{ id: 'fallback', name: 'Fallback' }] }],
+        } }),
+      }])) };
+    const unexpected = async (): Promise<never> => { throw new Error('Unexpected credential effect during catalog reading'); };
+    // Account metadata and the installed Machine capability transport are IO boundaries.
+    const purposes = createConnectedAccountPurposeBindingOwner({
+      store: { read: async () => ({ v: 1, bindings: [] }), update: unexpected, subscribe: () => ({ dispose() {} }) },
+      selectTarget: unexpected, materializeAccount: unexpected, projectTargetAccounts: unexpected,
+      assertTargetAccountMaterializable: unexpected,
+      resolveTarget: async target => target.kind === 'account' ? { account: target.account, displayName: 'Selected' } : null,
+    });
+    const observeModels = createConnectedAccountModelObserver({ registry, invoke: async request => {
+      expect(request.id).toBe(`cli.${routingId}`);
+      expect(request.params).toMatchObject({ connectedServices: { v: 2, bindingsByServiceId: {
+        [`${service.pluginId}/${service.localId}`]: { source: 'connected', profileId: account.accountId },
+      } } });
+      return { ok: true, result: { agentId: routingId, source: 'dynamic', supportsFreeform: false,
+        availableModels: [{ id: 'observed', name: 'Observed' }] } };
+    } });
+    const result = await readConnectedAccountModelCatalog({ registry, observeModels,
+      resolveSelection: purposes.resolveBindingIntentSelection,
+      request: { machineId: 'machine', connectedAccountTarget: { kind: 'account', account } },
+    });
+    expect(result.groups).toHaveLength(3);
+    expect(result.groups.every(group => group.rows.length === 1 && group.rows[0]?.descriptor.id === 'observed')).toBe(true);
+  } finally { await fixture.dispose(); }
+});
 
 it('observes a declared service with zero Agents through the shared catalog owner, retaining absent and observed-empty', async () => {
   const base = createBrokerProviderRegistry();
@@ -105,7 +156,7 @@ it('observes a declared service with zero Agents through the shared catalog owne
   const observeModels = createConnectedAccountModelObserver({ registry,
     resolveContributedCatalogParsers: async identity => {
       parserAcquisitions++;
-      const acquired = await fixture.registry.acquireProviderCatalogParsers(identity);
+      const acquired = await fixture.registry.acquireProviderCatalogParsers?.(identity);
       acquiredParserFormats = Object.keys(acquired?.parsersByFormat ?? {});
       return acquired ? { ...acquired, pluginId: identity.pluginId } : null;
     },
@@ -116,11 +167,11 @@ it('observes a declared service with zero Agents through the shared catalog owne
   const read = (currentOnly: boolean, forceRefresh = false) => readConnectedAccountModelCatalog({ registry,
     resolveSelection: purposes.resolveBindingIntentSelection, observeModels,
     request: { machineId: 'machine', connectedAccountTarget: { kind: 'account', account },
-      ...(currentOnly ? { refreshPolicy: 'current_only' as const } : {}), forceRefresh },
+      ...(currentOnly ? { refreshPolicy: 'current_only' as const } : {}), ...(forceRefresh ? { forceRefresh: true as const } : {}) },
   });
   const absent = await read(true);
-  expect(absent.groups).toHaveLength(3);
-  expect(absent.groups.every(group => group.rows[0]?.descriptor.id === 'compatibility')).toBe(true);
+  expect(absent.groups).toEqual([]);
+  expect(absent.error?.code).toBe('provider_catalog_unavailable');
   expect(lookupRequestAuth).toHaveBeenCalledTimes(0);
   expect(materializeAccount).toHaveBeenCalledTimes(0);
   expect(transport).toHaveBeenCalledTimes(0);

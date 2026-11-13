@@ -121,6 +121,7 @@ function createExecutionRunProviderPreparation(
         connectedServices: input.connectedServices ?? null,
         featureEnabled: input.featureEnabled,
         managedPurposeContext: { lease, happyHomeDir: input.happyHomeDir, signal: input.signal,
+            readModelProjection: input.readModelProjection,
             readProviderSettings: () => prepareProviderSettingsForCli({
                 readSnapshot: input.readAccountSettingsSnapshot ?? (() => input.accountSettingsSnapshot ?? null),
                 operationContext, signal: input.signal,

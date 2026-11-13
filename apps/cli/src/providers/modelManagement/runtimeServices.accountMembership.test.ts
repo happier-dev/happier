@@ -12,7 +12,7 @@ import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunL
 import { createRuntimeProviderModelManagementServices } from './runtimeServices';
 
 describe('Connected Account runnable model membership', () => {
-  it('withholds the public Muse fallback from runnable membership while preserving diagnostic models', async () => {
+  it('refuses the public Muse fallback when its exact Account observer is unavailable', async () => {
     const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     const fixture = await createManagedRunLaunchFixture();
     try {
@@ -44,19 +44,13 @@ describe('Connected Account runnable model membership', () => {
       const target = { kind: 'account' as const, account: { service: family.service, accountId: 'selected-muse-account' } };
       const diagnostic = await services.projectModels({ machineId: fixture.machineId, agentTargetKey: fixture.agentTargetKey,
         sourceCatalog: true, connectedAccountTarget: target, refreshPolicy: 'current_only' });
-      if (diagnostic.status !== 'success') throw new Error(diagnostic.error.code);
-      expect(diagnostic.groups.length).toBeGreaterThan(0);
-      for (const group of diagnostic.groups) {
-        expect(group.rows.map(row => row.descriptor.id)).toEqual(family.staticModels.map(model => model.id));
-        expect(group.rows.every(row => row.confidence === 'account_unverified')).toBe(true);
-      }
+      expect(diagnostic).toMatchObject({ status: 'error', error: { code: 'provider_catalog_unavailable' } });
 
       const runnable = await services.readSourceModelCatalogs({ machineId: fixture.machineId,
         source: { v: 1, kind: 'connected_account', target, credentialIncarnation: 'muse-credential' },
         refreshPolicy: 'current_only',
       });
-      if (runnable.status !== 'success') throw new Error(runnable.error.code);
-      expect(runnable.catalogs).toHaveLength(0);
+      expect(runnable).toMatchObject({ status: 'error', error: { code: 'provider_catalog_unavailable' } });
     } finally { await fixture.cleanup(); await plugin.dispose(); }
   });
 });
