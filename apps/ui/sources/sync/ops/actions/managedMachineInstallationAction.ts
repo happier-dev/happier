@@ -10,7 +10,6 @@ import { getActionOperation } from '@/sync/ops/actionOperations';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 import { captureLazyActionAccountContext, withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { answerManagedCreationPrompt } from '@/components/settings/machines/managed/managedCreationPrompt';
 
 /** Resolve the controller and open installer question from current owners, never caller-supplied task authority. */
 export function createManagedMachineInstallationRespond(captured?: LazyActionAccountContext): NonNullable<ActionExecutorDeps['machineManagedInstallationRespond']> {
@@ -46,7 +45,7 @@ export function createManagedMachineInstallationRespond(captured?: LazyActionAcc
                     const respond = (response: Pick<ManagedInstallationResponseV1, 'answer' | 'delivery'>) =>
                         invokeManagedInstallationResponse({ account, signal, input: { ...binding, expectedPromptKind: promptKind,
                             ...(input.purpose === 'establish' ? { expectedPromptId: input.promptId } : {}), ...response } });
-                    let approved = input.purpose === 'approve' && input.approved;
+                    const approved = input.purpose === 'approve' && input.approved;
                     if (input.purpose === 'approve' && input.prompt.kind === 'auth.approveRemoteProvisioning' && input.approved) {
                         const delivered = await respond({ delivery: { kind: 'terminalPairing' } });
                         if (!delivered.ok) return fail(delivered.error.code ?? 'managed_request_failed');
@@ -56,37 +55,25 @@ export function createManagedMachineInstallationRespond(captured?: LazyActionAcc
                         if (pairing.data.homeServerIdentityId !== input.homeId) return fail('server_target_mismatch');
                         if (Date.now() >= pairing.data.pairing.expiresAtMs
                             || pairing.data.pairing.expiresAtMs <= pairing.data.pairing.createdAtMs) return fail('auth_request_expired');
-                        // The same private delivery supplies pairing and the sole F2
-                        // issuer's admitted root. No separate review fetch is needed.
-                        if (pairing.data.reviewedParent?.actionId !== 'machines.managed.acquire') {
-                            const decision = await answerManagedCreationPrompt({ prompt: input.prompt,
-                                isCurrent: () => !signal?.aborted,
-                                respond: async value => {
-                                    approved = value;
-                                    return { kind: 'completed', value: null };
-                                },
-                            });
-                            if (decision.kind === 'failed') return fail(decision.code);
-                        }
-                        if (approved) {
+                        // Action admission owns the supplied answer. Pairing delivery must
+                        // never ask again and replace an accepted approval with a decline.
+                        account.assertCurrent();
+                        signal?.throwIfAborted();
+                        const home = await account.resolveHomeTarget();
+                        const descriptor = home.descriptor ?? buildEstablishedHomeTransportDescriptor({
+                            canonicalServerUrl: home.canonicalAuthUrl, homeServerIdentityId: input.homeId });
+                        if (!descriptor || descriptor.homeServerIdentityId !== input.homeId) return fail('server_target_mismatch');
+                        const target = await resolveHomeEnrollmentTransport(descriptor);
+                        if (!target.ok) return fail(target.reason);
+                        try {
                             account.assertCurrent();
                             signal?.throwIfAborted();
-                            const home = await account.resolveHomeTarget();
-                            const descriptor = home.descriptor ?? buildEstablishedHomeTransportDescriptor({
-                                canonicalServerUrl: home.canonicalAuthUrl, homeServerIdentityId: input.homeId });
-                            if (!descriptor || descriptor.homeServerIdentityId !== input.homeId) return fail('server_target_mismatch');
-                            const target = await resolveHomeEnrollmentTransport(descriptor);
-                            if (!target.ok) return fail(target.reason);
-                            try {
-                                account.assertCurrent();
-                                signal?.throwIfAborted();
-                                const pairingResult = await approveTerminalPairing({ target: target.transport, targetCredentials: account.credentials,
-                                    requesterPublicKey: decodeBase64(pairing.data.publicKey), supportsTokenOnly: pairing.data.supportsTokenOnly,
-                                    pairingContext: { secret: decodeBase64(pairing.data.pairing.secretB64Url, 'base64url'),
-                                        createdAtMs: pairing.data.pairing.createdAtMs, expiresAtMs: pairing.data.pairing.expiresAtMs }, signal });
-                                if (pairingResult !== 'approved') return fail(pairingResult === 'not_found' ? 'no_prompt' : 'auth_request_already_authorized');
-                            } finally { await target.transport.close(); }
-                        }
+                            const pairingResult = await approveTerminalPairing({ target: target.transport, targetCredentials: account.credentials,
+                                requesterPublicKey: decodeBase64(pairing.data.publicKey), supportsTokenOnly: pairing.data.supportsTokenOnly,
+                                pairingContext: { secret: decodeBase64(pairing.data.pairing.secretB64Url, 'base64url'),
+                                    createdAtMs: pairing.data.pairing.createdAtMs, expiresAtMs: pairing.data.pairing.expiresAtMs }, signal });
+                            if (pairingResult !== 'approved') return fail(pairingResult === 'not_found' ? 'no_prompt' : 'auth_request_already_authorized');
+                        } finally { await target.transport.close(); }
                     }
                     account.assertCurrent();
                     signal?.throwIfAborted();

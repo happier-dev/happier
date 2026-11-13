@@ -253,8 +253,8 @@ export async function runManagedMachineCreation(input: Readonly<{
                             expectedIntentRevision: requesterMachine.intentRevision }),
                     })
                     : prompt.kind === 'auth.approveRemoteProvisioning'
-                    // The response owner consumes one private pairing delivery and
-                    // presents the fallback question only without an admitted Create.
+                    // The response owner consumes one private pairing delivery with
+                    // this admitted answer; it never asks for another decision.
                     ? await executeApproved('machines.managed.bootstrap.respond', {
                         ...correlation, purpose: 'approve', prompt, approved: true })
                     : await answerManagedCreationPrompt({ prompt, isCurrent: current,

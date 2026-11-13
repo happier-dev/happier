@@ -642,8 +642,8 @@ describe('ordinary managed creation continuation', () => {
         expect(boundary.actions.filter(action => action.actionId === 'action.operations.get')).toHaveLength(0);
     });
     it.each([
-        ...[{ entry: 'creation', approved: true, trust: false }, { entry: 'creation', approved: false, trust: false },
-        { entry: 'workflow', approved: true, trust: false }, { entry: 'workflow', approved: false, trust: false },
+        ...[{ entry: 'creation', approved: true, trust: false },
+        { entry: 'workflow', approved: true, trust: false },
         { entry: 'creation', approved: true, trust: true }].map(value => ({ ...value, review: 'absent' as const, createConfirmation: false })),
         ...(['admitted', 'absent', 'forged', 'unrelated'] as const).map(review => ({ entry: 'creation', approved: true,
             trust: false, review, createConfirmation: true })),
@@ -692,7 +692,7 @@ describe('ordinary managed creation continuation', () => {
                 : { kind: 'enrolled', machine: { id: 'paid', enrolledMachineId: 'guest' } }
                     : { kind: 'failed', code: 'auth_declined' });
             expect(hostKeyQuestion.mock.calls.length + confirmation.mock.calls.length).toBe(createConfirmation
-                ? review === 'admitted' ? 1 : 2 : trust ? 2 : 1);
+                ? 1 : trust ? 1 : 0);
             expect(boundary.additionalConfirmations).toEqual([]);
             expect(installation.answers).toEqual([
                 ...(trust ? [expect.objectContaining({ homeId, managedId: 'paid', operationId: 'install', taskId: 'requester-pairing',
@@ -702,7 +702,7 @@ describe('ordinary managed creation continuation', () => {
             ]);
             expect(homes.requestsFor('/v1/auth/response')).toHaveLength(approved ? 1 : 0);
             // SEC2: the existing private response supplies both secret and F2
-            // admission once, including when the fallback confirmation declines.
+            // admission once; the response consumes the supplied answer.
             expect(installation.deliveries).toHaveLength(1);
             expect(boundary.actions.filter(value => value.actionId === 'action.operations.get')).toHaveLength(trust ? 3 : 2);
             expect(boundary.actions.filter(value => value.actionId === 'machines.managed.acquire')).toHaveLength(1);
