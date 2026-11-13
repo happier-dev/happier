@@ -1,10 +1,10 @@
+import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
 import * as React from 'react';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, findTestInstanceByTypeWithProps } from '@/dev/testkit';
-import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
 import { createSystemTaskRunner } from '@/components/systemTasks/createSystemTaskRunner';
 import { ThisComputerServersMenuSection } from './ThisComputerServersMenuSection';
 

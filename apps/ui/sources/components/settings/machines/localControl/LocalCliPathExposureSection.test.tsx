@@ -32,6 +32,9 @@ const LOCAL_PARAMS = {
     channel: 'stable',
 };
 
+// Load the real UI graph after installing its platform boundaries, outside a test's effect deadline.
+const { LocalCliPathExposureSection } = await import('./LocalCliPathExposureSection');
+
 async function createHarness() {
     const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
     const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
@@ -61,7 +64,6 @@ async function createHarness() {
         },
     });
 
-    const { LocalCliPathExposureSection } = await import('./LocalCliPathExposureSection');
     const screen = await renderScreen(React.createElement(LocalCliPathExposureSection, { runner }));
 
     return {
@@ -152,14 +154,14 @@ describe('LocalCliPathExposureSection', () => {
         await renderer.act(async () => {
             press = harness.pressRow('settings.localDesktop.cleanup');
         });
-        expect(invoke.mock.calls.map(([command]) => command)).toEqual(['desktop_uninstall_components']);
+        await vi.waitFor(() => expect(invoke.mock.calls.map(([command]) => command)).toEqual(['desktop_uninstall_components']));
         expect(harness.row('settings.localDesktop.cleanup')?.disabled).toBe(true);
         expect(harness.row('settings.localCliPath.add')?.disabled).toBe(true);
         await renderer.act(async () => {
             cleanup.resolve();
             await press;
         });
-        expect(invoke.mock.calls.map(([command]) => command)).toEqual(['desktop_uninstall_components', 'desktop_finish_shutdown']);
+        await vi.waitFor(() => expect(invoke.mock.calls.map(([command]) => command)).toEqual(['desktop_uninstall_components', 'desktop_finish_shutdown']));
     });
 
     it('keeps failures visible and allows retry without quitting', async () => {
