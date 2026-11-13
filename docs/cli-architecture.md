@@ -1015,7 +1015,7 @@ platform opens its menu, built by one native builder (`src-tauri/src/tray/model.
   template (`Sessions: {count}`), including zero; absent/null makes no session-count claim;
 - Open Happier (⌘O), the Updates item when there is one, Settings… (⌘,), the **Start at login** check
   item (the same login-start setting, through `daemon.service.autostart.set.v1`), then **Quit Happier**
-  (⌘Q) and **Stop background services and quit**.
+  (⌘Q) and **Quit Happier (close background services)**.
   Tray Quit, service mutations and the login toggle are disabled while a native service action runs.
 
 The web UI pushes its localized labels (U14), its rows, the setting and the status task's params
@@ -1052,7 +1052,7 @@ from its `tauri.conf.json` entry (`"create": false`: the app creates it at start
 implicit exit request, which menu-bar mode holds; only an explicit Quit ends the tray process, and it
 follows the one login-start setting (D11-1): **on**, it leaves every service running — they and the
 tray come back at the next login; **off**, it stops every desktop-managed service first, through the
-same confirmed path as **Stop background services and quit**, and a stop that fails keeps the tray
+same confirmed path as **Quit Happier (close background services)**, and a stop that fails keeps the tray
 alive with the failure shown so it can be retried; **unknown**, it leaves every service as it is. Once
 the setting is known the item says which it will do (*Quit Happier (keep background services
 running)* / *Quit Happier and stop background services*); unknown, it is the plain *Quit Happier*.

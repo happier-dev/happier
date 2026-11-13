@@ -3329,7 +3329,7 @@ export const en = {
         trayOpenInHappier: 'Open in Happier',
         traySettings: 'Settings…',
         trayStartAtLogin: 'Start at login',
-        trayStopAndQuit: 'Stop background services and quit',
+        trayStopAndQuit: 'Quit Happier (close background services)',
         trayStart: 'Start',
         trayRestart: 'Restart',
         trayStop: 'Stop',
