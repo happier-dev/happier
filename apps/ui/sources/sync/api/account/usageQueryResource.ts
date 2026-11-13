@@ -1580,11 +1580,11 @@ export async function readUiUsageQueryBatch(
         priorAccounting.clear();
         priorSlices.clear();
         settleUsageQueryProjection(accounting, result);
-        // Progress delivery belongs to the finite read. Its callback closes
-        // over the Resource's replacement frame, including the prior batch.
-        options = undefined;
         return result;
     } finally {
+        // A retained projection can outlive cancellation/failure too. Release
+        // the finite observer and its Resource frame on every settlement.
+        options = undefined;
         sessionCurrentnessClosed = true;
         unwatchNightHours?.();
         // Construction is only a module import and local observation capture;

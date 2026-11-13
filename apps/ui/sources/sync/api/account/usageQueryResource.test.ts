@@ -20,6 +20,7 @@ import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolve
 import { RetryableServerResponseError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQueryResourceStore, invalidateUsageQueryResources, mergeRetainedUsageAllowance, readUiUsageQueryBatch } from './usageQueryResource';
+import type { UsageQueryReprojection } from './usageQueryProjection';
 import { storage } from '@/sync/domains/state/storage';
 import { publishHomeAccountChange, publishHomeAccountChangeWake, subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
 import { buildConnectedAccountCatalogPhysicalKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
@@ -4459,6 +4460,52 @@ describe('usage query captured Resource adapter', () => {
       expect(generations.filter(generation => generation.deref() !== undefined).length,
         'four completed refreshes retain only the current accounting generation').toBe(1);
       expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.accounting!.totals.eventCount).toBe(4);
+    } finally { inspector.disconnect(); }
+  });
+
+  it('releases progress observers when cancelled finite reads keep their admitted projections', async () => {
+    const { Session: InspectorSession } = await import('node:inspector');
+    const captured = await context(request => request.path === '/v2/usage/query' ? Response.json(value) : undefined);
+    const query = normalizeUsageQuery({ period: { relative: 'all' }, includeQuota: false,
+      includeSessionEvidence: false, includeWorkEvidence: false });
+    const retained = [];
+    const observers = [];
+    for (let generation = 0; generation < 4; generation++) {
+      // The cached presentation remains useful after cancellation. Its finite
+      // read's observer must end, even when a consumer keeps that presentation.
+      const cancelled = await (async () => {
+        const controller = new AbortController();
+        // A reason created inside the observer would itself retain that
+        // observer through V8's error stack, independently of the read owner.
+        const reason = new DOMException('Cancelled finite read', 'AbortError');
+        let projection: UsageQueryReprojection | undefined;
+        const onProgress = (project: UsageQueryReprojection) => {
+          projection = project;
+          project();
+          controller.abort(reason);
+        };
+        const observer = new WeakRef(onProgress);
+        let aborted = false;
+        try {
+          await readUiUsageQueryBatch(captured, { queries: [query] }, controller.signal, undefined, { onProgress });
+        } catch (error) {
+          aborted = error instanceof Error && error.name === 'AbortError';
+        }
+        if (!projection) throw new Error('Expected a published projection before cancellation');
+        return { projection, observer, aborted };
+      })();
+      expect(cancelled.aborted).toBe(true);
+      retained.push(cancelled.projection);
+      observers.push(cancelled.observer);
+    }
+    const inspector = new InspectorSession();
+    inspector.connect();
+    try {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      await new Promise<void>((resolve, reject) => inspector.post('HeapProfiler.collectGarbage', error => error ? reject(error) : resolve()));
+      expect(observers.filter(observer => observer.deref() !== undefined).length,
+        'four cancelled reads retain zero retired progress observers').toBe(0);
+      expect(retained.map(project => project().results[0]?.key)).toEqual(Array(4).fill(getUsageQueryKey(query)));
     } finally { inspector.disconnect(); }
   });
 
