@@ -72,6 +72,18 @@ describe('createCodexAppServerTurnFailure', () => {
     expect(JSON.stringify(issue)).not.toContain('private-turn-token');
   });
 
+  it('retains a native HTTP refusal without a provider connection binding', () => {
+    const failure = createCodexAppServerTurnFailure({ value: { turn: { error: {
+      message: 'exceeded retry limit, last status: 429 Too Many Requests; Bearer private-turn-token',
+      codexErrorInfo: { response_too_many_failed_attempts: { http_status_code: 429 } },
+    } } } });
+    expect(readCodexAppServerFailureCause(failure)).toMatchObject({
+      httpStatus: 429,
+      providerErrorMessage: 'exceeded retry limit, last status: 429 Too Many Requests; Bearer [REDACTED]',
+    });
+    expect(JSON.stringify(failure)).not.toContain('private-turn-token');
+  });
+
   it('retains a redacted native process preview with a closed startup category', () => {
     const nativeError = Object.assign(new Error('PRIVATE_UNBOUNDED_MESSAGE'), {
       code: 'PLUGIN_EXEC_CLIENT_EXITED',
@@ -205,7 +217,7 @@ describe('createCodexAppServerTurnFailure', () => {
   });
 
   it.each([null, { profileId: 'connected-profile', groupId: null }])(
-    'classifies a structured 401 with auth context %j without exposing upstream text',
+    'classifies a structured 401 with auth context %j without exposing credentials',
     (authContext) => {
       const failure = createCodexAppServerTurnFailure({
         authContext,
@@ -213,7 +225,7 @@ describe('createCodexAppServerTurnFailure', () => {
           turn: {
             error: {
               message:
-                'Missing bearer or basic authentication in header. PRIVATE_BODY',
+                'Missing authentication in header. Bearer PRIVATE_BODY',
               codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } },
             },
           },
@@ -258,7 +270,7 @@ describe('createCodexAppServerTurnFailure', () => {
   it('retains a native flattened model_not_found code without classifying unrecognized upstream prose', () => {
     const failure = createCodexAppServerTurnFailure({
       value: flattenedModelNotFound(
-        'PRIVATE_UPSTREAM_DETAIL usage limit reached',
+        'Bearer PRIVATE_UPSTREAM_DETAIL; usage limit reached',
       ),
     });
     expect(failure).toMatchObject({ code: 'provider_model_not_found' });
@@ -342,13 +354,13 @@ describe('createCodexAppServerTurnFailure', () => {
     { http_connection_failed: { http_status_code: 403 } },
     { httpConnectionFailed: { httpStatusCode: 403 } },
   ])(
-    'retains structured HTTP failure status without provider text: %j',
+    'retains structured HTTP failure status without credentials or additional details: %j',
     (codexErrorInfo) => {
       const failure = createCodexAppServerTurnFailure({
         value: {
           turn: {
             error: {
-              message: 'PRIVATE_BODY_AND_CREDENTIAL',
+              message: 'Bearer PRIVATE_BODY_AND_CREDENTIAL',
               additionalDetails: 'PRIVATE_PROMPT',
               codexErrorInfo,
             },
@@ -370,7 +382,7 @@ describe('createCodexAppServerTurnFailure', () => {
         value: {
           error: {
             codexErrorInfo: { httpConnectionFailed: { httpStatusCode } },
-            message: 'PRIVATE_BODY',
+            message: 'Bearer PRIVATE_BODY',
           },
         },
       });

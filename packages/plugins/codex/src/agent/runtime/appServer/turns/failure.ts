@@ -770,7 +770,8 @@ export function createCodexAppServerTurnFailure(
   const phase = retainedCause?.phase ?? params.phase ?? 'turn';
   const nativeStartup = phase === 'client_start' || phase === 'thread_open' || phase === 'authentication';
   const providerErrorMessage = readRedactedProviderErrorMessage(params.value, nativeStartup,
-    phase === 'turn' && params.providerConnectionId && payload?.codexErrorInfo ? payload.message : undefined);
+    phase === 'turn' && payload?.codexErrorInfo && (providerErrorCode !== undefined || payload.httpStatus !== undefined)
+      ? payload.message : undefined);
   const daemonPreparationCause = RunnerDaemonPluginServicesPreparationCauseV1Schema.safeParse(
     readRecord(readRecord(params.value)?.details)?.cause,
   );

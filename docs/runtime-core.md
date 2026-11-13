@@ -3070,7 +3070,12 @@ The existing issue's optional `failureCause` retains a cause
 code, preparation/turn phase, closed classified reason, recognized native error
 code and HTTP status. Correlated Codex JSON-RPC application rejections also
 retain `providerErrorMessage`, redacted by the existing bug-report secret
-redactor. This is diagnostic presentation, not classification or retry
+redactor. Native Codex turn error notifications retain the same redacted message
+with or without a Provider connection binding, including managed-purpose launches.
+Local Voice carries the existing `runtimeIssueV1` through its Account-carried turn
+error stream and into the client runtime failure; HTTP status and vendor message
+remain diagnostic evidence. Generic Home launch-error prose is still excluded.
+This is diagnostic presentation, not classification or retry
 authority; response data and generic native error messages stay excluded.
 The redactor deliberately preserves filesystem paths in provider prose, so
 redaction does not make that prose safe for server-readable Session state.

@@ -3503,11 +3503,16 @@ describe('VoiceAgentManager', () => {
   });
 
   it('never flushes provisional native narration after a provider failure', async () => {
+    const failureCause = {
+      code: 'codex_app_server_turn_failed', phase: 'turn',
+      failureReason: 'unclassified_provider_error', httpStatus: 429,
+      providerErrorMessage: 'exceeded retry limit, last status: 429 Too Many Requests; Bearer [REDACTED]',
+    };
     const runtime = createDeterministicBackend('failed-native-speech', {
       onSend(request, publish) {
         const turnId = request.delivery.turnId;
         publish({ kind: 'message-delta', turnId, channel: 'assistant', text: 'I will inspect the session and report back. ' });
-        publish({ kind: 'turn-failed', turnId, diagnostic: { code: 'provider_error', severity: 'error', message: 'Provider failed' } });
+        publish({ kind: 'turn-failed', turnId, diagnostic: { code: 'provider_error', severity: 'error', message: 'Provider failed', details: { failureCause } } });
       },
     });
     const manager = new VoiceAgentManager({ createBackend: () => runtime });
@@ -3520,7 +3525,7 @@ describe('VoiceAgentManager', () => {
       const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'inspect it' });
       const events = await readVoiceAgentTurnStreamUntilDone({ manager, voiceAgentId: started.voiceAgentId, streamId: stream.streamId });
       expect(events.filter(event => event.t === 'voice_output' && event.output.kind === 'speech_segment')).toEqual([]);
-      expect(events.at(-1)).toMatchObject({ t: 'error', errorCode: 'provider_error' });
+      expect(events.at(-1)).toMatchObject({ t: 'error', errorCode: 'provider_error', runtimeIssueV1: { failureCause } });
     } finally {
       await manager.dispose();
     }

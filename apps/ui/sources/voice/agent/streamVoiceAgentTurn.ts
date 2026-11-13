@@ -119,6 +119,7 @@ export async function streamVoiceAgentTurn(params: Readonly<{
                 if (event.t === 'error') {
                     throw Object.assign(new Error(event.error || 'stream_failed'), {
                         rpcErrorCode: event.errorCode,
+                        runtimeIssueV1: event.runtimeIssueV1,
                         usageLimitRecovery: event.usageLimitRecovery,
                         usageLimitResetAtMs: event.usageLimitResetAtMs,
                     });

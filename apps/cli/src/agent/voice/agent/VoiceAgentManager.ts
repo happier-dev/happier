@@ -10,7 +10,7 @@ import {
   resolveExecutionRunRuntimeBackendId,
 } from '@/agent/runtime/bridges/executionRun/backendTargets';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import { readExecutionRunErrorCode } from '@/agent/runtime/bridges/executionRun/errors';
+import { readExecutionRunErrorCode, readExecutionRunRuntimeIssue } from '@/agent/runtime/bridges/executionRun/errors';
 import type { AgentInvocationTurnAdmissionWitness } from '@/plugins/runtime/invocation/services/types';
 import { decodeVoiceAssistantActions, getVoiceActionFunctionTool } from '@happier-dev/protocol/voice/actions';
 import { VoiceLocalConversationSchema } from '@happier-dev/protocol/voice/settings/localConversation';
@@ -1383,8 +1383,10 @@ export class VoiceAgentManager {
         const failure = normalizeVoiceAgentTurnError(error);
         const message = failure instanceof Error ? failure.message : 'stream_failed';
         const code = readExecutionRunErrorCode(failure);
+        const runtimeIssueV1 = readExecutionRunRuntimeIssue(failure);
         stream.events.push(ExecutionRunTurnStreamEventErrorSchema.parse({
           t: 'error', error: message, ...(code ? { errorCode: code } : {}),
+          ...(runtimeIssueV1 ? { runtimeIssueV1 } : {}),
           ...(failure && typeof failure === 'object' && 'usageLimitRecovery' in failure
             ? { usageLimitRecovery: failure.usageLimitRecovery } : {}),
           ...(failure && typeof failure === 'object' && 'usageLimitResetAtMs' in failure

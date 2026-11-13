@@ -8303,6 +8303,14 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Local Voice turn error events add optional `runtimeIssueV1`, reusing
+the closed Session runtime issue and failure-cause schemas. This diagnostic
+presentation carries the native owner's redacted vendor message and HTTP status
+through the existing Account-carried stream, without changing retry or authority.
+Current loose error-event readers tolerate the optional field; older producers
+without it remain valid. Matching CLI and UI consume the typed issue together.
+No persisted format, wire epoch or compatibility adapter changes.
+
 Unreleased 0.3 price Actions accept optional `modelIds` for exact tariff delivery.
 Agent/MCP defaults return a closed count/provenance summary; selected reads return
 the existing closed V1 catalog shape with only matching entries. UI/CLI defaults

@@ -5,6 +5,7 @@ import { VoiceAssistantActionSchema } from '../../voice/actions.js';
 import { VoiceAgentOutputEventV1Schema } from '../../voice/outputEvents.js';
 import { PendingLocalIdSchema } from '../../sessions/pending/pendingLocalId.js';
 import { SessionUsageLimitRecoveryDisplayV1Schema } from '../../sessions/state/valueSchemas/usageLimitRecovery.js';
+import { SessionRuntimeIssueV1Schema } from '../../sessions/control/runtimeIssueV1.js';
 import { ExecutionRunPreparedInstructionsForSchema } from './runPrimitives.js';
 export { ExecutionRunPreparedInstructionsForSchema } from './runPrimitives.js';
 
@@ -83,6 +84,8 @@ export const ExecutionRunTurnStreamEventErrorSchema = lazyZodSchema(() => z.loos
   t: z.literal('error'),
   error: z.string(),
   errorCode: z.optional(z.string()),
+  /** The native owner already redacted provider diagnostics; this stream is Account-carried. */
+  runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
   /** Display facts only; the native Run retains recovery and credential selection. */
   usageLimitRecovery: z.optional(SessionUsageLimitRecoveryDisplayV1Schema),
   usageLimitResetAtMs: z.optional(SessionUsageLimitRecoveryDisplayV1Schema.shape.resetAtMs),

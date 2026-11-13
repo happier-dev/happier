@@ -7,6 +7,7 @@ import { ExecutionRunTurnStreamReadRequestSchema, type ExecutionRunTurnStreamRea
 import { createDeferred, createSessionFixture } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { readSafeVoiceRuntimeFailureFacts } from '@/voice/runtime/voiceRuntimeFailureCode';
 import {
     readVoiceAgentActionEffectId,
     type VoiceAgentAcceptedOutputV1,
@@ -54,6 +55,23 @@ beforeEach(async () => {
 afterAll(() => network.dispose());
 
 describe('streamVoiceAgentTurn', () => {
+    it('retains the native HTTP status and redacted vendor message through the Voice failure', async () => {
+        const failureCause = { code: 'codex_app_server_turn_failed', phase: 'turn',
+            failureReason: 'unclassified_provider_error', httpStatus: 429,
+            providerErrorMessage: 'exceeded retry limit, last status: 429 Too Many Requests; Bearer [REDACTED]' };
+        const runtimeIssueV1 = { v: 1, scope: 'primary_session', status: 'failed', occurredAt: 1,
+            source: 'agent_session_error', code: 'codex_app_server_turn_failed', failureCause };
+        const client = serveVoiceStream({ start: async () => ({ streamId: 'failed-stream' }),
+            read: async () => ({ streamId: 'failed-stream', events: [{ t: 'error',
+                error: 'Codex app-server turn failed.', errorCode: 'codex_app_server_turn_failed', runtimeIssueV1 }],
+                nextCursor: 1, done: true }), cancel: async () => ({ ok: true }) });
+        const failure = await streamVoiceAgentTurn({ sessionId: 'sys_voice',
+            handle: { client, voiceAgentId: 'run', rpcSessionId: 'sys_voice' },
+            userText: 'brief me', displayUserText: 'brief me' }).then(() => null, error => error);
+        expect(failure).toMatchObject({ rpcErrorCode: 'codex_app_server_turn_failed', runtimeIssueV1 });
+        expect(readSafeVoiceRuntimeFailureFacts(failure)).toEqual({ failureCause });
+    });
+
     it('paces an empty predecessor wait reply and cancels its compatibility delay', async () => {
         const entered = createDeferred<void>();
         const response = createDeferred<void>();
