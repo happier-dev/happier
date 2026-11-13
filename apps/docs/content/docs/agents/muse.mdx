@@ -14,3 +14,51 @@ Muse models through a Provider gateway in another Agent.
 
 For native login and API-key connections, see
 [Muse accounts](/accounts/connected-services#muse-accounts-in-03-development).
+
+## Troubleshooting
+
+### Approved shell commands fail on Ubuntu
+
+On Ubuntu 24.04 and later, an approved shell command can fail with
+`bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`, or Muse can
+suggest installing bubblewrap even when it is already installed. Ubuntu's
+`kernel.apparmor_restrict_unprivileged_userns=1` policy can block Muse's bundled
+sandbox helper from creating the user namespace it needs. Approval does not
+remove this operating-system restriction.
+
+On the Machine running Muse, check the policy:
+
+```bash
+sysctl kernel.apparmor_restrict_unprivileged_userns
+```
+
+If it reports `1`, ask that Machine's administrator to allow user namespaces
+for the Muse executable. An executable-scoped AppArmor profile keeps the global
+restriction in place. For an installation under `~/.local/bin/muse-bin-*`, create
+`/etc/apparmor.d/happier-muse-userns` with the following content. Replace
+`/home/YOUR_USER` with your absolute home directory, or change the attachment to
+match your actual Muse executable. AppArmor profiles do not expand `~`.
+
+```text
+abi <abi/4.0>,
+include <tunables/global>
+profile happier-muse-userns "/home/YOUR_USER/.local/bin/muse-bin-*" flags=(unconfined) {
+  userns,
+}
+```
+
+The administrator can then load this profile:
+
+```bash
+sudo apparmor_parser -r /etc/apparmor.d/happier-muse-userns
+```
+
+Start a new Muse Session on that Machine and ask it to run a harmless shell
+command, such as `printf sandbox-ok`, to verify that sandboxed execution works.
+Reinstalling bubblewrap alone does not resolve this host-policy restriction.
+
+Meta also documents `--disable-sandbox`. That flag keeps approval prompts but
+removes Muse's filesystem confinement, including confinement of its file tools,
+and permits unrestricted network access. It changes the security boundary rather
+than repairing the sandbox; see [Meta's permissions and safety documentation](https://dev.meta.ai/docs/muse-code/permissions#run-without-guardrails)
+for the trade-off.
