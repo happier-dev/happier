@@ -37,6 +37,8 @@ import { registerDaemonMachineAgentIsolationRpcHandlers } from '@/rpc/handlers/d
 import { registerDaemonMachineAdminAccessRpcHandlers } from '@/rpc/handlers/daemonMachineAdminAccess';
 import { createMachineAdminAccessObserver } from '@/machines/adminAccess/observeMachineAdminAccess';
 import { createMachineAdminAccessHost } from '@/machines/adminAccess/machineAdminAccessHost';
+import { createMachineRolesRuntime } from '@/daemon/roles/machineRolesRuntime';
+import { registerDaemonMachineRolesRpcHandlers } from '@/rpc/handlers/daemonMachineRoles';
 import { readAgentIsolationSnapshot } from '@/daemon/agentIsolation/agentIsolationPolicy';
 import { createAgentIsolationEffectsBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
 import { createDaemonAgentIsolationEffects } from '@/daemon/agentIsolation/createDaemonAgentIsolationEffects';
@@ -72,6 +74,15 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
     nativeBoundary?: EnrollmentJourneyNativeBoundary;
     isolationWorkspace?: Readonly<{ rootId: string; path: string }>;
     isolationReadinessSystem?: AgentIsolationReadinessSystem;
+    /** A guest with an unavailable optional roles receiver exercises enrollment recovery. */
+    installRolesReceiver?: boolean;
+    /** Support published only by compositions that install the corresponding handlers. */
+    operationProtocolCapabilities?: import('@happier-dev/protocol/machines/operationProtocolCapabilitiesV1').MachineOperationProtocolCapabilitiesV1;
+    configureRpc?(rpc: RpcHandlerManager, context: Readonly<{
+        isolationNative: ReturnType<typeof createAgentIsolationEffectsBoundary> | null;
+        readIsolation: () => ReturnType<typeof readAgentIsolationSnapshot> | null;
+        captureMetadataPort: () => import('@happier-dev/protocol/machines/machineMetadataFieldV1').MachineMetadataFieldPortV1;
+    }>): readonly string[] | Promise<readonly string[]>;
     /** Observe the actual socket frame without replacing admission or dispatch. */
     observeReceivedRequest?(request: SocketRpcRequestPayload): Promise<void>;
 }>) {
@@ -154,14 +165,14 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
         scopePrefix: home.machineId, localMachineId: home.machineId, ...machineContent,
         resolveExternalActionEncryption: resolveEncryption,
         prepareRequesterAccountContext,
-        authorizeRequest: request => authorizeMachineRpcRequest(request, {
+        authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, {
             machineId: home.machineId,
             resolveCustodianAccountId: async () => home.accountId,
             resolveInstallationId: () => home.installationId,
             verifyMachineAdmission: admission => verifyMachineRpcAdmissionCurrent({
                 ...admission, privateKey: home.keys.secretKey, daemonToken, serverHttpBaseUrl: home.baseUrl,
             }),
-        }),
+        }, source),
     });
     registerExternalActionRpcHandler(rpc, {
         machineId: home.machineId, currentServerId: home.serverId, currentServerHttpBaseUrl: home.baseUrl,
@@ -233,13 +244,21 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
             ...(isolationMachine.daemonState ?? { status: 'running' }), runtimeId: 's0-daemon', agentIsolation: status,
         }; },
     }) : null;
-    if (isolationNative && isolationMachine) {
-        const captureMetadataPort = () => ({ read: async () => readOpenedMachineMetadataSnapshot(isolationMachine, true),
+    const captureMetadataPort = () => {
+        if (!isolationMachine) throw new Error('Machine isolation metadata is unavailable');
+        return { read: async () => readOpenedMachineMetadataSnapshot(isolationMachine, true),
             compareAndSwap: (mutation: Parameters<typeof publishMachineMetadataOnce>[1]) => publishMachineMetadataOnce({ getMachine: () => isolationMachine,
                 socket: machineSocket, codec: isolationCodec, expectedDataEncryptionKey: isolationMachine.dataEncryptionKey ?? null,
                 isContentCurrent: () => true, retireAndRefreshContent: async () => {}, notifyMetadataChanged() {},
-            }, mutation),
-        });
+            }, mutation) };
+    };
+    if (isolationNative && isolationMachine) {
+        if (input.installRolesReceiver !== false) {
+            const roles = createMachineRolesRuntime({ port: captureMetadataPort() });
+            registerDaemonMachineRolesRpcHandlers(rpc, { roles, target: () => ({ serverId: home.serverId,
+                machineId: home.machineId, installationId: home.installationId, custodianAccountId: home.accountId }) });
+            methods.push(RPC_METHODS.MACHINES_ROLES_SET);
+        }
         if (!input.nativeBoundary || !input.isolationReadinessSystem) throw new Error('S0 isolation must consume its enrolled guest OS boundary and readiness system');
         const adminObserver = createMachineAdminAccessObserver({ ...input.nativeBoundary.admin, onChanged: async () => {} });
         const elevation = { ...isolationNative.effects.elevation,
@@ -275,12 +294,13 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
         });
         methods.push('machines.agentIsolation.preview', 'machines.agentIsolation.set', 'machines.setup.adminAccess.inspect', 'machines.setup.adminAccess.set');
     }
+    methods.push(...await input.configureRpc?.(rpc, { isolationNative, readIsolation, captureMetadataPort }) ?? []);
     machineSocket.on('disconnect', () => rpc.onSocketDisconnect());
     machineSocket.on(SOCKET_RPC_EVENTS.REQUEST, (request: SocketRpcRequestPayload, acknowledge: (response: unknown) => void) => {
         receivedMethods.push(request.method);
         void (async () => {
             await input.observeReceivedRequest?.(request);
-            return installationBoundary.run(readS0Installation(home), () => rpc.handleRequest(request));
+            return installationBoundary.run(readS0Installation(home), () => rpc.handleRequest(request, undefined, 'authenticated_home_socket'));
         })().then(acknowledge);
     });
     let closed = false;
@@ -309,7 +329,7 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
         // Advertise only the signed ingress actually installed above, through
         // the same authenticated publisher as the production Machine client.
         await publishMachineOperationProtocolCapabilitiesOnSocket({ socket: machineSocket, machineId: home.machineId,
-            capabilities: { externalActionExecutionAuthorization:
+            capabilities: { ...input.operationProtocolCapabilities, externalActionExecutionAuthorization:
                 CURRENT_MACHINE_OPERATION_PROTOCOL_CAPABILITIES_V1.externalActionExecutionAuthorization } });
         // This raw process boundary stands in for ApiMachineClient, including
         // its authenticated alive publication. Registration alone is not an
