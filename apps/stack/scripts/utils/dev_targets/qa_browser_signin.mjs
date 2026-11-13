@@ -4,11 +4,17 @@ import { requireSessionName } from './qa_browser_retirement.mjs';
 
 /** Normalize stdin once; Stack-info owns endpoint discovery, the page driver owns CDP. */
 export async function runQaBrowserSignin({ sessionName, stackName, rootDir, cdpHttpUrl, confirmHomeAliasUrl, input = process.stdin }, boundaries = {}) {
+  const controller = new AbortController();
+  const signalSource = boundaries.signalSource ?? process;
+  const cancel = () => { controller.abort(); input.destroy(); };
+  signalSource.once('SIGINT', cancel);
+  signalSource.once('SIGTERM', cancel);
   let key = '';
   try {
     requireSessionName(sessionName);
     if (input.isTTY) return { ok: false, reason: 'stdin_required' };
     for await (const chunk of input) key += chunk;
+    if (controller.signal.aborted) return { ok: false, reason: 'cancelled' };
     const bytes = normalizeDevAuthKeyInputToBytes(key);
     key = '';
     if (!bytes) return { ok: false, reason: 'invalid_key' };
@@ -16,11 +22,15 @@ export async function runQaBrowserSignin({ sessionName, stackName, rootDir, cdpH
     if (!cdpHttpUrl) return { ok: false, reason: 'cdp_required' };
     const { readStackInfoSnapshot } = await import('../../stack/stack_info_snapshot.mjs');
     const info = await readStackInfoSnapshot({ rootDir, stackName });
-    const pending = runQaBrowserSigninPage({ urls: info.urls, cdpHttpUrl, key, confirmHomeAliasUrl }, boundaries);
+    const pending = runQaBrowserSigninPage({ urls: info.urls, cdpHttpUrl, key, confirmHomeAliasUrl, signal: controller.signal }, boundaries);
     key = '';
     return await pending;
   } catch {
     // Discovery errors must never export exception text or credential input.
-    return { ok: false, reason: 'browser_unavailable' };
-  } finally { key = ''; }
+    return { ok: false, reason: controller.signal.aborted ? 'cancelled' : 'browser_unavailable' };
+  } finally {
+    key = '';
+    signalSource.removeListener('SIGINT', cancel);
+    signalSource.removeListener('SIGTERM', cancel);
+  }
 }

@@ -79,6 +79,7 @@ export async function browserStep(step, key, { expectedHomeUrl, confirmHomeAlias
     if (document.querySelector('[data-testid="home-unreachable"]')) return 'home_unavailable';
     const warning = blockingDialog();
     if (warning) return warning;
+    if (home() === 'home') return 'home';
     if (location.pathname !== '/restore/manual') return 'restore_entry_unavailable';
     return document.querySelector('[data-testid="restore-manual-wizard"] input');
   });
@@ -112,21 +113,25 @@ export async function browserStep(step, key, { expectedHomeUrl, confirmHomeAlias
 
 const failure = (reason, detail) => Object.assign(new Error(reason), { reason, detail });
 
-async function connectPage(endpoint, WebSocketImpl, onEvent) {
+async function connectPage(endpoint, WebSocketImpl, onEvent, signal) {
   const socket = new WebSocketImpl(endpoint);
   const pending = new Map();
   let nextId = 0;
   const disconnected = Promise.withResolvers();
   // The disconnect can precede the caller's race while opening the socket.
   disconnected.promise.catch(() => {});
-  const fail = () => {
-    const error = failure('browser_unavailable');
+  const fail = (reason = 'browser_unavailable') => {
+    const error = failure(reason);
     for (const request of pending.values()) request.reject(error);
     pending.clear();
     disconnected.reject(error);
   };
-  socket.addEventListener('close', fail);
-  socket.addEventListener('error', fail);
+  const unavailable = () => fail();
+  const cancel = () => { fail('cancelled'); socket.close(); };
+  socket.addEventListener('close', unavailable);
+  socket.addEventListener('error', unavailable);
+  signal?.addEventListener('abort', cancel, { once: true });
+  if (signal?.aborted) cancel();
   socket.addEventListener('message', event => {
     try {
       const message = JSON.parse(event.data);
@@ -140,9 +145,10 @@ async function connectPage(endpoint, WebSocketImpl, onEvent) {
   });
   try {
     await Promise.race([new Promise(resolve => socket.addEventListener('open', resolve, { once: true })), disconnected.promise]);
-  } catch (error) { socket.close(); throw error; }
+  } catch (error) { signal?.removeEventListener('abort', cancel); socket.close(); throw error; }
   return {
     disconnected: disconnected.promise,
+    refuse: fail,
     send(method, params = {}) {
       const id = ++nextId;
       return new Promise((resolve, reject) => {
@@ -150,17 +156,18 @@ async function connectPage(endpoint, WebSocketImpl, onEvent) {
         socket.send(JSON.stringify({ id, method, params }));
       });
     },
-    close() { socket.close(); },
+    close() { signal?.removeEventListener('abort', cancel); socket.close(); },
   };
 }
 
 
 /** Drive an existing browser from the Stack owner's resolved endpoint snapshot. */
-export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHomeAliasUrl }, {
+export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHomeAliasUrl, signal }, {
   fetchImpl = fetch, WebSocketImpl = WebSocket,
 } = {}) {
   let client;
   try {
+    if (signal?.aborted) throw failure('cancelled');
     if (!cdpHttpUrl) return { ok: false, reason: 'cdp_required' };
     const cdp = new URL(cdpHttpUrl);
     if (!['http:', 'https:'].includes(cdp.protocol)) throw failure('browser_unavailable');
@@ -170,7 +177,7 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
     restoreUrl.hash = '';
     restoreUrl.searchParams.set('returnTo', '/');
     restoreUrl.searchParams.set('server', urls.canonicalServerUrl);
-    const pages = await readQaBrowserCdpTargets(cdp, { fetchImpl });
+    const pages = await readQaBrowserCdpTargets(cdp, { fetchImpl, signal });
     const page = pages.find(page => page.type === 'page' && page.url !== 'about:blank'
       && new URL(page.url).origin === restoreUrl.origin)
       ?? pages.find(page => page.type === 'page' && page.url === 'about:blank');
@@ -202,7 +209,9 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
       if (!navigation) return;
       const observedLoader = navigatedFrames.get(navigation.frameId);
       if (observedLoader && observedLoader !== navigation.loaderId) {
-        loaded?.reject(failure('restore_entry_unavailable'));
+        const error = failure('restore_entry_unavailable');
+        loaded?.reject(error);
+        client.refuse('restore_entry_unavailable');
       } else if (loadedFrames.get(navigation.loaderId) === navigation.frameId) loaded?.resolve();
     };
     client = await connectPage(endpoint.href, WebSocketImpl, message => {
@@ -242,7 +251,7 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
           else { request.failed = true; resolveProfile(); }
         }
       }
-    });
+    }, signal);
     const restored = (async () => {
       await client.send('Page.enable');
       await client.send('Page.setLifecycleEventsEnabled', { enabled: true });
@@ -324,9 +333,9 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
   } catch (error) {
     // Browser/Playwright/CDP errors may contain the filled value. Only our closed
     // reason vocabulary can cross this boundary; never return exception text.
-    const reasons = [QA_BROWSER_CUSTODY_LOST, QA_BROWSER_CDP_UNAVAILABLE, 'invalid_key', 'stdin_required', 'cdp_required', 'session_unavailable', 'browser_unavailable',
+    const reasons = [QA_BROWSER_CUSTODY_LOST, QA_BROWSER_CDP_UNAVAILABLE, 'cancelled', 'invalid_key', 'stdin_required', 'cdp_required', 'session_unavailable', 'browser_unavailable',
       'restore_entry_unavailable', 'restore_failed', 'home_unavailable', 'account_unavailable', 'home_alias_confirmation_required', 'home_origin_mismatch', 'home_migration_declined', 'home_reachability_failed', 'blocking_dialog'];
-    const reason = error?.code ?? error?.reason;
+    const reason = signal?.aborted ? 'cancelled' : error?.code ?? error?.reason;
     const result = { ok: false, reason: reasons.includes(reason) ? reason : 'browser_unavailable' };
     if (result.reason === 'home_reachability_failed' || result.reason === 'blocking_dialog' || result.reason === 'home_migration_declined') result.title = error.title;
     if (result.reason === 'home_origin_mismatch' || result.reason === 'home_migration_declined') {

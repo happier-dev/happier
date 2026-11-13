@@ -1,3 +1,6 @@
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { runQaBrowserSignin } from './qa_browser_signin.mjs';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import test from 'node:test';
@@ -7,7 +10,7 @@ const canonicalServerUrl = 'https://qa-home.invalid';
 const aliasUrl = 'https://previous-home.invalid';
 
 // Browser DOM/input/observers are a platform boundary; execute the real driver.
-async function observe({ alias = false, migrationDeclined = false, blockingDialog, blockingAfterSubmit = false, confirmHomeAliasUrl, step = 'restore', accountReady = true, homeUnavailable = false } = {}) {
+async function observe({ alias = false, migrationDeclined = false, blockingDialog, blockingAfterSubmit = false, confirmHomeAliasUrl, step = 'restore', accountReady = true, homeUnavailable = false, restored = false } = {}) {
   let view = 'restore';
   let submitted = false;
   let aliasConfirmed = false;
@@ -60,6 +63,7 @@ async function observe({ alias = false, migrationDeclined = false, blockingDialo
     },
   };
 
+  if (restored) { view = 'home'; location.pathname = '/'; }
   if (step === 'account') { view = 'account'; location.pathname = '/settings/account'; }
   const previous = new Map(Object.keys(context).map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
   Object.assign(globalThis, context);
@@ -157,7 +161,8 @@ test('projects both descriptor revisions without returning feature payloads or U
 
 // CDP is an external transport. Account readiness comes from the actual page
 // driver; the loaded profile is a response produced by that navigation.
-async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrigin = canonicalServerUrl, internalServerUrl, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true, accountPending = false, transientHomeUnavailable = false, restoreOutcome = 'home', foreignInCurrentDocument = false, browserDefaultOrigin, interruptedPath, navigationBeforeReply = false, childNavigation = false, cdpPath = '' } = {}) {
+async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrigin = canonicalServerUrl, internalServerUrl, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true, accountPending = false, transientHomeUnavailable = false, restoreOutcome = 'home', foreignInCurrentDocument = false, browserDefaultOrigin, interruptedPath, navigationBeforeReply = false, childNavigation = false, cdpPath = '', profileAbsent = false, cancelWhileWaiting = false, replaceAfterLoad = false, restored = false, cancelDuringBody = false } = {}) {
+  const controller = new AbortController();
   const uiUrl = 'http://qa-ui.localhost:19364';
   class BrowserSocket extends EventTarget {
     navigations = 0;
@@ -174,8 +179,13 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
             ? new URL(params.url).searchParams.get('server') ?? browserDefaultOrigin
             : profileOrigin;
         }
+        if (method === 'Network.getResponseBody' && cancelDuringBody) { controller.abort(); return; }
         if (method === 'Network.getResponseBody' && bodyUnavailable) {
           this.message({ id, error: { code: -32000, message: 'No resource with given identifier found' } });
+          return;
+        }
+        if (method === 'Runtime.callFunctionOn' && params.arguments[0].value === 'restore' && restored) {
+          void observe({ restored: true }).then(({ result }) => this.message({ id, result: { result: { value: result } } }));
           return;
         }
         if (method === 'Runtime.callFunctionOn' && params.arguments[0].value === 'account') {
@@ -218,6 +228,7 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
         } });
         if (new URL(params.url).pathname === '/settings/account') {
           const finishProfile = () => {
+            if (profileAbsent) return;
             this.profileFinished = true;
             // Observed live: HTTP 200, then canceled before body completion;
             // the app issues a surviving GET in the same frame and loader.
@@ -253,12 +264,16 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
           else finishProfile();
         }
         this.message({ method: 'Page.lifecycleEvent', params: { name: 'load', frameId: 'main', loaderId } });
+        if (new URL(params.url).pathname === '/settings/account') {
+          if (replaceAfterLoad) queueMicrotask(() => { navigateElsewhere(); setImmediate(() => this.dispatchEvent(new Event('close'))); });
+          if (cancelWhileWaiting) setImmediate(() => { controller.abort(); setImmediate(() => this.dispatchEvent(new Event('close'))); });
+        }
       });
     }
     close() {}
   }
   return await runQaBrowserSigninPage({ urls: { uiUrl, canonicalServerUrl, internalServerUrl },
-    cdpHttpUrl: `http://127.0.0.1:9999${cdpPath}`, key: randomBytes(32).toString('base64url'), confirmHomeAliasUrl: aliasUrl,
+    signal: controller.signal, cdpHttpUrl: `http://127.0.0.1:9999${cdpPath}`, key: randomBytes(32).toString('base64url'), confirmHomeAliasUrl: aliasUrl,
   }, { WebSocketImpl: BrowserSocket,
     // A pooled browser is addressed below its gateway path; the root list is refused.
     fetchImpl: async (url) => !new URL(url).pathname.startsWith(`${cdpPath}/`) ? { ok: false, status: 409, json: async () => ({}) }
@@ -350,3 +365,41 @@ for (const [name, options, detail] of [
     assert.deepEqual(await profileSignin(options), expected);
   });
 }
+
+// A restored browser may redirect away from the restore route before inspection.
+test('accepts the already-restored Home without filling the restore form', async () => {
+  const observed = await observe({ restored: true });
+  assert.equal(observed.result, 'home');
+  assert.equal(observed.credentialFilled, false);
+});
+
+test('cancels the profile observer when its loaded main document is replaced', async () => {
+  assert.deepEqual(await profileSignin({ profileAbsent: true, replaceAfterLoad: true }), {
+    ok: false, reason: 'restore_entry_unavailable',
+  });
+});
+
+test('caller cancellation settles an absent profile without a timeout or browser disconnect', async () => {
+  assert.deepEqual(await profileSignin({ profileAbsent: true, cancelWhileWaiting: true }), {
+    ok: false, reason: 'cancelled',
+  });
+});
+
+test('command interruption returns cancellation and releases its signal listeners', async () => {
+  const signals = new EventEmitter();
+  const input = new PassThrough();
+  const pending = runQaBrowserSignin({ sessionName: 'cancel-signin', input }, { signalSource: signals });
+  signals.emit('SIGINT');
+  input.end();
+  assert.deepEqual(await pending, { ok: false, reason: 'cancelled' });
+  assert.equal(signals.listenerCount('SIGINT'), 0);
+  assert.equal(signals.listenerCount('SIGTERM'), 0);
+});
+
+test('verifies the profile and final Home of an already-restored browser', async () => {
+  assert.deepEqual(await profileSignin({ restored: true }), { ok: true, accountIdPrefix: 'account-', homeOrigin: canonicalServerUrl });
+});
+
+test('cancellation remains effective while reading the observed profile body', async () => {
+  assert.deepEqual(await profileSignin({ cancelDuringBody: true }), { ok: false, reason: 'cancelled' });
+});

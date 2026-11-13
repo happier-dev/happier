@@ -803,9 +803,12 @@ that target instead of starting a competing local Metro process. Local fallback 
 target that fails the reachability preflight. The stable local tunnel/port therefore remains the URL
 used by browsers and installed development clients.
 
-This borrowed endpoint is the default UI mode for controlled QA stacks. Their server and daemon
-still load shared runtime snapshots; static snapshot UI is reserved for explicitly strict or
-reproducible UI QA.
+In 0.3 development, controlled QA stacks first adopt an existing shared web export
+whose captured inputs, options and requested capture boundary match on the serving host.
+When none matches, they report why and fall back to this borrowed endpoint.
+`--ui=export` explicitly requests a finite producer export; `--ui=borrowed` selects
+live Expo. Default selection never rebuilds UI, and server/daemon source bundles
+remain independent of the UI provider.
 
 Remote server placement currently supports the light server with SQLite. Its database file belongs
 to the machine running the server; Stack does not mount or proxy a local SQLite file over SSH.
@@ -883,18 +886,21 @@ the browser to a separate keeper. Stop only your own handle when finished. In cu
 development, identity-path enforcement is parked and fresh starts return an ordinary HTTP base
 URL. Keep the full returned URL: discovery also supports paths from already-running gateway sessions.
 
-In 0.3 development, sign an existing, signed-out QA browser into an Account with
+In 0.3 development, sign an existing QA browser into an Account with
 `hstack dev-targets browser signin <session> --stack=<qa> --cdp=<returned-cdp-http-url>`, piping the Account
 secret key to stdin. Use the pool's returned CDP endpoint directly; the session name labels
 the existing browser and does not launch or discover another browser. The command opens the
 app's manual restore route with the Stack's canonical Home address selected through the normal connection gate,
 then submits its existing form, bypassing Welcome navigation. Use the QA Account's key for that Home.
+If the app has already returned to a signed-in Home, the command verifies that existing Account
+instead of filling the restore form; check the returned Account id prefix against your QA Account.
 If the app requires a Home-address confirmation, the command returns `restore_entry_unavailable`
 before filling the form. Review the Home connection in the browser and rerun the command.
 It reads the signed-in Account id from Account settings and returns the browser to Home.
 It leaves authentication and persistence to the app, and prints only a JSON success result with
 the Account id prefix, or a typed failure reason. It never saves credentials or browser state
-outside the browser's normal storage. Keep the browser owner handle alive and close it after QA.
+outside the browser's normal storage. Interrupt a pending sign-in with Ctrl+C to receive the typed
+`cancelled` result. Keep the browser owner handle alive and close it after QA.
 
 If Stack info has no current UI endpoint, start fails with an error; check the stack's UI readiness
 or supply an explicit diagnostic URL.
