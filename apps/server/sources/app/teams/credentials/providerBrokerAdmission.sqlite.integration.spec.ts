@@ -174,26 +174,26 @@ const FIXTURE_APPLICATION = {
     protocol: 'openai-responses',
 } as const;
 
-function fixtureProviderProjection(connectionId: string, modelIds: readonly string[] = ['model-1']) {
+function fixtureProviderProjection(connectionId: string, modelIds: readonly string[] = ['model-1'], application: ProviderBrokerOpenRequestV1['application'] = FIXTURE_APPLICATION) {
     return {
         status: 'success',
-        agentTargetKey: FIXTURE_APPLICATION.agentTargetKey,
+        agentTargetKey: application.agentTargetKey,
         groups: [{
             connectionId, providerName: 'CLIProxyAPI', connectionName: 'Work',
             connectionRole: 'named', connectionDisplayNameMode: 'custom', connectionRevision: 1,
             sourceAuthority: {
-                provider: { identity: FIXTURE_APPLICATION.implementationIdentity, definitionRevision: 1 },
+                provider: { identity: application.implementationIdentity, definitionRevision: 1 },
                 connectionSecurityFingerprint: `connection-security:v1:${connectionId}`,
             },
             sourceRevision: 'source-revision-1', modelLoadAction: 'available', modelLoadPreflightPolicy: null,
             authorization: { authorized: true }, manualModelPolicy: 'allowed',
             supportsFreeformModelIds: false, suppressedConnectedServiceIds: [],
             rows: modelIds.map(modelId => ({
-                ref: { agentTargetKey: FIXTURE_APPLICATION.agentTargetKey, providerConnectionId: connectionId, modelId },
-                descriptor: { id: modelId, name: modelId }, application: FIXTURE_APPLICATION,
+                ref: { agentTargetKey: application.agentTargetKey, providerConnectionId: connectionId, modelId },
+                descriptor: { id: modelId, name: modelId }, application,
                 sources: { manual: false, static: true, probe: false }, confidence: 'verified_static',
                 compatibility: {
-                    result: { status: 'verified', selectedProtocol: FIXTURE_APPLICATION.protocol, evidence: { sourceUrls: ['https://example.com/provider'], verifiedAt: '2026-09-10' } },
+                    result: { status: 'verified', selectedProtocol: application.protocol, evidence: { sourceUrls: ['https://example.com/provider'], verifiedAt: '2026-09-10' } },
                     compatibilityFingerprint: 'compatibility:v1:current', confirmed: false,
                 },
                 endpointHealth: 'not_checked', catalog: { stale: false }, loadState: 'unknown', visibility: 'visible',
@@ -210,7 +210,7 @@ function fixtureProviderProjection(connectionId: string, modelIds: readonly stri
  */
 async function createBrokerFixture(
     label: string,
-    options: Readonly<{ requesterPublicKeyHex?: string; custodianOnWorker?: boolean }> = {},
+    options: Readonly<{ requesterPublicKeyHex?: string; custodianOnWorker?: boolean; application?: ProviderBrokerOpenRequestV1['application'] }> = {},
 ) {
     const requester = await db.account.create({ data: options.requesterPublicKeyHex
         ? { encryptionMode: 'e2ee', publicKey: options.requesterPublicKeyHex }
@@ -327,7 +327,7 @@ async function createBrokerFixture(
                 sourceRevision: 'source-revision-1',
                 initiatorMachineId: worker.id,
                 consumer: input.consumer ?? { kind: 'session', sessionId: input.sessionId! },
-                application: FIXTURE_APPLICATION,
+                application: options.application ?? FIXTURE_APPLICATION,
                 ...(input.refreshAuthority ? { refreshAuthority: input.refreshAuthority } : {}),
             },
             initiatorPresence: workerPresence,
@@ -335,7 +335,7 @@ async function createBrokerFixture(
             nowMs: 1,
             grantId: crypto.randomUUID(),
             signingKey: { keyId: 'fixture-home', secretKey: signingKey.secretKey },
-            readProviderProjection: async () => fixtureProviderProjection(connectionIdOf(input.resource), ['model-1', 'model-2']),
+            readProviderProjection: async () => fixtureProviderProjection(connectionIdOf(input.resource), ['model-1', 'model-2'], options.application),
             readPoolSourceEligibility: async () => ({ eligibleMachineIds: new Set([broker.id]), reasons: new Map() }),
             ...(input.readCurrentPresence ? { readCurrentPresence: input.readCurrentPresence } : {}),
             ...(input.readPoolSourceEligibility ? { readPoolSourceEligibility: input.readPoolSourceEligibility } : {}),
@@ -365,7 +365,7 @@ async function createBrokerFixture(
                 requestId: `${label}-${input.requestId}`,
                 requestFacts: {
                     generation: input.generation ?? false,
-                    routeKind: 'openai_responses',
+                    routeKind: options.application?.protocol === 'openai-chat' ? 'openai_chat_completions' : 'openai_responses',
                     modelId: input.modelId ?? 'model-1',
                     reasoningEffort: null,
                 },
@@ -419,6 +419,62 @@ describe('Team credential Provider broker admission', () => {
         });
     }, 180_000);
     afterAll(async () => { await harness?.close(); });
+
+    it('admits first and second Pi broker generations before turn publication and still refuses withdrawal', async () => {
+        // The daemon catalog is a remote boundary; use the Pi/OpenAI-chat
+        // application shape of the reported Muse-model carrier, not a native Muse Agent.
+        const fixture = await createBrokerFixture('pi-first-turn', { application: {
+            agentTargetKey: 'agent:happier.agent.pi/pi',
+            implementationIdentity: { pluginId: 'happier.agent.muse', localId: 'muse' },
+            endpointTemplateId: 'openai-chat', protocol: 'openai-chat',
+        } });
+        const resource = await fixture.createResource('muse-provider');
+        const session = await fixture.createSession();
+        await fixture.selectForSession(session.id, resource, TEST_AUTHENTICATION);
+        const opened = await fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION });
+        if (!opened.ok) throw new Error(`broker open failed: ${opened.reasonCode}`);
+        const admit = (requestId: string) => fixture.admit({ authority: opened.authority, resource, requestId, generation: true });
+        // Cold first call arrives before the asynchronously published begin.
+        await expect(admit('cold')).resolves.toMatchObject({ ok: true });
+        const mutate = async (turnId: string, action: 'begin' | 'complete', observedAt: number) => {
+            await expect(applySessionTurnMutation({ actorUserId: fixture.requester.id,
+                authentication: TEST_AUTHENTICATION,
+                mutation: { v: 1, sessionId: session.id, mutationId: `${turnId}-${action}`, turnId, action, observedAt },
+            })).resolves.toMatchObject({ ok: true, didApply: true });
+        };
+        await mutate('first', 'begin', 1);
+        await expect(admit('first-active')).resolves.toMatchObject({ ok: true });
+        await mutate('first', 'complete', 2);
+        // The second call can likewise precede its own begin; the completed
+        // prior turn must not be used for this request's attribution.
+        await expect(admit('second-before-begin')).resolves.toMatchObject({ ok: true });
+        await mutate('second', 'begin', 3);
+        await expect(admit('second-active')).resolves.toMatchObject({ ok: true });
+        await expect(db.usageEvent.findMany({ where: { teamCredentialResourceId: resource.id },
+            orderBy: { observedAt: 'asc' }, select: { turnId: true } })).resolves.toEqual([
+            { turnId: null }, { turnId: 'first' }, { turnId: null }, { turnId: 'second' },
+        ]);
+        await fixture.suspendRequester();
+        await expect(admit('withdrawn')).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
+        expect(await db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } })).toBe(4);
+    });
+
+    it('distinguishes inactive Session refusal from turn-publication refusal without exposing state', async () => {
+        const fixture = await createBrokerFixture('inactive-reason');
+        const resource = await fixture.createResource('inactive-provider');
+        const session = await fixture.createSession();
+        await fixture.selectForSession(session.id, resource, TEST_AUTHENTICATION);
+        const opened = await fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION });
+        if (!opened.ok) throw new Error(`broker open failed: ${opened.reasonCode}`);
+        await db.session.update({ where: { id: session.id }, data: { active: false } });
+        const warn = vi.spyOn(logger, 'warn');
+        try {
+            await expect(fixture.admit({ authority: opened.authority, resource, requestId: 'inactive', generation: true }))
+                .resolves.toEqual({ ok: false, reasonCode: 'session_not_active' });
+            expect(warn).toHaveBeenCalledWith({ module: 'provider-broker-admission', operation: 'request',
+                reasonCode: 'session_not_active', refusalReason: 'session_missing_or_inactive' });
+        } finally { warn.mockRestore(); }
+    });
 
     it.each(['machine-agent37', 'machine-boat'] as const)('admits declared managed provider roles for %s under the requesting native Action', async plugin => {
         const fixture = await createBrokerFixture(`finite-managed-${plugin}`);

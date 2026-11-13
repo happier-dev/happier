@@ -498,6 +498,8 @@ The normal flow is:
 
 Provider setup is intentionally separate from session launch. Once configured, users choose a model rather than repeatedly choosing or re-entering a provider.
 
+In 0.3 development, a contributed connection’s **Manage plugin** menu action opens the contributing plugin’s existing Store detail page. Its Update/review owns the current-to-proposed version and access changes; opening the link never starts an update. Providers remain plugin contributions, not a separate registry kind or revision-comparison surface. Custom connections and opaque contribution identities have no plugin destination.
+
 In 0.3 development, saving an API-key connection with a selected Machine runs
 the existing Provider probe once. The save remains committed when verification
 fails, and the Action returns the probe's typed refusal on the connection.
@@ -2740,10 +2742,13 @@ Resource access therefore has three distinct delivery/privacy contracts:
   extends the existing external-key/admission aggregate with a private current-operation binding
   and compare-and-clear retirement from actual daemon custody cleanup. That integrated path is
   not yet complete; read-only model listing must not establish an operation. The Home admits the current Account, Team resource, Session or execution run, policy
-  and placement once per job, at broker open (a Session's generation also needs the turn the
-  Session-binding owner admitted at turn begin). Each later request reads only whether that job
-  is still active (signed credential epoch, resource row and revision, the Session with its admitted
-  turn, or the Run occurrence) and admits its usage and limits. The custodian's source and member are
+  and placement once per job, at broker open. Each later request reads only whether that job
+  is still active (signed credential epoch, resource row and revision, the active Session,
+  or the Run occurrence) and admits its usage and limits. In 0.3 development, a Session request
+  may precede its first or next turn-begin publication. An available in-progress turn witness
+  must match the admitted requester/resource and supplies usage attribution; before publication,
+  usage retains its Session, requester and resource attribution with no turn id. A completed
+  previous turn is never used for the next request's attribution. The custodian's source and member are
   not re-read per request or on a source-change notification: the admitted operation
   retains its capture, and the next acquisition re-admits against the current source.
   Grant withdrawal advances the resource revision in the same transaction. The

@@ -82,7 +82,8 @@ type BrokerRefusalReason = Extract<TeamCredentialBrokerPlacementResolution, { er
     | 'broker_custodian_mismatch' | 'binding_resource_mismatch' | 'binding_delivery_mismatch'
     | 'binding_broker_entitlement_missing' | 'runner_selection_missing' | 'resource_lookup_missing'
     | 'execution_run_resource_entitlement_unavailable' | 'execution_run_broker_entitlement_missing'
-    | 'consumer_machine_access_missing';
+    | 'consumer_machine_access_missing' | 'session_missing_or_inactive' | 'session_turn_not_in_progress'
+    | 'session_turn_binding_mismatch';
 
 type Failure = Readonly<{
     ok: false;
@@ -1019,8 +1020,8 @@ export async function openRunnerTeamCredentialProviderBroker(
 
 /**
  * The one Home-side per-request admission owner. The broker job was admitted
- * once, by its signed open (and, for generation, by the Session turn the
- * Session-binding owner admitted at turn begin). Each model request therefore
+ * once, by its signed open. Session turn publication supplies attribution,
+ * not another admission prerequisite. Each model request therefore
  * reads only whether that admitted job is still active, then writes the
  * immutable request-count event (usage accounting and limits stay per request).
  */
@@ -1140,22 +1141,20 @@ async function readActiveBrokerJobInTx(
     } : null;
     if (sessionId !== null && (!session || session.accountId !== grant.initiator.accountId
         || !session.active || session.archivedAt !== null)) {
-        return failure('session_not_active');
+        return closedFailure('session_not_active', 'session_missing_or_inactive');
     }
     let turnId: string | null = null;
     if (grant.consumer.kind === 'execution_run') {
         turnId = input.generation ? input.executionRun?.activeTurnId ?? null : null;
-    } else if (input.generation) {
-        // Generation runs only inside the Session's in-progress turn whose
-        // witness — admitted at turn begin by the Session-binding owner —
-        // names this requester and resource.
-        if (!session?.latestTurnId || session.latestTurnStatus !== 'in_progress') return failure('session_not_active');
-        const latestTurnId = session.latestTurnId;
-        const turn = row?.turnId === latestTurnId ? row : null;
-        if (!turn
-            || turn.usageActorAccountId !== grant.initiator.accountId
+    } else if (input.generation && session?.latestTurnId && session.latestTurnStatus === 'in_progress') {
+        // The signed open already admitted this job. A model request can reach
+        // Home before its first (or next) turn-begin publication. An available
+        // in-progress witness supplies attribution; publication is not job activity.
+        const turn = row?.turnId === session.latestTurnId ? row : null;
+        if (!turn) return closedFailure('operation_not_current', 'session_turn_not_in_progress');
+        if (turn.usageActorAccountId !== grant.initiator.accountId
             || turn.teamCredentialResourceId !== grant.resourceId
-            || turn.credentialDeliveryMode !== 'brokered') return failure('operation_not_current');
+            || turn.credentialDeliveryMode !== 'brokered') return closedFailure('operation_not_current', 'session_turn_binding_mismatch');
         turnId = session.latestTurnId;
     }
     return {
