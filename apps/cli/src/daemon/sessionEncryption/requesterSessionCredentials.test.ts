@@ -1788,6 +1788,39 @@ describe('requester Session lifecycle custody', () => {
     await custody.cleanupOnFailure();
   });
 
+  it('starts a Manage grantee Workflow agent Session with the Run admission role and no second Machine read', async () => {
+    const host = await home({ custodianAccountId: 'alice' });
+    host.setMachineRole('manage');
+    const boundary = { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory!,
+      getObservedServerIdentityId: () => 'srv_workflow_home' };
+    const transport = createWorkflowRunMachineTransport({ runId: 'manage-agent-run', credentials,
+      requesterWorkAttributionV1: attribution, machineAdmissionBoundary: host.boundary, boundary,
+      isCurrent: async () => true,
+      transport: { machineId: attribution.machineId, invoke: async () => { throw new Error('Unexpected Machine transport'); } } });
+    let prepared: Awaited<ReturnType<typeof prepareWorkflowSessionRequester>> = null;
+    try {
+      const savedSecretOperationContext = await transport.resolveSavedSecretOperationContext();
+      if (!savedSecretOperationContext) throw new Error('Missing admitted Workflow Run');
+      const reads = host.readReturnedRows().machine;
+      const startup = { credentials, attribution, boundary, savedSecretOperationContext,
+        machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice' },
+        verifyMachineAdmissionCurrent: async () => true };
+      prepared = await prepareWorkflowSessionRequester(startup);
+      if (!prepared) throw new Error('Missing Workflow requester bootstrap');
+      const launched: SpawnSessionOptions[] = [];
+      const handler = createMachineSessionSpawnRpcHandler({ serverId: attribution.serverId,
+        handlers: { spawnSession: async options => { launched.push(options); return { type: 'success', sessionId: 'manage-agent-child' }; } } });
+      expect(await handler({ directory: '/workspace', machineId: attribution.machineId,
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        sessionCreationTag: host.correspondence.sessionCreationTag, sessionCreationCorrespondence: host.correspondence },
+      { requesterSessionBootstrap: prepared.admitted })).toMatchObject({ type: 'success', sessionId: 'manage-agent-child' });
+      expect(launched).toHaveLength(1);
+      expect(launched[0]?.requesterSessionBootstrap?.savedSecretOperationContext.machineAdmission)
+        .toMatchObject({ actorAccountId: 'bob', custodianAccountId: 'alice', role: 'manage' });
+      expect(host.readReturnedRows().machine).toBe(reads);
+    } finally { await prepared?.cleanupOnFailure(); await transport.dispose(); }
+  });
+
   it.each([false, true])('keeps admitted Workflow startup custody after observation ends but refuses released custody (released=%s)', async released => {
     const host = await home();
     const observation = new AbortController();

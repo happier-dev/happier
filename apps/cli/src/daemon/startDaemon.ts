@@ -504,6 +504,19 @@ export async function startDaemon(
   const publicReleaseChannel = getReleaseRingCatalogEntry(configuration.publicReleaseRing)
     .publicLabel as NonNullable<DaemonState['publicReleaseChannel']>;
 
+  // One plugin-runtime retirement for every daemon exit: ordinary shutdown drains through it, a
+  // self-restart runs it after handover, and the fatal startup exit runs it, so daemon-custody
+  // managed services never outlive their owner.
+  const disposePluginRuntimeRegistry = async (options?: Readonly<{ retainProjectServices?: boolean }>) => {
+    await pluginReloadController.shutdown({
+      timeoutMs: resolvePositiveIntEnv(
+        process.env.HAPPIER_DAEMON_PLUGIN_RUNTIME_SHUTDOWN_TIMEOUT_MS,
+        5_000,
+        { min: 0, max: 60_000 },
+      ),
+      ...(options?.retainProjectServices ? { retainProjectServices: true } : {}),
+    });
+  };
   try {
     const ownershipGate = await ensureDaemonStartupOwnership({
       takeoverRequested,
@@ -1184,18 +1197,6 @@ export async function startDaemon(
     const spawnResultResolverByKey = new Map<SessionTrackingKey, (result: SpawnSessionResult) => void>();
     const spawnWebhookTimeoutByKey = new Map<SessionTrackingKey, NodeJS.Timeout>();
     let hasPendingRunnerRestarts = () => false;
-    // One plugin-runtime retirement for every daemon exit: ordinary shutdown drains through it, and a
-    // self-restart runs it after handover so daemon-custody managed services never outlive their owner.
-    const disposePluginRuntimeRegistry = async (options?: Readonly<{ retainProjectServices?: boolean }>) => {
-      await pluginReloadController.shutdown({
-        timeoutMs: resolvePositiveIntEnv(
-          process.env.HAPPIER_DAEMON_PLUGIN_RUNTIME_SHUTDOWN_TIMEOUT_MS,
-          5_000,
-          { min: 0, max: 60_000 },
-        ),
-        ...(options?.retainProjectServices ? { retainProjectServices: true } : {}),
-      });
-    };
     // Project services keep serving across a handover; what the successor cannot adopt retires.
     const retireRuntimeForSelfRestartHandover = async () =>
       await disposePluginRuntimeRegistry({ retainProjectServices: true });
@@ -4305,8 +4306,7 @@ export async function startDaemon(
                     }
                     const prepared = request.retainedOperation ? null : await prepareWorkflowSessionRequester({
                       credentials: request.request.credentials, attribution: stamp,
-                      // current() above proves this accepted Run's own Machine/Account binding.
-                      machineAdmission: { actorAccountId: stamp.accountId, custodianAccountId: externalActionAccountId },
+                      savedSecretOperationContext: input.savedSecretOperationContext,
                       boundary: { serverId: stamp.serverId, serverHttpBaseUrl: readRequesterRuntimeServerHttpBaseUrl(),
                         happyHomeDir: configuration.happyHomeDir, getObservedServerIdentityId: resolveBoundHomeServerIdentityId },
                       verifyMachineAdmissionCurrent: current,
@@ -4713,6 +4713,8 @@ export async function startDaemon(
     machineResourcesPolicy = null;
     machineRoles?.stop();
     machineRoles = null;
+    await disposePluginRuntimeRegistry().catch(stopError =>
+      logger.warn('[DAEMON RUN] Plugin runtime retirement failed during startup cleanup', stopError));
     await machineVitals?.stop().catch((stopError) => {
       logger.debug('[DAEMON RUN] Machine vitals cleanup failed during shutdown', stopError);
     });

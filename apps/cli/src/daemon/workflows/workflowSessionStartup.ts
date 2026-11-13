@@ -22,21 +22,24 @@ import { prepareSessionAgentReadiness } from '@/session/creation/prepareSessionA
 import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 import type { MachineActionDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 import type { CurrentMachineInstallation } from '@/daemon/identity/currentMachineInstallation';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 
 /** The original startup operation, rather than its Workflow observer, owns launch custody. */
 export async function prepareWorkflowSessionRequester(
   input: Omit<Parameters<typeof prepareRequesterSessionBootstrap>[0], 'homeServerIdentityId' | 'boundary'> & Readonly<{
+    savedSecretOperationContext?: Pick<SavedSecretOperationContextV1, 'machineAdmission'>;
     boundary: Parameters<typeof prepareRequesterSessionBootstrap>[0]['boundary'] & Readonly<{
       getObservedServerIdentityId(): string | null | Promise<string | null>;
     }>;
   }>,
 ): ReturnType<typeof prepareRequesterSessionBootstrap> {
-  const { signal, ...requester } = input;
+  const { signal, savedSecretOperationContext, ...requester } = input;
   signal?.throwIfAborted();
   // This signal observes the Workflow claim. Once startup is accepted, its
   // existing Action operation supplies cancellation to the launch transport.
   // Keep the bootstrap's own disposal/currentness lifetime for that handoff.
-  const prepared = await prepareRequesterSessionBootstrap(requester);
+  const prepared = await prepareRequesterSessionBootstrap({ ...requester,
+    machineAdmission: savedSecretOperationContext?.machineAdmission ?? requester.machineAdmission });
   if (signal?.aborted) {
     await prepared?.cleanupOnFailure();
     signal.throwIfAborted();
