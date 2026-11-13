@@ -1,61 +1,32 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { expect, it } from 'vitest';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
-import { configuration } from '@/configuration';
 import { createSessionAccountActionExecutor } from './createSessionAccountActionExecutor';
+import { createSessionDaemonAuthorityFixture } from './sessionDaemonAuthority.testkit';
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
-import { AgentRuntimeDaemonServiceRequestV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import { hashProcessCommand } from '@/daemon/sessionRegistry';
-import { hashPrivateBearer } from '@/daemon/privateBearerFile';
-import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
-import { createAgentRuntimeDaemonServiceAuthorityPath, publishAgentRuntimeDaemonServiceAuthority,
-  removeAgentRuntimeDaemonServiceAuthorityIfOwned } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
-
-const processIdentity = vi.hoisted(() => vi.fn());
-// Process inspection and runner→daemon HTTP are system boundaries. The real
-// request parser, operation identity, store and conflict/recovery guards run.
-vi.mock('@/daemon/processIdentity', () => ({ readProcessIdentityByPid: processIdentity }));
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 it('separates fresh Agent launches with reused MCP ids while same-key recovery returns the original settlement', async () => {
-  const command = 'node /runtime/.runner-snapshots/request-identity/dist/index.mjs';
-  const runner = { pid: process.pid, processStartTimeMs: 23_346,
-    processCommandHash: hashProcessCommand(command), snapshotIdentity: 'snapshot:request-identity' };
-  processIdentity.mockResolvedValue({ pid: process.pid, processStartTimeMs: runner.processStartTimeMs, command });
-  const path = await createAgentRuntimeDaemonServiceAuthorityPath(configuration);
   const sessionId = 'identity-parent';
-  const authority = { happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
-    path, sessionId, runner, retainedAgent: createAgentSessionRunnerFactoryBinding({
-      v: 1, pluginId: 'acme.plugin', pluginVersion: '1.2.3', agentId: 'acme-agent', localAgentId: 'acme-agent',
-      sourceCustody: { kind: 'managed', immutableGenerationId: `sha256:${'1'.repeat(64)}`, installSource: 'localPath' },
-      locator: { module: './runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 },
-      normalizedModulePath: '/immutable/acme/runtime.mjs', loadMode: 'immutable-js',
-    }) };
-  await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: 31_001, capability: 'A'.repeat(43) });
-  vi.stubEnv('HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE', path);
   const witness = { turnId: 'identity-turn', inputId: 'identity-input', userMessageSeq: 1, userMessageSeqs: [1],
     agentStartCaller: { kind: 'session' as const, sessionId, starterDepth: 0, turnDepth: 0 } };
   const host = createHostActionOperationRuntime({ machineId: 'identity-machine', resolveAccountId: async () => 'identity-account' });
   let launches = 0;
   const ids: string[] = [];
-  vi.stubGlobal('fetch', async (_url: unknown, init?: RequestInit) => {
-    const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(String(init?.body)));
-    if (request.operation.kind !== 'action.execute') throw new Error('Expected Action request');
-    const operation = request.operation;
+  const daemon = await createSessionDaemonAuthorityFixture({ sessionId, execute: async operation => {
     ids.push(operation.requestId);
     const outcome = await host.observeExecution({ actionId: operation.actionId, input: operation.input,
-      actionRequestId: operation.requestId, sessionId: request.context.sessionId,
+      actionRequestId: operation.requestId, sessionId,
       // Physical child launch is the boundary. Its real retained settlement
       // must be returned without launching again on a same-key retry.
       execute: async () => ({ ok: true, result: { type: 'success', disposition: 'created',
         sessionId: `child-${++launches}`, executionTarget: { serverId: 'home', machineId: 'identity-machine' },
         organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } } }),
     });
-    return new Response(JSON.stringify({ ok: true, result: { kind: 'action.execution', requestId: operation.requestId, outcome } }));
-  });
+    return outcome;
+  } });
   const create = () => {
     const executor = createSessionAccountActionExecutor({
       base: createCliActionExecutor({ token: '', sessionId, mode: 'plain', ctx: null }),
@@ -108,6 +79,6 @@ it('separates fresh Agent launches with reused MCP ids while same-key recovery r
     expect(await invoke(connection, input('k'.repeat(513)), 2))
       .toMatchObject({ isError: false, value: { sessionId: 'child-5' } });
   } finally {
-    await removeAgentRuntimeDaemonServiceAuthorityIfOwned({ ...authority, capabilityDigest: hashPrivateBearer('A'.repeat(43)) });
+    await daemon.close();
   }
 });

@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { createSessionAccountActionExecutor } from './createSessionAccountActionExecutor';
-import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import type { HappyMcpSessionClient } from '@/mcp/startHappyServer';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { getActionSpec, listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { MANAGED_MACHINE_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { configuration } from '@/configuration';
 import { NATIVE_AGENT_SESSION_EFFECT_OUTCOME_UNKNOWN_CODE } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
@@ -31,6 +33,73 @@ const createRestrictedExecutor = () => createCliActionExecutor({
 });
 
 describe('Session MCP Account routing', () => {
+  it.each([
+    'authority_path_absent', 'turn_witness_absent', 'execution_run_turn_mismatch',
+    'execution_run_not_current', 'scm_workspace_invalid', 'turn_witness_projection_invalid',
+    'runner_authority_refused',
+  ] as const)('retains the owner refusal reason %s before daemon execution', async reason => {
+    const daemon = await createSessionDaemonAuthorityFixture({ sessionId: 'caller-session',
+      execute: async () => { throw new Error('Refused admission must not execute'); } });
+    type Witness = NonNullable<ReturnType<NonNullable<HappyMcpSessionClient['getActiveTurnAdmissionWitness']>>>;
+    // Ordinary native Muse Queue turns carry this host-produced input shape,
+    // rather than the separate realtime-input admission used by Voice.
+    const witness: Witness = { turnId: 'host-turn', inputId: 'host-input', userMessageSeq: 1, userMessageSeqs: [1],
+      agentStartCaller: { kind: 'session', sessionId: 'caller-session', starterDepth: 0, turnDepth: 0 } };
+    if (reason === 'authority_path_absent') vi.stubEnv('HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE', '');
+    if (reason === 'runner_authority_refused') vi.spyOn(processIdentity, 'readProcessIdentityByPid').mockResolvedValue(null);
+    const executor = createSessionAccountActionExecutor({ base: createRestrictedExecutor(), client: {
+      sessionId: 'caller-session', getServerBinding: () => ({ serverId: 'home', serverUrl: 'https://home.test' }),
+      rpcHandlerManager: { invokeLocal: async () => null, registerHandler() {} }, updateMetadata() {},
+      getActiveTurnAdmissionWitness: () => reason === 'turn_witness_absent' ? null
+        : reason === 'turn_witness_projection_invalid' ? { ...witness, userMessageSeq: -1 } : witness,
+      ...(reason === 'execution_run_turn_mismatch' || reason === 'execution_run_not_current' ? {
+        getSessionActionConfirmationBinding: () => ({
+          turnId: reason === 'execution_run_turn_mismatch' ? 'other-turn' : witness.turnId,
+          lifetimeSignal: new AbortController().signal, isCurrent: () => reason !== 'execution_run_not_current',
+          run: { runId: 'child-run', occurrenceId: 'child-occurrence', sidechainId: 'child-sidechain' },
+        }),
+      } : {}),
+    } });
+    try {
+      const result = await executor.execute(reason === 'scm_workspace_invalid' ? 'scm.diff.file' : 'workflow.definition.edit',
+        reason === 'scm_workspace_invalid' ? { path: 'file.ts' }
+          : getActionSpec('workflow.definition.edit').inputSchema.parse({
+            definitionId: '1113a111-1113-4113-8113-111311131113', expectedRevision: { headerVersion: 1, bodyVersion: 1 },
+            ops: [{ kind: 'rename', name: 'Updated recipe' }],
+          }), { surface: 'agent' });
+      expect(ActionExecuteFailureSchema.parse(result)).toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+        details: { code: 'target_unavailable', diagnostic: { reason } } });
+      expect(daemon.actionRequestCount).toBe(0);
+    } finally {
+      // Restore the stub before the fixture restores its original environment.
+      vi.unstubAllEnvs();
+      await daemon.close();
+    }
+  });
+
+  it('executes a Workflow edit from an admitted ordinary native Queue turn', async () => {
+    const outcome = { ok: true as const, result: { status: 'updated' } };
+    const daemon = await createSessionDaemonAuthorityFixture({ sessionId: 'caller-session', execute: async operation => {
+      expect(operation).toMatchObject({ actionId: 'workflow.definition.edit', witness: {
+        turnId: 'host-turn', inputId: 'host-input', userMessageSeq: 1, userMessageSeqs: [1], workDepth: 0,
+      } });
+      return outcome;
+    } });
+    const executor = createSessionAccountActionExecutor({ base: createRestrictedExecutor(), client: {
+      sessionId: 'caller-session', getServerBinding: () => ({ serverId: 'home', serverUrl: 'https://home.test' }),
+      rpcHandlerManager: { invokeLocal: async () => null, registerHandler() {} }, updateMetadata() {},
+      getActiveTurnAdmissionWitness: () => ({ turnId: 'host-turn', inputId: 'host-input', userMessageSeq: 1, userMessageSeqs: [1],
+        agentStartCaller: { kind: 'session', sessionId: 'caller-session', starterDepth: 0, turnDepth: 0 } }),
+    } });
+    try {
+      expect(await executor.execute('workflow.definition.edit', getActionSpec('workflow.definition.edit').inputSchema.parse({
+        definitionId: '1113a111-1113-4113-8113-111311131113', expectedRevision: { headerVersion: 1, bodyVersion: 1 },
+        ops: [{ kind: 'rename', name: 'Updated recipe' }],
+      }), { surface: 'agent' })).toEqual(outcome);
+      expect(daemon.actionRequestCount).toBe(1);
+    } finally { await daemon.close(); }
+  });
+
   it('preserves the daemon requester refusal at the Session MCP Action sink without retrying', async () => {
     const failure = { ok: false as const, error: {
       code: 'native_agent_privileged_effect_authority_unavailable', message: 'Runner authority unavailable',

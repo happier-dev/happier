@@ -4164,6 +4164,13 @@ Agent-specific protocol leaves live in `packages/plugins/<agentId>/src/agent/**`
 
 ### Session Account-action authority (0.3 development)
 
+Runner admission refusals retain `target_unavailable` and carry the refusing
+owner's code-only reason in `details: { code: 'target_unavailable', diagnostic:
+{ reason } }`. The Session Account executor distinguishes absent authority path
+or turn witness, invalid Run binding or workspace, invalid witness projection,
+and refused runner authority; the MCP realtime caller guard uses the same result
+owner. These reasons contain no paths, identities, credentials or input content.
+
 Installed Workflow Session leaves continue definition/trigger child Actions through
 the existing signed Workflow-origin admission. FIN passes its captured
 `InstalledWorkflowSessionLeafAdmission` to
