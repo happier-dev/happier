@@ -2,6 +2,7 @@ import type { Server } from "socket.io";
 import type { Redis } from 'ioredis';
 
 import { getRedisClient } from "@/storage/redis/redis";
+import { log } from "@/utils/logging/log";
 
 export type MachineSocketOwnershipRegistryConfig =
     | { enabled: false }
@@ -247,10 +248,14 @@ export function createMachineSocketOwnershipRegistry(params: Readonly<{
                         revokeLocalOwnership(key, socketId);
                     }
                 })
-                .catch(() => {
+                .catch((error: unknown) => {
+                    log({ module: "machine-socket-ownership", level: "warn", reason: errorName(error) },
+                        "Machine socket ownership refresh failed; disconnecting the owner");
                     const current = localOwners.get(key);
                     if (current?.socketId === socketId) {
-                        void redis.eval(DEL_IF_SOCKET_ID_SCRIPT, 1, key, socketId).catch(() => {});
+                        void redis.eval(DEL_IF_SOCKET_ID_SCRIPT, 1, key, socketId).catch(() => {
+                            // The refresh failure above is already reported; the key expires at its TTL.
+                        });
                     }
                     revokeLocalOwnership(key, socketId);
                 });
@@ -412,9 +417,16 @@ export function createMachineSocketOwnershipRegistry(params: Readonly<{
             const redis = params.redis ?? getRedisClient();
             try {
                 await redis.eval(DEL_IF_SOCKET_ID_SCRIPT, 1, key, paramsForRelease.socketId);
-            } catch {
-                // best-effort only; avoid bubbling into socket disconnect handlers
+            } catch (error) {
+                // Not rethrown into socket disconnect handlers. The key stays until its TTL,
+                // so a reconnect in that window can conflict: report it.
+                log({ module: "machine-socket-ownership", level: "warn", reason: errorName(error) },
+                    "Machine socket ownership release failed; the lease expires at its TTL");
             }
         },
     };
+}
+
+function errorName(error: unknown): string {
+    return error instanceof Error ? error.name : typeof error;
 }

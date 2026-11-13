@@ -5,6 +5,10 @@ import { createMachineSocketOwnershipRegistry } from "./machineSocketOwnershipRe
 
 const redisEvalMock = vi.fn();
 const redisHmgetMock = vi.fn();
+const logMock = vi.hoisted(() => vi.fn());
+
+// The server logger is the default-on operator signal; the registry's own logic runs for real.
+vi.mock("@/utils/logging/log", () => ({ log: logMock }));
 
 vi.mock("@/storage/redis/redis", () => ({
     getRedisClient: () => ({
@@ -47,6 +51,7 @@ function setSocket(io: Server, socketId: string, connected: boolean): Socket {
 }
 
 describe("createMachineSocketOwnershipRegistry", () => {
+    beforeEach(() => logMock.mockReset());
     beforeEach(() => {
         delete process.env.HAPPIER_MACHINE_SOCKET_OWNER_TTL_SECONDS;
         redisEvalMock.mockReset();
@@ -99,6 +104,8 @@ describe("createMachineSocketOwnershipRegistry", () => {
 
             expect(redisEvalMock).toHaveBeenCalledTimes(3);
             expect(originalSocket.disconnect).toHaveBeenCalledWith(true);
+            // A Redis outage disconnects the machine; operators must see why.
+            expect(logMock.mock.calls.filter(([meta]) => meta?.level === "warn")).toHaveLength(1);
             expect(redisEvalMock).toHaveBeenNthCalledWith(
                 3,
                 expect.stringContaining("DEL"),
@@ -671,5 +678,7 @@ describe("createMachineSocketOwnershipRegistry", () => {
                 socketId: "socket-1",
             }),
         ).resolves.toBeUndefined();
+        // A failed release leaves the Redis key until its TTL, so a reconnect can conflict.
+        expect(logMock.mock.calls.filter(([meta]) => meta?.level === "warn")).toHaveLength(1);
     });
 });
