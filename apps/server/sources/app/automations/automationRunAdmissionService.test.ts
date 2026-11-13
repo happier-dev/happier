@@ -5,6 +5,7 @@ import {
   createAccountScopedCryptoMaterialSnapshotV1,
 } from '@happier-dev/protocol';
 import type { Tx } from '@/storage/inTx';
+import { createMachineAdmissionPersistenceBoundary } from '@/app/api/testkit/machineAdmissionPersistenceBoundary';
 import { admitAutomationRunTx } from './automationRunAdmissionService';
 
 // This synthetic Prisma boundary models SQLite; real publication-lock SQL belongs to the DB-contract lane.
@@ -37,6 +38,7 @@ function fixture(change: 'missing' | 'disabled' | 'scope' | 'kind' | 'selector' 
   // Database is the sole mocked boundary. Mutating at lock acquisition models a CRUD change
   // committed after Conversation preflight and before canonical admission's locked reread.
   const tx = {
+    machine: createMachineAdmissionPersistenceBoundary('account-one').db.machine,
     automationTrigger: {
       findMany: async (input: { select: { kind?: boolean } }) => input.select.kind
         ? row() ? [row()] : [] : [{ id: triggerId }],

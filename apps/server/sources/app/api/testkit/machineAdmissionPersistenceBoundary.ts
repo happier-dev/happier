@@ -1,15 +1,5 @@
 import { MACHINE_PLAIN_DATA_KEY_MARKER, decodeBase64, encodePlainMachineStoredContent } from '@happier-dev/protocol';
-import type { Account, Machine } from '@prisma/client';
-
-type PersistedAdmissionMachineRow = Pick<Machine,
-    'id' | 'kind' | 'accountId' | 'installationId' | 'active' | 'revokedAt' | 'replacedByMachineId'
-    | 'metadata' | 'metadataVersion' | 'daemonState' | 'daemonStateVersion' | 'dataEncryptionKey'
-> & {
-    account: Pick<Account, 'status' | 'encryptionMode'>;
-    accountGrants: never[];
-    teamGrants: never[];
-    groupGrants: never[];
-};
+import type { MachineAdmissionFacts } from '@/app/machines/machineAccess';
 
 /** Persistence fixture only: the real Machine admission owner evaluates these rows. */
 export const TEST_MACHINE_INSTALLATION_ID = 'test-machine-installation';
@@ -28,7 +18,7 @@ export function createMachineAdmissionPersistenceBoundary(custodian: string | ((
             throw new Error('Unexpected Machine-admission database command');
         },
         machine: {
-            findMany: async ({ where }: { where: { id: { in: readonly string[] } } }): Promise<PersistedAdmissionMachineRow[]> => {
+            findMany: async ({ where }: { where: { id: { in: readonly string[] } } }): Promise<MachineAdmissionFacts[]> => {
                 const rows = await Promise.all(where.id.in.map(id => persistence.machine.findUnique({ where: { id } })));
                 return rows.filter(row => row !== null);
             },
@@ -42,8 +32,11 @@ export function createMachineAdmissionPersistenceBoundary(custodian: string | ((
                     replacedByMachineId: availability === 'replaced' ? 'replacement-machine' : null,
                     metadata: encodePlainMachineStoredContent({ host: 'test-host', platform: 'linux', happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }), metadataVersion: 1,
                     daemonState: null, daemonStateVersion: 0, dataEncryptionKey: new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')),
-                    account: { status: 'active', encryptionMode: 'plain' }, accountGrants: [], teamGrants: [], groupGrants: [],
-                } satisfies PersistedAdmissionMachineRow;
+                    managedResource: null, operationProtocolCapabilities: null, operationProtocolCapabilitiesRevision: 0,
+                    account: { id: accountId, status: 'active', encryptionMode: 'plain',
+                        name: null, firstName: null, lastName: null, username: null, avatar: null },
+                    accountGrants: [], teamGrants: [], groupGrants: [],
+                } satisfies MachineAdmissionFacts;
             },
         },
     };
