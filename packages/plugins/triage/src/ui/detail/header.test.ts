@@ -208,7 +208,7 @@ describe('the detail header line (lab meta: where the entry lives, then who open
                 branches: { head: 'leeroy/server-rounding', base: 'main' } }),
             viewer: testkitViewer(),
         });
-        expect(lineFor({ outcome })).toBe('example/repository #17 · leeroy/server-rounding → main · Mara Oduya opened 42 minutes ago');
+        expect(lineFor({ outcome })).toBe('example/repository #17 · Mara Oduya opened 42 minutes ago · leeroy/server-rounding → main');
     });
 
     it('says "You" when the reader opened it, through the row display\'s one rule', () => {

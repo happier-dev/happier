@@ -80,3 +80,10 @@ export type ListCollectionControl = Readonly<{
 }>;
 
 export const ListCollectionControlContext = createContext<ListCollectionControl | null>(null);
+
+/**
+ * @internal True inside the body a List row discloses (`List.Item` `expandedContent`): the row above already names
+ * what the body shows, so content that would caption itself (a diff's file label) keeps that name for assistive
+ * technology and does not draw it a second time.
+ */
+export const ListItemDisclosedBodyContext = createContext(false);

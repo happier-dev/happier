@@ -1,5 +1,5 @@
 import { useContext, type ReactElement, type ReactNode } from 'react';
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
 
 import { usePluginHostApi } from '../hostApi/context.js';
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
@@ -13,7 +13,7 @@ import {
 import { useHappierCodeBlockBehavior } from '../presentation/content/CodeBlock.js';
 import { resolveHappierDiffViewerRequest } from '../presentation/content/DiffViewer.js';
 import { Button } from './Button.js';
-import { ListCollectionControlContext } from './listCollectionControl.js';
+import { ListCollectionControlContext, ListItemDisclosedBodyContext } from './listCollectionControl.js';
 
 export type { MarkdownImageSource, MarkdownImageResolver } from '../presentation/content/Markdown.js';
 
@@ -80,7 +80,10 @@ export type DiffViewerProps = Readonly<{
   unifiedDiff: string;
   /** Optional path used for language-aware presentation. */
   filePath?: string;
-  /** A short visible description that also orients screen-reader users. */
+  /**
+   * What the diff shows, and its accessible name. It is drawn above the diff unless the diff is the body a List row
+   * discloses: that row already names the file, so there the label only names the diff for assistive technology.
+   */
   label: string;
   testID?: string;
   /**
@@ -111,6 +114,7 @@ export function DiffViewer({
   const host = useOptionalPluginUiPresentationHost();
   // A page-scrolling panel (`Tabs layout="page"`) is the scroller: the diff sizes to its content there.
   const pageScroll = useContext(ListCollectionControlContext)?.pageScroll === true;
+  const namedByRow = useContext(ListItemDisclosedBodyContext);
   if (fill && !pageScroll) {
     // One scroller: the label and whatever reads above it travel inside the diff's own list.
     const leading = <HappierStack gap={8}>{leadingContent}<HappierText variant="micro">{label}</HappierText></HappierStack>;
@@ -141,6 +145,9 @@ export function DiffViewer({
     </HappierScrollArea>
   );
 
+  if (namedByRow && !fill) {
+    return <View role="group" aria-label={label} accessibilityLabel={label}>{content}</View>;
+  }
   return (
     <HappierStack gap={8}>
       {fill ? leadingContent : null}

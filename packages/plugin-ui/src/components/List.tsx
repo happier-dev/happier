@@ -90,7 +90,7 @@ import {
 import { ContextMenu } from './Overlay.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
-import { ListCollectionControlContext } from './listCollectionControl.js';
+import { ListCollectionControlContext, ListItemDisclosedBodyContext } from './listCollectionControl.js';
 import { HappierRowOperationContext } from '../presentation/collection/rowOperation.js';
 import {
   ListCollectionHeader,
@@ -877,6 +877,14 @@ function VirtualizedList<Item>(
   const densityStyle: HappierPortableStyle = onSheet
     ? { gap: 0 }
     : props.density === 'flush' ? { gap: 0 } : props.density === 'compact' ? { gap: 4 } : { gap: 8 };
+  const theme = usePluginTheme();
+  // A List no page section or Collection lays out draws its rows' text `spacing.medium` in from its edge. What an
+  // author puts above and below those rows (a total, notices, a paging control) stands on the same text edge, so
+  // the panel reads as one column rather than a header hanging left of its rows.
+  const authorContentInsetStyle = useMemo<HappierPortableStyle | null>(
+    () => pageSection === null && collectionControl === null ? { paddingHorizontal: theme.spacing.medium } : null,
+    [pageSection, collectionControl, theme.spacing.medium],
+  );
   const { query, control: searchControl } = useListCollectionSearch(
     props.search,
     listRootRef,
@@ -1541,7 +1549,13 @@ function VirtualizedList<Item>(
     const rowIndex = rowIndexByKey.get(selectedKey);
     return rowIndex === undefined ? null : (rows[rowIndex]?.item ?? null);
   }, [headerRenderer, rowIndexByKey, rows, selectedKey]);
-  const authorHeader = resolveVirtualizedHeader(props.header, { selectedItem });
+  const resolvedAuthorHeader = resolveVirtualizedHeader(props.header, { selectedItem });
+  const authorHeader = authorContentInsetStyle === null || resolvedAuthorHeader === null || resolvedAuthorHeader === undefined
+    ? resolvedAuthorHeader
+    : <View style={authorContentInsetStyle}>{resolvedAuthorHeader}</View>;
+  const authorEndContent = authorContentInsetStyle === null || props.endContent === undefined
+    ? props.endContent
+    : <View style={authorContentInsetStyle}>{props.endContent}</View>;
   const selectionMode = useListSelectionModeControl(multiStore, eligibleSelectionKeys.length > 0);
   const headerContent = collectionControl?.hideChrome ? (
     authorHeader
@@ -1568,7 +1582,7 @@ function VirtualizedList<Item>(
   const collectionEndContent = scrollsEndContent ? (
     <View role="listitem">
       {emptyContent}
-      {props.endContent}
+      {authorEndContent}
     </View>
   ) : undefined;
   const renderItem = props.renderItem;
@@ -1748,7 +1762,9 @@ function VirtualizedList<Item>(
   // inset a table band uses), so a group label lines up with its rows' marks and the pane's title, never the edge.
   // Above it, the pause a group edge makes, so the label reads as the start of its rows rather than a tail of
   // whatever sits over it.
-  const sectionHeaderInsetPx = pageSection?.rowInsetPx ?? HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx;
+  // A plain List's bands stand on its rows' text edge with its header and end content (see `authorContentInsetStyle`).
+  const sectionHeaderInsetPx = pageSection?.rowInsetPx
+    ?? (collectionControl === null ? theme.spacing.medium : HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx);
   const defaultSectionHeaderStyle = useMemo(
     () => ({ paddingHorizontal: sectionHeaderInsetPx, paddingTop: HAPPIER_PAGE_METRICS.groupSeparatorGapPx }),
     [sectionHeaderInsetPx],
@@ -2141,7 +2157,7 @@ function VirtualizedList<Item>(
         ) : scrollsEndContent ? null : (
           emptyContent
         )}
-        {scrollsEndContent ? null : props.endContent}
+        {scrollsEndContent ? null : authorEndContent}
         {flatPageSheet || oneSheetSections ? null : props.footer}
       </View>
     </ListMultiSelectionProvider>
@@ -2373,7 +2389,7 @@ function ListItemExpansion(
             paddingBottom: theme.spacing.medium,
           }}
         >
-          {props.children}
+          <ListItemDisclosedBodyContext.Provider value>{props.children}</ListItemDisclosedBodyContext.Provider>
         </View>
       </HappierDisclosure>
     </View>

@@ -16,7 +16,7 @@ import {
 } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
@@ -109,9 +109,10 @@ const FILES_PAGE = {
 /** A host boundary fixture; Viewed mutation and refusal behavior belongs to the app owner. */
 function createHostViewedSource(
   initial: Readonly<Record<string, ScmFileViewedFile['state']>>,
+  errors: Readonly<Record<string, string>> = {},
 ) {
   const files = new Map<string, ScmFileViewedFile>(
-    PATHS.map(path => [path, { state: initial[path] ?? null, pending: false, errorCode: null }]),
+    PATHS.map(path => [path, { state: initial[path] ?? null, pending: false, errorCode: errors[path] ?? null }]),
   );
   const writes: Array<Readonly<{ path: string; viewed: boolean }>> = [];
   const snapshot = { status: 'ready' as const, headOid: HEAD, errorCode: null };
@@ -159,6 +160,7 @@ async function mountFiles(
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter({
         changedFilesReview: true,
+        overlays: true,
         observeChangedFilesReview: request => { reviews.push(request); },
         scmFileViewed: (request) => {
           requests.push(request);
@@ -171,8 +173,15 @@ async function mountFiles(
           const localId = typeof action === 'string' ? action : action.localId;
           if (localId.startsWith('ui/')) return await invokeSourcePanelFixtureAction(scope, localId, input, fixture.context, signal);
           dispatched.push(localId);
-          if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles)
-            return FILES_PAGE;
+          if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles) {
+            const filePath = (input as { filePath?: string }).filePath;
+            return filePath === undefined ? FILES_PAGE : {
+              kind: 'changedFiles',
+              rows: [{ path: filePath, status: 'modified', additions: 1, deletions: 1, changes: 2, diffAvailable: true,
+                evidence: { state: 'available', patch: '@@ -1 +1 @@\n-old\n+new' } }],
+              omittedRowCount: 0, projectionTruncated: false,
+            } as JsonValue;
+          }
           if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks) {
             return {
               kind: 'checks',
@@ -204,6 +213,15 @@ async function mountFiles(
     await fixture.press(await fixture.getByRole('tab', { name: 'Files' }));
   });
   return fixture;
+}
+
+/** The row's own "⋯" menu trigger: the first More actions control after the row's press target. */
+async function rowMenu(files: PluginUiTestkit, path: string) {
+  const buttons = await files.queryAllByRole('button');
+  const index = buttons.findIndex(button => button.name?.startsWith(path));
+  const trigger = buttons.slice(index + 1).find(button => button.name?.startsWith('More actions'));
+  expect(trigger).toBeDefined();
+  return trigger!;
 }
 
 afterEach(async () => {
@@ -251,13 +269,40 @@ describe('GitHub Files panel Viewed marks', () => {
     expect(writes).toEqual([]);
     expect(dispatched).not.toContain(GITHUB_FILE_VIEWED_ACTION_IDS_V1.read);
     expect(dispatched).not.toContain(GITHUB_FILE_VIEWED_ACTION_IDS_V1.set);
-    const first = rows.find(row => row.name?.startsWith('src/alpha.ts'))!;
-    await act(async () => { await files.press(first); });
-    await act(async () => { await files.press(await files.getByRole('button', { name: 'Mark unviewed' })); });
+    await act(async () => { await files.press(await rowMenu(files, 'src/alpha.ts')); });
+    await act(async () => { await files.press(await files.getByRole('menuitem', { name: 'Mark unviewed' })); });
     expect(writes).toEqual([{ path: 'src/alpha.ts', viewed: false }]);
     // The host owns pending writes and refusals. Its real owner coverage lives in
     // apps/ui/sources/sync/ops/scmDiffSummary/fileViewed.test.ts and review/hunkReview/
     // useHunkReviewController.fileViewed.test.tsx; the List consumes that owner unchanged.
+  });
+
+  it('shows each mark on its collapsed row and offers it in the row menu, never inside the open diff', async () => {
+    const { source, writes } = createHostViewedSource(
+      { 'src/alpha.ts': 'viewed', 'src/beta.ts': 'unviewed', 'src/gamma.ts': 'unviewed' },
+      { 'src/gamma.ts': 'github_graphql_response_invalid' },
+    );
+    const files = await mountFiles(source);
+    const row = (path: string) => [...document.querySelectorAll('[aria-expanded]')]
+      .find(node => node.textContent?.startsWith(path))!;
+    // Collapsed, the viewed file says so; an unviewed one stays one line.
+    expect(row('src/alpha.ts').textContent).toContain('Viewed');
+    expect(row('src/beta.ts').textContent).not.toContain('Viewed');
+    // A refused write reads as copy, never as GitHub's code.
+    expect(row('src/gamma.ts').textContent).toContain('Not saved to GitHub');
+    expect(document.body.textContent).not.toContain('github_graphql_response_invalid');
+
+    await act(async () => { await files.press((await files.queryAllByRole('button')).find(button => button.name?.startsWith('src/beta.ts'))!); });
+    await vi.waitFor(() => expect(document.body.textContent).toContain('+new'));
+    expect(await files.queryAllByRole('button', { name: 'Mark viewed' })).toHaveLength(0);
+    // The open diff is named by its row: the path is not drawn a second time above it.
+    const body = document.querySelector('[role="group"][aria-label="src/beta.ts"]');
+    expect(body).not.toBeNull();
+    expect([...body!.querySelectorAll('*')].filter(node => node.textContent === 'src/beta.ts')).toEqual([]);
+
+    await act(async () => { await files.press(await rowMenu(files, 'src/beta.ts')); });
+    await act(async () => { await files.press(await files.getByRole('menuitem', { name: 'Mark viewed' })); });
+    expect(writes).toEqual([{ path: 'src/beta.ts', viewed: true }]);
   });
 
   it('refreshes the files and the same host Viewed source through the parent page refresh', async () => {

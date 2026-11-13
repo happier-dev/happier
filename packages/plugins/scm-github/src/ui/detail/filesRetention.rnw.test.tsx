@@ -475,7 +475,9 @@ it('lists GitHub Files as expandable rows under a total, with Show more inside t
   expect(list!.textContent).not.toContain('Source');
   // The file rows' own disclosure state (each row's ⋯ trigger carries one too, for its menu).
   const toggles = [...list!.querySelectorAll('[aria-expanded]')].filter(node => node.textContent?.startsWith('src/'));
-  expect(toggles.map(node => node.getAttribute('aria-expanded'))).toEqual(['false', 'false', 'false', 'false', 'false']);
+  // A file GitHub sent no diff for has nothing to open: it is a plain row, not a disclosure.
+  expect(toggles.map(node => node.textContent?.split('+')[0])).not.toContainEqual(expect.stringContaining('logo.ts'));
+  expect(toggles.map(node => node.getAttribute('aria-expanded'))).toEqual(['false', 'false', 'false', 'false']);
   // Status speaks only when it says something: a plain modification is one line.
   const content = list!.textContent ?? '';
   expect(content).not.toContain('Modified');

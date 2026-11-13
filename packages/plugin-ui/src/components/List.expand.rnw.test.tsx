@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
+import { DiffViewer } from './Content.js';
 import { List } from './List.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 import { Text } from './Text.js';
@@ -52,6 +53,57 @@ describe('plugin-ui List.Item expand in place', () => {
 
     act(() => row()!.click());
     expect(row()?.getAttribute('aria-expanded')).toBe('false');
+    view.unmount();
+  });
+
+  it('lets the row name the diff it discloses: the diff keeps that name for readers and draws no second caption', () => {
+    const context = createSurfaceContext();
+    function FileRow() {
+      const [expanded, setExpanded] = useState(false);
+      return (
+        <List accessibilityLabel="Files">
+          <List.Item
+            testID="file-row"
+            title="src/review.ts"
+            expanded={expanded}
+            expandedContent={<DiffViewer unifiedDiff={'@@ -1 +1 @@\n-old\n+new'} filePath="src/review.ts" label="src/review.ts" />}
+            onPress={() => setExpanded((current) => !current)}
+          />
+        </List>
+      );
+    }
+    const view = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <FileRow />
+        <DiffViewer unifiedDiff={'@@ -1 +1 @@\n-a\n+b'} label="Standalone diff" />
+      </PluginUiProvider>,
+    );
+    act(() => view.container.querySelector<HTMLElement>('[data-testid="file-row"] [role="button"], [role="button"][data-testid="file-row"]')!.click());
+    const body = view.container.querySelector<HTMLElement>('[role="group"][aria-label="src/review.ts"]');
+    expect(body, 'the disclosed diff is named by its file').not.toBeNull();
+    expect(body!.textContent).toContain('+new');
+    expect(body!.textContent).not.toContain('src/review.ts');
+    // Outside a row the diff still captions itself.
+    expect(view.container.textContent).toContain('Standalone diff');
+    view.unmount();
+  });
+
+  it('draws a closed row flat: no rim, fill, shadow or lift until it opens', () => {
+    const view = mount();
+    const frame = () => view.container.querySelector<HTMLElement>('[data-testid="conversation-row:expanded"]')!.parentElement!;
+    const closed = getComputedStyle(frame());
+    const closedBox = { top: closed.marginTop, bottom: closed.marginBottom, border: closed.borderTopWidth };
+    expect(closed.borderTopColor).toMatch(/transparent|rgba\(0, 0, 0, 0\)/);
+    expect(closed.backgroundColor).toMatch(/^(transparent|rgba\(0, 0, 0, 0\))?$/);
+    expect(closed.boxShadow === '' || closed.boxShadow === 'none').toBe(true);
+    const row = () => view.container.querySelector<HTMLElement>('[data-testid="conversation-row"] [role="button"], [role="button"][data-testid="conversation-row"]')!;
+    act(() => row().click());
+    act(() => row().click());
+    // Folded again, it is the same flat frame it was before it opened.
+    const refolded = getComputedStyle(frame());
+    expect({ top: refolded.marginTop, bottom: refolded.marginBottom, border: refolded.borderTopWidth }).toEqual(closedBox);
+    expect(refolded.borderTopColor).toBe(closed.borderTopColor);
+    expect(refolded.boxShadow === '' || refolded.boxShadow === 'none').toBe(true);
     view.unmount();
   });
 });

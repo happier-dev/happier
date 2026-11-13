@@ -810,6 +810,8 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
     <List
       accessibilityLabel="Files this GitLab merge request changes"
       accessibilityLabelKey="plugins.gitlab.ui.filesLabel"
+      // Single-line file rows stack flush on the compact list step, as GitHub's Files rows do.
+      density="flush"
       items={state.rows}
       keyForItem={(row) => row.path}
       header={(
@@ -890,6 +892,7 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
         return (
         <Item
           title={row.path}
+          density="compact"
           {...(note === undefined ? {} : { subtitle: note })}
           accessoryOutsidePressable
           accessory={<Row gap="small">

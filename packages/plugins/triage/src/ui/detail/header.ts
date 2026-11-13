@@ -200,8 +200,8 @@ export function projectTriageDetailHeaderV1(
 }
 
 /**
- * The line under the detail title: where the entry lives, a pull request's branch pair, then who opened it and when
- * ("example/repository #17 · leeroy/server-rounding → main · You opened 42 minutes ago"). The source's brand mark leads it and the kind glyph sits beside the title, so the
+ * The line under the detail title: where the entry lives, who opened it and when, then a pull request's branch pair
+ * ("example/repository #17 · You opened 42 minutes ago · leeroy/server-rounding → main"). The source's brand mark leads it and the kind glyph sits beside the title, so the
  * source's name and the state word are not repeated in words. The connection is named only when the reader has
  * more than one connection to this source, which is the only time there is one to tell apart.
  */
@@ -218,12 +218,14 @@ export function readTriageDetailContextLineV1(
     : header.authorLabel === null
       ? text('plugins.triage.surface.detail.openedAt', 'Opened {age}', { age })
       : text('plugins.triage.surface.detail.openedBy', '{author} opened {age}', { author: header.authorLabel, age });
+  // Who and when precede the branch pair: a branch name is the longest and least-read part, so on a narrow pane it
+  // is the part the line's end cuts, never the author or the age.
   const parts = [
     header.addressLabel,
+    opened,
     header.branches === null
       ? null
       : text('plugins.triage.surface.detail.branches', '{head} → {base}', { head: header.branches.head, base: header.branches.base }),
-    opened,
     header.connectionLabel === null || header.sourceConnections < 2
       ? null
       : text('plugins.triage.surface.detail.via', 'via {name}', { name: header.connectionLabel }),
