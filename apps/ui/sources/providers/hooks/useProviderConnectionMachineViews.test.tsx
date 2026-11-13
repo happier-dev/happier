@@ -55,6 +55,26 @@ describe('useProviderConnectionMachineViews', () => {
         await account.reset();
     });
 
+    it.each(['unknown_home', 'signed_out'] as const)('settles %s as a failed peer check instead of loading forever', async kind => {
+        const { useProviderConnectionMachineViews } = await import('./useProviderConnectionMachineViews');
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = kind === 'signed_out' ? vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue(null) : null;
+        const target = row('srv_missing', 'machine-a', kind === 'signed_out' ? otherServerId : 'missing-provider-home');
+        const hook = await renderHook(() => useProviderConnectionMachineViews({
+            enabled: true, connectionId: 'pc_a', targets: [target],
+        }));
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({
+                loading: false,
+                byTargetKey: { ['srv_missing\u0000machine-a']: {
+                    status: 'error', error: { code: 'provider_authorization_changed' },
+                } },
+            }));
+            expect(providerHarness.state.requests.filter(request =>
+                request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE)).toHaveLength(0);
+        } finally { await hook.unmount(); credentials?.mockRestore(); }
+    });
+
     it.each(['detail', 'peers'] as const)('starts one %s check on invalidated refocus and handles the next visible invalidation', async kind => {
         let catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
             connections: [{ v: 1, id: 'pc_a', source: { kind: 'contribution', contributionKey: 'acme.plugin/acme' },

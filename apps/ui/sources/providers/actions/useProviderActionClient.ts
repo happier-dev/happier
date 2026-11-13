@@ -157,9 +157,9 @@ export function useProviderActionClient(serverId: string | null | readonly (stri
     return { ...methods, scopeKey, scopeStates, accountScope: accountScope ?? { resolution: { kind: resolvedServerId ? 'resolving' as const : 'unknown_home' as const }, binding: null }, pendingApproval, retryReadiness, ready: initiatingLifetime !== null && requestedServerIds.length > 0 && requestedServerIds.every(id => {
         const state = scopeStates.get(resolveServerProfileScopeIdForIdentifier(id));
         if (!state || state.resolution.kind === 'resolving') return false;
-        if (state.resolution.kind === 'unavailable') return true;
+        if (state.resolution.kind !== 'bound') return true;
         const binding = state.binding;
-        return state.resolution.kind === 'bound' && binding?.isCurrent() === true
+        return binding?.isCurrent() === true
             && (!initiatingLifetime || (initiatingLifetime.isCurrent()
                 && areServerAccountScopesEqual(initiatingLifetime.scope, binding.scope)));
     }) };
