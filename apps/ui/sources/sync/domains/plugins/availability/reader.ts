@@ -2219,7 +2219,7 @@ function readReleaseLessDeclarationDigest(
 
 function createBoundReader(input: Readonly<{
     scope: ServerAccountScope;
-    readInitialFailure: (pluginId: string) => ReturnType<ReturnType<typeof createPluginAccountAvailabilityInitialReadiness>['read']>;
+    readInitialFailure: (pluginId?: string) => ReturnType<ReturnType<typeof createPluginAccountAvailabilityInitialReadiness>['read']>;
     readState: () => AvailabilityProjectionState | null;
     subscribe: PluginAccountAvailabilityReader['subscribe'];
     hostBundledUi?: readonly PreparedBundledUiDeclaration[];
@@ -2283,7 +2283,7 @@ function createBoundReader(input: Readonly<{
         readCurrentAccountExecutionDeclarations: () => readAccountExecutionSelections(input.readState(), input.scope, input.hostBundledUi ?? []),
         ensureCurrentAccountExecutionDeclarations: async ({ family }) => {
             const state = input.readState();
-            if (!readProjectionForScope(state, input.scope)) return { kind: 'unavailable',
+            if (!readProjectionForScope(state, input.scope)) return input.readInitialFailure() ?? { kind: 'unavailable',
                 code: state ? 'account_availability_scope_mismatch' : 'account_availability_not_loaded' };
             const candidates = readAccountExecutionSelections(input.readState(), input.scope, input.hostBundledUi ?? [], true)
                 .filter(selection => (selection.manifest.contributes[family]?.length ?? 0) > 0
@@ -2730,7 +2730,7 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
                 : state && areServerAccountScopesEqual(state.scope, scoped) ? getObservationSnapshot(pluginId) : null;
             const reader = createBoundReader({
                 scope: scoped,
-                readInitialFailure: (pluginId) => state && areServerAccountScopesEqual(state.scope, scoped)
+                readInitialFailure: (pluginId) => pluginId !== undefined && state && areServerAccountScopesEqual(state.scope, scoped)
                     && (state.intentReadsByPluginId.has(pluginId) || state.retiredPluginIds?.includes(pluginId))
                     ? null : initialReadiness.read(scoped),
                 readState: () => state,

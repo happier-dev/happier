@@ -148,7 +148,7 @@ describe('Plugin Account Availability reader', () => {
                     sourceConfigSchema,
                     setupActionRef: { pluginId: 'com.acme.fixture', localId: 'setup' } } } }] } });
         const smaller = PluginPortableReleaseManifestV1Schema.parse({ ...full, contributes: {} });
-        const digestOf = (manifest: typeof full) => `sha256:${(manifest === full ? 'c' : 'd').repeat(64)}`;
+        const digestOf = (manifest: typeof full): `sha256:${string}` => `sha256:${(manifest === full ? 'c' : 'd').repeat(64)}`;
         const entry = (machineId: string, manifest = full) => ({ machineId,
             machineInstallationId: `${machineId}-installation`, declaration: { declarationDigestSha256: digestOf(manifest) } });
         const response = (machineDeclarations: readonly ReturnType<typeof entry>[]) =>
@@ -967,6 +967,23 @@ describe('Plugin Account Availability reader', () => {
         expect(publications).toBe(2);
     });
 
+    it.each(['machineProvisioners', 'machineRecipes', 'deploymentTargets'] as const)(
+        'settles failed initial %s discovery with its Account failure and recovers on publication', async (family) => {
+            const store = createPluginAccountAvailabilityReaderStore();
+            const reader = store.bind(scope);
+            expect(await reader.ensureCurrentAccountExecutionDeclarations({ family }))
+                .toEqual({ kind: 'unavailable', code: 'account_availability_not_loaded' });
+            store.fail({ scope, code: 'plugin_availability_unavailable' });
+            expect(await reader.ensureCurrentAccountExecutionDeclarations({ family }))
+                .toEqual({ kind: 'unavailable', code: 'plugin_availability_unavailable' });
+            expect(await store.bind({ ...scope, accountId: 'another-account' })
+                .ensureCurrentAccountExecutionDeclarations({ family }))
+                .toEqual({ kind: 'unavailable', code: 'account_availability_not_loaded' });
+            store.replace({ scope, snapshot: snapshot({ intentReads: [], materializations: [], snapshots: [] }) });
+            expect(await reader.ensureCurrentAccountExecutionDeclarations({ family }))
+                .toEqual({ kind: 'available', declarations: [] });
+        });
+
     it('discovers lazy browser-unreachable provisioners for fresh Accounts and honors disabled selections', async () => {
         const loaded: string[] = [];
         const { projectBundledPluginUiDeclaration, projectBundledPluginUiFirstPaintDeclaration } = await import(
@@ -1014,6 +1031,7 @@ describe('Plugin Account Availability reader', () => {
         const { PLUGIN_MANIFEST } = await import('../../../../../../../packages/plugins/machine-recipes/src/manifest');
         const declaration = await projectBundledPluginUiDeclaration({ packageName: '@happier-dev/plugins-machine-recipes',
             packageVersion: PLUGIN_MANIFEST.version, manifest: PLUGIN_MANIFEST, artifactGraphs: [] });
+        if (!declaration) throw new Error('expected the machine-recipes manifest to project a bundled UI declaration');
         const firstPaint = await projectBundledPluginUiFirstPaintDeclaration(declaration);
         const store = createPluginAccountAvailabilityReaderStore({ hostBundledUi: [{ ...firstPaint,
             loadDeclaration: async () => { loaded.push(declaration.pluginId); return declaration; } }] });
