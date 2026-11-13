@@ -93,14 +93,17 @@ export async function createTeamDirectActionMaterialFixture(options: Readonly<{
     const published = deliveryMode === 'direct' ? await inTx(tx => upsertTeamCredentialRecipientMaterialInTx(tx, { actorAccountId: custodian.id,
         resourceId: resource.id, recipientAccountId: recipient.id, sourceMemberKey, sourceVersion, recipientMode: 'plain',
         recipientContentPublicKeyFingerprint: null, stored, expectedResourceRevision: resource.revision,
-        expectedStoredSourceVersion: null, expectedPublishedSourceVersion: null })) : { ok: true };
+        expectedStoredSourceVersion: null, expectedPublishedSourceVersion: null })) : { ok: true as const };
     if (!published.ok) throw new Error(`Fixture publication refused: ${published.reason}`);
     const purpose = { consumer: { pluginId: manifest.id, localId: options.actionId ?? 'options' }, purpose: options.purposeId ?? 'cloud-api' };
     const consumer = { kind: 'action_operation' as const, operationId: 'finite-request',
-        actionId: `${manifest.id}/actions/${purpose.consumer.localId}`, pluginVersion: manifest.version, purpose };
+        actionId: `${manifest.id}/actions/${purpose.consumer.localId}` as const, pluginVersion: manifest.version, purpose };
+    // The owner admits any root Action id; refusal cases substitute non-plugin roots.
+    const actionAdmission: NonNullable<Parameters<typeof readCurrentTeamCredentialRecipientMaterialInTx>[1]['actionAdmission']> = {
+        rootActionId: consumer.actionId, machineId: machine.id };
     const input = { teamId: team.id, resourceId: resource.id, recipientAccountId: recipient.id,
         slot: { kind: 'connected_service_purpose' as const, purpose }, disclosedMember: sourceAccount, consumer,
-        actionAdmission: { rootActionId: consumer.actionId, machineId: machine.id },
+        actionAdmission,
         sessionAuthentication: { env: process.env, authority: 'present_user' as const, authenticationEvidence: [] },
         authentication: { authenticationAuthority: 'present_user' as const } };
     const readCurrent = (override: Partial<typeof input> = {}) => inTx(tx => readCurrentTeamCredentialRecipientMaterialInTx(tx, { ...input, ...override }));

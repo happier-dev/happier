@@ -58,7 +58,8 @@ export type TeamPolicyError =
     | "team_authentication_policy_unavailable"
     | "team_authentication_unavailable"
     | "team_authentication_required"
-    | "teams_unavailable";
+    | "teams_unavailable"
+    | "managed_default_machine_not_member_usable";
 
 export type TeamPolicyResult =
     | Readonly<{ ok: true; team: TeamSummaryV1 }>

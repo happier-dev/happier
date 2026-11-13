@@ -516,7 +516,7 @@ export async function listProviderDescriptorsInTx(
         references: workosRows.map(row => ({ id: row.id, teamId: null })),
         providers: new Map(homeInstances.flatMap(resolved => resolved.status === "ready" ? [[resolved.instance.id, resolved] as const] : [])),
     }, readCapture);
-    const workosRowsByProvider = new Map<string, typeof workosRows>();
+    const workosRowsByProvider = new Map<string, (typeof workosRows)[number][]>();
     for (const row of workosRows) {
         const rows = workosRowsByProvider.get(row.providerInstanceId) ?? [];
         rows.push(row);

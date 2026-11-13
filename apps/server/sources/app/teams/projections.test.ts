@@ -5,8 +5,8 @@ import { projectTeamSummaryV1, type TeamRecord } from "./projections";
 
 describe("Team managed defaults audience", () => {
     it.each(["guest", "member", "admin", "owner"] as const)("projects Team defaults for the %s audience", (viewerRole) => {
-        const managedDefaults = { team: { permissionModeByAgentTargetKey: { "agent:example.agent/example": "read-only" } }, groups: {} };
-        const homeDefaults = { permissionModeByAgentTargetKey: { "agent:example.agent/example": "default" } };
+        const managedDefaults = { team: { permissionModeByAgentTargetKey: { "agent:example.agent/example": "read-only" as const } }, groups: {} };
+        const homeDefaults = { permissionModeByAgentTargetKey: { "agent:example.agent/example": "default" as const } };
         const capabilities = { ...NO_TEAM_CAPABILITIES_V1, viewTeam: true };
         const summary = projectTeamSummaryV1({
             team: {

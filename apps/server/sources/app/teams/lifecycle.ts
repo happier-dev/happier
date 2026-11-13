@@ -20,7 +20,6 @@ import { AccountStatus } from "@/storage/enums.generated";
 import { revokeActiveTeamInvitationsForTeamInTx } from "./invitations/invitationLifecycle";
 import { admitTeamMemberInTx } from "./memberships/membershipService";
 import { TEAM_PROJECTION_SELECT, projectTeamSummaryV1, type TeamRecord } from "./projections";
-import { readHomeGovernancePolicyInTx } from "@/app/home/governance/governancePolicy";
 import { readTeamSummaryCountsInTx } from "./teamSummaryCounts";
 import { publishTeamChangedInTx, readTeamCreationPublicationAudienceInTx } from "./teamChanges";
 import {

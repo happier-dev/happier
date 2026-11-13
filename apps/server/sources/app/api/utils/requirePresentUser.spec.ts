@@ -13,7 +13,9 @@ describe("requirePresentUser", () => {
         for (const authTokenKind of ["account", "terminal"]) {
             for (const authAuthority of ["present_user", "account_automation", undefined]) {
                 const accepted = createReply();
-                await expect(requirePresentUser({ authAuthority, authTokenKind }, accepted.reply)).resolves.toBeUndefined();
+                // A real Fastify request carries authAuthority too; the guard must ignore it.
+                const request = { authAuthority, authTokenKind };
+                await expect(requirePresentUser(request, accepted.reply)).resolves.toBeUndefined();
                 expect(accepted.code).not.toHaveBeenCalled();
             }
         }

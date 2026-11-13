@@ -126,9 +126,9 @@ export async function openTeamCredentialActionBroker(input: TeamCredentialAction
             ...(poolEligibility ? { poolEligibleMachineIds: poolEligibility.eligibleMachineIds } : {}),
         });
         if (!placement.ok) return { ok: false as const, reasonCode: placement.error };
-        if (!placement.broker?.endpointAuthority) return { ok: false as const, reasonCode: 'broker_unavailable' as const };
         const broker = placement.broker;
-        const endpoint = broker.endpointAuthority;
+        const endpoint = broker?.endpointAuthority;
+        if (!broker || !endpoint) return { ok: false as const, reasonCode: 'broker_unavailable' as const };
         const topology = admitProviderBrokerTopology({ machineId: request.initiatorMachineId, endpointId: initiator.endpointId },
             { machineId: broker.machineId, endpointId: endpoint.endpointId });
         if (!topology.ok) return topology;
@@ -150,8 +150,8 @@ export async function openTeamCredentialActionBroker(input: TeamCredentialAction
         await saveRepeatKey(tx, admissionKey, input.grantId, new Date(authority.payload.expiresAt));
         return { ok: true as const, authority, target: { custodianAccountId: resource.custodianAccountId,
             brokerMachineId: broker.machineId, endpointId: endpoint.endpointId, endpointRevision: endpoint.revision,
-            endpoint: { endpointId: endpoint.endpointId, ...(endpoint.relayUrls ? { relayUrls: endpoint.relayUrls } : {}),
-                ...(endpoint.directAddresses ? { directAddresses: endpoint.directAddresses } : {}) } } };
+            endpoint: { endpointId: endpoint.endpointId, ...(endpoint.relayUrls ? { relayUrls: [...endpoint.relayUrls] } : {}),
+                ...(endpoint.directAddresses ? { directAddresses: [...endpoint.directAddresses] } : {}) } } };
     });
 }
 

@@ -63,7 +63,7 @@ it("refuses a retained Bot-template root replayed after the presenter's Machine 
       }),
       dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
       installationId: crypto.randomUUID(),
-      installationPublicKey: nacl.sign.keyPair().publicKey,
+      installationPublicKey: new Uint8Array(nacl.sign.keyPair().publicKey),
       operationProtocolCapabilitiesRevision: 1,
       operationProtocolCapabilities: {
         externalActionExecutionAuthorization: { protocolVersions: [1] },

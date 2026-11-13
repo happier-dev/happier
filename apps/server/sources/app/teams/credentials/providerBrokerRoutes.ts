@@ -240,10 +240,12 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
         if (!signing.ok) {
             return reply.send({ ok: false, reasonCode: 'update_required' });
         }
-        if (request.sessionRuntimePrincipal && parsed.data.v !== 3) {
+        const sessionRuntimePrincipal = request.sessionRuntimePrincipal;
+        const openRequest = parsed.data;
+        if (sessionRuntimePrincipal && openRequest.v !== 3) {
             const runnerSelection = await inTx(tx => verifyRunnerBrokerOpenSelectionInTx(tx, {
-                principal: request.sessionRuntimePrincipal!,
-                request: parsed.data,
+                principal: sessionRuntimePrincipal,
+                request: openRequest,
             }), { isolationLevel: "Serializable" /* Runner broker selection verification composes frozen selection, entitlement and resource currentness. */ });
             if (!runnerSelection) {
                 return reply.send({ ok: false, reasonCode: 'resource_forbidden' });

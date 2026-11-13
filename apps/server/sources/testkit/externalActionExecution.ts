@@ -74,7 +74,7 @@ export async function createExternalActionHomeForTests(options: ExternalActionHo
         };
         await db.account.create({ data: { id: options.accountId, encryptionMode: accountEncryptionMode } });
         await db.machine.create({ data: { id: options.machineId, accountId: options.accountId,
-            installationId: options.installationId, installationPublicKey: options.installationPublicKey,
+            installationId: options.installationId, installationPublicKey: new Uint8Array(options.installationPublicKey),
             metadata: machineStoredContent.metadata, dataEncryptionKey: decodeBase64(machineStoredContent.dataEncryptionKey),
             active: true, lastActiveAt: new Date(),
             operationProtocolCapabilitiesRevision: 1,
@@ -102,7 +102,7 @@ export async function createExternalActionHomeForTests(options: ExternalActionHo
             const target = options.workspaceSyncTarget;
             await db.account.create({ data: { id: target.accountId, encryptionMode: 'plain' } });
             await db.machine.create({ data: { id: target.machineId, accountId: target.accountId,
-                installationId: target.installationId, installationPublicKey: target.installationPublicKey,
+                installationId: target.installationId, installationPublicKey: new Uint8Array(target.installationPublicKey),
                 metadata: encodePlainMachineStoredContent({ host: 'Sync target', platform: 'linux', happyCliVersion: 'test',
                     homeDir: sqlite.baseDir, happyHomeDir: sqlite.baseDir }),
                 dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), active: true, lastActiveAt: new Date(),
@@ -129,18 +129,19 @@ export async function createExternalActionHomeForTests(options: ExternalActionHo
             });
         }
         let manageGrantee: ExternalActionHomeForTests['manageGrantee'];
-        if (options.manageGranteeAccountId) {
+        const manageGranteeAccountId = options.manageGranteeAccountId;
+        if (manageGranteeAccountId) {
             await db.account.create({ data: { id: options.manageGranteeAccountId, encryptionMode: 'plain' } });
             if (options.workspaceSyncTarget) {
                 const targetGrant = await inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
                     actorAccountId: options.workspaceSyncTarget!.accountId, machineId: options.workspaceSyncTarget!.machineId,
-                    principal: { kind: 'account', accountId: options.manageGranteeAccountId! }, level: 'admin',
+                    principal: { kind: 'account', accountId: manageGranteeAccountId }, level: 'admin',
                 }));
                 if (targetGrant.kind !== 'saved') throw new Error('external_action_home_requester_target_grant_refused');
             }
             const granted = await inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
                 actorAccountId: options.accountId, machineId: options.machineId,
-                principal: { kind: 'account', accountId: options.manageGranteeAccountId }, level: 'admin',
+                principal: { kind: 'account', accountId: manageGranteeAccountId }, level: 'admin',
             }));
             if (granted.kind !== 'saved') throw new Error('external_action_home_manage_grant_refused');
             const admitted = await resolveMachineAdmission({ actorAccountId: options.manageGranteeAccountId,

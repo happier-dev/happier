@@ -9,6 +9,7 @@ import { deleteNativeUsageHistory, recordUsageEvent, recordTeamCredentialExterna
 import { createUsageEventRetentionRule } from '@/app/retention/rules/usageEventRetentionRule';
 import { readRetentionPolicyFromEnv } from '@/app/retention/config/readRetentionPolicyFromEnv';
 import { evaluateTeamCredentialUsageAdmissionLimitsInTx, projectTeamCredentialUsageLimitsInTx } from './teamCredentialUsageLimits';
+import { parseUsageLimitRows } from './teamCredentialUsageLimitEvaluation';
 import { refreshTeamCredentialUsageCountersInTx } from './teamCredentialUsageCounters';
 import { admitTeamCredentialUsageInTx } from './teamCredentialUsageAdmission';
 
@@ -200,7 +201,7 @@ export function defineTeamCredentialUsageCounterContract(options: Readonly<{ con
             accounting: { status: 'available', inferenceKey: 'inference' },
             tokens: { ...request.tokens, input: 20, total: 20 }, metadata: undefined });
         expect(await recordUsageEvent(f.member.id, native)).toMatchObject({ ok: true });
-        const canonical = () => inTx(tx => projectTeamCredentialUsageLimitsInTx(tx, { resourceId: f.resource.id, actorAccountId: f.member.id, now: f.now, limits: [f.limit] }));
+        const canonical = () => inTx(tx => projectTeamCredentialUsageLimitsInTx(tx, { resourceId: f.resource.id, actorAccountId: f.member.id, now: f.now, limits: parseUsageLimitRows([f.limit]) }));
         expect(await f.read()).toMatchObject(await canonical());
         expect(await recordUsageEvent(f.member.id, { ...native, tokens: { ...native.tokens, input: 27, total: 27 } })).toMatchObject({ ok: true });
         expect(await f.read()).toMatchObject(await canonical());
@@ -260,7 +261,7 @@ export function defineTeamCredentialUsageCounterContract(options: Readonly<{ con
                 observedAt: new Date('2026-08-31T23:59:59Z').getTime(),
             } })).toMatchObject({ ok: true, didApply: true });
         const canonical = await inTx(tx => projectTeamCredentialUsageLimitsInTx(tx, {
-            resourceId: f.resource.id, actorAccountId: f.member.id, now: f.now, limits: [f.limit],
+            resourceId: f.resource.id, actorAccountId: f.member.id, now: f.now, limits: parseUsageLimitRows([f.limit]),
         }));
         expect(canonical).toMatchObject({ ok: true, applied: [{ recorded: 0 }] });
         expect(await f.read()).toMatchObject(canonical);
@@ -314,7 +315,7 @@ export function defineTeamCredentialUsageCounterContract(options: Readonly<{ con
         await correction;
         await expect(f.read()).resolves.toMatchObject({ ok: true, applied: [{ limitId: f.limit.id, recorded: 27 }] });
         const canonical = await inTx(tx => projectTeamCredentialUsageLimitsInTx(tx, {
-            resourceId: f.resource.id, actorAccountId: f.member.id, now: f.now, limits: [f.limit],
+            resourceId: f.resource.id, actorAccountId: f.member.id, now: f.now, limits: parseUsageLimitRows([f.limit]),
         }));
         expect(await f.read()).toMatchObject(canonical);
         expect(await db.teamCredentialResource.findUnique({ where: { id: f.resource.id } })).toEqual(f.resource);

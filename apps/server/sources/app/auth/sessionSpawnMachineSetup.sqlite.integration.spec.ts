@@ -15,7 +15,7 @@ import { computeExternalActionRequestEnvelopeDigestV1, encodeExternalActionResol
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
     EXTERNAL_ACTION_REVIEWED_CHILD_HEADER, ExternalActionExecutionAuthorizationV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1,
-    projectExternalActionDeploymentPreparationEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+    projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import { auth } from './auth';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedDiscussionHttpFixture } from '@/app/api/routes/actions/discussionExecutionAuthorization.testkit';
@@ -68,7 +68,7 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
             const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(response.json());
             expect(authorization.binding).toMatchObject({ accountId: f.account.id, credentialId: f.pat.tokenId,
                 actionId: 'session.spawn_new', machineId: f.machine.id, target: projected.target,
-                admittedMachineRole: 'manage', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) });
+                admittedMachineRole: 'manage', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(ExternalActionRequestEnvelopeSchema.parse(envelope)) });
             expect(await auth.verifyExternalActionExecutionAuthorization(authorization.token)).toEqual(authorization.binding);
             expect(authorization.binding).toMatchObject({ grant: f.pat.grant });
             const creationGrant = ApiTokenGrantV1Schema.parse({ ...f.pat.grant, create: {

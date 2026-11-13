@@ -1128,9 +1128,13 @@ export function registerTeamCredentialResourceRoutes(
                     code,
                     requestId: selected.request.requestId,
                     failureDetail: dispatched.failureDetail,
-                    readiness: { kind: readiness, ...(readiness === "broker_unavailable" && "reason" in dispatched
-                        ? { reason: dispatched.reason } : {}), ...(code === 'connected_service_credential_reconnect_required'
-                            ? { reason: code } : {}) },
+                    // Each readiness kind carries only the reason its schema admits.
+                    readiness: readiness === "broker_unavailable"
+                        ? { kind: readiness, ...("reason" in dispatched && dispatched.reason === "incompatible"
+                            ? { reason: dispatched.reason } : {}) }
+                        : readiness === "source_unavailable"
+                            ? { kind: readiness, ...(code === 'connected_service_credential_reconnect_required' ? { reason: code } : {}) }
+                            : { kind: readiness },
                     recovery: readiness === "broker_unavailable"
                         ? "reason" in dispatched && dispatched.reason === "incompatible"
                             ? "Update the broker Machine and try again."
