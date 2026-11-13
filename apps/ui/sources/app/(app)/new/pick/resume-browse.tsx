@@ -8,9 +8,7 @@ import { isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { buildBackendTargetRouteParams, resolveBackendTargetFromRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { getResolvedBackendCatalogEntries, resolveBackendTargetOperationalAgentId } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
-import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
+import { useResumeBrowseCatalog } from '@/components/sessions/external/browse/useResumeBrowseCatalog';
 import { ExternalSessionsBrowseScreen } from '@/components/sessions/external/browse/ExternalSessionsBrowseScreen';
 import { ExternalSessionsBrowseRouteGate } from '@/components/sessions/external/browse/ExternalSessionsBrowseRouteGate';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -90,19 +88,14 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
         const directParam = pickFirstNonEmpty(params.spawnServerId, params.serverId);
         return directParam || null;
     }, [params.serverId, params.spawnServerId]);
-    const daemonMergedProjection = useDaemonMergedProjectionInputs({
-        // Backend entries and external-session sources read Agent declarations only.
-        sections: DAEMON_AGENT_CATALOG_SECTIONS,
-        machineId: effectiveMachineId,
-        serverId: effectiveServerId,
-    });
+    const inventory = useResumeBrowseCatalog(effectiveMachineId, effectiveServerId);
+    const daemonMergedProjection = inventory.projection;
     const daemonMergedProjectionInputs = daemonMergedProjection.phase === 'ready' ? daemonMergedProjection.inputs : null;
-    const { snapshot: acpCatalog } = useAcpCatalogForServer(effectiveServerId);
-    const catalogReady = acpCatalog?.catalog.status === 'ready' && !acpCatalog.stale;
+    const acpCatalog = inventory.catalog;
     const resolvedBackendEntries = React.useMemo(() => {
         return getResolvedBackendCatalogEntries({
             enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey: backendEnabledByTargetKey }),
-            acpCatalogSnapshot: acpCatalog?.catalog,
+            acpCatalogSnapshot: acpCatalog,
             backendEnabledByTargetKey: backendEnabledByTargetKey,
             collapseConfiguredBackendProviderSentinels: true,
             mergedProviderProjectionById: daemonMergedProjectionInputs?.mergedProviderProjectionById ?? null,
@@ -172,11 +165,11 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
      * phase (`ready`, `unsupported`, `error`, or `idle` when there is no machine at all)
      * may prove the lock unavailable.
      */
-    const awaitingProjection = !catalogReady || daemonMergedProjection.phase === 'loading';
+    const awaitingProjection = inventory.phase === 'loading';
 
     const settings = useExternalSessionBrowseSettings(daemonMergedProjectionInputs?.pluginProjectionV2, operationalAgentId ? [operationalAgentId] : []);
     const lockScope = React.useMemo(() => {
-        if (!catalogReady) return null;
+        if (inventory.phase !== 'ready') return null;
         if (!effectiveMachineId) return null;
         if (!operationalAgentId) return null;
         if (!canBrowseExternalSessions({
@@ -207,12 +200,12 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
             providerId: operationalAgentId,
             source,
         };
-    }, [accountProfile, agentOptionState, catalogReady, daemonMergedProjectionInputs?.pluginProjectionV2, effectiveMachineId, effectiveServerId, operationalAgentId, settings]);
+    }, [accountProfile, agentOptionState, inventory.phase, daemonMergedProjectionInputs?.pluginProjectionV2, effectiveMachineId, effectiveServerId, operationalAgentId, settings]);
 
     React.useEffect(() => {
-        if (lockScope || awaitingProjection) return;
+        if (lockScope || inventory.phase !== 'ready') return;
         safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
-    }, [awaitingProjection, lockScope, navigation, pickerFallbackHref, router]);
+    }, [inventory.phase, lockScope, navigation, pickerFallbackHref, router]);
 
     const headerTitle = t('externalSessions.browseTitle');
     const headerBackTitle = t('common.cancel');
@@ -250,6 +243,20 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
                                 if (returnMode === 'dispatch') {
                                     safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
                                 }
+                            }}
+                        />
+                    ) : inventory.phase === 'unavailable' ? (
+                        <SurfaceStateCard
+                            testID="external-sessions-browse-route-unavailable"
+                            kind="unavailable"
+                            accessibilitySemantics="alert"
+                            title={t('common.unavailable')}
+                            reason={t('externalSessions.browseRouteAvailabilityUnknownSubtitle')}
+                            diagnosticCode={inventory.reason}
+                            action={{ label: t('common.retry'), onPress: inventory.retry }}
+                            secondaryAction={{
+                                label: t('common.close'),
+                                onPress: () => safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref }),
                             }}
                         />
                     ) : awaitingProjection ? (

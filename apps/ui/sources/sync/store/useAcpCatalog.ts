@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { AcpCatalogRecordV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import type { AcpCatalogRecordV1, AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { invalidateAcpCatalogProjection, observeAcpCatalog } from '@/sync/engine/settings/acpCatalogEngine';
@@ -9,26 +9,40 @@ import { getStorage } from '@/sync/domains/state/storage';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
+import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { retryServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 type AcpCatalogDemand = Readonly<{ enabled?: boolean }>;
 
-/** A Home alone cannot manufacture an Account. Unknown or different Homes remain unavailable. */
+/** Resolve routed Homes through their credential owner; an omitted Home uses the active Account. */
 function useAcpCatalogScopeForServer(requestedServerId?: string | null, requestedScope?: ServerAccountScope | null) {
     const activeScope = useAccountSettingsScope();
     const accountScope = requestedScope === undefined ? activeScope : requestedScope;
-    const scope = requestedServerId === undefined ? accountScope
-        : requestedServerId && accountScope && areServerProfileIdentifiersEquivalent(requestedServerId, accountScope.serverId)
-            ? accountScope : null;
-    return scope;
+    const matchesAccount = !requestedServerId || Boolean(accountScope
+        && areServerProfileIdentifiersEquivalent(requestedServerId, accountScope.serverId));
+    const needsResolution = !matchesAccount && requestedScope === undefined;
+    const resolution = useServerCredentialAccountScopeResolution(needsResolution ? requestedServerId : null);
+    const scope = matchesAccount ? accountScope : needsResolution && resolution.kind === 'bound' ? resolution.scope : null;
+    const unresolvedCatalog: AcpCatalogSnapshotV1 = needsResolution && resolution.kind === 'resolving'
+        ? { status: 'loading' } : { status: 'unavailable', reason: needsResolution ? resolution.kind : 'scope-retired' };
+    return { scope, unresolvedCatalog };
 }
 
 export function useAcpCatalogForServer(requestedServerId?: string | null, requestedScope?: ServerAccountScope | null, demand?: AcpCatalogDemand) {
-    return useAcpCatalog(useAcpCatalogScopeForServer(requestedServerId, requestedScope), demand);
+    const { scope, unresolvedCatalog } = useAcpCatalogScopeForServer(requestedServerId, requestedScope);
+    const result = useAcpCatalog(scope, demand);
+    const refresh = React.useCallback(() => {
+        if (scope) return invalidateAcpCatalogProjection(scope);
+        if (requestedServerId) retryServerCredentialAccountScope(requestedServerId);
+        return Promise.resolve();
+    }, [scope, requestedServerId]);
+    return { ...result, catalog: result.snapshot?.catalog ?? (scope ? { status: 'loading' as const } : unresolvedCatalog), refresh };
 }
 
 export function useAcpCatalogDataForServer(requestedServerId?: string | null, requestedScope?: ServerAccountScope | null, demand?: AcpCatalogDemand) {
-    return useAcpCatalogData(useAcpCatalogScopeForServer(requestedServerId, requestedScope), demand);
+    const { scope } = useAcpCatalogScopeForServer(requestedServerId, requestedScope);
+    return useAcpCatalogData(scope, demand);
 }
 
 function useAcpCatalogSource(requestedScope?: ServerAccountScope | null, demand?: AcpCatalogDemand) {

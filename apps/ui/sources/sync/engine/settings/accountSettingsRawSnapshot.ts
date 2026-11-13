@@ -20,8 +20,8 @@ export function retainAccountSettingsRawSnapshot(scope: AccountSettingsScope, ve
     const key = accountSettingsScopeKeySuffix(scope);
     const previous = retained.get(key);
     if (previous && previous.version > version) return;
-    if (raw === null) retained.delete(key);
-    else retained.set(key, { version, raw, headVerified: true });
+    // `null` is an opened empty document (a new Account has none yet), which every consumer reads as `{}`.
+    retained.set(key, { version, raw: raw ?? {}, headVerified: true });
 }
 
 export function readRetainedAccountSettingsRawSnapshot(scope: AccountSettingsScope): RetainedRawSettings | undefined {

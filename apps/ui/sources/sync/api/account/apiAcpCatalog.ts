@@ -10,6 +10,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { classifyAccountStorageReadFailure, resolveAccountStorageContext, resolveAccountStorageContextForDisclosure } from '@/sync/encryption/accountStorageContext';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
+import { readCurrentAccountSettingsRawSnapshot } from '@/sync/engine/settings/accountSettingsRawSnapshot';
 import { classifyHttpMutationRequestFailure } from '@/sync/http/mutationRequestOutcome';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import type { ServerFetch } from '@/sync/http/client';
@@ -82,12 +83,18 @@ export async function readAcpCatalogInContext(context: AcpCatalogAccountContext,
                 catalog = opened.status === 'opened' ? { status: 'ready', record: opened.record, revision: row.revision }
                     : { ...opened, revision: row.revision };
             } else if (row.status === 'absent') {
-                const { encryption } = await context.resolveAccountEncryption();
-                const baseline = await readAccountSettingsBaseline({ credentials: context.credentials, encryption, accountMode: mode,
-                    request: (path, init) => context.request(path, init, { retry: 'none' }) });
+                // A passive projection: Sync has normally just admitted this document. Writes stay CAS-bound to its version.
+                const baseline = await readCurrentAccountSettingsRawSnapshot({ serverId: context.serverId, accountId: context.accountId },
+                    { credentials: context.credentials, request: context.request, signal, readBaseline: async () => {
+                        const { encryption } = await context.resolveAccountEncryption();
+                        const read = await readAccountSettingsBaseline({ credentials: context.credentials, encryption, accountMode: mode,
+                            request: (path, init) => context.request(path, init, { retry: 'none' }) });
+                        // `raw` is null only for an empty document; unreadable content throws.
+                        return { raw: read.raw ?? {}, version: read.version };
+                    } });
                 context.assertCurrent();
-                const rawSettings = baseline.format === 'empty' ? {} : baseline.raw;
-                if (rawSettings !== null) capturedSource = { raw: rawSettings, version: baseline.version, mode };
+                const rawSettings = baseline.raw;
+                capturedSource = { raw: rawSettings, version: baseline.version, mode };
                 const source = readFreshAcpCatalogSourceV1(rawSettings);
                 if (source.status === 'ready') catalog = { status: 'ready', record: source.record, revision: 'absent', source: 'fresh', sourceSettingsVersion: baseline.version };
                 else {

@@ -45,7 +45,8 @@ const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/act
 const { createVoiceAgentSettingsCatalogReader } = await import('@/sync/ops/actions/voiceAgentSettingsCatalog');
 const { createScmDiffSummarySettingsCatalogReader } = await import('@/sync/ops/actions/scmDiffSummarySettingsCatalog');
 const { useResumeCapabilityOptions } = await import('@/agents/hooks/useResumeCapabilityOptions');
-const { useAcpCatalog } = await import('@/sync/store/useAcpCatalog');
+const { useAcpCatalog, useAcpCatalogForServer } = await import('@/sync/store/useAcpCatalog');
+const { resetAccountSettingsRawSnapshotsForTests, retainAccountSettingsRawSnapshot } = await import('@/sync/engine/settings/accountSettingsRawSnapshot');
 beforeAll(loadSyncSingletonForTests);
 let scope: { serverId: string; accountId: string };
 let raw: Record<string, unknown>;
@@ -93,10 +94,14 @@ beforeEach(async () => {
         return new Response(null, { status: 404 });
     });
     scope = await activateHome('a');
+    // Tests replace the served Settings document without moving its version; start each without an admitted copy.
+    resetAccountSettingsRawSnapshotsForTests();
 });
 afterEach(async () => {
     await standardCleanup();
     resetAcpCatalogEngineForTests(); resetAcpCatalogSnapshotsForTests();
+    // Each test serves its own Settings document at a reused version; the admitted document is per fixture lifetime.
+    resetAccountSettingsRawSnapshotsForTests();
     await disconnectActiveServerConnection();
     // Account-owned maintenance outlives the focused view; retire the fixture credentials too.
     for (const [serverUrl, serverId] of testHomes) await TokenStorage.removeCredentialsForServerUrl(serverUrl, { serverId });
@@ -104,6 +109,26 @@ afterEach(async () => {
     retireActiveServerAccountScopeLifetime(); resetRuntimeFetch();
 });
 describe('ACP captured Account row snapshots', () => {
+    it('settles an unknown Home without borrowing the active Account catalog', async () => {
+        const hook = await renderHook(() => useAcpCatalogForServer('unknown-resume-home'));
+        await vi.waitFor(() => expect(hook.getCurrent().catalog).toEqual({ status: 'unavailable', reason: 'unknown_home' }));
+        expect(hook.getCurrent().snapshot).toBeNull();
+    });
+
+    it.each([null, undefined])('observes the active Home when the route Home is %s', async serverId => {
+        const hook = await renderHook(() => useAcpCatalogForServer(serverId));
+        await vi.waitFor(() => expect(hook.getCurrent().snapshot?.catalog).toMatchObject({ status: 'ready', revision: 3 }));
+        expect(hook.getCurrent().snapshot?.scope).toEqual(scope);
+    });
+
+    it('observes a routed Home using its own credential-bound Account', async () => {
+        const routedScope = scope;
+        await activateHome('b');
+        const hook = await renderHook(() => useAcpCatalogForServer(routedScope.serverId));
+        await vi.waitFor(() => expect(hook.getCurrent().snapshot?.catalog).toMatchObject({ status: 'ready', revision: 3 }));
+        expect(hook.getCurrent().snapshot?.scope).toEqual(routedScope);
+    });
+
     it.each([false, true])('retains a cold stale catalog only while its captured Account is admitted (retired: %s)', async retired => {
         const first = createDeferred<Response>();
         const trailing = createDeferred<Response>();
@@ -208,6 +233,21 @@ describe('ACP captured Account row snapshots', () => {
         expect(await readAcpCatalog(scope)).toMatchObject({ catalog: { status: 'ready', source: 'predecessor',
             record: { definitions: [{ launch: { kind: 'command', command: 'custom-kiro-cli', args: ['acp'] },
                 runtime: { stderrRules: KIRO_ACP_STDERR_RULES } }] } } });
+    });
+    it('projects an absent row from the Settings document Sync already admitted instead of reading it again', async () => {
+        row = { status: 'absent' };
+        let settingsReads = 0;
+        setRuntimeFetch(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 4 }));
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v2/account/settings') { settingsReads += 1; return Response.json({ version: 4, content: { t: 'plain', v: raw } }); }
+            if (path === ACP_CATALOG_ROWS_ROUTE_V1) return Response.json(row);
+            return new Response(null, { status: 404 });
+        });
+        retainAccountSettingsRawSnapshot(scope, 4, null);
+        expect(await readAcpCatalog(scope)).toMatchObject({ catalog: { status: 'ready', revision: 'absent' }, source: { raw: {}, version: 4 } });
+        expect(settingsReads).toBe(0);
     });
     it('retains the admitted row revision when malformed sibling definitions make the inventory partial', async () => {
         row = { status: 'present', revision: 10, content: { t: 'plain', v: { v: 1,
