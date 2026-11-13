@@ -53,7 +53,6 @@ import {
   resolveDaemonStartAdmission,
   resolveStackDaemonStartRequested,
 } from './utils/auth/daemon_gate.mjs';
-import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { buildServerRuntimeEnv } from './utils/server/server_env.mjs';
 import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mode.mjs';
 import { cmd, sectionTitle } from './utils/ui/layout.mjs';
@@ -239,9 +238,8 @@ async function main() {
   const sourceSnapshot = runtimeLaunchContext.runtimeMode.mode === 'source-snapshot';
   const preparedSourceReload = process.env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD === '1';
   const reuseSourceRuntime = flags.has('--reuse-source-runtime') || preparedSourceReload;
-  if (flags.has('--reuse-source-runtime') && (!sourceSnapshot || !flags.has('--no-dev-targets')
-      || (process.env.HAPPIER_DEV_TARGET_EXECUTION !== '1' && !preparedSourceReload))) {
-    throw new Error('[source-bundle] runtime reuse is restricted to prepared source reloads or remote source recovery');
+  if (flags.has('--reuse-source-runtime') && (!sourceSnapshot || !flags.has('--no-dev-targets'))) {
+    throw new Error('[source-bundle] runtime reuse requires a source runtime with --no-dev-targets');
   }
   const sourceUi = sourceSnapshot ? resolveSourceQaUiMode({ uiMode: kv.get('--ui') ?? (flags.has('--ui') ? '' : undefined),
     noUi: flags.has('--no-ui'), consumerStackName: autostart.stackName,
@@ -506,8 +504,8 @@ async function main() {
 	      env: baseEnv,
 	    });
 	  }
-	  let daemonScopeEnv = applyStackActiveServerScopeEnv({ env: { ...baseEnv, ...sourceRuntimeEnv }, stackName, cliIdentity: 'default' });
-	  const serviceMode = (daemonScopeEnv.HAPPIER_STACK_SERVICE_MODE ?? '').toString().trim() === '1';
+	  let daemonScopeEnv;
+	  const serviceMode = (baseEnv.HAPPIER_STACK_SERVICE_MODE ?? '').toString().trim() === '1';
   const terminalIsInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
   serverPort = await selectLocalServerPortCandidateForStack({
@@ -524,6 +522,11 @@ async function main() {
   // We auto-prefer the Tailscale HTTPS URL when available, unless explicitly overridden.
   const { publicServerUrl: publicServerUrlPreview } = getPublicServerUrlEnvOverride({ serverPort, env: baseEnv, stackName });
   publicServerUrl = serverRequested ? publicServerUrlPreview : serverConnection.publicServerUrl;
+
+  daemonScopeEnv = await getDaemonEnv({
+    baseEnv: { ...baseEnv, ...sourceRuntimeEnv }, cliHomeDir, stackName, cliIdentity: 'default',
+    internalServerUrl, publicServerUrl,
+  });
 
   const daemonStartAdmission = resolveDaemonStartAdmission({
     daemonRequested: localDaemonRequested,
@@ -709,7 +712,10 @@ async function main() {
 
   baseEnv = (await prepareStackRelay({ repoDir: getRepoDir(rootDir, baseEnv), env: baseEnv,
     runtimeStatePath, signal: pendingSourceStart?.signal })).env;
-  daemonScopeEnv = applyStackActiveServerScopeEnv({ env: { ...baseEnv, ...sourceRuntimeEnv }, stackName, cliIdentity: 'default' });
+  daemonScopeEnv = await getDaemonEnv({
+    baseEnv: { ...baseEnv, ...sourceRuntimeEnv }, cliHomeDir, stackName, cliIdentity: 'default',
+    internalServerUrl, publicServerUrl,
+  });
 
   // Server
   // If a previous run left a server behind, free the port first (prevents false "ready" checks).

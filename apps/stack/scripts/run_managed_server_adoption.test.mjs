@@ -16,6 +16,7 @@ import { buildStubHappierServerSetSource } from './testkit/core/stub_happier_cli
 import { createOuterStackRuntimeStartPublication } from './stack/run_script_with_stack_env.mjs';
 import { withStackRuntimeStartClaim } from './utils/stack/runtime_state.mjs';
 import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
+import { createStackRuntimeCleanupIncompleteError } from './utils/stack/stop_failure.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = dirname(scriptsDir);
@@ -38,7 +39,8 @@ test('outer source replacement claim clears the previous loaded identity and lau
   assert.equal(claimed.sourceRuntimeLaunch, null);
 });
 
-test('source runner recovery adopts a healthy daemon from its frozen selection without stopping or rebuilding it', async (t) => {
+for (const recovery of ['remote', 'printed-local']) {
+test('source runner recovery adopts a healthy daemon from its frozen selection without stopping or rebuilding it via ' + recovery, async (t) => {
   const fixture = await createTempFixture(t, {prefix:'hstack-source-daemon-adoption-'});
   const stackName = 'source-recovery';
   const baseDir = fixture.path('stacks', stackName);
@@ -82,9 +84,10 @@ test('source runner recovery adopts a healthy daemon from its frozen selection w
   const health = await spawnStackOwnedHealthServer({stackName, envPath:join(baseDir, 'env')});
   const serverUrl = `http://127.0.0.1:${health.port}`;
   const env = {...process.env, CI:'1', HAPPIER_STACK_STACK:stackName,
+    HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID:'stack_other__id_other',
     HAPPIER_STACK_STORAGE_DIR:fixture.path('stacks'), HAPPIER_STACK_REPO_DIR:fakeRepo,
     HAPPIER_STACK_ENV_FILE:join(baseDir,'env'), HAPPIER_STACK_RUNTIME_STATE_PATH:runtimeStatePath,
-    HAPPIER_STACK_CLI_HOME_DIR:cliHomeDir, HAPPIER_DEV_TARGET_EXECUTION:'1',
+    HAPPIER_STACK_CLI_HOME_DIR:cliHomeDir, HAPPIER_DEV_TARGET_EXECUTION:recovery === 'remote' ? '1' : '0',
     HAPPIER_STACK_AUTO_AUTH_SEED:'0', HAPPIER_STACK_MIGRATE_CREDENTIALS:'0',
     HAPPIER_STACK_TAILSCALE_SERVE:'0', HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES:'0',
     HAPPIER_STACK_SKIP_REFRESH_DEPS:'1', HAPPIER_STACK_SERVER_COMPONENT:'happier-server-light'};
@@ -101,7 +104,11 @@ test('source runner recovery adopts a healthy daemon from its frozen selection w
   }
   await writeFile(runtimeStatePath, JSON.stringify({stackName, ownerPid:null, sourceRuntimeIdentities:{daemon:{selected:'frozen-identity',loaded:'frozen-identity'}},
     sourceRuntimeLaunch:{entrypoint,cliDir,env:{}}, processes:{daemonPid:daemon.pid,daemonPids:[daemon.pid]}}));
-  const recoveryArgs = ['--runtime=source', '--reuse-source-runtime', '--restart', '--no-dev-targets', '--no-server', `--server-url=${serverUrl}`, '--no-ui', '--no-browser'];
+  const refusal = createStackRuntimeCleanupIncompleteError({ stackName, finalization: { reason: 'cleanup_incomplete' } }, { restart: true });
+  const printedStartArgs = refusal.recovery.split(' && ').at(-1).split(' ').slice(4);
+  const recoveryArgs = [...(recovery === 'remote'
+    ? ['--runtime=source', '--reuse-source-runtime', '--restart', '--no-dev-targets'] : printedStartArgs),
+    '--no-server', `--server-url=${serverUrl}`, '--no-ui', '--no-browser'];
   // stack start claims the runtime before run.mjs publishes its own adoption.
   // Exercise both real writers so the outer claim cannot erase that evidence.
   const restoreEnv = withPatchedProcessEnv(null, {HAPPIER_STACK_STORAGE_DIR:env.HAPPIER_STACK_STORAGE_DIR});
@@ -119,15 +126,18 @@ test('source runner recovery adopts a healthy daemon from its frozen selection w
   let output = '';
   runner.stdout.on('data', data => { output += String(data); });
   runner.stderr.on('data', data => { output += String(data); });
-  await waitForOutput(() => output + (existsSync(stopMarker) ? '\nunexpected-stop' : ''), /unexpected-stop|keeping existing daemon|daemon already running/i,
+  await waitForOutput(() => output + (existsSync(stopMarker) ? '\nunexpected-stop' : ''), /unexpected-stop|keeping existing daemon|daemon already running|start: already running/i,
     runServerReadyTimeoutMs, () => runner.exitCode !== null || runner.signalCode !== null);
   await assert.rejects(readFile(stopMarker), {code:'ENOENT'}, 'a healthy frozen daemon must not receive stop during runner recovery');
-  const state = JSON.parse(await readFile(runtimeStatePath,'utf8'));
-  assert.equal(state.ownerPid, runner.pid, output);
-  assert.equal(state.processes.daemonPid, daemon.pid);
-  assert.deepEqual(state.sourceRuntimeIdentities.daemon, {selected:'frozen-identity',loaded:'frozen-identity'});
+  // Recovery may adopt a foreground owner or settle through the idempotent
+  // start path. Both must preserve the healthy daemon and its frozen selection.
+  const settled = JSON.parse(await readFile(runtimeStatePath, 'utf8'));
+  assert.equal(settled.processes.daemonPid, daemon.pid);
+  assert.deepEqual(settled.sourceRuntimeIdentities.daemon, {selected:'frozen-identity',loaded:'frozen-identity'});
   assert.equal((await checkDaemonStatePingAware(cliHomeDir,{serverUrl,env:daemonEnv})).status,'running');
 });
+
+}
 
 async function createFakeMonorepo(rootDir) {
   await mkdir(join(rootDir, 'node_modules'), { recursive: true });

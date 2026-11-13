@@ -12,7 +12,7 @@ export function createStackRuntimeCleanupIncompleteError(actions, { stackName = 
     ? null
     : `hstack stack stop ${stackName} --yes --no-docker`
       + (sessionsRemain ? ` --preserve-daemon && hstack stack daemon ${stackName} stop --json` : '')
-      + (restart ? ` && hstack stack start ${stackName} --restart --reuse-source-runtime` : '');
+      + (restart ? ` && hstack stack start ${stackName} --runtime=source --restart --reuse-source-runtime --no-dev-targets` : '');
   return Object.assign(new Error(
     `[stack] ${stackName} stop cleanup is incomplete (${describeStackRuntimeCleanupFailure(actions)})`
       + (recovery ? `. Recovery: ${recovery}` : ''),

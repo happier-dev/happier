@@ -108,7 +108,7 @@ for (const placement of ['plain-local', 'prepared-local', 'prepared-remote']) {
   });
 }
 
-test('source handoff rejects unprepared local reuse and invalid borrowed origins', async t => {
+test('source recovery accepts local reuse and rejects invalid handoff placement and borrowed origins', async t => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'handoff-rejections' });
   const env = { ...process.env, HAPPIER_STACK_STACK: fixture.stackName,
@@ -116,12 +116,12 @@ test('source handoff rejects unprepared local reuse and invalid borrowed origins
     HAPPIER_STACK_REPO_DIR: rootDir, HAPPIER_STACK_PREPARED_SOURCE_RELOAD: '', HAPPIER_DEV_TARGET_EXECUTION: '' };
   const args = [join(rootDir, 'scripts/run.mjs'), '--json', '--runtime=source'];
   const unprepared = await runNode([...args, '--no-dev-targets', '--reuse-source-runtime'], { cwd: rootDir, env });
-  assert.notEqual(unprepared.code, 0, unprepared.stdout);
-  assert.match(unprepared.stderr, /runtime reuse is restricted/u);
+  assert.equal(unprepared.code, 0, unprepared.stderr);
+  assert.equal(JSON.parse(unprepared.stdout).launchMode, 'source-snapshot');
   const misplaced = await runNode([...args, '--reuse-source-runtime'], { cwd: rootDir,
     env: { ...env, HAPPIER_STACK_PREPARED_SOURCE_RELOAD: '1' } });
   assert.notEqual(misplaced.code, 0, misplaced.stdout);
-  assert.match(misplaced.stderr, /runtime reuse is restricted/u);
+  assert.match(misplaced.stderr, /runtime reuse requires/u);
   for (const origin of ['file:///fixture', 'http://fixture.invalid/path', 'http://user:password@fixture.invalid']) {
     const result = await runNode([...args, '--no-dev-targets', `--prepared-borrowed-webapp-origin=${origin}`], { cwd: rootDir, env });
     assert.notEqual(result.code, 0, result.stdout);
