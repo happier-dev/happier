@@ -52,6 +52,17 @@ describe('SectionActionButton', () => {
         const host = screen.findHostByTestId('members.pick');
         expect(host?.props.accessibilityState?.expanded ?? host?.props['aria-expanded']).toBe(true);
     });
+
+    it('starts a text-only action on its label, with no empty glyph slot before it (DEPLOY-REACCEPT-1113 D5)', async () => {
+        const screen = await renderScreen(
+            <SectionActionButton testID="definition.edit" title="Edit" onPress={() => {}} />,
+        );
+        // The button component the section action renders (its props name its display), not a host node.
+        const [button] = screen.root.findAll((node) => typeof node.type !== 'string' && node.props.display === 'inverted');
+        expect(button).toBeDefined();
+        expect('leading' in button!.props).toBe(false);
+        expect('trailing' in button!.props).toBe(false);
+    });
 });
 
 describe('SectionButtonRow', () => {

@@ -8,7 +8,8 @@ import { Icon, type IconName } from '@/components/ui/icons/Icon';
  * A section's trailing action (`ItemGroup` `action`): a quiet text button with a glyph, such as
  * "+ Add member", "Refresh" or "Invite". It never competes with the page's one primary action.
  * An action that goes somewhere else ("Browse all") is a `destination`: its title is followed by the
- * same onward caret a destination row draws, instead of a leading glyph.
+ * same onward caret a destination row draws, instead of a leading glyph. A text-only action ("Edit", "Move…")
+ * draws no glyph slot, so its label starts on the section's text edge when it wraps beneath the description.
  */
 export const SectionActionButton = React.memo(function SectionActionButton(props: Readonly<{
     testID?: string;
@@ -26,6 +27,7 @@ export const SectionActionButton = React.memo(function SectionActionButton(props
 } & (
     | Readonly<{ icon: IconName; destination?: never }>
     | Readonly<{ icon?: never; destination: true }>
+    | Readonly<{ icon?: never; destination?: never }>
 )>) {
     const { theme } = useUnistyles();
     return (
@@ -38,7 +40,7 @@ export const SectionActionButton = React.memo(function SectionActionButton(props
             accessibilityHint={props.accessibilityHint}
             {...(props.destination
                 ? { trailing: <Icon name="caret-right" size={14} color={theme.colors.text.secondary} /> }
-                : { leading: <Icon name={props.icon} size={14} color={theme.colors.text.secondary} /> })}
+                : props.icon ? { leading: <Icon name={props.icon} size={14} color={theme.colors.text.secondary} /> } : {})}
             textStyle={{ color: theme.colors.text.secondary }}
             disabled={props.disabled}
             loading={props.loading}
