@@ -11,6 +11,28 @@ import { installDropdownCommonModuleMocks } from './dropdownTestHelpers';
 installDropdownCommonModuleMocks();
 
 describe('useSelectableMenu (allowEmptySelection)', () => {
+  it('finds the selected late arrival across groups, searches it, and restores it after clearing', async () => {
+    const { useSelectableMenu } = await import('./useSelectableMenu');
+    const selected: SelectableMenuItem = { id: 'chosen', title: 'Shared model', category: 'team' };
+    const hook = await renderHook(({ items }: { items: readonly SelectableMenuItem[] }) => useSelectableMenu({
+      items, initialSelectedId: selected.id, onRequestClose: () => {}, open: true,
+    }), { initialProps: { items: [] as readonly SelectableMenuItem[] } });
+    try {
+      expect(hook.getCurrent().selectedIndex).toBe(-1);
+      expect(hook.getCurrent().filteredCategories).toEqual([]);
+      await hook.rerender({ items: [
+        { id: 'own', title: 'Own model', category: 'own' }, selected,
+        { id: 'native', title: 'Native model', category: 'native' },
+      ] });
+      expect(hook.getCurrent().allItems[hook.getCurrent().selectedIndex]?.id).toBe(selected.id);
+      expect(hook.getCurrent().filteredCategories.map(group => group.id)).toEqual(['own', 'team', 'native']);
+      await act(async () => { hook.getCurrent().handleSearchChange('SHARED'); });
+      expect(hook.getCurrent().allItems).toEqual([selected]);
+      expect(hook.getCurrent().selectedIndex).toBe(0);
+      await act(async () => { hook.getCurrent().handleSearchChange(''); });
+      expect(hook.getCurrent().allItems[hook.getCurrent().selectedIndex]?.id).toBe(selected.id);
+    } finally { await hook.unmount(); }
+  });
   it('keeps keyboard selection work local in a 54,935-item source and admits a real replacement', async () => {
     const { useSelectableMenu } = await import('./useSelectableMenu');
     let identityReads = 0;

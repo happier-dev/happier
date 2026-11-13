@@ -44,6 +44,47 @@ async function startAdding(screen: Awaited<ReturnType<typeof renderScreen>>, inp
 }
 
 describe('ShareSheet full presentation', () => {
+    it('keeps a selected grant while folded directories become searched asynchronous results across kinds', async () => {
+        const chosen = presentSharePrincipal({ ref: { kind: 'account', accountId: 'chosen' }, name: 'Shared person' });
+        const candidate = presentSharePrincipal({ ref: { kind: 'account', accountId: 'other' }, name: 'Shared colleague' });
+        const candidates = [candidate,
+            presentSharePrincipal({ ref: { kind: 'team', teamId: 'design' }, name: 'Shared Team' }),
+            presentSharePrincipal({ ref: { kind: 'group', teamId: 'design', groupId: 'editors' }, name: 'Shared Group' }),
+        ];
+        const state: ShareSheetModel = { ...model, grants: [{
+            grant: chosen.ref, principal: chosen, level: { kind: 'editable', value: 'view', options: ['view'] },
+            removal: { kind: 'allowed' }, operation: { kind: 'idle' },
+        }], directory: { query: '', sections: candidates.map(candidate => ({
+            kind: candidate.ref.kind, title: candidate.ref.kind, status: 'idle', candidates: [],
+            cursor: null, hasMore: false, loadingMore: false,
+            resolveCandidates: async () => (candidate.ref.kind === 'account' ? [chosen, candidate] : [candidate]).map(principal => ({
+                principal, addition: { kind: 'allowed' as const }, operation: { kind: 'idle' as const },
+            })),
+        })) } };
+        const build = (query: string, revealSuggestions: boolean) => buildShareSheetSelectionStep({
+            model: { ...state, directory: { ...state.directory, query } }, actions, adapter,
+            presentation: 'full', idPrefix: '', onExpand: noop, revealSuggestions,
+        });
+        const collapsed = build('', false);
+        expect(collapsed.sections.some(section => section.id === 'directory-controls')).toBe(true);
+        const searched = build('shared', true);
+        for (const step of [collapsed, searched]) {
+            const grants = step.sections.filter(section => section.kind === 'static')
+                .flatMap(section => section.options).filter(option => option.id === chosen.key);
+            expect(grants).toHaveLength(1);
+            expect(grants[0]?.label).toBe(chosen.displayName);
+        }
+        const directories = searched.sections.filter(section => section.kind === 'dynamic');
+        expect(directories).toHaveLength(3);
+        for (const directory of directories) {
+            const result = await directory.resolve('shared', new AbortController().signal);
+            // Directories are presented account, group, team by their canonical order.
+            const expected = candidates.find(candidate => directory.id === `directory:${candidate.ref.kind}`);
+            expect(expected).toBeDefined();
+            expect(result.options.map(option => option.id)).toEqual([expected!.key]);
+        }
+        expect(build('', false).sections.map(section => section.id)).toEqual(collapsed.sections.map(section => section.id));
+    });
     it('keeps browse entries above asynchronous suggestions', () => {
         const step = buildShareSheetSelectionStep({ model: { ...model, directory: { query: '', sections: [{
             kind: 'account', title: 'People', status: 'idle', candidates: [], cursor: null, hasMore: false,

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { foldUnavailableRows } from './foldUnavailableRows';
+import { filterSelectionListSections } from '@/components/ui/selectionList/filterSelectionListSections';
+import type { SelectionListOption, SelectionListSectionDescriptor } from '@/components/ui/selectionList/_types';
+type SelectionListStaticSection = Extract<SelectionListSectionDescriptor, { kind: 'static' }>;
 
 type Row = Readonly<{ id: string; unavailable?: boolean }>;
 type Section = Readonly<{
@@ -10,6 +13,26 @@ type Section = Readonly<{
 }>;
 
 describe('foldUnavailableRows', () => {
+  it('preserves a selected unavailable search match across sections after a cold inventory arrives', () => {
+    const selected = { id: 'selected', label: 'Shared model', disabled: true } satisfies SelectionListOption;
+    const fold = (sections: readonly SelectionListStaticSection[]) => foldUnavailableRows<SelectionListOption, SelectionListStaticSection>({
+      sections, isUnavailable: row => row.disabled === true,
+      group: (options, title) => ({ kind: 'static', id: 'unavailable', title, options }), title: 'Unavailable',
+    });
+    expect(fold([])).toEqual([]); // This pure owner has no loading/ready authority.
+    const settled = fold([
+      { kind: 'static', id: 'own', options: [{ id: 'own', label: 'Own model' }, { id: 'other', label: 'Other', disabled: true }] },
+      { kind: 'static', id: 'team', options: [selected] },
+      { kind: 'static', id: 'native', options: [{ id: 'native', label: 'Native model' }] },
+    ]);
+    expect(settled.map(section => section.id)).toEqual(['own', 'native', 'unavailable']);
+    const matches = filterSelectionListSections(settled, 'SHARED');
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatchObject({ id: 'unavailable', options: [selected] });
+    const group = settled.at(-1)!;
+    expect(group.options.find(row => row.id === selected.id)).toBe(selected);
+    expect(filterSelectionListSections(settled, '')).toBe(settled);
+  });
   it('moves every unusable row into one trailing counted group and drops sections it empties', () => {
     const sections: Section[] = [
       {

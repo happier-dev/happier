@@ -15,6 +15,30 @@ import type { SelectionListOption } from '../_types';
  * These tests pin the contract independent of the React orchestrator.
  */
 describe('SelectionListRenderPlan (R14 extracted)', () => {
+    it('keeps query-projected folded matches beside cold and settled asynchronous sections', async () => {
+        const { synthesizeSelectionListRenderPlan } = await import('../SelectionListRenderPlan');
+        const selected = { id: 'chosen', label: 'Shared model' } satisfies SelectionListOption;
+        const closed = [{ id: 'disclosure', label: 'Unavailable (1)' }];
+        const sections = [
+            { kind: 'static' as const, id: 'own', options: [{ id: 'own', label: 'Shared local' }] },
+            { kind: 'static' as const, id: 'fold', options: closed, filterOptions: () => [closed[0]!, selected] },
+            { kind: 'dynamic' as const, id: 'remote', showSkeletonsOnFirstLoad: true, resolve: async () => ({ options: [selected] }) },
+        ];
+        const args = { sections, inputValue: 'shared', filterQuery: 'shared' };
+        const cold = synthesizeSelectionListRenderPlan({ ...args, dynamicSectionStates: new Map([
+            ['remote', { status: 'idle' as const, options: [], lastSuccessOptions: undefined }],
+        ]) });
+        expect(cold.map(section => section.id)).toEqual(['own', 'fold', 'remote']);
+        expect(cold[1]?.options).toEqual([closed[0], selected]);
+        expect(cold[2]).toMatchObject({ dynamicState: 'loading', options: [] });
+        const settled = synthesizeSelectionListRenderPlan({ ...args, dynamicSectionStates: new Map([
+            ['remote', { status: 'success' as const, options: [selected], lastSuccessOptions: undefined }],
+        ]) });
+        expect(settled[2]?.options[0]).toBe(selected);
+        expect(settled[2]?.dynamicState).toBeUndefined();
+        const cleared = synthesizeSelectionListRenderPlan({ ...args, inputValue: '', filterQuery: '', dynamicSectionStates: new Map() });
+        expect(cleared[1]?.options).toEqual(closed);
+    });
     it.each(['idle', 'loading', 'error', 'success'] as const)(
         'activates current descriptor bindings for retained options in the %s state',
         async (status) => {
