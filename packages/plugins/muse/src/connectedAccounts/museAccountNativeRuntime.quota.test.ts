@@ -80,6 +80,17 @@ it.each([true, false])('reads account allowance on demand through OAuth-only MSP
   } finally { await f.dispose(); }
 });
 
+it('refreshes an imported OAuth login with no invented expiry', async () => {
+  const f = await fixture({ result: sample });
+  f.values.set('nativeObtainedVia', 'native-import');
+  f.values.delete('expiresAtMs');
+  try {
+    await expect(museConnectedAccountRuntime.quota!(f.context)).resolves.toMatchObject({ limits: [{ id: 'weekly', used: 9 }, { id: 'window', used: 6 }] });
+    expect((await f.audit()).methods).toEqual(['initialize', 'initialized', 'usage/refresh']);
+    await f.assertCleanedUp();
+  } finally { await f.dispose(); }
+});
+
 it('hands native -32080 retryAfterMs to the existing provider backoff owner without retrying', async () => {
   const f = await fixture({ error: { code: -32080, message: 'synthetic-sensitive',
     data: { kind: 'usageRefreshRateLimited', retryable: true, retryAfterMs: 54321 } } });
@@ -101,7 +112,8 @@ it.each([
   const f = await fixture({ error: { code, message: 'synthetic-sensitive', data } });
   try {
     const error = await museConnectedAccountRuntime.quota!(f.context).catch(error => error);
-    expect(error).toMatchObject({ code: 'plugin_connected_account_usage_unavailable', data: { details: { code, ...data } } });
+    expect(error).toBeInstanceOf(QuotaFetchError);
+    expect(error).toMatchObject({ providerCode: String(code), quotaFetchErrorCode: code === -32081 ? 'missing_auth' : 'network' });
     expect(String(error)).not.toContain('synthetic-sensitive');
     await f.assertCleanedUp();
   } finally { await f.dispose(); }

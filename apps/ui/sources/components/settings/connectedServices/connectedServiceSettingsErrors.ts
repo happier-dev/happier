@@ -79,6 +79,13 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         : t('connectedServices.errors.generic');
 
     switch (code) {
+        case '-32081':
+            return t('connectedServices.errors.quotaRefreshNoLogin');
+        case '-32082':
+            return t('connectedServices.errors.quotaRefreshMintFailed');
+        case '-32080':
+        case 'provider_backoff':
+            return t('connectedServices.errors.quotaRefreshRateLimited');
         case 'action_account_scope_changed':
             return t('connectedServices.errors.accountConfigurationChanged');
         case 'connected_account_purpose_catalog_unavailable':

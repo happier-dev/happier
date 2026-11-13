@@ -4943,6 +4943,9 @@ const enConnectedServices = {
       'This account already has the maximum number of connected accounts. Disconnect one you no longer need and try again.',
     invalidGroup:
       'This account group is invalid. Review its settings and try again.',
+    quotaRefreshNoLogin: "Sign in again to refresh usage.",
+    quotaRefreshMintFailed: "The provider could not mint a usage credential.",
+    quotaRefreshRateLimited: "Usage refresh is rate limited.",
     quotaRefreshFailed: 'Couldn’t refresh usage.',
     quotaRefreshRetryAt: ({ error, time }: { error: string; time: string }) => `${error} Try again after ${time}.`,
     requestFailedWithStatus: ({ status }: { status: number }) =>

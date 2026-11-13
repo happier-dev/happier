@@ -314,9 +314,15 @@ async function runLoad(
             // Manual refresh still goes through the canonical runtime admission.
             if (snapshot) entry.supported = true;
             entry.error = null;
-            if (read?.status === 'error' && snapshot?.state !== 'not_loaded') {
+            // A failure answers this client's own refresh request, or explains missing usage. A background
+            // failure keeps last-known meters on screen without an error: the producer only re-fetches once a
+            // snapshot is past its freshness bound, so staleness stays the consumer's signal.
+            if (read?.status === 'error' && snapshot?.state !== 'not_loaded'
+                && (entry.refreshSinceFetchedAt !== null || !snapshot?.meters.length)) {
                 // Provider messages, headers and status codes stay diagnostic-only, never user-facing copy.
-                const error = t('connectedServices.errors.quotaRefreshFailed');
+                const error = diagnostic?.code
+                    ? resolveConnectedServiceSettingsErrorMessage({ code: diagnostic.code })
+                    : t('connectedServices.errors.quotaRefreshFailed');
                 // A retry time already past is no guidance; the next read says what is true then.
                 entry.error = typeof diagnostic?.retryAtMs === 'number' && diagnostic.retryAtMs > Date.now()
                     ? t('connectedServices.errors.quotaRefreshRetryAt', {

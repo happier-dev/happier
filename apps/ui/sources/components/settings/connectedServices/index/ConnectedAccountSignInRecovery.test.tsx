@@ -24,7 +24,7 @@ describe('Connected account sign-in recovery', () => {
             testID="account" title="Work" identityLabel="work@example.test" roles={[{ key: 'pool:work', icon: 'stack', label: 'Work pool', active: true }]}
             signedOut={null} legacyServiceId={null} accountId="work"
             star={<IconButton testID="account:defaults" iconName="star" accessibilityLabel="Defaults" onPress={defaults} />}
-            onOpen={open} facts={{ ...facts, planLabel: 'Pro', usage: { kind: 'error', retry }, refresh }}
+            onOpen={open} facts={{ ...facts, planLabel: 'Pro', usage: { kind: 'error', retry, error: 'Sign in again' }, refresh }}
             now={0} legacyServiceMarkId={null} agentIds={[]}
         />);
         expect(screen.getTextContent()).toContain('Work pool');

@@ -4068,10 +4068,10 @@ export class ConnectedServiceQuotasCoordinator {
       const status = providerHttpStatusForHealth(deferred ? previousFailure?.status : failure?.status);
       const code = deferred ? previousFailure?.code
         ?? (this.failureStateByBindingKey.get(key)?.providerDirected ? 'provider_backoff' : undefined)
-        : failure?.quotaFetchErrorCode;
-      const safeCode = typeof code === 'string'
-        && ['auth_failure', 'missing_auth', 'network', 'malformed', 'provider_backoff'].includes(code)
-        ? code : undefined;
+        : failure?.providerCode ?? failure?.quotaFetchErrorCode ?? failure?.code;
+      // Keep the producer's typed cause. The usage diagnostic schema owns validation;
+      // provider messages and response content are never copied into publication.
+      const safeCode = typeof code === 'string' ? code : undefined;
       const snapshot: ProviderAccountUsageSnapshotV1 = { ...lastKnown, state: 'error_last_known_good', diagnostics: [{
         kind: 'provider_http', ...(safeCode ? { code: safeCode } : {}),
         ...(status === undefined ? {} : { status }), observedAtMs: now,

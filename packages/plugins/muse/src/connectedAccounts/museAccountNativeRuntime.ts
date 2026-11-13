@@ -45,7 +45,10 @@ export const museConnectedAccountRuntime: ConnectedAccountRuntime = {
         status: 429, quotaFetchErrorCode: 'provider_backoff', providerCode: '-32080',
         retryAfterMs: typeof failure.retryAfterMs === 'number' ? failure.retryAfterMs : undefined,
       });
-      if (failure.code === -32081 || failure.code === -32082) return readMuseQuotaObservation(failure);
+      if (failure.code === -32081 || failure.code === -32082) throw new QuotaFetchError('Muse usage refresh is unavailable.', {
+        quotaFetchErrorCode: failure.code === -32081 ? 'missing_auth' : 'network',
+        providerCode: String(failure.code),
+      });
       throw error;
     } finally {
       try { await msp?.dispose(); }

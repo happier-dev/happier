@@ -10,7 +10,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { __resetConnectedServiceQuotaSnapshotStore } from '@/hooks/server/connectedServices/connectedServiceQuotaSnapshotStore';
 import { createQualifiedQuotaTestHarness } from '@/hooks/server/connectedServices/qualifiedConnectedAccountQuotaTestHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { ConnectedAccountIndexLiveFacts, ConnectedAccountIndexActions, ConnectedAccountIndexStatusLines } from './ConnectedAccountIndexRow';
+import { ConnectedAccountIndexLiveFacts, ConnectedAccountIndexActions, ConnectedAccountIndexStatusLines, ConnectedAccountUsageFreshnessLine, ConnectedAccountIndexUsageBlock } from './ConnectedAccountIndexRow';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -91,13 +91,20 @@ it('leaves a settled fresh card\'s time to the page header, which already says i
     expect(screen.findByTestId('account:as-of')).toBeFalsy();
 });
 
-it('shows a failed refresh beside retained account usage instead of silently clearing pending', async () => {
-    const screen = await renderScreen(<ConnectedAccountIndexStatusLines testID="account" now={2_000} facts={{
+it.each([ConnectedAccountIndexStatusLines, ConnectedAccountUsageFreshnessLine])('shows the owner’s refresh cause beside retained account usage (%#)', async Component => {
+    const screen = await renderScreen(<Component testID="account" now={2_000} facts={{
         usage: { kind: 'meters', meters: [], error: 'Refresh failed' }, planLabel: null, subscription: null, recoveryCredits: null,
         fetchedAt: 1_000, staleSince: null, refreshing: false, refresh: vi.fn(),
     }} />);
     expect(screen.findByTestId('account:refresh-error')).toBeTruthy();
-    expect(screen.findByTestId('account:as-of')).toBeTruthy();
+    expect(screen.getTextContent()).toContain('Refresh failed');
+    if (Component === ConnectedAccountIndexStatusLines) expect(screen.findByTestId('account:as-of')).toBeTruthy();
+});
+
+it('shows the owner’s cause before any usage figures exist', async () => {
+    const screen = await renderScreen(<ConnectedAccountIndexUsageBlock testID="empty" now={2_000}
+        usage={{ kind: 'error', error: 'Sign in again to refresh usage', retry: vi.fn() }} />);
+    expect(screen.getTextContent()).toContain('Sign in again to refresh usage');
 });
 
 it('gives a failed usage refresh its Retry on the row (QA-CONFIG D3)', async () => {

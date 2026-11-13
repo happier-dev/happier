@@ -252,17 +252,17 @@ describe('useQualifiedConnectedAccountQuota', () => {
         expect(hook.getCurrent().snapshot).toEqual(fresh);
     });
 
-    it.each(['fresh observation', 'producer failure'] as const)(
+    it.each(['fresh observation', 'producer failure', 'native no login', 'native mint failed', 'native rate window'] as const)(
         'keeps an acknowledged refresh pending across shared readers until a %s arrives', async outcome => {
             const hook = await renderHook(() => useQualifiedConnectedAccountQuota(ref), { wrapper: Wrapper });
             const detail = await renderHook(() => useQualifiedConnectedAccountQuota(ref, { refreshMachineId: null }), { wrapper: Wrapper });
             await vi.waitFor(() => expect(hook.getCurrent().snapshot).toEqual(snapshot));
-            const waiting = outcome === 'producer failure'
+            const waiting = outcome !== 'fresh observation'
                 ? { ...snapshot, diagnostics: [{ kind: 'provider_http' as const, status: 429, observedAtMs: 5 }] }
                 : snapshot;
             boundary.refresh.mockImplementation(async () => {
                 boundary.read.mockImplementation(async () => Response.json(quotaTestResponse(waiting,
-                    outcome === 'producer failure' ? 'error' : 'ok', 10)));
+                    outcome !== 'fresh observation' ? 'error' : 'ok', 10)));
                 return Response.json({ success: true });
             });
             await act(async () => { await hook.getCurrent().refresh(); });
@@ -271,10 +271,11 @@ describe('useQualifiedConnectedAccountQuota', () => {
             expect(hook.getCurrent()).toMatchObject({ snapshot: waiting, refreshing: true });
             expect(detail.getCurrent()).toMatchObject({ snapshot: waiting, refreshing: true });
             // The daemon's later publication removes refreshRequestedAt to supply completion.
+            const retryAtMs = Date.now() + 60_000;
             const settled = outcome === 'fresh observation' ? { ...snapshot, fetchedAt: 11 }
-                : { ...snapshot, diagnostics: [{ kind: 'provider_http' as const, status: 429, observedAtMs: 11 }] };
+                : { ...snapshot, diagnostics: [{ kind: 'provider_http' as const, code: outcome === 'native no login' ? '-32081' : outcome === 'native mint failed' ? '-32082' : 'provider_backoff', status: 429, observedAtMs: 11, ...(outcome === 'native rate window' ? { retryAtMs } : {}) }] };
             boundary.read.mockImplementation(async () => Response.json(quotaTestResponse(settled,
-                outcome === 'producer failure' ? 'error' : 'ok')));
+                outcome !== 'fresh observation' ? 'error' : 'ok')));
             await act(async () => {
                 publishHomeAccountChange(boundary.context().serverBasis.serverId,
                     [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1]);
@@ -282,8 +283,11 @@ describe('useQualifiedConnectedAccountQuota', () => {
             await vi.waitFor(() => expect(hook.getCurrent().refreshing).toBe(false));
             expect(hook.getCurrent().snapshot).toEqual(settled);
             expect(detail.getCurrent().snapshot).toEqual(settled);
-            expect(hook.getCurrent().error).toBe(outcome === 'producer failure'
-                ? t('connectedServices.errors.quotaRefreshFailed') : null);
+            expect(hook.getCurrent().error).toEqual(outcome !== 'fresh observation'
+                ? outcome === 'native no login' ? t('connectedServices.errors.quotaRefreshNoLogin')
+                  : outcome === 'native mint failed' ? t('connectedServices.errors.quotaRefreshMintFailed')
+                  : outcome === 'native rate window' ? t('connectedServices.errors.quotaRefreshRetryAt', { error: t('connectedServices.errors.quotaRefreshRateLimited'), time: new Date(retryAtMs).toLocaleString() })
+                  : t('connectedServices.errors.quotaRefreshRateLimited') : null);
             expect(boundary.refresh).toHaveBeenCalledOnce();
         },
     );

@@ -57,7 +57,7 @@ export type ConnectedAccountIndexUsage =
     | Readonly<{ kind: 'meters'; meters: readonly ConnectedAccountIndexMeter[]; error?: string | null }>
     /** Only the meters wait; the row is already there. Two placeholder windows hold the space. */
     | Readonly<{ kind: 'loading' }>
-    | Readonly<{ kind: 'error'; retry: () => void }>
+    | Readonly<{ kind: 'error'; retry: () => void; error: string }>
     /** Keys: the provider reports no limits and bills per use. */
     | Readonly<{ kind: 'noLimits' }>
     | Readonly<{ kind: 'none' }>;
@@ -149,7 +149,7 @@ export const ConnectedAccountIndexUsageBlock = React.memo(function ConnectedAcco
     if (usage.kind === 'error') {
         return (
             <View style={styles.usageLine}>
-                <Text style={styles.quiet} numberOfLines={1}>{t('connectedServicesSettings.usageReadFailed')}</Text>
+                <Text style={styles.quiet} numberOfLines={1}>{usage.error}</Text>
                 <RoundButton
                     testID={`${props.testID}:usage-retry`}
                     size="small"
@@ -190,7 +190,7 @@ export const ConnectedAccountIndexStatusLines = React.memo(function ConnectedAcc
                 <SurfaceStateCard testID={`${props.testID}:refresh-status`} size="line" kind="loading" title={t('connectedServices.quota.refreshing')} />
             ) : null}
             {facts.usage.kind === 'meters' && facts.usage.error ? (
-                <SurfaceFreshnessLine testID={`${props.testID}:refresh-error`} reason={t('connectedServicesSettings.usageReadFailed')} tone="warning"
+                <SurfaceFreshnessLine testID={`${props.testID}:refresh-error`} reason={facts.usage.error} tone="warning"
                     {...(facts.refresh ? { action: { label: t('common.retry'), onPress: facts.refresh } } : {})} />
             ) : null}
             {ownTime ? <SurfaceAsOfLabel at={facts.fetchedAt!} testID={`${props.testID}:as-of`} /> : null}
@@ -361,7 +361,7 @@ export const ConnectedAccountUsageFreshnessLine = React.memo(function ConnectedA
     const { theme } = useUnistyles();
     const { facts } = props;
     if (facts.usage.kind === 'meters' && facts.usage.error) {
-        return <SurfaceFreshnessLine testID={`${props.testID}:refresh-error`} reason={t('connectedServicesSettings.usageReadFailed')} tone="warning"
+        return <SurfaceFreshnessLine testID={`${props.testID}:refresh-error`} reason={facts.usage.error} tone="warning"
                     {...(facts.refresh ? { action: { label: t('common.retry'), onPress: facts.refresh } } : {})} />;
     }
     if (facts.staleSince === null) return null;
@@ -393,7 +393,7 @@ function useQualifiedFacts(account: QualifiedConnectedAccountRef, billedPerUse: 
     const usage: ConnectedAccountIndexUsage = meters.length > 0
         ? { kind: 'meters', meters, error: quota.error }
         : quota.loading ? { kind: 'loading' }
-            : quota.error ? { kind: 'error', retry }
+            : quota.error ? { kind: 'error', retry, error: quota.error }
                 : billedPerUse && snapshot?.meters.length === 0 ? { kind: 'noLimits' } : { kind: 'none' };
     const subscriptionFacts = projectConnectedAccountSubscriptionFacts(
         billedPerUse ? { kind: 'apiKey', keySuffix: null } : null,
@@ -428,7 +428,7 @@ function useLegacyFacts(serviceId: ConnectedServiceId, profileId: string, billed
     const usage: ConnectedAccountIndexUsage = meters.length > 0
         ? { kind: 'meters', meters, error }
         : key && quota.loadingByKey[key] ? { kind: 'loading' }
-            : error ? { kind: 'error', retry }
+            : error ? { kind: 'error', retry, error }
                 : billedPerUse && snapshot?.meters.length === 0 ? { kind: 'noLimits' } : { kind: 'none' };
     return {
         usage,
