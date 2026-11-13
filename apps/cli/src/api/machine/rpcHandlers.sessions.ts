@@ -24,10 +24,18 @@ import type { RpcHandlerRegistrar } from '../rpc/types';
 import type { MachineRpcHandlerDeps, MachineRpcHandlers } from './rpcHandlers';
 import type { RegisterActionSpecRpcHandlersParams } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 
-export function registerMachineSessionRpcHandlers(params: Readonly<{
-  rpcHandlerManager: RpcHandlerManager & RpcHandlerRegistrar;
+/** What the new-Session family needs from the Machine's RPC composition (see `MachineRpcLifecycleRegistration`). */
+export type MachineSessionRpcFamily = Readonly<{
   handlers: MachineRpcHandlers;
   deps?: MachineRpcHandlerDeps;
+}>;
+
+/**
+ * The new-Session Machine RPC family: creation preparation, spawn, spawn-new, server start, fork,
+ * continue-with-replay and continuation reads. Registered by the `sessions` Machine role.
+ */
+export function registerMachineSessionRpcHandlers(params: MachineSessionRpcFamily & Readonly<{
+  rpcHandlerManager: RpcHandlerManager & RpcHandlerRegistrar;
 }>): Readonly<{
   sessionSpawnDirectTargetTransport?: SessionSpawnDirectTargetTransport;
 }> {

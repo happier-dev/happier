@@ -19,13 +19,13 @@ import { t } from '@/text';
  * An ordinary send goes to `submitSessionUserMessage`, the canonical message
  * owner, and the Session keeps running the Agent it already has. When the
  * in-session Agent picker has armed another Agent, the same submission goes
- * here instead: one `session.agentTransition` invocation that stops the source
+ * here instead: one admitted `session.agent.transition` Action that stops the source
  * runtime, commits the target, and admits this exact input through that same
  * message owner on the far side of the cutover.
  *
  * The two destinations are alternatives, never both. This one owns no queue, no
  * retry loop and no progress phases; every fact it reports comes from the
- * daemon's single closed result union.
+ * daemon's closed result union or the Action owner's typed refusal.
  */
 
 export type ArmedAgentContinuationLabels = Readonly<{

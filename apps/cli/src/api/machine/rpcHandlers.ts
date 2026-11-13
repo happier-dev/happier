@@ -41,14 +41,7 @@ import { ExecutionRunPermissionRespondInputSchema } from '@happier-dev/protocol/
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
-import type { VoiceInferenceWorkerHandle } from '@/daemon/voiceInference/voiceInferenceWorker';
-import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
-import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
-import {
-  registerMachineVoiceInferenceRpcHandlers,
-  type MachineVoiceInferenceRpcRegistration,
-} from './rpcHandlers.voiceInference';
 import {
   registerMachineVoiceSpeechRpcHandlers,
   type MachineVoiceSpeechRpcRegistration,
@@ -103,7 +96,7 @@ import {
   registerMachineWorkspaceSyncRpcHandlers,
   type MachineWorkspaceSyncRpcService,
 } from './rpcHandlers.workspaceSync';
-import { registerMachineSessionRpcHandlers } from './rpcHandlers.sessions';
+import type { MachineSessionRpcFamily } from './rpcHandlers.sessions';
 import { registerProjectOpenRpcHandlers } from '@/rpc/handlers/projects/registerProjectOpenRpcHandlers';
 import type { ProjectOpenRuntime } from '@/workspaces/activation/openProject';
 import { registerMachineSessionGoalRpcHandlers } from './rpcHandlers.sessionGoals';
@@ -208,7 +201,6 @@ import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 import { admitSessionHandoffExistingState, type createSessionHandoffPreflightMachineRpc } from '@/session/handoff/sessionHandoffPreflightMachineRpc';
 import type { StoredCredentials } from '@/persistence';
-import type { SessionSpawnDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 import {
   registerExternalActionRpcHandler,
   type ExternalActionRpcRegistrationOptions,
@@ -259,9 +251,9 @@ export type MachineRpcHandlers = {
   isSessionActive?: (sessionId: string) => Promise<boolean>;
   loadLocalSessionMetadata?: (sessionId: string) => Promise<SessionHandoffLocalMetadataSource | null>;
   requestShutdown: () => void;
-  memory?: MemoryWorkerHandle;
+  /** The `memory` role's worker while that role runs; external Session observation feeds it. Its RPC family is the role's. */
+  memory?: Pick<MemoryWorkerHandle, 'attachExternalObservation'>;
   daemonServerWorkScheduler?: Pick<DaemonServerWorkScheduler, 'getSnapshot'>;
-  voiceInference?: VoiceInferenceWorkerHandle;
   machineTransferChannel?: Readonly<{
     onEnvelope: (listener: (payload: MachineTransferReceiveEnvelope) => void) => () => void;
     sendEnvelope: (payload: MachineTransferSendEnvelope) => void;
@@ -287,7 +279,7 @@ export type MachineRpcHandlers = {
       filesystemScope?: PreparedFilesystemTransferScope | null,
     ) => Promise<void | Readonly<{ aborted: boolean }>>;
   }>;
-  preparedMachineTransfer?: Pick<Parameters<typeof registerMachinePreparedTransferRpcHandlers>[0], 'request'>;
+  preparedMachineTransfer?: Pick<Parameters<typeof registerMachinePreparedTransferRpcHandlers>[0], 'request' | 'rawTransferHandlers'>;
   directTransferExport?: Readonly<{
     prepareExportSession: (input: DirectTransferExportPrepareRequest, filesystemScope?: PreparedFilesystemTransferScope, context?: RpcHandlerContext) => Promise<Readonly<{
       transferId: string;
@@ -484,8 +476,11 @@ export type MachineRpcLifecycleRegistration = Readonly<{
   externalSessionPluginAdmissionOwner?: ExternalSessionPluginAdmissionOwner;
   /** The one fenced external-session executor retained for host Action ingress. */
   externalSessionHostActionExecutor?: RpcActionExecutor;
-  /** Exact-daemon Session spawn transport shared with host Action ingress. */
-  sessionSpawnDirectTargetTransport?: SessionSpawnDirectTargetTransport;
+  /**
+   * Inputs of the new-Session RPC family. The `sessions` Machine role registers it on activation
+   * (P03-SESSIONS-SPLIT); machine core registers none of its methods.
+   */
+  sessionsRoleFamily: MachineSessionRpcFamily;
   connectivityResources: readonly Readonly<{
     name: string;
     pause(): void | Promise<void>;
@@ -494,7 +489,6 @@ export type MachineRpcLifecycleRegistration = Readonly<{
   transferRelayV2DownloadOwners: readonly TransferRelayV2DownloadSessionOwner[];
   promptAssetTransfers: MachinePromptAssetTransferRpcRegistration;
   registryTransfers: MachineRegistryTransferRpcRegistration;
-  voiceInference?: MachineVoiceInferenceRpcRegistration;
   voiceSpeech: MachineVoiceSpeechRpcRegistration;
   voiceClientCredentials: MachineVoiceClientCredentialRpcRegistration;
   voiceClientMediatedCredentials: MachineVoiceClientMediatedCredentialRpcRegistration;
@@ -532,7 +526,6 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     rpcHandlerManager, ...params.deps.managedActivity,
   });
   const memoryWorker = handlers.memory ?? null;
-  const voiceInferenceWorker = handlers.voiceInference ?? null;
   const externalSessionOperationExclusion =
     params.deps?.externalSessionOperationExclusion
     ?? createExternalSessionOperationExclusion({
@@ -561,11 +554,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     ...(params.deps?.requesterBootstrapBoundary ? { requesterBootstrapBoundary: params.deps.requesterBootstrapBoundary } : {}),
   });
 
-  const sessionRpcRegistration = registerMachineSessionRpcHandlers({
-    rpcHandlerManager,
-    handlers,
-    deps: { ...params.deps, filesystemEffectAdmission },
-  });
+  const sessionsRoleFamily: MachineSessionRpcFamily = { handlers, deps: { ...params.deps, filesystemEffectAdmission } };
   const externalAction = params.deps?.externalAction;
   if (externalAction) {
     registerExternalActionRpcHandler(rpcHandlerManager, externalAction);
@@ -626,7 +615,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     ...(params.deps?.observeCapabilitiesCliSnapshot
       ? { observeCliSnapshot: params.deps.observeCapabilitiesCliSnapshot }
       : {}),
-    hasSessionAgentTransition: () => rpcHandlerManager.hasHandler(RPC_METHODS.SESSION_AGENT_TRANSITION),
+    hasSessionAgentTransition: () => externalAction !== undefined,
     ...(params.deps?.createCapabilitiesApiClient
       ? { createApiClient: params.deps.createCapabilitiesApiClient }
       : {}),
@@ -705,31 +694,12 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   registerSessionPermissionRpcHandlers({ rpcHandlerManager });
   registerSubagentRpcHandlers({ rpcHandlerManager });
 
-  if (memoryWorker) {
-    registerMachineMemoryRpcHandlers({
-      rpcHandlerManager,
-      memoryWorker,
-    });
-  }
-
   if (handlers.daemonServerWorkScheduler) {
     registerMachineServerWorkRpcHandlers({
       rpcHandlerManager,
       daemonServerWorkScheduler: handlers.daemonServerWorkScheduler,
     });
   }
-
-  const voiceInferenceEnabled = resolveCliFeatureDecision({
-    featureId: 'voice.daemonInference',
-    env: process.env,
-    serverSnapshot: params.deps?.getServerFeaturesSnapshot?.(),
-  }).state === 'enabled';
-  const voiceInferenceRegistration = voiceInferenceWorker && voiceInferenceEnabled
-    ? registerMachineVoiceInferenceRpcHandlers({
-      rpcHandlerManager,
-      voiceInferenceWorker,
-    })
-    : null;
 
   const voiceSpeechRegistration = registerMachineVoiceSpeechRpcHandlers({
     rpcHandlerManager,
@@ -1251,9 +1221,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     cleanupRequesterMachineTerminals: terminalRegistration.cleanupRequesterMachineTerminals,
     projectFiniteExecutionInstalled: Boolean(resolveProjectFiniteRuntime && params.deps?.currentMachineId && params.deps.currentServerId),
     ...(resolveProjectFiniteRuntime ? { resolveProjectFiniteRuntime } : {}),
-    ...(sessionRpcRegistration.sessionSpawnDirectTargetTransport
-      ? { sessionSpawnDirectTargetTransport: sessionRpcRegistration.sessionSpawnDirectTargetTransport }
-      : {}),
+    sessionsRoleFamily,
     externalSessionHostActionExecutor:
       externalSessionsRegistration.hostExternalSessionActionExecutor,
     ...(externalSessionsRegistration.pluginAdmissionOwner
@@ -1271,7 +1239,6 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     voiceSpeech: voiceSpeechRegistration,
     voiceClientCredentials: voiceClientCredentialRegistration,
     voiceClientMediatedCredentials: voiceClientMediatedCredentialRegistration,
-    ...(voiceInferenceRegistration ? { voiceInference: voiceInferenceRegistration } : {}),
     dispose: async () => {
       try {
         await retireFiniteExecution();
@@ -1292,7 +1259,6 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
           voiceSpeechRegistration.dispose(),
           voiceClientCredentialRegistration.dispose(),
           voiceClientMediatedCredentialRegistration.dispose(),
-          ...(voiceInferenceRegistration ? [voiceInferenceRegistration.dispose()] : []),
         ]);
       } finally {
         executionRunRegistration.dispose();

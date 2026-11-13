@@ -48,7 +48,7 @@ Envelope-layout requests retain timing through their existing owner patch and
 divider. This development compatibility path uses the existing layout discriminator;
 it adds no server feature bit or retry after a 400 response.
 
-`packages/protocol/src/sessions/agentTransition.ts` is the single owner. Methods are declared in
+`packages/protocol/src/sessions/agentTransition.ts` owns the request and coordinator result.
 `packages/protocol/src/actions/sessionAgentTransitionActionFamily.ts` declares the mutation Action.
 Its input uses the request below without `v`. The composer operation invokes the real UI Action
 executor, which selects the Session Machine and admits requester custody before daemon execution.
@@ -56,6 +56,8 @@ executor, which selects the Session Machine and admits requester custody before 
 Action failures retain their typed owner code and use the existing Action failure presenter in the
 composer banner. Known refusals preserve the prompt and arm; the canonical Action unknown-outcome
 classification still blocks resend until reconciliation. No raw-RPC fallback is attempted.
+The daemon's input-permission capability follows its installed Account Action executor; it does
+not depend on the retired raw mutation handler. Session-process registration does not offer it.
 
 The request is strict: `{ v: 1, sessionId, expectedCurrentAgentId, selection, input }`. `selection`
 carries `agentId` plus optional `modelId`, `providerConnectionId`, `acpSessionModeId` and
