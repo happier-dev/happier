@@ -399,11 +399,6 @@ export function isAcceptedPendingQueueV2DeliveryAckResponseLoss(error: unknown):
     );
 }
 
-export type PendingQueueDeliveryFailure = Readonly<{
-    localId: string;
-    reason: PendingQueueDeliveryBlockedReason | 'session_input_cancelled';
-}>;
-
 function readResolvedLocalIds(value: unknown): string[] {
     if (!value || typeof value !== 'object') return [];
     const rawLocalIds = (value as Record<string, unknown>).resolvedLocalIds;
@@ -1022,22 +1017,16 @@ export async function listPendingQueueV2ProviderDeliveryLocalIdsFromServer(param
     }
 }
 
-export async function readPendingQueueV2DeliveryFailureByLocalIdFromServer(params: {
+export async function readPendingQueueV2DeliveryStatusByLocalIdFromServer(params: {
     token: string;
     sessionId: string;
     localId: string;
     recipient?: Readonly<{ kind: 'execution_run'; runId: string }>;
     signal?: AbortSignal;
     resolveAuthorizationHeaders?: ResolvePendingQueueAuthorizationHeaders;
-}): Promise<PendingQueueDeliveryFailure | null> {
+}): Promise<PendingDeliveryStatusV1 | null> {
     const entries = await listPendingQueueV2DeliveryStatusesFromServer({ ...params, includeDiscarded: true });
-    const entry = entries.find(row => row.localId === params.localId);
-    if (entry?.deliveryStatus.status === 'discarded' && entry.deliveryStatus.reason === 'session_input_cancelled') {
-        return { localId: params.localId, reason: 'session_input_cancelled' };
-    }
-    if (entry?.deliveryStatus.status !== 'blocked') return null;
-    const reason = entry.deliveryStatus.reason;
-    return reason ? { localId: params.localId, reason } : null;
+    return entries.find(row => row.localId === params.localId)?.deliveryStatus ?? null;
 }
 
 export async function discardPendingQueueV2Messages(params: {

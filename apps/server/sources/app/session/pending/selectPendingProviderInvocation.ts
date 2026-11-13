@@ -82,7 +82,10 @@ export function selectPendingProviderInvocation(params: Readonly<{
     deliveryTiming: PendingClaimDeliveryTiming;
     readRuntimeActivity: () => 'idle' | 'active' | 'unknown';
 }>): PendingProviderInvocationSelection {
-    const ordered = [...params.rows].sort(compareRows);
+    // The final Team refusal remains visible for the original input but cannot
+    // fence independent fresh input after regrant. Never re-dispatch that row.
+    const ordered = params.rows.filter(row => row.deliveryState !== 'blocked'
+        || row.deliveryBlockedReason !== 'team_access_removed').sort(compareRows);
     if (ordered.length === 0) return { deferredReason: 'no_pending' };
     if (ordered[0]!.deliveryState === 'delivering') {
         return { deferredReason: 'waiting_for_predecessor' };

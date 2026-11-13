@@ -760,8 +760,8 @@ describe('sendSessionMessage', () => {
     }, 60_000);
 
     it('returns wait_failed when the current prompt delivery is blocked before transcript materialization', async () => {
-        const readPendingQueueV2DeliveryFailureByLocalIdFromServer = vi.fn(async () => ({
-            localId: 'blocked-local',
+        const readPendingQueueV2DeliveryStatusByLocalIdFromServer = vi.fn(async () => ({
+            status: 'blocked' as const,
             reason: 'runtime_disposed_before_delivery' as const,
         }));
         const materializeNextPendingQueueV2MessageViaHttp = vi.fn(async () => undefined);
@@ -788,7 +788,7 @@ describe('sendSessionMessage', () => {
                 suppressed: false,
             })),
             materializeNextPendingQueueV2MessageViaHttp,
-            readPendingQueueV2DeliveryFailureByLocalIdFromServer,
+            readPendingQueueV2DeliveryStatusByLocalIdFromServer,
         }));
         vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
             fetchEncryptedTranscriptPageAfterSeq,
@@ -851,7 +851,7 @@ describe('sendSessionMessage', () => {
             timeoutMs: expect.any(Number),
         }));
         expect(waitForTranscriptEncryptedMessageByLocalId.mock.calls[0]?.[0]?.timeoutMs).toBeLessThanOrEqual(10_000);
-        expect(readPendingQueueV2DeliveryFailureByLocalIdFromServer).toHaveBeenCalledWith(expect.objectContaining({
+        expect(readPendingQueueV2DeliveryStatusByLocalIdFromServer).toHaveBeenCalledWith(expect.objectContaining({
             token: 'token',
             sessionId: 'sess-1',
             localId: 'blocked-local',

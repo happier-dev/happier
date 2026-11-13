@@ -17,7 +17,7 @@ import {
     materializeNextPendingQueueV2MessageViaReleasedServerSocket,
     markPendingQueueV2DeliveryHandled,
     readAcceptedPendingQueueV2DeliveryRetryDirective,
-    readPendingQueueV2DeliveryFailureByLocalIdFromServer,
+    readPendingQueueV2DeliveryStatusByLocalIdFromServer,
     readPendingQueueV2MessageContentByLocalIdFromServer,
     readPendingQueueV2ActivationEligibilityFromServer,
     resolveAcceptedPendingQueueV2Delivery,
@@ -1490,12 +1490,12 @@ describe('pendingQueueV2Transport', () => {
             },
         });
 
-        await expect(readPendingQueueV2DeliveryFailureByLocalIdFromServer({
+        await expect(readPendingQueueV2DeliveryStatusByLocalIdFromServer({
             token: 'token',
             sessionId: 'session/with spaces',
             localId: 'blocked-local',
         })).resolves.toEqual({
-            localId: 'blocked-local',
+            status: 'blocked',
             reason: 'runtime_disposed_before_delivery',
         });
 
@@ -1523,12 +1523,12 @@ describe('pendingQueueV2Transport', () => {
             },
         });
 
-        await expect(readPendingQueueV2DeliveryFailureByLocalIdFromServer({
+        await expect(readPendingQueueV2DeliveryStatusByLocalIdFromServer({
             token: 'token',
             sessionId: 'session/with spaces',
             localId: 'blocked-local',
         })).resolves.toEqual({
-            localId: 'blocked-local',
+            status: 'blocked',
             reason: 'payload_too_large',
         });
     });

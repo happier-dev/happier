@@ -171,6 +171,8 @@ import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncr
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { registerLocalSessionRpcTarget } from '@/session/transport/rpc/localSessionRpcChannel';
 import { readDaemonState } from '@/persistence';
+import { readHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { readStartedByArg } from '@/cli/readStartedByArg';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { findTranscriptEncryptedMessageByLocalIdV2 } from './transcriptMessageLookup';
 import {
@@ -1229,12 +1231,8 @@ export class ApiSessionClient extends EventEmitter {
                 && session.initialTranscriptAfterSeq >= 0
                     ? Math.trunc(session.initialTranscriptAfterSeq)
                     : null;
-        this.startedByDaemonProcess = (() => {
-            const idx = process.argv.lastIndexOf('--started-by');
-            if (idx < 0) return false;
-            const value = process.argv[idx + 1];
-            return value === 'daemon';
-        })();
+        this.startedByDaemonProcess = readHostedSessionScope()?.end !== undefined
+            || readStartedByArg(process.argv).value === 'daemon';
         this.materializationRuntime = createSessionClientMaterializationRuntime({
             onKeepAliveStateMayHaveChanged: () => this.maybeScheduleUserSocketDisconnect(),
             initialPendingQueueState: readKnownPendingQueueState(session) ?? UNKNOWN_PENDING_QUEUE_STATE,
@@ -5253,7 +5251,10 @@ export class ApiSessionClient extends EventEmitter {
                     this.nonBlockingArchivedPendingDeliveryLocalIds.add(localId);
                     continue;
                 }
-                if (status !== undefined && status.status !== 'discarded') continue;
+                // Home's final Team refusal ends this input's local custody.
+                // Keep the durable refusal visible without fencing fresh input.
+                const refused = status?.status === 'blocked' && status.reason === 'team_access_removed';
+                if (status !== undefined && status.status !== 'discarded' && !refused) continue;
                 if (!this.materializationRuntime.hasPendingQueueMaterializedLocalId(localId)) continue;
                 // Provider acceptance may have begun while the Pending snapshot was read.
                 if (this.terminalPendingSettlementLocalIdsInFlight.has(localId)) continue;

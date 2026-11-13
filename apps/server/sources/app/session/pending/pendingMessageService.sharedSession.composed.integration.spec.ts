@@ -7231,7 +7231,7 @@ describe("pendingMessageService (shared sessions)", () => {
         });
     });
 
-    it('settles an unaccepted Workflow reply when Team access is withdrawn', async () => {
+    it('settles an unaccepted Workflow reply and admits fresh ordinary input after Team access is restored', async () => {
         const owner = await createAccount('withdrawn-workflow-owner');
         const session = await createSession(owner.id);
         const workflow = { purpose: 'invocation' as const, runId: randomUUID(), invocationRecordId: randomUUID() };
@@ -7249,6 +7249,13 @@ describe("pendingMessageService (shared sessions)", () => {
         expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } }))
             .toMatchObject({ deliveryState: 'blocked', deliveryBlockedReason: 'team_access_removed',
                 replyProgress: { outcome: { kind: 'failed' } } });
+        const freshId = localId + '-after-regrant';
+        await enqueuePendingMessage({ actorUserId: owner.id, sessionId: session.id, localId: freshId,
+            ciphertext: 'fresh-input-after-regrant', requestedAction: { v: 1, kind: 'enqueue' } });
+        expect(await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: session.id }))
+            .toMatchObject({ ok: true, didMaterialize: true, message: { localId: freshId } });
+        expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } }))
+            .toMatchObject({ deliveryState: 'blocked', deliveryBlockedReason: 'team_access_removed' });
     });
 
     it("withdraw reports actual removal and never mistakes an absent or accepted request for a restored draft", async () => {

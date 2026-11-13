@@ -790,6 +790,55 @@ describe('target Session input authoring through HTTP', () => {
     expect(result.message).toContain('Team access');
   });
 
+  it.each([
+    { signed: false, target: undefined },
+    { signed: true, target: undefined },
+    { signed: false, target: recipient },
+    { signed: true, target: recipient },
+  ])('observes Team refusal after the user row is committed (signed=$signed, target=$target)', async ({ signed, target }) => {
+    // r1113b recorded the refused user at seq 11 before Pending became blocked;
+    // no corresponding accepted host turn exists. The former fixture returned null.
+    const localId = 'withdrawn-team-materialized';
+    const user = { id: 'cmweikxxt007umcoa6d57pqcj', seq: 11, localId, createdAt: 1794546381518, updatedAt: 1794546381518,
+      sidechainId: target ? 'sidechain-a' : null,
+      content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'No tools. Reply QA_TEAM_DENIED.' } } } };
+    let blocked = false;
+    let scheduled = false;
+    const originalGet = http.get.getMockImplementation()!;
+    http.get.mockImplementation(async (url: string) => {
+      if (url.includes('/messages/by-local-id/')) {
+        if (!scheduled) {
+          scheduled = true;
+          setImmediate(() => {
+            blocked = true;
+            observationSocket.emit('update', { id: 'team-refusal', seq: 12, createdAt: 1794546382712,
+              body: { t: 'pending-changed', sid: sessionId, pendingVersion: 12, pendingCount: 1, pendingBlockedCount: 1 } });
+          });
+        }
+        return { status: 200, data: { message: user } };
+      }
+      if (url.includes('/messages?')) return { status: 200, data: { messages: [user], hasMore: false } };
+      if (url.includes('/turns')) return { status: 200, data: { turns: [] } };
+      if (url.includes('/pending')) return { status: 200, data: { ...(target ? { recipient: target } : {}), pending: [
+        { localId, status: 'queued', deliveryState: blocked ? 'blocked' : 'delivering', deliveryBlockedReason: blocked ? 'team_access_removed' : null },
+      ] } };
+      const response = await originalGet(url);
+      if (url.endsWith('/v2/sessions/' + sessionId)) Object.assign(response.data.session, { active: true });
+      return response;
+    });
+    mockRunReads([{ occurrenceId: 'occurrence-a', current: null, last: null }]);
+    const result = await sendSessionMessage({ credentials, idOrPrefix: sessionId, localId,
+      message: 'No tools. Reply QA_TEAM_DENIED.', ...(target ? { recipient: target } : {}), wait: true, timeoutMs: 100,
+      ...(signed ? { resolveAuthorizationHeaders: () => ({ Authorization: 'Original-requester-proof' }) } : {}) });
+    expect(result).toMatchObject({ ok: false, code: 'wait_failed',
+      admissionResult: { status: 'rejected', code: 'session_input_unauthorized' } });
+    if (!target) {
+      expect(await waitForSessionInputResult({ credentials, idOrPrefix: sessionId, localId, timeoutMs: 100,
+        ...(signed ? { resolveAuthorizationHeaders: () => ({ Authorization: 'Original-requester-proof' }) } : {}) }))
+        .toMatchObject({ ok: true, result: { kind: 'failed' } });
+    }
+  });
+
   it('returns the exact target Pending refusal through Session Send without re-polling or resending', async () => {
     const originalGet = http.get.getMockImplementation()!;
     const pendingReads: string[] = [];

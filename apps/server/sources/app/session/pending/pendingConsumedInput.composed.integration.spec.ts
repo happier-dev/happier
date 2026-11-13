@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { AgentSessionRuntimeEventV1Schema, deriveAccountMachineKeyFromRecoverySecret, renderSessionInputContextPromptV1, type AgentSessionRuntimeEvent } from '@happier-dev/protocol';
 import { decodeBase64 } from 'privacy-kit';
 import Fastify from 'fastify';
+import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 
@@ -13,6 +14,7 @@ import type { Fastify as AppFastify } from '@/app/api/types';
 import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
 import { enableSchemaValidation } from '@/app/api/utils/enableSchemaValidation';
 import { enableErrorHandlers } from '@/app/api/utils/enableErrorHandlers';
+import { registerAccountProfileRoute } from '@/app/api/routes/account/registerAccountProfileRoute';
 import { registerAccountEncryptionRoutes } from '@/app/api/routes/account/registerAccountEncryptionRoutes';
 import { registerSessionListingRoutes } from '@/app/api/routes/session/registerSessionListingRoutes';
 import { registerSessionMessageRoutes } from '@/app/api/routes/session/registerSessionMessageRoutes';
@@ -59,6 +61,8 @@ import { createResourceDataKey } from '../../../../../cli/src/api/encryption/res
 import { writeSessionDataKeyEnvelopeInTx } from '@/app/session/encryption/sessionDataKeyEnvelopePersistence';
 import { inTx } from '@/storage/inTx';
 import { hasCanonicalFollowProviderInputAcceptanceInTx } from '@/app/session/follow/providerInputAcceptance';
+import { waitForSessionInputResult } from '../../../../../cli/src/session/services/sendSessionMessage';
+import { blockPendingQueueV2Delivery } from '../../../../../cli/src/api/session/pendingQueueV2Transport';
 import { sendFileReviewNoteToSession } from '../../../../../cli/src/session/services/sendFileReviewNote';
 import { runWithServerHttpBaseUrl } from '../../../../../cli/src/api/client/serverHttpBaseUrl';
 import { prepareSessionInputForProviderDispatch } from '../../../../../cli/src/agent/runtime/turns/prepareSessionInputForProviderDispatch';
@@ -75,6 +79,7 @@ describe('consumed ACP input → host turn → Pending', () => {
         enableErrorHandlers(app);
         enableAuthentication(app);
         registerAccountEncryptionRoutes(app);
+        registerAccountProfileRoute(app);
         registerSessionListingRoutes(app);
         registerSessionMessageRoutes(app);
         registerSessionFollowRoutes(app);
@@ -89,6 +94,121 @@ describe('consumed ACP input → host turn → Pending', () => {
         await Promise.all([...clients].map(client => client.close()));
         clients.clear();
         vi.unstubAllEnvs();
+    });
+
+    it('observes a committed input refusal through real HTTP and advances the next ordinary input', async () => {
+        harness.resetEnv();
+        const authentication = createPresentUserSessionAccessAuthentication();
+        const accountSecret = new Uint8Array(32).fill(7);
+        const metadata = createTestMetadata({ path: harness.baseDir });
+        const owner = await db.account.create({ data: createSignedAccountContentBinding(tweetnacl.box.keyPair.fromSecretKey(deriveAccountMachineKeyFromRecoverySecret(accountSecret)).publicKey) });
+        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        const credentials = { token, encryption: { type: 'legacy' as const, secret: accountSecret } };
+        const resource = await createResourceDataKey({ credentials, mode: 'e2ee' });
+        if (resource.mode !== 'e2ee') throw new Error('Expected fixture E2EE resource');
+        const sessionKey = resource.dataKey;
+        const sealInput = (text: string) => encodeBase64(encrypt(sessionKey, 'dataKey', { role: 'user', content: { type: 'text', text } }));
+        const session = await db.session.create({ data: { tag: randomUUID(), accountId: owner.id,
+            metadata: encodeBase64(encrypt(sessionKey, 'dataKey', metadata)) } });
+        expect(await inTx(tx => writeSessionDataKeyEnvelopeInTx(tx, { sessionId: session.id,
+            recipientAccountId: owner.id, encryptedDataKey: decodeBase64(resource.dataEncryptionKey),
+            markRecipientChanged: false }))).toMatchObject({ ok: true });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: '{}' } });
+        await db.accessKey.create({ data: { accountId: owner.id, machineId: machine.id, sessionId: session.id, data: 'encrypted' } });
+        const client = new ApiSessionClient(token, {
+            id: session.id, seq: 0, encryptionMode: 'e2ee', encryptionKey: sessionKey, encryptionVariant: 'dataKey',
+            metadata, metadataVersion: 0, agentState: null, agentStateVersion: 0,
+        }, {
+            metadataAuthority: { kind: 'owner', credentials, readCurrentCredentials: async () => credentials },
+            localMachineId: machine.id,
+            initialRegisteredSessionStateFieldMutations: [createInitialHostRuntimeActivityMutation({
+                sessionId: session.id, agentRuntimeApplicability: 'supported',
+            })],
+            transport: { serverId: 'consumed-input-home', serverUrl: origin, resolveToken: async () => token,
+                createSessionSocketTransport: binding => createSessionSocketTransport({ ...binding, token, serverUrl: origin,
+                    accessKeyBinding: 'preestablished' }) },
+        });
+        clients.add(client);
+        const deliveredInputIds = new Set<string>();
+        // Subscribe to pushed input; the runner's consumer below owns draining.
+        client.onUserMessage(message => { if (message.localId) deliveredInputIds.add(message.localId); });
+        expect(await client.claimCurrentSessionPublisherAuthorityForStartup()).toMatchObject({ status: 'claimed' });
+        await client.updateRuntimeActivityProjection({ runtimeActivityState: 'idle', runtimeActivityActiveCount: 0 });
+
+        const localId = 'withdrawn-' + randomUUID();
+        const request = { actorUserId: owner.id, sessionId: session.id, localId, authentication };
+        expect(await enqueuePendingMessage({ ...request, ciphertext: sealInput('No tools. Reply QA_TEAM_DENIED.'),
+            requestedAction: { v: 1, kind: 'enqueue' } }))
+            .toMatchObject({ ok: true });
+        expect(await client.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force',
+            deliveryTiming: 'after_foreground_ready' })).toMatchObject({ type: 'materialized', localId });
+        // Materialization invokes the real host admission/settlement writer.
+        // Live r1113b committed this user before Home refused turn-begin.
+        expect(await db.sessionMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+        })).toMatchObject({ localId, messageRole: 'user' });
+        await runWithServerHttpBaseUrl(origin, async () => {
+            let observedPending!: () => void;
+            const firstPendingRead = new Promise<void>(resolve => { observedPending = resolve; });
+            const get = axios.get.bind(axios);
+            // Instrument the real HTTP boundary without replacing its response.
+            const reads = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+                const response = await get(url, config);
+                if (url.includes('/pending')) observedPending();
+                return response;
+            });
+            try {
+                const result = waitForSessionInputResult({ credentials, idOrPrefix: session.id, localId,
+                    timeoutMs: 5_000, resolveAuthorizationHeaders: () => ({ Authorization: 'Bearer ' + token }) });
+                // Old code can return pending without ever reading Pending. Let
+                // that terminal result reach the assertion, rather than hanging
+                // this test on a read the broken consumer never performs.
+                await Promise.race([firstPendingRead, result]);
+                expect(await blockPendingQueueV2Delivery({ token, sessionId: session.id, localId,
+                    reason: 'team_access_removed' })).toMatchObject({ pendingQueueState: { pendingBlockedCount: 1 } });
+                expect.soft(await result).toMatchObject({ ok: true, result: { kind: 'failed' } });
+            } finally { reads.mockRestore(); }
+        });
+        // The grant owner separately proves regrant admission. This is the
+        // retained queue shape after that boundary: a fresh enqueue, no bypass.
+        expect(await client.reconcilePendingProviderInputCustodyBeforeMaterialization()).toBe(true);
+        const freshId = localId + '-after-regrant';
+        const queue = new MessageQueue2<string>(mode => mode);
+        client.onUserMessage(message => {
+            if (message.localId === freshId && message.content.type === 'text') {
+                deliveredInputIds.add(message.localId);
+                queue.push(message.content.text, 'default');
+            }
+        });
+        const consumer = createSessionProviderInputConsumer({ messageQueue: queue,
+            session: createSessionProviderInputConsumerSessionAdapter(client),
+            pendingQueueDeliveryTiming: 'after_foreground_ready' });
+        const abort = new AbortController();
+        const nextInput = consumer.waitForNextInput({ abortSignal: abort.signal });
+        try {
+            // The public route publishes the committed Pending change; the
+            // storage function alone deliberately does not emit that wake.
+            expect((await axios.post(origin + '/v2/sessions/' + session.id + '/pending', {
+                localId: freshId, ciphertext: sealInput('Fresh prompt'), requestedAction: { v: 1, kind: 'enqueue' },
+            }, { headers: { Authorization: 'Bearer ' + token } })).data).toMatchObject({ didWrite: true });
+            await waitForCondition(() => Promise.resolve(deliveredInputIds.has(freshId)), {
+                timeoutMs: 5_000, intervalMs: 10, label: 'fresh ordinary input pushed past retained Team refusal',
+            });
+            expect(await nextInput).toMatchObject({ message: 'Fresh prompt' });
+        } catch (error) {
+            const rows = await db.sessionPendingMessage.findMany({ where: { sessionId: session.id },
+                select: { localId: true, status: true, deliveryState: true, deliveryBlockedReason: true } });
+            throw new Error(String(error) + JSON.stringify({ rows, state: client.getPendingQueueState(),
+                retained: client.hasPendingProviderInput(localId), fresh: client.hasPendingProviderInput(freshId) }));
+        } finally {
+            abort.abort();
+            await nextInput;
+        }
+        expect(await db.sessionMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId: freshId } },
+        })).toMatchObject({ localId: freshId, messageRole: 'user' });
+        expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } }))
+            .toMatchObject({ deliveryState: 'blocked', deliveryBlockedReason: 'team_access_removed' });
     });
 
     it.each(['retained', 'reconnect', 'successor', 'ordinary-head', 'person-hold', 'omitted', 'file-review'] as const)(

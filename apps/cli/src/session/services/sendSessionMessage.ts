@@ -19,6 +19,7 @@ import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/s
 import { SESSION_MESSAGE_PROVENANCE_META_KEY, SessionInputRequestSchema, SessionMessageProvenanceSchema, stripSessionInputProtectedMeta, readSessionInputAuthority, readSessionInputSenderSessionIdV1, deriveWorkflowSessionInputLocalIdV2, buildTrustedHostSessionInputAdmissionV1, type SessionInputReplyIntentV1, type SessionInputEnqueueResultV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { withSessionMessageModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import type { ProviderErrorV1, SessionInputRequest, SessionMessageProvenance, SessionInputAdmissionRejectionCodeV1, SessionMessageSendResultV1, SessionPendingEnqueueByMachineRequestV1, SessionPendingExecutionRunEnqueueByMachineRequestV2, PendingRequestedActionV1, ParticipantRecipientV1, ExecutionRunInputTurnV1, ExecutionRunPublicState } from '@happier-dev/protocol';
+import type { PendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import { SessionInputAdmissionRejectionCodeV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 import { normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 import { ExecutionRunGetResponseSchema, ExecutionRunInputTurnV1Schema } from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -40,8 +41,7 @@ import {
   blockPendingQueueV2Delivery,
   enqueuePendingExecutionRunMessageViaHttp,
   listPendingQueueV2DeliveryStatusesFromServer,
-  readPendingQueueV2DeliveryFailureByLocalIdFromServer,
-  type PendingQueueDeliveryFailure,
+  readPendingQueueV2DeliveryStatusByLocalIdFromServer,
   type PendingQueueDeliveryBlockedReason,
 } from '@/api/session/pendingQueueV2Transport';
 import {
@@ -640,16 +640,16 @@ function formatBlockedPromptDeliveryFailure(reason: PendingQueueDeliveryBlockedR
   return `Current turn failed: pending delivery blocked (${reason})`;
 }
 
-async function readPromptDeliveryFailureReason(params: Readonly<{
+async function readPromptDeliveryStatus(params: Readonly<{
   token: string;
   sessionId: string;
   localId: string;
   recipient?: Readonly<{ kind: 'execution_run'; runId: string }>;
   signal?: AbortSignal;
   resolveAuthorizationHeaders?: ResolveSessionMessageAuthorizationHeaders;
-}>): Promise<PendingQueueDeliveryFailure['reason'] | null> {
+}>): Promise<PendingDeliveryStatusV1 | null> {
   try {
-    return (await readPendingQueueV2DeliveryFailureByLocalIdFromServer(params))?.reason ?? null;
+    return await readPendingQueueV2DeliveryStatusByLocalIdFromServer(params);
   } catch {
     return null;
   }
@@ -685,7 +685,6 @@ async function waitForCurrentPromptDelivery(params: CurrentPromptDeliveryObserva
         ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
       });
       params.signal?.throwIfAborted();
-      if (materialized) return { kind: 'materialized', message: materialized };
       if (params.replyCredentials) {
         try {
           const original = await readOriginalReply({ ...params, credentials: params.replyCredentials });
@@ -699,10 +698,16 @@ async function waitForCurrentPromptDelivery(params: CurrentPromptDeliveryObserva
           params.signal?.throwIfAborted();
         }
       }
-      const failureReason = await readPromptDeliveryFailureReason(params);
+      const deliveryStatus = await readPromptDeliveryStatus(params);
       params.signal?.throwIfAborted();
-      if (failureReason === 'session_input_cancelled') return { kind: 'cancelled' };
-      if (failureReason) return { kind: 'blocked', reason: failureReason };
+      if (deliveryStatus?.status === 'discarded' && deliveryStatus.reason === 'session_input_cancelled') return { kind: 'cancelled' };
+      if (deliveryStatus?.status === 'blocked') return { kind: 'blocked', reason: deliveryStatus.reason };
+      // Host transcript custody precedes provider acceptance. Keep observing
+      // the same Pending original until its owner settles it; a committed user
+      // row alone must not bypass a later final delivery refusal.
+      if (materialized && (!deliveryStatus || deliveryStatus.status === 'discarded')) {
+        return { kind: 'materialized', message: materialized };
+      }
       if (!(await events.waitForChange(revision, params))) break;
     }
     return { kind: 'missing' };
