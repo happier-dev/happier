@@ -22,14 +22,19 @@ vi.mock('expo-linear-gradient', () => ({
     LinearGradient: (props: Record<string, unknown>) => React.createElement('LinearGradient', props),
 }));
 
+// Collect the real owner graph before any case's deadline starts: a cold transform of this graph takes longer
+// than a case's 60 s on a loaded host, and inside a case it timed out whichever case ran first (UI refinements 11-13).
+const { GlassSurface } = await import('./GlassSurface');
+const { CompactSearchField } = await import('@/components/ui/forms/CompactSearchField');
+const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
+const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
+const { glassPresetMaterials } = await import('./glassMaterial');
+const { lightTheme } = await import('@/theme');
+const { storage } = await import('@/sync/domains/state/storage');
+const { FloatingOverlay } = await import('@/components/ui/overlays/FloatingOverlay');
+
 describe('Android material fallback', () => {
     it('shares translucent field ink with an in-flow card plane but keeps disabled and accessibility-solid fields unchanged', async () => {
-        const { GlassSurface } = await import('./GlassSurface');
-        const { CompactSearchField } = await import('@/components/ui/forms/CompactSearchField');
-        const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
-        const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
-        const { glassPresetMaterials } = await import('./glassMaterial');
-        const { lightTheme } = await import('@/theme');
         for (const solid of ['glass', 'disabled', 'reduceTransparency'] as const) {
             // A card is translucent only with a picture behind it; over the plain page it is solid.
             const screen = await renderScreen(<GlassRuntimeEnvironmentProvider value={{ reduceTransparency: solid === 'reduceTransparency', atmosphereBehind: 'wallpaper' }}>
@@ -46,10 +51,6 @@ describe('Android material fallback', () => {
         }
     });
     it('keeps menu edges at the alpha of its Android paint: an unblurred Custom tint as set, an opaque fill where blur was asked for', async () => {
-        const { storage } = await import('@/sync/domains/state/storage');
-        const { glassPresetMaterials } = await import('./glassMaterial');
-        const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
-        const { FloatingOverlay } = await import('@/components/ui/overlays/FloatingOverlay');
         const before = storage.getState();
         try {
             for (const [blur, opacity] of [['off', 0], ['off', 0.2], ['strong', 0.2]] as const) {
@@ -84,10 +85,6 @@ describe('Android material fallback', () => {
     });
 
     it('paints dialogs, sheets and menus opaque when there is no blur target; in-flow cards keep their tint', async () => {
-        const { GlassSurface } = await import('./GlassSurface');
-        const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
-        const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
-        const { glassPresetMaterials } = await import('./glassMaterial');
         // Anything can stand behind a floating surface (owner 11-13: the Welcome hero showed through a sheet).
         for (const floatingRole of ['panel', 'menu'] as const) {
             const screen = await renderScreen(<GlassRuntimeEnvironmentProvider value={{ nativeRenderer: true }}>
