@@ -269,29 +269,8 @@ async function admitUsageBatchMetadata(snapshot: Awaited<ReturnType<typeof captu
     queries: readonly UsageAnalyticsQueryRequest[], timing?: UsageQueryTiming, isReaderClosed?: () => boolean) {
     assertUsageReaderOpen(isReaderClosed);
     let sliceStartedAt = performance.now();
-    const histories = new Map<NonNullable<UsageAnalyticsSnapshot['rawEvidenceRows']>, {
-        evidenceRows: ScopedUsageEvidenceRow[]; normalizedEvidenceById: Map<string, ScopedUsageEvidenceRow>;
-    }>();
-    for (const captured of snapshot.snapshots.values()) {
-        if (!captured.rawEvidenceRows) continue;
-        let admitted = histories.get(captured.rawEvidenceRows);
-        if (!admitted) {
-            admitted = { evidenceRows: [], normalizedEvidenceById: new Map() };
-            for (const row of captured.rawEvidenceRows) {
-                const evidence = captured.normalizedEvidenceById?.get(row.id) ?? toScopedUsageEvidenceRow(row);
-                admitted.evidenceRows.push(evidence);
-                admitted.normalizedEvidenceById.set(evidence.id, evidence);
-                if (performance.now() - sliceStartedAt >= usageQuerySliceMs) {
-                    if (timing) timing.durations.fold += performance.now() - sliceStartedAt;
-                    await setImmediate();
-                    assertUsageReaderOpen(isReaderClosed);
-                    sliceStartedAt = performance.now();
-                }
-            }
-            histories.set(captured.rawEvidenceRows, admitted);
-        }
-        Object.assign(captured, admitted, { rawEvidenceRows: undefined });
-    }
+    // Body and evidence readers borrow one normalized copy of a captured event.
+    const admittedBodies = new Map<object, UsageAnalyticsSnapshot['rows'][number]>();
     const inputs = new Map<UsageAnalyticsSnapshot['rows'], string[]>();
     for (const query of queries) {
         const key = getUsageAnalyticsQueryRequestKey(query);
@@ -306,8 +285,10 @@ async function admitUsageBatchMetadata(snapshot: Awaited<ReturnType<typeof captu
         const evidenceById = snapshot.snapshots.get(keys[0]!)?.normalizedEvidenceById;
         for (const row of rows) {
             const evidence = evidenceById?.get(row.id);
-            admitted.push(evidence ? { ...row, metadata: evidence.metadata, accountingEvidence: evidence.accountingEvidence }
-                : toScopedUsageEvidenceRow(row));
+            const body = evidence ? { ...row, metadata: evidence.metadata, accountingEvidence: evidence.accountingEvidence }
+                : toScopedUsageEvidenceRow(row);
+            admitted.push(body);
+            admittedBodies.set(row, body);
             if (performance.now() - sliceStartedAt >= usageQuerySliceMs) {
                 if (timing) timing.durations.fold += performance.now() - sliceStartedAt;
                 await setImmediate();
@@ -316,6 +297,29 @@ async function admitUsageBatchMetadata(snapshot: Awaited<ReturnType<typeof captu
             }
         }
         for (const key of keys) snapshot.snapshots.set(key, { ...snapshot.snapshots.get(key)!, rows: admitted });
+    }
+    const histories = new Map<NonNullable<UsageAnalyticsSnapshot['rawEvidenceRows']>, {
+        evidenceRows: ScopedUsageEvidenceRow[]; normalizedEvidenceById: Map<string, ScopedUsageEvidenceRow>;
+    }>();
+    for (const captured of snapshot.snapshots.values()) {
+        if (!captured.rawEvidenceRows) continue;
+        let admitted = histories.get(captured.rawEvidenceRows);
+        if (!admitted) {
+            admitted = { evidenceRows: [], normalizedEvidenceById: new Map() };
+            for (const row of captured.rawEvidenceRows) {
+                const evidence = captured.normalizedEvidenceById?.get(row.id) ?? admittedBodies.get(row) ?? toScopedUsageEvidenceRow(row);
+                admitted.evidenceRows.push(evidence);
+                admitted.normalizedEvidenceById.set(evidence.id, evidence);
+                if (performance.now() - sliceStartedAt >= usageQuerySliceMs) {
+                    if (timing) timing.durations.fold += performance.now() - sliceStartedAt;
+                    await setImmediate();
+                    assertUsageReaderOpen(isReaderClosed);
+                    sliceStartedAt = performance.now();
+                }
+            }
+            histories.set(captured.rawEvidenceRows, admitted);
+        }
+        Object.assign(captured, admitted, { rawEvidenceRows: undefined });
     }
     if (snapshot.activitySummary) {
         const key = getUsageAnalyticsQueryRequestKey(snapshot.activitySummary.query);
@@ -393,7 +397,7 @@ export async function projectUsageAnalyticsBatch(snapshot: Awaited<ReturnType<ty
             const coordinate = getUsageAnalyticsProjectionKey(query);
             const admitted = population;
             const scalar = async (demand: UsageAnalyticsQueryRequest, owned: UsageAnalyticsProjectionContext) => {
-                const { value, pricingPartitions } = await completeUsageAnalyticsProjection(prepareUsageAnalyticsProjectionSteps(owned, demand, priceCatalog, admitted, timing, canGroupPrices([demand])), isReaderClosed);
+                const { value, pricingPartitions } = await completeUsageAnalyticsProjection(prepareUsageAnalyticsProjectionSteps(owned, demand, priceCatalog, admitted, timing, canGroupPrices([demand]), includeContributions || prepareSummary), isReaderClosed);
                 if (!prepareSummary) return value;
                 const projected = await completeUsageAnalyticsProjection(projectUsageAnalyticsSummarySteps(value, demand, pricingPartitions), isReaderClosed);
                 return { ...value, summary: projected.summary };
@@ -404,7 +408,7 @@ export async function projectUsageAnalyticsBatch(snapshot: Awaited<ReturnType<ty
                 const shared = group.map(demand => projectionContexts.get(getUsageAnalyticsQueryRequestKey(demand))!)
                     .find(candidate => candidate.messageCountsBySession !== undefined) ?? captured;
                 try {
-                    const union = await projectUsageAnalyticsDemands(shared, group, priceCatalog, admitted, prepareSummary, timing, canGroupPrices(group), isReaderClosed);
+                    const union = await projectUsageAnalyticsDemands(shared, group, priceCatalog, admitted, prepareSummary, timing, canGroupPrices(group), isReaderClosed, includeContributions || prepareSummary);
                     project = async (demand, owned) => {
                         try {
                             return await union(demand, owned);

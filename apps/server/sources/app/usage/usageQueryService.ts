@@ -169,7 +169,7 @@ export function prepareUsageAnalyticsProjection(snapshot: UsageAnalyticsProjecti
 
 /** One admitted population/coordinate owns its union. Batch callers can service I/O between real projection units. */
 export function* prepareUsageAnalyticsProjectionSteps(snapshot: UsageAnalyticsProjectionContext, request: UsageAnalyticsQueryRequest,
-    priceCatalog: UsageModelPriceCatalog, population: UsageAnalyticsPopulation, timing?: UsageQueryTiming, groupPrices = false): Generator<void, PreparedUsageAnalyticsProjection, void> {
+    priceCatalog: UsageModelPriceCatalog, population: UsageAnalyticsPopulation, timing?: UsageQueryTiming, groupPrices = false, retainContributions = true): Generator<void, PreparedUsageAnalyticsProjection, void> {
     const { totalContributions, evidenceRows, costMode } = population;
     const publicPopulation = request.population === 'public_eligible_personal';
     const rankedDimensions = getUsageAnalyticsRankedDimensions(request);
@@ -295,7 +295,11 @@ export function* prepareUsageAnalyticsProjectionSteps(snapshot: UsageAnalyticsPr
     // The delivery owner still consumes admitted row identity for Session/turn
     // membership. These unpriced rows cannot reach a requested detail page.
     const value = grouped ? { ...priced.value, contributions: raw.contributions } : priced.value;
-    return { value, pricingPartitions: readUsagePageCostProjectionBasis(value)?.partitions,
+    const pricingPartitions = readUsagePageCostProjectionBasis(value)?.partitions;
+    // Compact delivery must also release the detail held by the private pricing witness.
+    // Summaries and requested detail keep these operands until their consumers finish.
+    if (!retainContributions) delete value.contributions;
+    return { value, pricingPartitions,
         select(selected: UsageAnalyticsQueryRequest, selectedSnapshot: UsageAnalyticsProjectionContext): UsageAnalyticsQueryResponse {
         const selectedCoverage = projectCoverage(selected, rankedFor(selected), selected.includeModelTimeline === true && timelineTruncatedFor(selected.topLimit));
         const coverage = repriceUsageAnalyticsCoverage(selectedCoverage, selectedCoverage,

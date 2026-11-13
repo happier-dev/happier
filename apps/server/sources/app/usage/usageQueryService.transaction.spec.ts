@@ -8,6 +8,7 @@ import { request as requestHttp, type ClientRequest } from 'node:http';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { Readable } from 'node:stream';
 import { finished } from 'node:stream/promises';
+import { usagePageCostProjectionBasis, type UsagePageCostProjectionBasis } from '@happier-dev/protocol/usage/usageCostFacts';
 
 // Observe the OS scheduler while preserving its actual event-loop yield.
 const schedulerBoundary = vi.hoisted(() => ({ onYield: () => {} }));
@@ -52,7 +53,15 @@ function transactionReader() {
             if (sql.includes('FROM "UsageEvent"')) {
                 usageEventReads.push(readingInTransaction);
                 const rows = await usageEventRawRead(query) as object[];
-                return sql.includes('"captureKind"') ? rows.map(row => ({ ...row, captureKind: 'body' })) : rows;
+                if (!sql.includes('"captureKind"')) return rows;
+                const captured = rows.map(row => ({ ...row, captureKind: 'body' }));
+                const payload = /jsonb_build_array\((.*?)\)::text AS payload/s.exec(sql);
+                if (!payload) return captured;
+                // Mirror the actual SQL result columns; the production decoder stays real.
+                const keys = [...payload[1]!.matchAll(/c\."([^"]+)"/g)].map(match => match[1]!);
+                return captured.map(row => ({ payload: JSON.stringify(keys.map(key => Reflect.get(row, key) ?? null)),
+                    observedAt: Reflect.get(row, 'observedAt'), createdAt: Reflect.get(row, 'createdAt'),
+                    reportUpdatedAt: null }));
             }
             if (sql.includes('UsageAccountingProjection')) throw new Error('Live query read derived Usage projection');
             return await inTxPostgresControlStatementMock.$queryRaw(query as TemplateStringsArray, ...values);
@@ -65,6 +74,7 @@ installDbModuleMock({ db: { ...transactionReader(), $transaction: async (fn: (tx
 } } });
 const { createAuthenticatedTestApp, withAuthenticatedTestApp } = await import('@/app/api/testkit/sqliteFastify');
 const { queryUsageAnalytics } = await import('./usageQueryService');
+const { captureUsageAnalyticsBatch, projectUsageAnalyticsBatch } = await import('./query/readUsageAnalyticsBatch');
 const { registerAccountUsageRoutes } = await import('@/app/api/routes/account/registerAccountUsageRoutes');
 
 describe('Usage snapshot transaction lifetime', () => {
@@ -133,6 +143,44 @@ describe('Usage snapshot transaction lifetime', () => {
         expect(committed).toBe(true);
         expect(usageEventReads).toEqual([false]);
         expect(transactions.transaction).not.toHaveBeenCalled();
+    });
+
+    it('retains one normalized accounting body per captured event across output demands', async () => {
+        const query = UsageAnalyticsQueryRequestSchema.parse({ includeSeries: true });
+        const captured = await captureUsageAnalyticsBatch('account', [query]);
+        let normalizedBodies: object[] = [];
+        let normalizedEvidence: object[] = [];
+        await expect(projectUsageAnalyticsBatch(captured, [query], false, false, undefined, undefined, () => {
+            const snapshot = [...captured.snapshots.values()][0];
+            if (!snapshot?.rows[0]?.accountingEvidence || snapshot.rawEvidenceRows !== undefined) return false;
+            normalizedBodies = snapshot.rows;
+            normalizedEvidence = [...snapshot.normalizedEvidenceById!.values()];
+            return true;
+        })).rejects.toThrow('Usage reader closed');
+        expect(normalizedBodies).toHaveLength(1);
+        expect(new Set([...normalizedBodies, ...normalizedEvidence]).size,
+            'evidence and body readers must borrow the same admitted event, without retaining a second full-row copy').toBe(1);
+    });
+
+    it.each([false, true])('retains priced event detail only when the batch requests it (%s)', async detail => {
+        const count = 128;
+        usageEventRawRead.mockImplementation(async () => Array.from({ length: count }, (_, index) => ({
+            ...eventForAttempt(1), id: `event-${index}`, turnId: `turn-${index}`, modelId: 'gpt-4o',
+        })));
+        const queries = [{ includeActivity: true },
+            { includeSeries: true, includeModelTimeline: true }].map(query => UsageAnalyticsQueryRequestSchema.parse(query));
+        const captured = await captureUsageAnalyticsBatch('account', queries);
+        const batch = await projectUsageAnalyticsBatch(captured, queries, detail);
+        for (const result of batch.results) {
+            if (!('value' in result)) throw new Error('Usage projection failed');
+            expect(result.value.totals.tokens.total).toBe(count * 7);
+            expect(result.value.contributions?.length).toBe(detail ? count : undefined);
+            const priced = (result.value.totals.cost as typeof result.value.totals.cost & {
+                [usagePageCostProjectionBasis]?: UsagePageCostProjectionBasis;
+            })[usagePageCostProjectionBasis]?.response.contributions;
+            expect(priced?.length ?? 0,
+                'omitting contributions must also release their hidden pricing-basis reference').toBe(detail ? count : 0);
+        }
     });
 
     it.each(['service', 'v1', 'v2'])('yields during slow %s projection after releasing its database reads', async surface => {
