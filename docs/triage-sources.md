@@ -1644,6 +1644,12 @@ relation, including from a Session without a checkout or in another repository.
 Only explicit work-on-PR or link Actions create the checkout-verified binding;
 `channels_pr_link_checkout_not_verified` belongs to that explicit Action.
 
+In unreleased 0.3 development source, a PR cited in an ordinary Composer Send
+is content. The attachment resolver reads it without creating a Session–PR
+relation, including from a Session without a checkout or in another repository.
+Only explicit work-on-PR or link Actions create the checkout-verified binding;
+`channels_pr_link_checkout_not_verified` belongs to that explicit Action.
+
 For an existing PR workspace, the configured owner invokes the read-only
 `entries/verify-existing-review-workspace-v1` Action. It obtains the exact
 Session's admitted checkout through `session.status.get`, then calls the same

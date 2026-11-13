@@ -2,13 +2,12 @@ import {
     TriageConfiguredSourceInstanceV1Schema,
     TriageGetResultV1Schema,
     TriageSourceDescriptorV1Schema,
-    TriageSourceLinkSessionInputV1Schema,
-    TriageSourceReadSessionLinksResultV1Schema,
     type TriageConfiguredSourceInstanceV1,
     type TriageGetInputV1,
     type TriageGetResultV1,
 } from '@happier-dev/triage-protocol/v1';
-import { PluginError, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import { definePlugin, PluginError, type ComposerAttachmentResolveRequestV2, type ComposerAttachmentResolveResultV1, type PluginCancellationOptions, type PluginServices } from '@happier-dev/plugin-sdk';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { TriageAdmittedSourceV1 } from '../actions/listEntries.js';
@@ -33,6 +32,13 @@ import { createTriageReadSourceSessionLinksActionHandler } from '../actions/sess
 import { CORPUS_SESSION_LINKS_COLLECTION_ID, CORPUS_SOURCE_INSTANCES_COLLECTION_ID } from '../corpus/collections/ids.js';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { loadDispatchContextSpecimens, type DispatchContextSpecimen } from './dispatchContextSpecimens.test-support.js';
+import { GITHUB_TEST_ACCOUNT } from '../../../scm-github/src/triage/testkit/githubTriage.test-support.js';
+import { createGithubSessionRelationTestkit } from '../../../scm-github/testkit/sessionRelations.test-support.js';
+import { GITHUB_PLUGIN } from '../../../scm-github/src/manifest.js';
+import { channelsOperationOnlyTargetedContributionsFixture } from '../../../channels/src/testkit/operationOnlyTargetedContributionsFixture.js';
+import { TRIAGE_PLUGIN, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
+import { TRIAGE_ENTRY_ATTACHMENT_LOCAL_ID_V1 } from './attachmentValue.js';
+import { TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1 } from '../actions/sessionLinksProtocol.js';
 
 /**
  * Fresh exact resolution immediately before an Agent dispatch
@@ -347,14 +353,10 @@ function attachment(overrides: Readonly<Record<string, unknown>> = {}) {
 }
 
 describe('the admitted attachment runtime relation owner', () => {
-    it('records the exact source link when an authoring seed dispatches its entry attachment', async () => {
-        for (const sourceOwned of [false, true]) {
+    it('resolves an authoring seed as content without creating a corpus Session link', async () => {
             const fixture = createTestkitCorpusCollections();
             fixture.control.sourceInstances.seed(toCorpusStoredValue(instanceRow('a', SOURCE, INSTANCE_A)));
             const get = { role: 'get' };
-            const linkSession = { role: 'linkSession' };
-            const readSessionLinks = { role: 'readSessionLinks' };
-            const nativeLinks: Extract<ReturnType<typeof TriageSourceReadSessionLinksResultV1Schema.parse>, { kind: 'complete' }>['links'][number][] = [];
             // Account Collections and the targeted Action transport are host boundaries.
             const context = { services: {
                 storage: { account: { collection: (definition: { id: string }) => definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION_ID
@@ -364,21 +366,10 @@ describe('the admitted attachment runtime relation owner', () => {
                     contributor: { pluginId: SOURCE.pluginId, contributionId: SOURCE.localId },
                     descriptor: TriageSourceDescriptorV1Schema.parse({ v: 1, purpose: 'triage-source', displayName: 'Example forge',
                         kinds: [{ id: LOCAL_REF.kindId, workflowSubject: 'pullRequest', displayName: 'Pull request' }],
-                        ...(sourceOwned ? { sessionRelations: { kindIds: [LOCAL_REF.kindId] } } : {}) }),
-                    operations: { get, ...(sourceOwned ? { linkSession, readSessionLinks } : {}) },
+                    }),
+                    operations: { get },
                 }] }), dispose: () => {} }) },
                 actions: { executeAdmittedTargetedOperation: async (operation: unknown, input: TriageGetInputV1) => {
-                    if (operation === linkSession) {
-                        const write = TriageSourceLinkSessionInputV1Schema.parse(input);
-                        expect(write.instance.instance.sourceInstanceId).toBe(INSTANCE_A);
-                        expect(write.localRef).toEqual(LOCAL_REF);
-                        expect(write.linked).toBe(true);
-                        if (!nativeLinks.some(link => link.sessionId === write.sessionId)) nativeLinks.push({
-                            localRef: write.localRef, sessionId: write.sessionId, linkedAtMs: 10, displayPath: 'example/repository',
-                        });
-                        return { status: 'linked' };
-                    }
-                    if (operation === readSessionLinks) return TriageSourceReadSessionLinksResultV1Schema.parse({ kind: 'complete', links: nativeLinks });
                     expect(operation).toBe(get);
                     return TriageGetResultV1Schema.parse({ kind: 'present', localRef: input.localRef,
                         locator: testkitLocator(), snapshot: testkitSnapshot(), viewer: testkitViewer() });
@@ -396,16 +387,80 @@ describe('the admitted attachment runtime relation owner', () => {
             expect((await runtime.resolveForDispatch!(request, context)).attachments[0]?.status).toBe('ready');
             const read = createTriageReadSourceSessionLinksActionHandler();
             const result = await read({ v: 1, entryRef: ENTRY_REF, sourceInstanceId: INSTANCE_A }, context);
-            expect(result).toMatchObject({ kind: 'complete', links: [{ entryRef: ENTRY_REF, sessionId: request.sessionId }] });
-            expect('links' in result && result.links).toHaveLength(1);
-            // A dispatch replay must keep the same relationship, including its original timestamp.
+            expect(result).toMatchObject({ kind: 'complete', links: [] });
+            // Replays and Execution Runs must also leave relationships unchanged.
             await runtime.resolveForDispatchV2!({ scope: { kind: 'session', sessionId: request.sessionId },
                 localId: request.localId, attachments: request.attachments }, context);
             expect(await read({ v: 1, entryRef: ENTRY_REF, sourceInstanceId: INSTANCE_A }, context)).toEqual(result);
             await runtime.resolveForDispatchV2!({ scope: { kind: 'execution_run', executionRunId: 'run-without-session' },
                 localId: request.localId, attachments: request.attachments }, context);
             expect(await read({ v: 1, entryRef: ENTRY_REF, sourceInstanceId: INSTANCE_A }, context)).toEqual(result);
-        }
+    });
+
+    it.each(['none', 'other-repository'] as const)('dispatches cross-repo PR content from a Session with workspace %s without writing a Channels relation', async sessionWorkspace => {
+        const journey = await createGithubSessionRelationTestkit({ sessionWorkspace });
+        const corpus = createTestkitCorpusCollections();
+        const source = journey.instance.instance.source;
+        const configured = { ...journey.instance, instance: { ...journey.instance.instance, sourceInstanceId: INSTANCE_A } };
+        corpus.control.sourceInstances.seed(toCorpusStoredValue({ ...instanceRow('a', source, INSTANCE_A), configured }));
+        const entryRef = { source, ...journey.localRef };
+        let resolved: ComposerAttachmentResolveResultV1 | undefined;
+        // The SDK host invokes the activated lifecycle with its real Action
+        // service. The driver supplies only that host callback, never link results.
+        const driver = definePlugin({ id: TRIAGE_PLUGIN.manifest.id, version: TRIAGE_PLUGIN.manifest.version, actions: {
+            'test/dispatch-attachment': { title: 'Invoke the registered attachment callback', surfaces: ['plugin'],
+                dangerLevel: 'safe', inputSchema: { type: 'object' }, resultSchema: { type: 'null' },
+                run: async (input, context) => {
+                    const runtime = triage.registration('composerAttachments', TRIAGE_ENTRY_ATTACHMENT_LOCAL_ID_V1);
+                    if (!runtime?.resolveForDispatchV2) throw new Error('The entry attachment runtime is not registered');
+                    resolved = await runtime.resolveForDispatchV2(input as unknown as ComposerAttachmentResolveRequestV2, context);
+                    return null;
+                } },
+        } });
+        const triage = await createPluginTestkit({ manifest: { ...TRIAGE_PLUGIN.manifest, contributes: {
+            ...TRIAGE_PLUGIN.manifest.contributes, actions: [
+                ...TRIAGE_PLUGIN.manifest.contributes.actions, ...driver.manifest.contributes.actions,
+            ],
+        } }, module: { activateAccount: TRIAGE_PLUGIN.activateAccount, activate: async api => {
+            const disposeTriage = await TRIAGE_PLUGIN.activate(api);
+            const disposeDriver = await driver.activate(api);
+            return async () => {
+                if (typeof disposeDriver === 'function') await disposeDriver();
+                if (typeof disposeTriage === 'function') await disposeTriage();
+            };
+        } }, targetedContributionContributors: [journey.source], actionTargets: [journey.source], services: {
+            storage: { account: { collection: (definition: { id: string }) => definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION_ID
+                ? corpus.collections.sourceInstances : definition.id === CORPUS_SESSION_LINKS_COLLECTION_ID
+                    ? corpus.collections.sessionLinks : corpus.collections.userMarks } } as unknown as PluginServices['storage'],
+        } });
+        const services = { targetedContributions: channelsOperationOnlyTargetedContributionsFixture(
+            triage, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1, [GITHUB_PLUGIN.manifest]) };
+        const delivery = planTriageActionDeliveryV1({ delivery: 'compose', promptText: 'Ask about this PR', entries: [{
+            entryRef, sourceInstance: { source, sourceInstanceId: INSTANCE_A }, presentation: { title: 'Attached PR' },
+            lastKnownLocator: journey.locator,
+        }] });
+        if (delivery.kind !== 'compose') throw new Error('Missing authoring seed');
+        const request = { scope: { kind: 'session', sessionId: 'authoring-session' }, localId: 'first-input',
+            attachments: delivery.attachments.map(draft => ({ instanceId: 'seed-entry', key: draft.value.key, value: draft.value.value })) };
+        try {
+            await triage.invokeAction('test/dispatch-attachment', request, { surface: 'plugin', services });
+            expect(resolved?.attachments[0]).toMatchObject({ status: 'ready', context: expect.stringContaining(
+                'title: Stream terminal frames without a full re-render') });
+            const relation = await triage.invokeAction(TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1,
+                { v: 1, entryRef, sourceInstanceId: INSTANCE_A }, { surface: 'plugin', services });
+            expect(relation).toMatchObject({ kind: 'complete', links: [] });
+            expect(await journey.invokeBinding('session-pull-request-binding-v1', { kind: 'readRelations',
+                credentialRef: GITHUB_TEST_ACCOUNT, sessionId: 'authoring-session',
+            })).toEqual({ kind: 'relations', links: [] });
+            await triage.invokeAction('test/dispatch-attachment', request, { surface: 'plugin', services });
+            expect(await triage.invokeAction(TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1,
+                { v: 1, entryRef, sourceInstanceId: INSTANCE_A }, { surface: 'plugin', services })).toEqual(relation);
+            await triage.invokeAction('test/dispatch-attachment', { ...request,
+                scope: { kind: 'execution_run', executionRunId: 'run-without-session' },
+            }, { surface: 'plugin', services });
+            expect(await triage.invokeAction(TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1,
+                { v: 1, entryRef, sourceInstanceId: INSTANCE_A }, { surface: 'plugin', services })).toEqual(relation);
+        } finally { await triage.dispose(); await journey.dispose(); }
     });
 
     it('freshly reads full selected alert evidence through the composer runtime and retains it typed for host fencing', async () => {

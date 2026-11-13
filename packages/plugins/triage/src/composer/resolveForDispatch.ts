@@ -38,9 +38,9 @@ import { parseTriageComposerEntryAttachmentValue, readTriageComposerForgeEvidenc
  * reported as blocked and the canonical host owns the
  * all-or-none dispatch refusal, because a partially resolved selection is a
  * prompt that quietly omits something the user attached.
- * Resolved Session attachments record their relationship through the same
- * source-session relation owner as direct starts. Execution Runs have no
- * Session identity and create no Session relationship.
+ * Resolved attachments are content, not a request to bind the Session to an
+ * entry. Only explicit link/work Actions write that relationship and verify
+ * its checkout. Evidence may come from another repository or no checkout.
  *
  * One thing it does own, because it is the only place a `merged(successor)`
  * observation is produced: the single durable continuity effect that answer has
@@ -241,7 +241,6 @@ export async function resolveTriageEntryForDispatch(
                 continue;
             }
             attachments.push(await resolveOne(attachment, {
-                sessionId: request.sessionId,
                 configured,
                 admittedByQualifiedId,
                 executeGet: deps.executeGet,
@@ -262,7 +261,6 @@ export async function resolveTriageEntryForDispatch(
 async function resolveOne(
     attachment: TriageEntryDispatchAttachmentV1,
     context: Readonly<{
-        sessionId: string | undefined;
         configured: ReadonlyMap<string, TriageConfiguredSourceInstanceV1>;
         admittedByQualifiedId: ReadonlyMap<string, TriageAdmittedSourceV1>;
         executeGet: TriageAdmittedGetExecutorV1;
@@ -352,14 +350,6 @@ async function resolveOne(
     }
     switch (observation.kind) {
         case 'present': {
-            if (context.sessionId !== undefined) {
-                const linked = await context.sourceRelations.write({ entryRef, sourceInstanceId: sourceInstance.sourceInstanceId,
-                    sessionId: context.sessionId, linked: true,
-                    display: { locator: observation.locator, scopeLabel: observation.snapshot.scopeLabel } });
-                if (linked.status === 'failed') throw linked.failure;
-                if (linked.status !== 'linked') return blocked(attachment.instanceId, 'failed', false,
-                    'Its Session relationship could not be recorded.');
-            }
             return {
                 instanceId: attachment.instanceId,
                 status: 'ready',

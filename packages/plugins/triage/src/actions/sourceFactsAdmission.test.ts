@@ -1,14 +1,17 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { definePlugin, type PluginInvocationContext, type PluginServices } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
+import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
+import { TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
 import { createTriageListEntriesDeps } from './listEntries.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { createTriageReobserveEntryActionHandler } from './reobserveEntry.js';
+import { PLUGIN_MANIFEST, TRIAGE_PLUGIN, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
+import { TRIAGE_ENTRY_ATTACHMENT_LOCAL_ID_V1 } from '../composer/attachmentValue.js';
+import { readTriageSessionLinksPageV1 } from '../sessions/readEntrySessionLinks.js';
 
 const fixture = createTriageSourceV1Fixture();
 const facts = [
@@ -70,26 +73,98 @@ describe('source fact admission across the host result boundary', () => {
     });
 });
 
-// Round C requires an inventory guard because these host-bound adapters do not
-// share a loader. Domain behavior is asserted above, not inferred from imports.
-it('routes every source scan/get host adapter through Triage fact admission', () => {
-    const root = fileURLToPath(new URL('../', import.meta.url));
-    const sites: string[] = [];
-    function visit(directory: string): void {
-        for (const entry of readdirSync(directory, { withFileTypes: true })) {
-            const path = join(directory, entry.name);
-            if (entry.isDirectory()) { visit(path); continue; }
-            if (!entry.name.endsWith('.ts') || /test|test-support/u.test(entry.name)) continue;
-            const source = readFileSync(path, 'utf8');
-            for (const match of source.matchAll(/execute(?:Get|Scan): async[^]*?executeAdmittedTargetedOperation\([^;]*?\),/gu)) {
-                sites.push(relative(root, path).replaceAll('\\', '/'));
-                expect(match[0], path).toContain('admitSourceFacts(await');
-            }
-        }
-    }
-    visit(root);
-    expect(sites.sort()).toEqual([
-        'actions/fixPullRequests.ts', 'actions/listEntries.ts', 'actions/reobserveEntry.ts',
-        'composer/attachmentRuntime.ts', 'workItems/runtime.ts',
-    ]);
+it('JSON-rehydrated exact source facts reject duplicate identities before attachment publication', async () => {
+    const protocol = TriageSourcesContributionProtocolV1;
+    const source = fixture.configuredInstance.instance.source;
+    const entryRef = fixture.detailInput.observation.entryRef;
+    const corpus = createTestkitCorpusCollections();
+    corpus.control.sourceInstances.seed(toCorpusStoredValue({ instanceTag: 'a'.repeat(43),
+        sourceQualifiedId: `${source.pluginId}/${source.localId}`,
+        lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1, configured: fixture.configuredInstance }));
+    let duplicate = true;
+    const definition = definePlugin({ id: source.pluginId, version: '0.0.0', actions: {
+        discover: { title: 'Discover', surfaces: protocol.operations.listInstances.declaration.surfaces,
+            inputSchema: protocol.operations.listInstances.declaration.input.schema,
+            resultSchema: protocol.operations.listInstances.declaration.resultSchema, run: async () => fixture.listInstancesResult },
+        scan: { title: 'Scan', surfaces: protocol.operations.scan.declaration.surfaces,
+            inputSchema: protocol.operations.scan.declaration.input.schema,
+            resultSchema: protocol.operations.scan.declaration.resultSchema, run: async () => fixture.scanResult },
+        get: { title: 'Get', surfaces: protocol.operations.get.declaration.surfaces,
+            inputSchema: protocol.operations.get.declaration.input.schema,
+            resultSchema: protocol.operations.get.declaration.resultSchema, run: async () => fixture.getResult },
+    }, ui: { renderers: [{ id: 'detail', kind: 'declarative', root: { kind: 'text', text: 'Source detail' } }] },
+    contributesTo: { 'happier.triage': { sources: { [source.localId]: protocol.contribute({ descriptor: fixture.descriptor,
+        operations: { listInstances: protocol.operations.listInstances.bind('discover'),
+            scan: protocol.operations.scan.bind('scan'), get: protocol.operations.get.bind('get') },
+        surfaces: { detail: { renderer: 'detail' } },
+    }) } } } });
+    // A loaded source's JSON declaration cannot carry executable keyed-array
+    // refinements. Keep its malformed external output raw until host decoding.
+    const contributor = await createPluginTestkit({ manifest: JSON.parse(JSON.stringify(definition.manifest)), module: {
+        activate(api) {
+            api.actions.register('discover', async () => fixture.listInstancesResult);
+            api.actions.register('scan', async () => { throw new Error('An exact attachment must not scan'); });
+            api.actions.register('get', async input => {
+                expect(input).toEqual(fixture.getInput);
+                return { ...fixture.getResult, snapshot: { ...fixture.getResult.snapshot,
+                    facts: duplicate ? [...facts, { ...facts[0]!, label: 'Different label' }] : facts } };
+            });
+        },
+    } });
+    let plugin: PluginTestkit | undefined;
+    let run: ((context: PluginAccountActionContext) => Promise<void>) | undefined;
+    // As in the existing composed source harness, the host supplies descriptor
+    // semantics; SDK admission issues the original handles and parses results.
+    const targetedContributions = { observeForSelf: () => ({ readCurrent: async () => {
+        const snapshot = plugin!.readTargetedContributionFixture(TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1);
+        return { ...snapshot, contributions: snapshot.contributions.map(entry => ({ ...entry, descriptor: fixture.descriptor })) };
+    }, dispose() {} }) } as unknown as PluginServices['targetedContributions'];
+    try {
+        plugin = await createPluginTestkit({ manifest: JSON.parse(JSON.stringify(PLUGIN_MANIFEST)),
+            targetedContributionContributors: [contributor], module: { ...TRIAGE_PLUGIN,
+                activateAccount(api) {
+                    TRIAGE_PLUGIN.activateAccount({ ...api, actions: { register(id, handler, options) {
+                        api.actions.register(id, async (input, context) => {
+                            const invoke = run; run = undefined;
+                            const current = { ...context, services: { ...context.services, targetedContributions } };
+                            if (invoke) await invoke(current);
+                            return handler(input, current);
+                        }, options);
+                    } } });
+                },
+            }, services: { storage: { account: { collection: (collection: { id: string }) => {
+                if (collection.id === 'source-instances') return corpus.collections.sourceInstances;
+                if (collection.id === 'session-links') return corpus.collections.sessionLinks;
+                if (collection.id === 'user-marks') return corpus.collections.userMarks;
+                throw new Error(`Unexpected Collection ${collection.id}`);
+            } } } as unknown as PluginServices['storage'] } });
+        const runtime = plugin.registration('composerAttachments', TRIAGE_ENTRY_ATTACHMENT_LOCAL_ID_V1);
+        if (!runtime?.resolveForDispatch) throw new Error('The declared attachment resolver is not registered');
+        const request = { sessionId: 'duplicate-facts-session', localId: 'pending-input', attachments: [{
+            instanceId: 'selected-entry', key: 'selected-entry', value: { v: 1, entryRef,
+                sourceInstance: fixture.configuredInstance.instance,
+                ...(fixture.getInput.lastKnownLocator === undefined ? {} : { lastKnownLocator: fixture.getInput.lastKnownLocator }) },
+        }] };
+        run = async context => {
+            const operation = plugin!.issueAdmittedTargetedOperation({ point: TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,
+                contributor: { testkit: contributor, contributionId: source.localId }, role: 'get' });
+            // This positive malformed carrier proves JSON structural decoding
+            // alone does not enforce fact identities; the consumer must admit.
+            expect(await context.services.actions.executeAdmittedTargetedOperation(operation, fixture.getInput))
+                .toMatchObject({ kind: 'present', snapshot: { facts: [...facts, { ...facts[0]!, label: 'Different label' }] } });
+            await runtime.resolveForDispatch!(request, context);
+        };
+        await expect(plugin.invokeAction('sources/read-configured-v1', { v: 1 }, { surface: 'agent' }))
+            .rejects.toMatchObject({ data: { code: 'plugin_targeted_operation_result_invalid' } });
+        expect((await readTriageSessionLinksPageV1(corpus.collections.sessionLinks)).links).toEqual([]);
+        duplicate = false;
+        run = async context => {
+            const resolved = await runtime.resolveForDispatch!(request, context);
+            expect(resolved.attachments).toEqual([expect.objectContaining({ instanceId: 'selected-entry', status: 'ready' })]);
+            expect(resolved.attachments[0]).toHaveProperty('context', expect.stringContaining('acme/checks: Passing'));
+        };
+        await plugin.invokeAction('sources/read-configured-v1', { v: 1 }, { surface: 'agent' });
+        expect((await readTriageSessionLinksPageV1(corpus.collections.sessionLinks)).links)
+            .toEqual([]);
+    } finally { await plugin?.dispose(); await contributor.dispose(); }
 });
