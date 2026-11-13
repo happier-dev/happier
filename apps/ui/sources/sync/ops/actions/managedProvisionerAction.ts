@@ -1,16 +1,18 @@
 import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { prepareManagedAcquireProvisionerAdmissionV1, prepareManagedPowerProvisionerAdmissionV1, executeManagedProvisionerDiscovery, projectAccountManagedProvisioners,
     type ManagedProvisionerDiscoveryEntry } from '@happier-dev/cli-common/machines/managed/provisioners';
-import { ManagedMachineActionInputSchemasV1, type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { unwrapManagedMachineReadV1, ManagedMachineActionInputSchemasV1, type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ActionExecutorDeps, ActionExecuteFailure, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import type { LazyActionAccountContext } from './actionAccountContext';
 import { createManagedMachineActionClient, ManagedMachineActionError } from '@/sync/api/machines/managedMachineActions';
 import { resolvePluginActionConnectedAccountUseRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import { projectConnectedAccountHostAccessScopes, type ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
-import { bindManagedMachineRoleCredentials, ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
+import { bindManagedMachineRoleCredentials, ManagedMachineControllerError, projectManagedMachineRolePurposeBindingsV1,
+    readManagedMachineRoleCredentialConfigurationsV1 } from '@happier-dev/cli-common/machines/managed';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import { openManagedMachineReadSnapshots } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { readUiConnectedAccountActionFormOptions } from '@/sync/ops/connectedAccounts/connectedAccountFormOptions';
 
 /** Exact effects demand one selected declaration; chooser discovery retains the family inventory. */
@@ -94,12 +96,10 @@ export async function prepareUiManagedProvisionerAdmission(
                 const binding: ConnectedAccountInvocationPurposeBinding = {
                     identity, operationId: context.operationAcceptance?.operationId ?? context.actionRequestId!,
                     purposes: authorizations.map(authorization => authorization.purpose),
-                    purposeBindings: { v: 1, bindings: authorizations.map(authorization => ({ purpose: authorization.purpose,
-                        target: { kind: 'account', account: authorization.credential.account } })) },
+                    purposeBindings: projectManagedMachineRolePurposeBindingsV1(authorizations),
                     isCurrent: () => active && !context.signal?.aborted,
                     managedOperation: { role,
-                        credentialConfigurations: authorizations.flatMap(({ credential }) => credential.configurationRevision === undefined
-                            ? [] : [{ account: credential.account, revision: credential.configurationRevision }]),
+                        credentialConfigurations: readManagedMachineRoleCredentialConfigurationsV1(authorizations),
                         isCurrent: currentRole => active && currentRole === role && !context.signal?.aborted },
                 };
                 try {
@@ -133,12 +133,17 @@ export async function prepareUiManagedProvisionerAdmission(
         if (!account?.serverIdentityId) return { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
         if (input.homeId !== account.serverIdentityId) return { ok: false as const, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
         try {
-            const machine = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get',
+            const read = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get',
                 { homeId: input.homeId, managedId: input.managedId }, { signal: request.context.signal });
             account.assertCurrent();
-            if (machine.id !== input.managedId || machine.homeId !== input.homeId)
+            const structural = unwrapManagedMachineReadV1(read);
+            if (structural.id !== input.managedId || structural.homeId !== input.homeId)
                 return { ok: false as const, errorCode: 'managed_response_invalid', error: 'managed_response_invalid' };
-            return prepareManagedPowerProvisionerAdmissionV1(machine, readSelected, request.actionId,
+            if (structural.controller) return null;
+            const [opened] = await openManagedMachineReadSnapshots(account.accountLifetime.scope, [read], request.context.signal);
+            account.assertCurrent();
+            if (!opened?.launch) return { ok: false as const, errorCode: 'content_unavailable', error: 'content_unavailable' };
+            return prepareManagedPowerProvisionerAdmissionV1(opened, readSelected, request.actionId,
                 'includeGuestDiagnostics' in input && input.includeGuestDiagnostics ? { includeGuestDiagnostics: true } : undefined);
         } catch (error) {
             const code = request.context.signal?.aborted ? 'cancelled'

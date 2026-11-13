@@ -1,4 +1,5 @@
-import { bindManagedMachineRoleCredentials, ManagedMachineControllerError,
+import { bindManagedMachineRoleCredentials, ManagedMachineControllerError, projectManagedMachineRolePurposeBindingsV1,
+    readManagedMachineRoleCredentialConfigurationsV1,
     type ManagedNativeInvocation, type ManagedReconciliationNative } from '@happier-dev/cli-common/machines/managed';
 import type { ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import { projectConnectedAccountHostAccessScopes } from '@happier-dev/cli-common/connectedAccounts';
@@ -74,12 +75,10 @@ readCredentialRevision: () => number | undefined, credential: ReturnType<typeof 
             // operation when present, otherwise Home's admitted creation request.
             identity, operationId: params.context.operationAcceptance?.operationId ?? params.requestId,
             purposes: authorizations.map(authorization => authorization.purpose),
-            purposeBindings: { v: 1, bindings: authorizations.map(authorization => ({ purpose: authorization.purpose,
-                target: { kind: 'account', account: authorization.credential.account } })) },
+            purposeBindings: projectManagedMachineRolePurposeBindingsV1(authorizations),
             isCurrent: () => active && !signal?.aborted,
             managedOperation: { role,
-                credentialConfigurations: authorizations.flatMap(({ credential }) => credential.configurationRevision === undefined
-                    ? [] : [{ account: credential.account, revision: credential.configurationRevision }]),
+                credentialConfigurations: readManagedMachineRoleCredentialConfigurationsV1(authorizations),
                 isCurrent: currentRole => active && currentRole === role && !signal?.aborted },
         };
         try {
