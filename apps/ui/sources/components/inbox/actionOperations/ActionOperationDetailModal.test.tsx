@@ -63,10 +63,11 @@ const { ActionOperationDetailModal } = await import('./ActionOperationDetailModa
 describe('ActionOperationDetailModal', () => {
     it.each([
         { kind: 'backup', failed: true }, { kind: 'managed-install', failed: true },
-        { kind: 'machine-setup', failed: true }, { kind: 'backup', failed: false },
+        { kind: 'machine-setup', failed: true }, { kind: 'machine-setup-before-execution', failed: true },
+        { kind: 'backup', failed: false },
     ] as const)('offers the shared investigation only for a failed receipt ($kind, failed=$failed)', async ({ kind, failed }) => {
         const snapshot = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'retained-failure', revision: 1,
-            actionId: kind === 'backup' ? DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 : kind === 'machine-setup' ? MACHINE_SETUP_APPLY_ACTION_ID_V1 : 'machines.managed.acquire', state: failed ? 'failed' : 'succeeded',
+            actionId: kind === 'backup' ? DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 : kind.startsWith('machine-setup') ? MACHINE_SETUP_APPLY_ACTION_ID_V1 : 'machines.managed.acquire', state: failed ? 'failed' : 'succeeded',
             scope: { accountId: 'account-1', machineId: 'machine-1' }, title: 'Retained failure',
             createdAt: 100, startedAt: 110, settledAt: 120, cancellation: 'unsupported',
             ...(failed ? { error: { errorCode: 'native_failed', error: 'Native operation failed' } } : {}),

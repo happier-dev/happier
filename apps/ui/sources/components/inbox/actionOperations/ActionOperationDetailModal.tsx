@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { isDeploymentBackupEvidenceActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isMachineSetupOperationActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { TriageFailureSubjectV1 } from '@happier-dev/triage-protocol/v1';
 import { FailureInvestigationActions } from '@/components/inbox/detail/FailureInvestigationActions';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
@@ -284,7 +285,7 @@ export const ActionOperationDetailModal = React.memo(
     } : null;
     const investigationSubject: TriageFailureSubjectV1 | null = !failedAddress ? null
       : isDeploymentBackupEvidenceActionIdV1(snapshot.actionId) ? { kind: 'backupRun', operation: failedAddress }
-      : snapshot.domainRef?.kind === 'managedMachine' || snapshot.domainRef?.kind === 'machineSetup'
+      : snapshot.domainRef?.kind === 'managedMachine' || isMachineSetupOperationActionIdV1(snapshot.actionId)
         ? { kind: 'managedMachineOperation', operation: failedAddress } : null;
     const pluginIdentity = readActionOperationPluginIdentity(snapshot.actionId);
     const detail = projectActionOperationDetail(snapshot, observation);
