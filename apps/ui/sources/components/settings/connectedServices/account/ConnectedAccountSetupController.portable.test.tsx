@@ -17,6 +17,7 @@ import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/t
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createMachineFixture, createPlainMachineRowFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import type { ConnectedAccountAttemptTransactionRecord } from '@happier-dev/cli-common/connectedAccounts';
+import { SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretPromoteOutputV1Schema, SHARED_SAVED_SECRET_ACTION_PATHS_V1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import type { ConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { PluginUiArtifactsManifestEntryV2Schema } from '@happier-dev/protocol/plugins/ui';
 import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
@@ -129,6 +130,14 @@ const claudeDeclaration = await projectBundledPluginUiDeclaration({ packageName:
 packaged.declarations[packaged.declarations.length - 1] = {
     ...await projectBundledPluginUiFirstPaintDeclaration(claudeDeclaration), loadDeclaration: async () => claudeDeclaration,
 };
+const { PLUGIN_MANIFEST: CODER_MANIFEST } = await import('../../../../../../../packages/plugins/machine-coder/src/manifest');
+const coder = { pluginId: CODER_MANIFEST.id, localId: 'coder-account' };
+const coderDescriptor = CODER_MANIFEST.contributes.connectedAccountDescriptors?.find(row => row.id === coder.localId);
+if (!coderDescriptor?.authentication.account) throw new Error('Missing Coder Account authentication declaration');
+await prepareAuthenticationInventory(packaged, { manifest: CODER_MANIFEST, target: coderDescriptor.authentication.account,
+    projectPath: 'packages/plugins/machine-coder', entryPath: 'packages/plugins/machine-coder/src/account.ts',
+    packageName: '@happier-dev/plugins-machine-coder' });
+
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 
 
@@ -141,7 +150,7 @@ afterEach(async () => {
 });
 
 function PortableSetup(props: Readonly<{ credentials: NonNullable<Awaited<ReturnType<typeof restoreServerAccountForTest>>['credentials']>;
-    onCancel: () => void; controllerKey?: number; controllerMounted?: boolean; service?: typeof service; modeId?: string; sheet?: boolean; registry?: ConnectedServiceRegistrySnapshot;
+    onCancel: () => void; onConnected?: () => void; controllerKey?: number; controllerMounted?: boolean; service?: typeof service; modeId?: string; sheet?: boolean; registry?: ConnectedServiceRegistrySnapshot;
     initialTarget?: Readonly<{ serverIdentityId: string; machineId: string }> | null; reconnectAccountId?: string; connectSheet?: boolean }>) {
     const [machineRequired, setMachineRequired] = React.useState(false);
     const selection = useMachineAdministrationTargetSelection(MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts,
@@ -167,9 +176,9 @@ function PortableSetup(props: Readonly<{ credentials: NonNullable<Awaited<Return
             ? { kind: 'reconnect', serviceKey, accountId: props.reconnectAccountId } : { kind: 'service', serviceKey }}
             catalog={[{ serviceKey, service: selectedService, entry: null, legacyServiceId: null, label: 'Vercel',
                 usedBy: [], usedByAgentIds: [], connectedCount: 0, section: 'tools', canAdd: true }]}
-            targetSelection={selection} onTargetChange={() => {}} onClose={props.onCancel}
+            targetSelection={selection} onTargetChange={() => {}} onClose={props.onCancel} onConnected={props.onConnected}
             onMachineRequirementChange={setMachineRequired} registry={props.registry} /> : <ConnectedAccountSetupController key={props.controllerKey} service={props.service ?? service} targetSelection={selection}
-            panel={{ intent: props.reconnectAccountId ? { kind: 'reconnect', accountId: props.reconnectAccountId } : { kind: 'add' }, modeId: props.modeId, onConnected: () => {}, onCancel: props.onCancel,
+            panel={{ intent: props.reconnectAccountId ? { kind: 'reconnect', accountId: props.reconnectAccountId } : { kind: 'add' }, modeId: props.modeId, onConnected: props.onConnected ?? (() => {}), onCancel: props.onCancel,
                 onMachineRequirementChange: setMachineRequired }} />}
         </AppShellPluginUiProjectionProvider>
     </InjectedAuthProvider>;
@@ -205,6 +214,7 @@ async function restorePortableFixture(requestedService = service, homeClient = f
         }),
     });
     const transactions = new Map<string, ConnectedAccountAttemptTransactionRecord>();
+    const promotions: Array<ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse>> = [];
     let creates = 0;
     let forgetDiscoveredAttempt = false;
     let machineReads = 0;
@@ -228,7 +238,7 @@ async function restorePortableFixture(requestedService = service, homeClient = f
         : machinePresence ? [createPlainMachineRowFixture({ id: 'offline-controller', accountId,
             machine: createMachineFixture({ id: 'offline-controller', active: false, activeAt: 0 }) })] : [];
     connection = await restoreServerAccountForTest({ serverUrl, serverIdentityId, accountId, credentials,
-        additionalRequestOrigins: ['https://dash.cloudflare.com', 'https://api.cloudflare.com', 'https://console.neon.tech', 'https://api.supabase.com'],
+        additionalRequestOrigins: ['https://dash.cloudflare.com', 'https://api.cloudflare.com', 'https://console.neon.tech', 'https://api.supabase.com', 'https://api.vercel.com'],
         configureSocket: socket => {
             configureConnectedServerSocketBoundary(socket);
             vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, payload: SocketRpcRequestPayload) => {
@@ -252,6 +262,10 @@ async function restorePortableFixture(requestedService = service, homeClient = f
             if (request.origin !== serverUrl) {
                 vendorRequests.push(request.href);
                 vendorCredentialMatches.push(new Headers(init?.headers).get('authorization') === 'Bearer portable-cloudflare-token-fixture');
+                if (request.origin === 'https://api.vercel.com') {
+                    expect(request.pathname).toBe('/v2/teams/team_fixture');
+                    return Response.json({ id: 'team_fixture', name: 'Fixture team' });
+                }
                 await vendorResponseReady;
                 return new Response(null, { status: vendorStatus });
             }
@@ -275,6 +289,12 @@ async function restorePortableFixture(requestedService = service, homeClient = f
                 }
                 return transaction;
             }
+            if (request.pathname === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.promote']) {
+                const promotion = SharedSavedSecretPromoteInputV1Schema.parse(await new Response(init?.body).json());
+                promotions.push(promotion);
+                return Response.json(SharedSavedSecretPromoteOutputV1Schema.parse({ resourceId: promotion.resourceId, settingsVersion: 0,
+                    connectedAccountCredential: { credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: 'configured-account-1' } }));
+            }
             if (request.pathname === '/v4/connect/qualified/accounts') return Response.json({ service: requestedService, accounts: [] });
             return homes.request(input, init);
         },
@@ -291,7 +311,7 @@ async function restorePortableFixture(requestedService = service, homeClient = f
         expect(snapshot.features.capabilities.connectedServices.publicOAuthClients).toEqual(features.capabilities.connectedServices.publicOAuthClients);
     }
     machineReads = 0;
-    return { credentials, serverId, serverIdentityId, transactions, paths, vendorRequests, vendorCredentialMatches, machineRpcMethods, forgetOnNextDiscovery() { forgetDiscoveredAttempt = true; },
+    return { credentials, serverId, serverIdentityId, transactions, paths, promotions, vendorRequests, vendorCredentialMatches, machineRpcMethods, forgetOnNextDiscovery() { forgetDiscoveredAttempt = true; },
         get creates() { return creates; },
         get machineReads() { return machineReads; }, get machineRpcs() { return machineRpcs; } };
 }
@@ -819,5 +839,68 @@ it('renders Vercel configuration and secret token fields with a stale registry a
         expect(screen.findHostByTestId('connected-account-manual:token')!.props.secureTextEntry).toBe(true);
         expect(fixture.machineRpcs).toBe(0);
         expect(fixture.machineReads).toBe(0);
+    } finally { await screen.unmount(); }
+});
+
+it.each([
+    { service: coder, fieldId: 'endpoint', value: 'https://coder-fixture.test' },
+    { service: vercel, fieldId: 'teamId', value: 'team_fixture' },
+])('connects $service.pluginId with one fresh inline submission', async ({ service, fieldId, value }) => {
+    const fixture = await restorePortableFixture(service);
+    const onConnected = vi.fn();
+    const screen = await renderScreen(<PortableSetup credentials={fixture.credentials} service={service} sheet onCancel={() => {}} onConnected={onConnected} />);
+    try {
+        await vi.waitFor(() => expect(screen.findHostByTestId(`connected-account-configuration:${fieldId}`), screen.getTextContent()).not.toBeNull());
+        await act(async () => {
+            screen.changeTextByTestId(`connected-account-configuration:${fieldId}`, value);
+            screen.changeTextByTestId('connected-account-manual:token', 'synthetic-inline-token');
+        });
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:submit')!.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('connected-account-manual:submit');
+        await vi.waitFor(() => expect(onConnected, screen.getTextContent()).toHaveBeenCalledOnce(), { timeout: 10_000 });
+        expect(fixture.promotions).toHaveLength(1);
+        const credential = fixture.promotions[0]!.connectedAccountCredentialMutation;
+        if (!credential || !('initialConfiguration' in credential)) throw new Error('Missing initial Account configuration');
+        expect(credential.initialConfiguration).toMatchObject({ expectedConfigurationRevision: null,
+            replacementContentEnvelope: { t: 'plain', v: { values: { [fieldId]: value } } } });
+        expect(fixture.creates).toBe(1);
+        expect(fixture.machineRpcs).toBe(0);
+    } finally { await screen.unmount(); }
+});
+
+
+it('refuses a genuinely changed Coder draft and offers recovery before credential promotion', async () => {
+    const fixture = await restorePortableFixture(coder);
+    const setup = (mounted: boolean) => <PortableSetup credentials={fixture.credentials} service={coder}
+        modeId="token" controllerMounted={mounted} onCancel={() => {}} />;
+    const screen = await renderScreen(setup(false));
+    try {
+        await flushHookEffects({ cycles: 10 });
+        const { runConnectedAccountAuthenticationAction } = await import('@/sync/ops/connectedAccounts/connectedAccountDaemon');
+        const started = await runConnectedAccountAuthenticationAction({ serverId: fixture.serverId,
+            expectedAccountId: 'portable-controller', command: { operation: 'beginConnect', service: coder, modeId: 'token' } });
+        if (started.status !== 'configurationRequired' || !started.attemptId) throw new Error('Missing Coder configuration draft');
+        await screen.update(setup(true));
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-configuration:endpoint')).not.toBeNull());
+        await flushHookEffects({ cycles: 10 });
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const changed = await createDefaultActionExecutor().execute('connectedServices.configuration.replace', {
+            target: { kind: 'attempt', attemptId: started.attemptId }, expectedRevision: null,
+            values: { endpoint: 'https://coder-changed.test' }, secretValues: {},
+        }, { surface: 'ui', authority: 'present_user', serverId: fixture.serverId, expectedAccountId: 'portable-controller' });
+        expect(changed.ok).toBe(true);
+        await act(async () => {
+            screen.changeTextByTestId('connected-account-configuration:endpoint', 'https://coder-fixture.test');
+            screen.changeTextByTestId('connected-account-manual:token', 'synthetic-conflict-token');
+        });
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:submit')!.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('connected-account-manual:submit');
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account:error:retry'), screen.getTextContent()).not.toBeNull());
+        expect(screen.getTextContent()).toContain(t('connectedServices.errors.accountConfigurationChanged'));
+        expect(fixture.promotions).toHaveLength(0);
+        await screen.pressByTestIdAsync('connected-account:error:retry');
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account:error'), screen.getTextContent()).toBeNull());
+        expect(screen.findHostByTestId('connected-account-manual:token')!.props.editable).not.toBe(false);
+        expect(fixture.promotions).toHaveLength(0);
     } finally { await screen.unmount(); }
 });

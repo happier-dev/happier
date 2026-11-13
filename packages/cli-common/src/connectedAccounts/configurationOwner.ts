@@ -174,48 +174,53 @@ export function createConnectedAccountAttemptConfigurationStore(params: Readonly
         record: ConnectedAccountConfigurationRecord;
     }>>();
 
+    async function read(target: AttemptConfigurationTarget): Promise<ConnectedAccountConfigurationRecord | null> {
+        const staged = configurations.get(target.attemptId);
+        if (staged) {
+            return sameService(staged.target.service, target.service) && staged.target.modeId === target.modeId
+                ? staged.record : null;
+        }
+        const record = await params.transactions?.address?.read(target.attemptId);
+        if (!record) return null;
+        if (record.kind === 'manual') {
+            if (!sameService(record.scope.service, target.service) || record.scope.modeId !== target.modeId) return null;
+            const manual = await params.transactions?.address?.readManualDraft?.(record);
+            return manual?.stagedAccountConfigurationContent === undefined || manual.expectedConfigurationRevision === null
+                ? null
+                : parseConnectedAccountConfigurationRecordContent(
+                    manual.stagedAccountConfigurationContent, manual.expectedConfigurationRevision, 'attempt',
+                );
+        }
+        const snapshot = record.kind === 'oauth'
+            ? (await params.transactions?.oauth?.read?.(target.attemptId, record))?.snapshot
+            : record.kind === 'device'
+                ? await params.transactions?.device?.read(target.attemptId, record)
+                : null;
+        if (!snapshot || snapshot.attemptId !== target.attemptId
+            || !sameService(snapshot.service, target.service) || snapshot.modeId !== target.modeId
+            || snapshot.stagedAccountConfigurationContent === undefined) return null;
+        return parseConnectedAccountConfigurationRecordContent(
+            snapshot.stagedAccountConfigurationContent, snapshot.expectedConfigurationRevision, 'attempt',
+        );
+    }
+
     return Object.freeze({
-        async read(target: AttemptConfigurationTarget): Promise<ConnectedAccountConfigurationRecord | null> {
-            const staged = configurations.get(target.attemptId);
-            if (staged) {
-                return sameService(staged.target.service, target.service) && staged.target.modeId === target.modeId
-                    ? staged.record : null;
-            }
-            const record = await params.transactions?.address?.read(target.attemptId);
-            if (!record) return null;
-            if (record.kind === 'manual') {
-                if (!sameService(record.scope.service, target.service) || record.scope.modeId !== target.modeId) return null;
-                const manual = await params.transactions?.address?.readManualDraft?.(record);
-                return manual?.stagedAccountConfigurationContent === undefined || manual.expectedConfigurationRevision === null
-                    ? null
-                    : parseConnectedAccountConfigurationRecordContent(
-                        manual.stagedAccountConfigurationContent, manual.expectedConfigurationRevision, 'attempt',
-                    );
-            }
-            const snapshot = record.kind === 'oauth'
-                ? (await params.transactions?.oauth?.read?.(target.attemptId, record))?.snapshot
-                : record.kind === 'device'
-                    ? await params.transactions?.device?.read(target.attemptId, record)
-                    : null;
-            if (!snapshot || snapshot.attemptId !== target.attemptId
-                || !sameService(snapshot.service, target.service) || snapshot.modeId !== target.modeId
-                || snapshot.stagedAccountConfigurationContent === undefined) return null;
-            return parseConnectedAccountConfigurationRecordContent(
-                snapshot.stagedAccountConfigurationContent, snapshot.expectedConfigurationRevision, 'attempt',
-            );
-        },
+        read,
         async replace(input: Readonly<{
             target: AttemptConfigurationTarget;
             expectedRevision: string | null;
             replacement: Omit<ConnectedAccountConfigurationRecord, 'revision'>;
         }>) {
-            const current = configurations.get(input.target.attemptId);
-            if ((current && (!sameService(current.target.service, input.target.service)
-                || current.target.modeId !== input.target.modeId))
-                || (current?.record.revision ?? null) !== input.expectedRevision) {
-                return Object.freeze({ status: 'conflict' as const, code: 'connected_account_configuration_changed' });
-            }
             try {
+                const restored = await read(input.target);
+                // A restored draft and a warm draft have the same revision authority.
+                // Prefer a local replacement committed while the persisted read awaited.
+                const current = configurations.get(input.target.attemptId);
+                if ((current && (!sameService(current.target.service, input.target.service)
+                    || current.target.modeId !== input.target.modeId))
+                    || (current?.record.revision ?? restored?.revision ?? null) !== input.expectedRevision) {
+                    return Object.freeze({ status: 'conflict' as const, code: 'connected_account_configuration_changed' });
+                }
                 const record = parseConnectedAccountConfigurationRecordContent(input.replacement, params.createRevision(), 'attempt');
                 configurations.set(input.target.attemptId, Object.freeze({
                     target: Object.freeze({

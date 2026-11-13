@@ -13,6 +13,7 @@ import type {
   ConnectedAccountDeviceTransactionSnapshot,
   ConnectedAccountOAuthTransactionSnapshot,
 } from '@happier-dev/cli-common/connectedAccounts';
+import { createConnectedAccountAttemptConfigurationStore } from '@happier-dev/cli-common/connectedAccounts';
 import type { PluginSourceCustody } from '@/plugins/runtime/sourceAuthority';
 import { loadBundledPluginLocators } from '@/plugins/projection/registry/builtIn/locators';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
@@ -262,6 +263,19 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     expect(record?.content.t).toBe(accountMode === 'plain' ? 'plain' : 'encrypted');
     const next = createHost();
     expect(await next.address.readManualDraft!(record!)).toEqual(manual);
+    const configurations = createConnectedAccountAttemptConfigurationStore({
+      createRevision: () => 'configuration-2', transactions: next,
+    });
+    const target = { kind: 'attempt' as const, attemptId: snapshot.attemptId, service, modeId: snapshot.modeId };
+    const recovered = await configurations.read(target);
+    expect(recovered?.revision).toBe(manual.expectedConfigurationRevision);
+    const replacement = { ...manual.stagedAccountConfigurationContent, values: { tenant: 'edited-fixture' } };
+    expect(await configurations.replace({ target, expectedRevision: recovered!.revision, replacement })).toMatchObject({
+      status: 'committed', record: { revision: 'configuration-2', values: { tenant: 'edited-fixture' } },
+    });
+    expect(await configurations.replace({ target, expectedRevision: recovered!.revision, replacement })).toEqual({
+      status: 'conflict', code: 'connected_account_configuration_changed',
+    });
     expect(await next.address.acknowledge({ ...snapshot, phase: 'starting', manual: undefined })).toEqual(acknowledged);
     const submitted = await api.read({ attemptId: snapshot.attemptId });
     expect(submitted?.scope.phase).toBe('starting');
