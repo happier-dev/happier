@@ -56,6 +56,7 @@ export {
   hasTerminalPrimaryTurnStatusV1,
   isFreshAwarenessTimestampV1,
   isLiveSessionRuntimeV1,
+  isSessionRuntimeRunningV1,
   normalizeAwarenessSequenceV1,
   resolveAwarenessCurrentnessV1,
   projectSessionAwarenessRuntimeV1,

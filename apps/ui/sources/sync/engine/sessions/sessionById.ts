@@ -635,8 +635,9 @@ export async function fetchAndApplySessionById(params: Readonly<{
   try {
     encryptionMode = admitReportedSessionMode({ reported: row.encryptionMode === 'plain' ? 'plain' : 'e2ee',
       dataEncryptionKey: row.dataEncryptionKey,
-      admittedE2ee: params.getExistingSession?.(sessionId)?.encryptionMode === 'e2ee'
-        || params.encryption.getSessionEncryption(sessionId) !== null });
+      // Only a reported `plain` can be refused; an E2EE row needs no reader lookup.
+      admittedE2ee: row.encryptionMode === 'plain' && (params.getExistingSession?.(sessionId)?.encryptionMode === 'e2ee'
+        || params.encryption.getSessionEncryption(sessionId) !== null) });
   } catch {
     return { ok: false, session: null, errorCode: ACCOUNT_MODE_DOWNGRADE_UNVERIFIED };
   }

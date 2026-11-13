@@ -199,7 +199,7 @@ import {
 } from '@/sync/runtime/sessionRealtimeScmConsumers';
 import { registerSessionTranscriptDerivedCacheClear } from '@/sync/runtime/sessionTranscriptDerivedCaches';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
-import { SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS } from '../domains/session/attention/runtimePresentation';
+import { isLiveSessionRuntime, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS } from '../domains/session/attention/runtimePresentation';
 import {
   sortTranscriptMessagesOldestFirst,
   normalizeTranscriptSeq,
@@ -735,9 +735,7 @@ function shouldReusePreviousProgressProjection(input: Readonly<{
 }
 
 function buildProjectedSessionListRowRenderable(renderable: SessionListRenderableSession): SessionListRenderableSession {
-  const isActiveStreaming = renderable.active === true
-    && renderable.presence === 'online'
-    && renderable.thinking === true;
+  const isActiveStreaming = isLiveSessionRuntime(renderable) && renderable.thinking === true;
   return {
     ...renderable,
     updatedAt: isActiveStreaming ? 0 : renderable.updatedAt,

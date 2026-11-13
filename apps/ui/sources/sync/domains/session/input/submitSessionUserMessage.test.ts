@@ -403,6 +403,21 @@ describe('submitSessionUserMessage Pending action ownership', () => {
         expect(onlineHarness.ensureSessionRuntimeForPendingInput).toHaveBeenCalledTimes(1);
     });
 
+    it.each(['online_only', 'when_available'] as const)(
+        'does not resume a running Session whose live presence this client has not observed yet (%s)', async policy => {
+            // A freshly opened client holds the Session's running state but no live presence
+            // sample until the runtime next publishes; idle runtimes publish nothing.
+            const harness = createPort();
+            harness.isMachineReachable.mockReturnValue(true);
+            await submitSessionUserMessage(harness.port, {
+                ...submitOptions(createSession({ active: true, presence: undefined })),
+                sessionInactiveResumePolicy: policy,
+                resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' },
+            });
+            expect(harness.enqueuePendingMessage).toHaveBeenCalledTimes(1);
+            expect(harness.ensureSessionRuntimeForPendingInput).toHaveBeenCalledTimes(0);
+        });
+
     it('durably delegates when-available activation to the daemon', async () => {
         const session = createSession({ active: false, presence: 0 });
         const harness = createPort();

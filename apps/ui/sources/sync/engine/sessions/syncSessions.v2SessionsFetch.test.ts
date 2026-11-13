@@ -196,12 +196,18 @@ function createEncryptionHarness(): {
         const [decrypted] = await decryptEncryptionKeys([value]);
         return decrypted ?? null;
     });
-    const initializeSessions = vi.fn(async () => {});
-    const removeSessionEncryption = vi.fn();
+    // Mirrors the real Encryption boundary: a Session reader exists only after initializeSessions
+    // opened it (and until it is removed). Returning a reader for every id would make each plain
+    // row look like an admitted E2EE Session, which the mode admission refuses as a downgrade.
+    const openedSessionIds = new Set<string>();
+    const initializeSessions = vi.fn(async (sessions: Map<string, Uint8Array | null>) => {
+        for (const sessionId of sessions.keys()) openedSessionIds.add(sessionId);
+    });
+    const removeSessionEncryption = vi.fn((sessionId: string) => { openedSessionIds.delete(sessionId); });
     const decryptMetadata = vi.fn(async (_version: number, value: string) => ({ decrypted: value }));
     const decryptMetadataPayload = vi.fn(async (_version: number, value: string) => ({ decrypted: value }));
     const decryptAgentState = vi.fn(async (_version: number, _value: string | null | undefined) => null);
-    const getSessionEncryption = vi.fn(() => ({
+    const sessionReader = {
         decryptMetadata,
         decryptMetadataPayload,
         decryptAgentState,
@@ -209,7 +215,8 @@ function createEncryptionHarness(): {
         decryptAgentStateResult: vi.fn(async (version: number, value: string | null | undefined) => value === undefined
             ? { status: 'unavailable' as const }
             : { status: 'available' as const, value: await decryptAgentState(version, value) }),
-    }));
+    };
+    const getSessionEncryption = vi.fn((sessionId: string) => openedSessionIds.has(sessionId) ? sessionReader : null);
     const encryption: EncryptionHarnessEncryption = {
         decryptEncryptionKey,
         decryptEncryptionKeys,
@@ -377,10 +384,12 @@ afterEach(() => {
 });
 
 describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
-    it('prefers matching hydrated Agent identity over a same-version compact cache', () => {
-        const row = buildSessionRow({ id: 's_agent_identity', metadataVersion: 7 });
-        const existing = buildExistingSession({ id: row.id, metadataVersion: 7,
-            metadata: { path: '/repo', host: 'home', flavor: 'claude', runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: {}, provider: {} } } });
+    it('prefers matching hydrated Agent identity over a same-version compact cache', async () => {
+        const row = buildSessionRow({ id: 's_agent_identity', metadataVersion: 7, dataEncryptionKey: 'dek-agent-identity' });
+        // Only a Session opened through the production reader carries document admission.
+        const existing = await openSessionFixture(async () => jsonResponse({ sessions: [row], nextCursor: null, hasNext: false }),
+            buildExistingSession({ id: row.id, metadataVersion: 7,
+                metadata: { path: '/repo', host: 'home', flavor: 'claude', runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: {}, provider: {} } } }));
         const cached = { ...staleCacheEntry(row.id, '/repo'), metadataVersion: 7, flavor: 'claude' };
         expect(buildRenderableFromRowAndCache(row, { token: 't', secret: 's' },
             PLAIN_ACCOUNT_CURRENTNESS, cached, existing).metadata?.flavor).toBe('codex');
@@ -1618,7 +1627,8 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         expect(decryptEncryptionKey).not.toHaveBeenCalled();
         expect(decryptEncryptionKeys).not.toHaveBeenCalled();
         expect(initializeSessions).not.toHaveBeenCalled();
-        expect(getSessionEncryption).not.toHaveBeenCalled();
+        // Mode admission consults the reader registry for a reported-plain row; none is open.
+        expect(getSessionEncryption.mock.results.every(({ value }) => value === null)).toBe(true);
     });
 
     it('uses a custom session list path when fetching a secondary snapshot', async () => {
@@ -1968,7 +1978,9 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 sessions: [
                     buildSessionRow({
                         id: 's_plain',
-                        dataEncryptionKey: 'unused-plain-key',
+                        // A reported-plain row carrying a data-key envelope is a refused mode
+                        // downgrade (admitReportedSessionMode); a genuinely plain row has none.
+                        dataEncryptionKey: null,
                         encryptionMode: 'plain',
                         metadata: JSON.stringify({ path: '/repo', host: 'dev' }),
                         agentState: JSON.stringify({}),
@@ -2002,7 +2014,8 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         expect(decryptEncryptionKey).not.toHaveBeenCalled();
         expect(decryptEncryptionKeys).not.toHaveBeenCalled();
         expect(initializeSessions).not.toHaveBeenCalled();
-	        expect(getSessionEncryption).not.toHaveBeenCalled();
+	        // Mode admission consults the reader registry for a reported-plain row; none is open.
+	        expect(getSessionEncryption.mock.results.every(({ value }) => value === null)).toBe(true);
 	        expect(appliedSessions).toHaveLength(1);
         expect(appliedSessions[0]).toEqual(
             expect.objectContaining({
@@ -2222,6 +2235,13 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
 
         const { encryption } = createEncryptionHarness();
         const applySessionListRenderables = vi.fn();
+        // The current renderable must come from the production reader: a hand-built row has no
+        // document admission, so the custody boundary would rightly refuse to carry it forward.
+        const admittedSession = await openSessionFixture(requestSpy, buildExistingSession({
+            id: 's_ready_refetch', metadataVersion: 1, agentStateVersion: 1, metadata: { path: '/repo/ready', host: 'dev' },
+        }));
+        const currentRenderable: SessionListRenderableSession = { ...buildSessionListRenderableFromSession(admittedSession),
+            latestReadyEventSeq: 9, latestReadyEventAt: 9_000, hasUnreadMessages: true };
 
         await fetchAndApplySessions({
             credentials: { token: 't', secret: 's' },
@@ -2230,28 +2250,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
             request: requestSpy,
             applySessions: () => {},
             applySessionListRenderables,
-            getCurrentSessionListRenderable: (sessionId) => sessionId === 's_ready_refetch'
-                ? {
-                    id: 's_ready_refetch',
-                    seq: 10,
-                    createdAt: 1,
-                    updatedAt: 1,
-                    active: true,
-                    activeAt: 1,
-                    archivedAt: null,
-                    lastViewedSessionSeq: 8,
-                    latestTurnStatus: 'in_progress',
-                    latestReadyEventSeq: 9,
-                    latestReadyEventAt: 9_000,
-                    metadataVersion: 1,
-                    agentStateVersion: 1,
-                    metadata: { path: '/repo/ready' },
-                    thinking: false,
-                    thinkingAt: 0,
-                    presence: 'online',
-                    hasUnreadMessages: true,
-                } as any
-                : null,
+            getCurrentSessionListRenderable: (sessionId) => sessionId === 's_ready_refetch' ? currentRenderable : null,
             log: { log: () => {} },
         });
 
@@ -5157,7 +5156,10 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         ], { serverId: 'server-superseded' });
     });
 
-    it('aborts inactive session-list data-key hydration before queued native work dispatches', async () => {
+    // DataKeyOpenings (ecb31634bf2) isolates a borrower's cancellation from the shared opening it
+    // joined: the opening completes under the Encryption scope and retains its keys for the next
+    // borrower. The inactive borrower publishes nothing; the superseding read opens nothing again.
+    it('publishes nothing for an inactive session-list hydration and reuses its shared openings', async () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(4));
         const firstDataKey = new Uint8Array(32).fill(10);
         const secondDataKey = new Uint8Array(32).fill(20);
@@ -5242,9 +5244,20 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         });
         await fetchPromise;
 
-        expect(nativeDispatches).toEqual([[firstEnvelope]]);
         expect(sessionDataKeys.size).toBe(0);
         expect(initializeSessions).not.toHaveBeenCalled();
+
+        await fetchAndApplySessions({
+            serverId: 'server-native-queue-abort',
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys,
+            request: requestSpy,
+            applySessions: vi.fn(),
+            log: { log: () => {} },
+        });
+        expect(nativeDispatches).toEqual([[firstEnvelope], [secondEnvelope]]);
+        expect([...sessionDataKeys.keys()].sort()).toEqual(['s_native_abort_first', 's_native_abort_second']);
     });
 
     it('does not update data-key caches when the account scope changes mid-batch', async () => {

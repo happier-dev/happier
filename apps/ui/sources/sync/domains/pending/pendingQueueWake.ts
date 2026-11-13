@@ -1,3 +1,4 @@
+import { isSessionRuntimeRunning } from '@/sync/domains/session/attention/runtimePresentation';
 import type { ResumeSessionOptions } from '@/sync/ops';
 import type { Session } from '../state/storageTypes';
 import { buildWakeResumeExtras } from '@/agents/catalog/catalog';
@@ -47,8 +48,7 @@ export function getPendingQueueWakeResumeOptions(opts: {
     // Only gate waking on "idle" when the session is actively running.
     // For inactive/archived sessions, `thinking` / `agentState.requests` can be stale; blocking wake would
     // strand pending-queue messages until the user sends another message (or the state refreshes).
-    const isSessionActive = session.active === true && session.presence === 'online';
-    if (isSessionActive) {
+    if (isSessionRuntimeRunning(session)) {
         const pendingRequestFlags = derivePendingRequestFlagsFromSession(session);
         const inputReadiness = deriveSessionInputReadinessState({
             id: session.id,

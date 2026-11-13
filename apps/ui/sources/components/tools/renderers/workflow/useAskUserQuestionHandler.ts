@@ -1,3 +1,4 @@
+import { isSessionRuntimeRunning } from '@/sync/domains/session/attention/runtimePresentation';
 import * as React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import type { SessionQuestionHandlerV1 } from '@happier-dev/protocol/sessions/permissions/v1';
@@ -69,7 +70,7 @@ export function useAskUserQuestionHandler(
     const session = row ?? full;
     const recipient = isSessionAccessRecipient(session?.access, session?.accessLevel);
     const availability: AskUserQuestionHandler['availability'] = handling?.explicitlyStopped
-      ? 'stopped' : session?.presence === 'online' ? 'online' : 'offline';
+      ? 'stopped' : session && isSessionRuntimeRunning(session) ? 'online' : 'offline';
     return { sessionId: handlerSessionId, needsFull: !full && !recipient,
       name: session ? getSessionName(session, serverId) : null, availability,
       show: Boolean(session && (handling || recipient)

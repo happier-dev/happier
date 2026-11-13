@@ -1,3 +1,4 @@
+import { isSessionRuntimeRunning } from '@/sync/domains/session/attention/runtimePresentation';
 import type { SessionListBackgroundWorkAttentionMode } from './sessionListBackgroundWorkAttention';
 import { inboxItemViewV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { describeWorkStatusBucket } from '@/components/work/status/workStatusBuckets';
@@ -77,11 +78,9 @@ type PlacementCandidate<Reason extends PlacementReason> = Readonly<{
 
 function isRetainableWorkingSession(session: SessionListRenderableSession, nowMs: number): boolean {
     if (
-        session.active !== true
-        || session.presence !== 'online'
+        !isSessionRuntimeRunning(session)
         || session.latestTurnStatus !== 'in_progress'
         || session.thinking === false
-        || session.archivedAt != null
     ) {
         return false;
     }

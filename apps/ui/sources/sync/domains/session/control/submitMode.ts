@@ -1,3 +1,4 @@
+import { isSessionRuntimeRunning } from '@/sync/domains/session/attention/runtimePresentation';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { isNonSteerablePromptPayload } from '@happier-dev/protocol/sessions/messages/special-commands';
 import type { PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
@@ -60,7 +61,8 @@ type SessionSubmitRuntimeState = Readonly<{
     localControlBlocksDirectSubmit: boolean;
     isBusy: boolean;
     inputReadinessDisposition: 'accepts_next_turn' | 'steer_available' | 'blocked' | 'offline';
-    isOnline: boolean;
+    /** Running state from the input readiness owner (`isSessionRuntimeRunning`). */
+    isRunning: boolean;
 }>;
 
 function getProviderInFlightSteerSupported(session: Session | null): boolean {
@@ -101,7 +103,7 @@ function deriveSubmitRuntimeState(session: Session | null, nowMs: number): Sessi
         localControlBlocksDirectSubmit,
         isBusy: inputReadiness.isInputBusy,
         inputReadinessDisposition: inputReadiness.disposition,
-        isOnline: session?.presence === 'online',
+        isRunning: inputReadiness.disposition !== 'offline',
     };
 }
 
@@ -316,7 +318,7 @@ export function decideSessionMessageDelivery(opts: {
         };
     }
 
-    if (!runtimeState.isOnline) {
+    if (!runtimeState.isRunning) {
         return {
             mode: 'server_pending',
             intent,
@@ -466,7 +468,7 @@ export function canSteerUserMessageNow(opts: { session: Session | null; nowMs?: 
 export function supportsInFlightSteerUserMessage(opts: { session: Session | null }): boolean {
     const { session } = opts;
     const capabilities = session?.agentState?.capabilities;
-    return session?.presence === 'online' && session.agentState?.controlledByUser !== true
+    return session !== null && isSessionRuntimeRunning(session) && session.agentState?.controlledByUser !== true
         && (capabilities?.inFlightSteerSupported ?? capabilities?.inFlightSteer ?? getProviderInFlightSteerSupported(session)) === true;
 }
 const COMPOSER_SEND_MODES = ['agent_queue', 'server_pending', 'interrupt'] as const;

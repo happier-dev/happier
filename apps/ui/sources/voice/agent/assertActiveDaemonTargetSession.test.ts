@@ -73,6 +73,12 @@ describe('assertActiveDaemonTargetSession', () => {
             .rejects.toMatchObject({ code: 'VOICE_AGENT_TARGET_SESSION_OFFLINE' });
     });
 
+    it('admits a running target before its live presence is observed (fresh client)', async () => {
+        seedTargetSession({ presence: undefined });
+        await expect(assertActiveDaemonTargetSession({ serverId: targetHome.id, sessionId: 'target-1' }))
+            .resolves.toBeUndefined();
+    });
+
     it('does not use a direct Session row from another Home for an explicit target', () => {
         seedTargetSession({ serverId: focusedHome.id });
         storage.setState({ sessionListIndexByServerId: {} });
@@ -80,11 +86,11 @@ describe('assertActiveDaemonTargetSession', () => {
     });
 
     it('does not borrow online presence from another Home or admit a newer offline observation', async () => {
-        const session = seedTargetSession({ presence: undefined, activeAt: 100 });
+        const session = seedTargetSession({ active: false, presence: undefined, activeAt: 100 });
         sessionRuntimeObservations.observe({ serverId: focusedHome.id, sessionId: session.id },
             { active: true, activeAt: 200, presence: 'online' });
         await expect(assertActiveDaemonTargetSession({ serverId: targetHome.id, sessionId: session.id }))
-            .rejects.toMatchObject({ code: 'VOICE_AGENT_TARGET_SESSION_OFFLINE' });
+            .rejects.toMatchObject({ code: 'VOICE_AGENT_TARGET_SESSION_INACTIVE' });
         sessionRuntimeObservations.observe({ serverId: targetHome.id, sessionId: session.id },
             { active: true, activeAt: 200, presence: 'online' });
         await expect(assertActiveDaemonTargetSession({ serverId: targetHome.id, sessionId: session.id }))

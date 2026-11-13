@@ -1,3 +1,4 @@
+import { isSessionRuntimeRunning } from '@/sync/domains/session/attention/runtimePresentation';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol/backends/targets/backendTargetRef';
 import { sessionExecutionRunStop } from '@/sync/ops/sessionExecutionRuns';
 import { resolveSessionAddressFromLocalState } from '@/sync/domains/session/resolveSessionAddressFromLocalState';
@@ -86,7 +87,7 @@ export async function assertActiveDaemonTargetSession(target: SessionAddress | s
             { code: 'VOICE_AGENT_TARGET_SESSION_INACTIVE' },
         );
     }
-    if (session.presence !== 'online') {
+    if (!isSessionRuntimeRunning(session)) {
         throw Object.assign(
             new Error('Target session is offline. Reconnect it before starting local voice.'),
             { code: 'VOICE_AGENT_TARGET_SESSION_OFFLINE' },

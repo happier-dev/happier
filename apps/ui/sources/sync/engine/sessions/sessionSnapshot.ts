@@ -1167,7 +1167,9 @@ async function decryptSessionRow(
             try {
                 encryptionMode = admitReportedSessionMode({ reported: row.encryptionMode === 'plain' ? 'plain' : 'e2ee',
                     dataEncryptionKey: row.dataEncryptionKey,
-                    admittedE2ee: cachedEntry?.encryptionMode === 'e2ee' || Boolean(encryption?.getSessionEncryption(row.id)) });
+                    // Only a reported `plain` can be refused; an E2EE row needs no reader lookup.
+                    admittedE2ee: row.encryptionMode === 'plain' && (cachedEntry?.encryptionMode === 'e2ee'
+                        || Boolean(encryption?.getSessionEncryption(row.id))) });
             } catch {
                 // A refused downgrade stays a locked E2EE Session: nothing is written in plaintext.
                 return buildLockedHydratedSessionFromRow(row, 'e2ee', cachedEntry, serverId, 'encrypted_content_unavailable');

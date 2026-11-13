@@ -307,6 +307,25 @@ describe('getPendingQueueWakeResumeOptions', () => {
         })).toBeNull();
     });
 
+    it('does not wake a running Session mid-turn before its live presence is observed (fresh client)', () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        const session: any = {
+            active: true,
+            thinking: false,
+            thinkingAt: 0,
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: 1_000,
+            agentState: null,
+            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
+        };
+
+        expect(getPendingQueueWakeResumeOptions({
+            sessionId: 's1',
+            session,
+            resumeCapabilityOptions: { accountSettings: {} },
+        })).toBeNull();
+    });
+
     it('does not block wake for display-only provider runtime activity after foreground completion', () => {
         vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
         const session: any = {

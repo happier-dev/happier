@@ -5198,6 +5198,7 @@ export {
   hasUnavailableAwarenessComponentV1,
   isFreshAwarenessTimestampV1,
   isLiveSessionRuntimeV1,
+  isSessionRuntimeRunningV1,
   isSessionAwarenessContentReadableV1,
   markSessionListQueryResultV1,
   normalizeAwarenessCountV1,

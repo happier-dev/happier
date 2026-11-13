@@ -12,6 +12,7 @@ import {
     isFreshTimestamp,
     SESSION_OPTIMISTIC_PENDING_THINKING_MS,
     SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS,
+    isLiveSessionRuntime,
 } from '@/sync/domains/session/attention/runtimePresentation';
 import {
     prunePendingRequestObservedAtCache,
@@ -359,8 +360,7 @@ function needsTranscriptPendingFreshnessProbe(
     session: Session,
     sessionMessages: StorageState['sessionMessages'][string] | undefined,
 ): boolean {
-    return session.active === true
-        && session.presence === 'online'
+    return isLiveSessionRuntime(session)
         && sessionMessages?.isLoaded === true
         && readNumber(session.pendingRequestObservedAt) === null
         && !hasProjectedPendingRequestCounts(session)

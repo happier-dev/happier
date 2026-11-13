@@ -161,6 +161,18 @@ export type ProjectSessionAwarenessRuntimeV1Input = Readonly<{
 }>;
 
 /**
+ * Whether the Session's runtime is running: durable `active`, not contradicted by an observed
+ * detach. Unobserved presence (a fresh client before the runtime next publishes) is not a stop.
+ * `isLiveSessionRuntimeV1` is the separate "this device observes a live connection" fact.
+ */
+export function isSessionRuntimeRunningV1(
+  input: Readonly<{ presence: 'online' | 'offline' | 'unknown'; active?: boolean | null }>,
+  archived: boolean,
+): boolean {
+  return !archived && input.active === true && input.presence !== 'offline';
+}
+
+/**
  * Whether the runtime that publishes this Session's state is still there to publish it.
  *
  * One owner for "live", because it is the precondition of every claim derived from a report the
@@ -254,10 +266,7 @@ export function projectSessionAwarenessRuntimeV1(
   // active projection without owning a presence channel (the CLI V2 row is the concrete case).
   // Preserve actionable pending evidence unless reachability is known offline; unavailable
   // runtime evidence has already been replaced above and therefore cannot satisfy `active`.
-  const potentiallyLive = !archived
-    && !unservable
-    && runtime.active === true
-    && runtime.presence !== 'offline';
+  const potentiallyLive = !unservable && isSessionRuntimeRunningV1(runtime, archived);
   // Keep an outstanding request visible until its count clears or its owning runtime is no
   // longer live. The request timestamp need not advance while it waits, so age is not settlement
   // evidence. Updated CLIs retain and retry settlement intents; older producers can leave an

@@ -1,3 +1,4 @@
+import { isSessionRuntimeRunning } from '@/sync/domains/session/attention/runtimePresentation';
 import { DEFAULT_SESSION_INACTIVE_RESUME_POLICY } from '@happier-dev/protocol/account/settings/accountSettings';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import { normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
@@ -413,11 +414,14 @@ function selectInactiveSessionResumePolicy(
     decision: SessionMessageDeliveryDecision,
     requestedAction: PendingRequestedActionV1,
 ): 'when_available' | 'online_only' | null {
+    // `active` is the Session's running state. Live presence is a separate observation that a
+    // fresh client lacks until the runtime next publishes, and its absence is not a stop: the
+    // daemon answers "already running" to a resume of a running Session after a full round trip.
     if (
         opts.requestedAction === undefined
         && decision.intent === 'default'
         && requestedAction.kind === 'enqueue'
-        && (opts.session.active === false || opts.session.presence !== 'online')
+        && !isSessionRuntimeRunning(opts.session)
     ) {
         const policy = opts.sessionInactiveResumePolicy ?? DEFAULT_SESSION_INACTIVE_RESUME_POLICY;
         return policy === 'when_available' || policy === 'online_only' ? policy : null;

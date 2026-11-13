@@ -1,4 +1,4 @@
-import { SESSION_AWARENESS_OPTIMISTIC_PENDING_INPUT_MS, SESSION_AWARENESS_RUNTIME_STALE_SIGNAL_MS, hasProjectedActiveTurnV1, hasTerminalPrimaryTurnStatusV1, isFreshAwarenessTimestampV1, isLiveSessionRuntimeV1, projectSessionAwarenessRuntimeV1 } from '@happier-dev/protocol/sessions/awareness/runtime';
+import { SESSION_AWARENESS_OPTIMISTIC_PENDING_INPUT_MS, SESSION_AWARENESS_RUNTIME_STALE_SIGNAL_MS, hasProjectedActiveTurnV1, hasTerminalPrimaryTurnStatusV1, isFreshAwarenessTimestampV1, isLiveSessionRuntimeV1, isSessionRuntimeRunningV1, projectSessionAwarenessRuntimeV1 } from '@happier-dev/protocol/sessions/awareness/runtime';
 import { normalizeAwarenessTimestampV1 } from '@happier-dev/protocol/sessions/awareness/inputV1';
 import { projectSessionAwarenessOperationalV1 } from '@happier-dev/protocol/sessions/awareness/projectV1';
 import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -99,6 +99,20 @@ export function isLiveSessionRuntime(
     input: Pick<SessionRuntimePresentationInput, 'active' | 'presence' | 'archivedAt'>,
 ): boolean {
     return isLiveSessionRuntimeV1(
+        { presence: readAwarenessPresence(input.presence), active: input.active },
+        normalizeAwarenessTimestampV1(input.archivedAt) !== null,
+    );
+}
+
+/**
+ * Whether the Session's runtime is running (durable `active`, no observed detach). Send, steer,
+ * wake, resume copy and handler availability read this; unobserved presence on a fresh client is
+ * not a stop. Use `isLiveSessionRuntime` only for "this device observes a live connection".
+ */
+export function isSessionRuntimeRunning(
+    input: Readonly<{ active?: boolean | null; presence?: unknown; archivedAt?: number | null }>,
+): boolean {
+    return isSessionRuntimeRunningV1(
         { presence: readAwarenessPresence(input.presence), active: input.active },
         normalizeAwarenessTimestampV1(input.archivedAt) !== null,
     );

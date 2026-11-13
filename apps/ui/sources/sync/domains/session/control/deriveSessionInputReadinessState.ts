@@ -8,6 +8,7 @@ import {
     normalizeRuntimeStatusTimestamp,
     SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS,
     SESSION_OPTIMISTIC_PENDING_THINKING_MS,
+    isSessionRuntimeRunning,
 } from '@/sync/domains/session/attention/runtimePresentation';
 
 export type SessionInputReadinessDisposition =
@@ -46,8 +47,7 @@ export function deriveSessionInputReadinessState(
     nowMs: number,
 ): SessionInputReadinessState {
     input = readSessionRuntimeObservation(input);
-    const isOnline = input.active === true && input.presence === 'online';
-    if (!isOnline) {
+    if (!isSessionRuntimeRunning(input)) {
         return {
             disposition: 'offline',
             isInputBusy: false,
@@ -96,8 +96,6 @@ function hasFreshOptimisticPendingUserMessage(
     const latestTurnStatus = input.latestTurnStatus ?? null;
     if (hasTerminalPrimaryTurnStatus(latestTurnStatus)) return false;
     return input.hasPendingUserMessages === true
-        && input.active === true
-        && input.presence === 'online'
         && isFreshTimestamp(
             normalizeRuntimeStatusTimestamp(input.optimisticThinkingAt),
             nowMs,
@@ -113,8 +111,6 @@ function hasFreshForegroundRuntimeActivity(
     if (hasProjectedActiveTurn(latestTurnStatus)) return true;
     if (hasTerminalPrimaryTurnStatus(latestTurnStatus)) return false;
     return input.thinking === true
-        && input.active === true
-        && input.presence === 'online'
         && isFreshTimestamp(
             normalizeRuntimeStatusTimestamp(input.thinkingAt),
             nowMs,

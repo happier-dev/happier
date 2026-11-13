@@ -5,6 +5,23 @@ import { deriveSessionInputReadinessState } from './deriveSessionInputReadinessS
 describe('deriveSessionInputReadinessState', () => {
     const nowMs = 1_000_000;
 
+    it('reads a running Session whose live presence is not yet observed (fresh client) by its running state', () => {
+        // A fresh client has `active` from the snapshot and no presence sample until the runtime
+        // next publishes. Unobserved presence is not a detach; an observed detach still is.
+        const running = { active: true, activeAt: nowMs - 1_000, presence: undefined } as const;
+        const dispositions = [
+            deriveSessionInputReadinessState({ ...running, thinking: true, thinkingAt: nowMs - 1_000,
+                inFlightSteerSupported: true, inFlightSteerAvailable: true }, nowMs).disposition,
+            deriveSessionInputReadinessState({ ...running, latestTurnStatus: 'in_progress',
+                latestTurnStatusObservedAt: nowMs - 1_000 }, nowMs).disposition,
+            deriveSessionInputReadinessState({ ...running, thinking: false, latestTurnStatus: 'completed',
+                latestTurnStatusObservedAt: nowMs - 1_000 }, nowMs).disposition,
+        ];
+        expect(dispositions).toEqual(['steer_available', 'blocked', 'accepts_next_turn']);
+        expect(deriveSessionInputReadinessState({ ...running, presence: nowMs - 500 }, nowMs).disposition).toBe('offline');
+        expect(deriveSessionInputReadinessState({ ...running, active: false }, nowMs).disposition).toBe('offline');
+    });
+
     it('does not treat display-only provider runtime activity as input-busy', () => {
         const input = {
             active: true,

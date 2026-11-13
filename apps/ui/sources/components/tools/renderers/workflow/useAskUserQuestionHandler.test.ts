@@ -254,7 +254,8 @@ it('explains a stopped manager for a person-handled question without changing it
   expect(storage.getState().sessions.worker?.agentState?.requests?.question?.currentHandler).toEqual({ kind: 'person' });
 
   // Resuming the manager cannot make it the handler of this already-routed question.
-  await act(async () => { storage.setState({ sessions: { worker, manager: { ...manager, presence: 'online',
+  // A fresh client reads the resumed manager's running state before any live presence sample.
+  await act(async () => { storage.setState({ sessions: { worker, manager: { ...manager, active: true, presence: undefined,
     ownerMetadataView: { path: '/repo', host: 'test', name: 'Daily coordinator' } } } }); });
   expect(hook.getCurrent()).toBeNull();
   expect(storage.getState().sessions.worker?.agentState?.requests?.question?.currentHandler).toEqual({ kind: 'person' });

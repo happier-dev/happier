@@ -21,6 +21,17 @@ const steerable = {
 } as any;
 
 describe('decideSessionMessageDelivery row actions', () => {
+    it('offers busy steering to a running Session before its live presence is observed (fresh client)', () => {
+        const fresh = { ...steerable, presence: undefined, pendingVersion: 2, metadata: { version: '999.0.0' } };
+        expect(decideSessionMessageDelivery({ configuredMode: 'agent_queue', session: fresh, nowMs: now }))
+            .toMatchObject({ requestedAction: { v: 1, kind: 'steer_if_active' } });
+        expect(resolveSessionComposerSendActions({ session: fresh, configuredMode: 'agent_queue', nowMs: now }).modes)
+            .toContain('agent_queue');
+        // An observed detach keeps the offline path.
+        expect(decideSessionMessageDelivery({ configuredMode: 'agent_queue', session: { ...fresh, presence: 0 }, nowMs: now }))
+            .toMatchObject({ reason: 'offline_pending' });
+    });
+
     it('treats an active online runtime with unchanged empty AgentState as ready for ordinary input', () => {
         expect(decideSessionMessageDelivery({
             configuredMode: 'agent_queue',

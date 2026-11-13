@@ -1,3 +1,4 @@
+import { isSessionRuntimeRunning } from '@/sync/domains/session/attention/runtimePresentation';
 import * as React from 'react';
 import { readableMessageText } from '@/components/sessions/transcript/messageDisplayText';
 import { isPendingMessageForRecipient } from '@/sync/domains/pending/pendingMessageRecipient';
@@ -305,7 +306,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         || pendingQueueDeliveryTimingSetting === 'after_foreground_ready'
             ? pendingQueueDeliveryTimingSetting
             : settingsDefaults.sessionPendingQueueDeliveryTiming;
-    const pendingQueueRuntimeReachable = session?.active === true && session?.presence === 'online';
+    const pendingQueueRuntimeReachable = session ? isSessionRuntimeRunning(session) : false;
     const { sendNowActionLabel } = getPendingMessageSendPresentation(session);
     const pendingQueueForegroundState = runtimeWorking
         ? (canSteerNow ? 'active_steerable' : 'active_unsteerable')

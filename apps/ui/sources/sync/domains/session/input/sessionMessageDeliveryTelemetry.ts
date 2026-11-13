@@ -1,5 +1,5 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { projectUiSessionRuntimeAwareness } from '@/sync/domains/session/attention/runtimePresentation';
+import { isSessionRuntimeRunning, projectUiSessionRuntimeAwareness } from '@/sync/domains/session/attention/runtimePresentation';
 import {
     syncReliabilityTelemetry,
     type SyncReliabilityTelemetry,
@@ -75,7 +75,7 @@ export function recordSessionMessageDeliveryDecision(params: Readonly<{
         active: session?.active === true,
         presence: String(session?.presence ?? 'unknown'),
         busy: runtimeStatus.working === true,
-        agentReady: session?.active === true && session.presence === 'online',
+        agentReady: session ? isSessionRuntimeRunning(session) : false,
         controlledByUser: session?.agentState?.controlledByUser === true,
         inFlightSteerSupported: (capabilities?.inFlightSteerSupported ?? capabilities?.inFlightSteer) === true,
         inFlightSteerAvailable: (capabilities?.inFlightSteerAvailable ?? capabilities?.inFlightSteer) === true,

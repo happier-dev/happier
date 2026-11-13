@@ -151,6 +151,14 @@ process-terminal fact remains separate. Current requests, explicit resume and
 runtime serviceability failures retain precedence; List, Map and report counts
 consume the same decision.
 
+Two runtime facts stay distinct. *Running* (`isSessionRuntimeRunningV1`) means durable
+`active` with no observed detach. An unobserved presence, as on a freshly opened client
+before the runtime next publishes, is not a stop. Send, steer, pending wake, resume copy,
+voice targeting and manager-question availability read it through the UI's
+`isSessionRuntimeRunning`. *Live* (`isLiveSessionRuntimeV1`, UI `isLiveSessionRuntime`)
+means this device currently observes the runtime's connection. Freshness, `working`
+from a thinking sample, and live-tick reuse read it.
+
 Pending permission and user-action counts are session-wide projections of the
 acknowledged Agent state. Its legacy and metadata-tuple writers normalize and
 publish those counts, including explicit clears when requests settle. Foreground

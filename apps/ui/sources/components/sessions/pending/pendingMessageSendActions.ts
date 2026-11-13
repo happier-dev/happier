@@ -1,6 +1,6 @@
 import type { DiscardedPendingMessage, PendingMessage, Session } from '@/sync/domains/state/storageTypes';
 import { canSteerUserMessageNow } from '@/sync/domains/session/control/submitMode';
-import { projectUiSessionRuntimeAwareness } from '@/sync/domains/session/attention/runtimePresentation';
+import { isSessionRuntimeRunning, projectUiSessionRuntimeAwareness } from '@/sync/domains/session/attention/runtimePresentation';
 import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessageActivity';
 import type { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -20,7 +20,7 @@ export function getPendingMessageSendPresentation(session: Session | null) {
             : backgroundActive ? t('session.pendingMessages.actions.sendToAgentNow') : t('session.pendingMessages.actions.sendNow'),
         sendNowConfirmationTitle: canSteerNow ? t('session.pendingMessages.sendConfirm.interruptTitle')
             : backgroundActive ? t('session.pendingMessages.sendConfirm.backgroundTitle') : t('session.pendingMessages.sendConfirm.title'),
-        sendNowConfirmationBody: session?.presence !== 'online' ? t('session.pendingMessages.sendConfirm.resumeBody')
+        sendNowConfirmationBody: !session || !isSessionRuntimeRunning(session) ? t('session.pendingMessages.sendConfirm.resumeBody')
             : backgroundActive ? t('session.pendingMessages.sendConfirm.backgroundBody') : t('session.pendingMessages.sendConfirm.body'),
     };
 }

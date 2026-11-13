@@ -403,6 +403,27 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(sendPendingMessageNow).not.toHaveBeenCalled();
     });
 
+    it('does not describe resuming a running session whose live presence is not yet observed (fresh client)', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        modalConfirm.mockResolvedValueOnce(false);
+        sessionValue = { active: true, presence: undefined, thinking: false };
+
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+            discardedMessages: [],
+        }));
+
+        await hoverPendingMessageRow(screen, 'p1');
+        await screen.pressByTestIdAsync('pendingMessages.sendNow:p1');
+
+        expect(modalConfirm).toHaveBeenCalledWith(
+            t('session.pendingMessages.sendConfirm.title'),
+            t('session.pendingMessages.sendConfirm.body'),
+            { confirmText: t('session.pendingMessages.actions.sendNow') },
+        );
+    });
+
     it('leaves inactive managed held input to the existing wake recovery control', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         sessionValue = { active: false, presence: 'offline', thinking: false };
@@ -928,7 +949,8 @@ describe('PendingMessagesTranscriptBlock', () => {
                 discardedMessages: [],
             }));
 
-            expect(screen.findByTestId('pendingMessages.nonSteerableNotice')).toBeTruthy();
+            // An inactive runtime is not running, so it offers no in-flight steering to explain.
+            expect(screen.findByTestId('pendingMessages.nonSteerableNotice')).toBeNull();
 
             await hoverPendingMessageRow(screen, 'p1');
 
