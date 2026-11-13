@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import { MachineProvisionerCheckResultV1Schema, MachineProvisionerObservationV1Schema,
+import { MachineProvisionerCheckResultV1Schema, MachineProvisionerDestroyResultV1Schema, MachineProvisionerObservationV1Schema,
   MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { PLUGIN, PLUGIN_MANIFEST, ROLE_SCHEMAS } from './manifest.js';
 import { connectedAccountRuntime } from './account.js';
@@ -10,7 +10,7 @@ import type { ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connec
 // Boat OpenAPI 3.1, fetched 2026-11-05: https://docs.boat.dev/openapi/boat-v1.yaml.
 // Only the vendor HTTP boundary is replaced; Account activation and role schemas are real.
 async function fixture(options: { trial?: boolean; permission?: string; health?: 'ok' | 'degraded'; state?: string;
-  matches?: number; lostReply?: boolean; secondPage?: boolean; createRefusal?: string } = {}) {
+  matches?: number; lostReply?: boolean; secondPage?: boolean; createRefusal?: string; createRefusalStatus?: number } = {}) {
   const requests: Array<{ path: string; method: string; body?: unknown; label: string | null }> = [];
   const sandboxFacts = { name: 'Boat contract fixture', desktopAvailable: true, snapshotAvailable: true };
   const http = createPluginHttpFixture({ request: request => {
@@ -21,8 +21,9 @@ async function fixture(options: { trial?: boolean; permission?: string; health?:
     if (options.lostReply && method === 'POST') throw new Error('Create committed; reply lost');
     let value: unknown;
     const refusal = options.permission ?? (method === 'POST' ? options.createRefusal : undefined);
-    if (refusal) value = { ok: false, type: 'sandbox.error', status: 403, code: refusal,
-      message: 'private vendor content', error: { code: refusal, message: 'private vendor content', status: 403 }, requestId: 'req_test' };
+    const refusalStatus = options.permission ? 403 : options.createRefusalStatus ?? 403;
+    if (refusal) value = { ok: false, type: 'sandbox.error', status: refusalStatus, code: refusal,
+      message: 'private vendor content', error: { code: refusal, message: 'private vendor content', status: refusalStatus }, requestId: 'req_test' };
     else if (url.pathname.endsWith('/limits')) value = { ok: true, type: 'limits.info', sandboxPlanKey: options.trial ? 'trial' : 'box_20',
       sandboxPlanDollars: 20, activeSandboxes: 0, maxActiveSandboxes: 100, canStart: true, billingStatus: 'active' };
     else if (url.pathname.endsWith('/saved-snapshots')) value = { ok: true, type: 'snapshot.saved.list', snapshots: [
@@ -37,7 +38,7 @@ async function fixture(options: { trial?: boolean; permission?: string; health?:
     } else if (method === 'POST') value = { ok: true, type: 'sandbox.created', status: 'provisioning', ttlSeconds: null,
       sandbox: { ...sandboxFacts, id: 'bx_23456789', state: 'init' } };
     else value = { ok: true, type: 'sandbox.info', sandbox: { ...sandboxFacts, id: 'bx_23456789', state: options.state ?? 'ready', health: options.health ?? 'ok' } };
-    return { status: refusal ? 403 : method === 'POST' ? 202 : 200, finalUrl: request.url, headers: {},
+    return { status: refusal ? refusalStatus : method === 'POST' ? 202 : 200, finalUrl: request.url, headers: {},
       body: new TextEncoder().encode(JSON.stringify(value)) };
   } });
   const host = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: PLUGIN, services: { http } });
@@ -45,6 +46,53 @@ async function fixture(options: { trial?: boolean; permission?: string; health?:
 }
 
 describe('Boat documented contract gaps', () => {
+  it('recovers and deletes a lost Create using the label written by the real acquisition producer', async () => {
+    let labels: Record<string, string> | undefined;
+    let creates = 0;
+    let deletes = 0;
+    const id = 'bx_23456789';
+    const operationId = 'bdop_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const http = createPluginHttpFixture({ request: request => {
+      const url = new URL(request.url);
+      let value: unknown;
+      if (url.pathname.endsWith('/limits')) value = { ok: true, type: 'limits.info', sandboxPlanKey: 'box_20' };
+      else if (request.method === 'POST') {
+        creates++;
+        const body = JSON.parse(new TextDecoder().decode(request.body));
+        labels = body.labels;
+        throw new Error('Provider committed; response lost');
+      } else if (url.pathname.endsWith('/sandboxes')) {
+        const expected = labels && `happier-managed-id=${labels['happier-managed-id']}`;
+        value = { ok: true, type: 'sandbox.list', sandboxes: url.searchParams.get('label') === expected ? [{ id }] : [],
+          pageInfo: { hasMore: false, nextCursor: null, limit: 100 } };
+      } else if (request.method === 'DELETE') {
+        expect(url.pathname).toBe(`/api/v1/sandboxes/${id}`);
+        deletes++;
+        value = { ok: true, type: 'sandbox.deleted', operation: { id: operationId, kind: 'sandbox', targetId: id, status: 'pending' } };
+      } else {
+        expect(url.pathname).toBe(`/api/v1/deletion-operations/${operationId}`);
+        value = { ok: true, type: 'sandbox.deleted', operation: { id: operationId, kind: 'sandbox', targetId: id, status: 'completed' } };
+      }
+      return { status: 200, finalUrl: request.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(value)) };
+    } });
+    const host = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: PLUGIN, services: { http } });
+    try {
+      const acquired = ROLE_SCHEMAS.acquireResult.parse(await host.invokeAction('acquire', {
+        managedId: 'managed-lost-delete', launch: { size: 'small', source: { kind: 'blank' } },
+      }));
+      expect(acquired.kind).toBe('pending');
+      if (acquired.kind !== 'pending') throw new Error('Expected lost submission');
+      const recovered = ROLE_SCHEMAS.acquireResult.parse(await host.invokeAction('reconcile', { nativeOperation: acquired.nativeOperationRef.value }));
+      expect(recovered).toMatchObject({ kind: 'bound', resource: { value: { sandboxId: id } } });
+      if (recovered.kind !== 'bound') throw new Error('Expected exact recovered identity');
+      const deleted = MachineProvisionerDestroyResultV1Schema.parse(await host.invokeAction('destroy', { resource: recovered.resource.value }));
+      expect(deleted.kind).toBe('accepted');
+      if (deleted.kind !== 'accepted') throw new Error('Expected retained delete operation');
+      expect(await host.invokeAction('destroy', { nativeOperation: deleted.nativeOperationRef.value })).toEqual({ kind: 'confirmed' });
+      expect({ creates, deletes }).toEqual({ creates: 1, deletes: 1 });
+    } finally { await host.dispose(); }
+  });
+
   it.each([{ kind: 'blank' }, { kind: 'named-snapshot', name: 'base' }, { kind: 'fork', sandboxId: 'bx_abcdefgh' }])(
     'labels $kind creates and recovers a lost reply by exact label without another allocation', async source => {
       const { host, requests } = await fixture({ lostReply: true, secondPage: true });
@@ -142,11 +190,15 @@ describe('Boat documented contract gaps', () => {
   });
 
   it.each([
-    ['daily_limit_reached', 'native_daily_limit_reached'],
-    ['idempotency_key_reused', 'native_idempotency_mismatch'],
-    ['api_key_action_forbidden', 'native_api_key_action_forbidden'],
-  ])('retains definite allocation refusal %s without turning it into recovery', async (createRefusal, code) => {
-    const { host, requests } = await fixture({ createRefusal });
+    ['daily_limit_reached', 'native_daily_limit_reached', 429],
+    ['idempotency_key_reused', 'native_idempotency_mismatch', 409],
+    ['api_key_action_forbidden', 'native_api_key_action_forbidden', 403],
+    ['invalid_json', 'native_request_failed', 400],
+    ['unauthorized', 'native_authorization_failed', 401],
+    ['rate_limited', 'native_rate_limited', 429],
+    ['not_found', 'native_not_found', 404],
+  ] as const)('retains definite allocation refusal %s without turning it into recovery', async (createRefusal, code, createRefusalStatus) => {
+    const { host, requests } = await fixture({ createRefusal, createRefusalStatus });
     try {
       const result = ROLE_SCHEMAS.acquireResult.parse(await host.invokeAction('acquire', {
         managedId: 'managed-gaps', launch: { size: 'small', source: { kind: 'blank' } },

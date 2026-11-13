@@ -161,7 +161,7 @@ describe('Boat machine provisioner contract', () => {
     expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
   });
   it.each([
-    { status: 403, code: 'unauthorized', kind: 'pending', httpStatusClass: '4xx' },
+    { status: 403, code: 'unauthorized', kind: 'rejected', httpStatusClass: '4xx' },
     { status: 429, code: 'limit_reached', kind: 'rejected', httpStatusClass: '4xx' },
     { status: 503, code: 'service_error', kind: 'pending', httpStatusClass: '5xx' },
   ])('retains HTTP $status acquire cause through the activated role without repeating allocation', async failure => {

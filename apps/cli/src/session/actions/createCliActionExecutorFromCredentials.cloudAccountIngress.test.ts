@@ -1,12 +1,16 @@
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import { handleActionsCommand } from '@/cli/commands/actions';
+
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { writeDaemonState } from '@/persistence';
 import { configuration } from '@/configuration';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+
+afterEach(() => { vi.restoreAllMocks(); process.exitCode = undefined; });
 
 for (const provider of ['agent37', 'boat']) {
     for (const actionId of ['machines.provisioners.options', 'machines.managed.acquire'] as const) {
@@ -43,20 +47,28 @@ for (const provider of ['agent37', 'boat']) {
                 const address = http.address(); if (!address || typeof address === 'string') throw new Error('Missing fixture port');
                 if (scenario !== 'absent') writeDaemonState({ pid: process.pid, httpPort: address.port, startedAt: Date.now(), startedWithCliVersion: 'test', controlToken: 'fixture', machineId: 'own-machine', accountId: scenario === 'own' ? 'owner' : 'another-account' });
                 try {
-                    const executor = createCliActionExecutorFromCredentials({ credentials: { token, encryption: null,
-                        credentialProvenance: 'stored_session' }, serverId: configuration.activeServerId,
-                        serverIdentityId: 'srv_home',
-                        serverApiUrl: `http://127.0.0.1:${address.port}`,
-                        actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
-                    const result = await executor.execute(actionId, input, { surface: 'cli', presentUserConfirmation: { actionId } });
+                    let output = '';
+                    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+                        output += String(chunk);
+                        const callback = args.find(argument => typeof argument === 'function');
+                        if (typeof callback === 'function') callback();
+                        return true;
+                    });
+                    await handleActionsCommand(['invoke', actionId, '--input-json', JSON.stringify(input), '--json'], {
+                        readCredentialsFn: async () => ({ token, encryption: null, credentialProvenance: 'stored_session' }),
+                        getServerProfileFn: async () => { throw new Error('No saved profile in this isolated test Home'); },
+                        createExecutorFn: params => createCliActionExecutorFromCredentials({ ...params,
+                            serverId: configuration.activeServerId, serverIdentityId: 'srv_home',
+                            serverApiUrl: `http://127.0.0.1:${address.port}`,
+                            actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } }),
+                    });
+                    const result = JSON.parse(output);
                     if (scenario === 'own') {
-                        expect(result).toEqual({ ok: false, errorCode: 'credential_unavailable', error: 'Select a connected account.',
-                            details: { phase: 'connected_account_admission', remedy: 'Select an account.' } });
+                        expect(result).toMatchObject({ ok: false, kind: 'actions_invoke', error: { code: 'credential_unavailable' } });
                         expect(requests).toEqual([expect.objectContaining({ actionId, input })]);
                         expect(requests[0]).not.toHaveProperty('target');
                     } else {
-                        expect(result).toMatchObject({ ok: false, errorCode: 'daemon_unavailable', effectAttempted: false,
-                            details: { phase: 'managed_machine_daemon_ingress', remedy: expect.any(String) } });
+                        expect(result).toMatchObject({ ok: false, kind: 'actions_invoke', error: { code: 'daemon_unavailable' } });
                         expect(requests).toEqual([]);
                     }
                 } finally { http.closeAllConnections(); await new Promise<void>(resolve => http.close(() => resolve())); }

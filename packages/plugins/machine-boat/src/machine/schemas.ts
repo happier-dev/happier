@@ -67,6 +67,7 @@ export class BoatNativeError extends Error {
 }
 
 const admissionRefusalCodes: readonly string[] = [
+  'native_request_failed', 'native_authorization_failed', 'native_rate_limited', 'native_not_found',
   'native_idempotency_mismatch', 'native_daily_limit_reached', 'native_limit_reached',
   'native_member_limit_reached', 'native_machine_class_plan_required',
   'native_trial_machine_class_not_allowed', 'native_trial_auto_stop_required',

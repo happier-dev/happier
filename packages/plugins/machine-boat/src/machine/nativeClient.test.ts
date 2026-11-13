@@ -17,6 +17,19 @@ function withPaidAccount(fetch: typeof globalThis.fetch) {
 }
 
 describe('Boat native HTTP boundary', () => {
+  it.each([
+    [408, 'invalid_request'],
+    [503, 'unauthorized'],
+    [307, 'unauthorized'],
+    [409, 'idempotency_in_progress'],
+  ] as const)('retains acquisition correlation for an uncertain HTTP %i %s reply', async (status, code) => {
+    const client = withPaidAccount(async () => json({ ok: false, code,
+      error: { code, message: 'private vendor content', status } }, status));
+    expect(await client.acquire({ launch: { size: 'small', source: { kind: 'blank' } }, idempotencyKey: 'uncertain-create' }))
+      .toEqual({ kind: 'pending', operation: { kind: 'acquire', idempotencyKey: 'uncertain-create' },
+        nativeCause: { httpStatusClass: status >= 500 ? '5xx' : status >= 400 ? '4xx' : '3xx' } });
+  });
+
   it('does not report access when the limits endpoint returns an unrelated object', async () => {
     const client = createBoatNativeClient({ fetch: async () => json({}) });
     await expect(client.check()).rejects.toMatchObject({ code: 'native_response_invalid' });

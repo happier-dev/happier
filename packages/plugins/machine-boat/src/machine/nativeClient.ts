@@ -104,6 +104,11 @@ export function createBoatNativeClient(options: BoatNativeClientOptions = {}) {
       const parsed = errorResponse.safeParse(value);
       if (!parsed.success) throw new BoatNativeError('native_response_invalid', nativeCause);
       const error = parsed.data;
+      // Only a completed client refusal disproves allocation. A timeout or
+      // server failure can follow a committed create, regardless of its code.
+      if (response.status === 408) throw new BoatNativeError('native_transport_unavailable', nativeCause);
+      if (response.status >= 500) throw new BoatNativeError('native_service_unavailable', nativeCause);
+      if (response.status < 400) throw new BoatNativeError('native_response_invalid', nativeCause);
       if (response.status === 401 || error.code === 'unauthorized') throw new BoatNativeError('native_authorization_failed', nativeCause);
       if (error.code === 'idempotency_in_progress') throw new BoatNativeError('native_idempotency_in_progress', nativeCause);
       if (error.code === 'idempotency_key_reused') throw new BoatNativeError('native_idempotency_mismatch', nativeCause);
@@ -113,7 +118,7 @@ export function createBoatNativeClient(options: BoatNativeClientOptions = {}) {
       }
       if (response.status === 429 || error.code === 'rate_limited') throw new BoatNativeError('native_rate_limited', nativeCause);
       if (response.status === 404 && error.code === 'not_found') throw new BoatNativeError('native_not_found', nativeCause);
-      throw new BoatNativeError(response.status >= 500 ? 'native_service_unavailable' : 'native_request_failed', nativeCause);
+      throw new BoatNativeError('native_request_failed', nativeCause);
     }
     return value;
   }
