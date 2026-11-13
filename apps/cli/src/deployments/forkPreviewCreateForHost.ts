@@ -1,5 +1,5 @@
-import type { ActionExecutorContext, ActionExecutorDeps, DeploymentEnvironmentCreateInputV1,
-    HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol';
+import type { ActionExecutorContext, ActionExecutorDeps, DeploymentEnvironmentCreateInputV1 } from '@happier-dev/protocol';
+import type { HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateResultV1Schema,
     DeploymentDomainMutationResultV1Schema, DeploymentDomainListResultV1Schema,
     resolveDeploymentPreviewExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';

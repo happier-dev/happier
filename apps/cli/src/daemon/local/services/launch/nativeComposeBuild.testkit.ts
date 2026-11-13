@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { create as createTar } from 'tar';
 import nacl from 'tweetnacl';
 import type { DeploymentImageV1, EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
-import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk/services';
+import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
 import { environmentSecretBindingIdentityV1 } from '@happier-dev/deployment-protocol';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';

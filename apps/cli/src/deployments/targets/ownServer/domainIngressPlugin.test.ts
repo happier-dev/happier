@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { DeploymentDomainContentV1Schema } from '@happier-dev/deployment-protocol';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import type { HostReviewedChildInvocationV1 } from '@happier-dev/protocol';
+import type { HostReviewedChildInvocationV1 } from '@happier-dev/protocol/actions/executor/types';
 import { prepareOwnServerDomainReviewedChildren } from './ownServerDomainActions';
 import { disableCloudflareDomainForHost } from './cloudflareDomainPreparation';
 

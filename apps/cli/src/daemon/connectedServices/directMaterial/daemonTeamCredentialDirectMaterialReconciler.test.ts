@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { accountSettingsParse, type ActionExecutorDeps, type ConnectedAccountDirectExportProjectionV1 } from '@happier-dev/protocol';
+import { accountSettingsParse, type ActionExecutorDeps } from '@happier-dev/protocol';
+import type { ConnectedAccountDirectExportProjectionV1 } from '@happier-dev/protocol/connect/pluginConnectedAccountAuthenticationV2';
 import {
   NO_TEAM_CAPABILITIES_V1,
   TeamCredentialResourcePageV1Schema,

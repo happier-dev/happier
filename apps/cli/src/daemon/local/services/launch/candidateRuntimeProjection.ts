@@ -1,7 +1,7 @@
 /** Native Compose owns parsing; the existing attachment owns runtime custody. */
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { DeploymentMissingRequiredSecretsV1 } from '@happier-dev/deployment-protocol';
-import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk/services';
+import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
 import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import type { HostDeploymentRuntimeProjectionV1 } from '@/deployments/secrets/deploymentExecEnvPort';
 import { prepareNativeComposeNormalizationProfileForHost } from './nativeComposeEngine';

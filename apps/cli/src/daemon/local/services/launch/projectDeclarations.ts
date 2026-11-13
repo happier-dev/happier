@@ -17,7 +17,7 @@ import { readProjectDefinitionFileBytes } from '@/workspaces/projectSetup/native
 import { resolveProjectServiceStartChoice } from '@/workspaces/execution/projectServicePlacement';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { buildProjectManagedServiceStartRequest, type ProjectManagedServiceSupervisionInput, type ProjectManagedServiceHandle, type EnvironmentProjectManagedServiceHandle, type createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
-import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk/services';
+import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
 import type { DeploymentServiceExportV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import type { Disposable } from '@happier-dev/plugin-sdk';
 import type { ManagedServiceNativeLogReadV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';

@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { DeploymentImageV1 } from '@happier-dev/deployment-protocol';
-import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk/services';
+import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
 import { createNativeComposeImageIdentity, resolveNativeComposeDeploymentOwnedImageTag, resolveNativeComposeRegistryForReference, normalizeNativeComposePlatform,
     type NativeComposeImageAcquisition, type NativeComposeRegistryAcquisition, type NativeComposeEffectAuthority } from './nativeComposeImageIdentity';
 

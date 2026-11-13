@@ -564,6 +564,7 @@ export const DeploymentEnvironmentGetResultV1Schema = lazyZodSchema(() => z.unio
     pendingAdmission: z.optional(DeploymentPendingAdmissionV1Schema) }), DeploymentActionFailureV1Schema,
 ]));
 export const DeploymentEnvironmentGetResultV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(DeploymentEnvironmentGetResultV1Schema));
+export type DeploymentEnvironmentGetResultV1 = z.infer<typeof DeploymentEnvironmentGetResultV1Schema>;
 export const DeploymentReceiptGetResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ok: z.literal(true), deployment: DeploymentReceiptHeaderV1Schema,
     failureSummary: z.optional(z.nullable(DeploymentReceiptFailureSummaryV1Schema)),

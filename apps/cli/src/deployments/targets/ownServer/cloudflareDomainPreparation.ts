@@ -1,4 +1,5 @@
-import type { ActionExecutorContext, DeploymentDomainChildRpcV1, HostReviewedChildInvocationV1 } from '@happier-dev/protocol';
+import type { ActionExecutorContext, DeploymentDomainChildRpcV1 } from '@happier-dev/protocol';
+import type { HostReviewedChildInvocationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { DeploymentDomainHeaderV1, DeploymentDomainTopologyV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readDeploymentDomainArtifactV1, parseMachineSecretGrantSubjectKey,
     type DeploymentDomainContentV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';

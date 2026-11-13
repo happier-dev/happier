@@ -1,7 +1,7 @@
 import { constants } from 'node:fs';
 import { cp, lstat, mkdir, mkdtemp, realpath, rename, rm } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk/services';
+import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
 import type { WorkspaceManifestEntry } from '@happier-dev/protocol';
 import { isDeploymentSourceUnchangedManifestInput, isDeploymentManifestInputUnchanged } from '@/deployments/targets/ownServer/exactCommitRelease';
 import { resolveContainedWorkspaceMaterializationPath } from '@/scm/workspace/workspaceMaterializationSafety';

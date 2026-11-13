@@ -1,9 +1,10 @@
 import { readFile, realpath, writeFile } from 'node:fs/promises';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentBuildSupportV1, DeploymentImageV1 } from '@happier-dev/deployment-protocol';
-import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk/services';
+import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
 import { isDeploymentSourceUnchangedManifestInput } from '@/deployments/targets/ownServer/exactCommitRelease';
 import { createNativeComposeImageIdentity, resolveNativeComposeDeploymentOwnedImageTag, normalizeNativeComposePlatform,
     type NativeComposeImageArchive, type NativeComposeImageAcquisition, type NativeComposeRegistryAcquisition,
@@ -430,7 +431,7 @@ export function createNativeComposeImagePreparation(input: Readonly<{
                         if (!(error instanceof NativeComposeBakeFailure)) throw error;
                         const buildSupport = projectNativeComposeBuildSupport(requestedBuildPlatforms, { builtPlatforms, failure: error });
                         const code = error.observedCause === 'runtime_platform_unsupported' ? 'build_platform_unsupported' : 'native_build_failed';
-                        const failureCause = { phase: `deployment.native.build.${error.observedCause}`, errorClass: 'Error',
+                        const failureCause: ActionFailureCauseV1 = { phase: `deployment.native.build.${error.observedCause}`, errorClass: 'Error',
                             errorCode: error.diagnosticCode, httpStatus: null };
                         throw new PluginError({ code, message: 'The native image build failed',
                             details: { buildSupport }, failureCause }, { cause: { ok: false, errorCode: code, error: code,
