@@ -11318,8 +11318,8 @@ const pl: typeof en = {
         confirmDescription: 'Szkic zostanie usunięty ze wszystkich zsynchronizowanych urządzeń.',
         failedTitle: 'Nie udało się usunąć szkicu',
         launchInCustody: 'Ten szkic uruchamia sesję. Możesz go usunąć, gdy uruchamianie się zakończy.',
-        botTitle: 'Usuń szkic bota',
     },
+    botActionTitles: { open: 'Otwórz zapisany szkic bota', delete: 'Usuń szkic bota', directorySet: 'Ustaw folder szkicu bota', modelSet: 'Ustaw model szkicu bota' },
     conflict: {
         title: 'Przejrzyj sprzeczne zmiany',
         description: 'Wybierz, którą wersję zachować dla każdego pola. Przed zastąpieniem możesz skopiować wersję z tego urządzenia.',

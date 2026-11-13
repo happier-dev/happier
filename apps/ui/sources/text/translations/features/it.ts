@@ -11304,8 +11304,8 @@ const it: typeof en = {
         confirmDescription: 'La bozza viene rimossa dai tuoi dispositivi sincronizzati.',
         failedTitle: 'Impossibile eliminare questa bozza',
         launchInCustody: 'Questa bozza sta avviando una sessione. Potrai eliminarla al termine dell’avvio.',
-        botTitle: 'Elimina bozza del bot',
     },
+    botActionTitles: { open: 'Apri una bozza di bot salvata', delete: 'Elimina bozza del bot', directorySet: 'Imposta la cartella della bozza del bot', modelSet: 'Imposta il modello della bozza del bot' },
     conflict: {
         title: 'Rivedi le modifiche in conflitto',
         description: 'Scegli quale versione mantenere per ogni campo. Puoi copiare la versione del tuo dispositivo prima di sostituirla.',

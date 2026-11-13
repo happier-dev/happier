@@ -11288,8 +11288,8 @@ const zhHans: typeof en = {
         confirmDescription: '这会从你所有已同步的设备上移除该草稿。',
         failedTitle: '无法删除此草稿',
         launchInCustody: '此草稿正在启动会话。启动完成后即可删除。',
-        botTitle: '删除机器人草稿',
     },
+    botActionTitles: { open: '打开已保存的机器人草稿', delete: '删除机器人草稿', directorySet: '设置机器人草稿的文件夹', modelSet: '设置机器人草稿的模型' },
     conflict: {
         title: '检查冲突的更改',
         description: '为每个字段选择要保留的版本。替换前可以先复制本设备的版本。',

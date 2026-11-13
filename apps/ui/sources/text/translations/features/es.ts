@@ -11308,8 +11308,8 @@ const es: typeof en = {
         confirmDescription: 'Esto quita el borrador de tus dispositivos sincronizados.',
         failedTitle: 'No se pudo eliminar este borrador',
         launchInCustody: 'Este borrador está iniciando una sesión. Podrás eliminarlo cuando termine el inicio.',
-        botTitle: 'Eliminar borrador del bot',
     },
+    botActionTitles: { open: 'Abrir un borrador de bot guardado', delete: 'Eliminar borrador del bot', directorySet: 'Definir la carpeta del borrador del bot', modelSet: 'Definir el modelo del borrador del bot' },
     conflict: {
         title: 'Revisa los cambios en conflicto',
         description: 'Elige qué versión conservar en cada campo. Puedes copiar la versión de tu dispositivo antes de reemplazarla.',

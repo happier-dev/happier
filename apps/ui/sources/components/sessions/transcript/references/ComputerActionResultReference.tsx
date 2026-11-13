@@ -10,7 +10,7 @@ import { useOpenSessionComputerScreen } from '@/components/computer/useOpenSessi
 import { noteSessionComputerMachine } from '@/sync/domains/computer/sessionComputerMachines';
 import { getStorage } from '@/sync/domains/state/storage';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
-import { readMachineName } from '@/utils/sessions/machineDisplayNames';
+import { readDisplayedMachineName } from '@/utils/sessions/machineDisplayNames';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
@@ -203,7 +203,7 @@ function MountedComputerActionReference(props: Readonly<{
     const identity = useBrowserSessionAgentIdentity({ sessionId, serverId });
     const [shared, setShared] = React.useState<ComputerApprovalDisplayV1 | null>(null);
     const store = getStorage();
-    const readName = React.useCallback(() => readMachineName(resolveServerScopedMachine(store.getState(), serverId, reference.machineId)),
+    const readName = React.useCallback(() => readDisplayedMachineName(resolveServerScopedMachine(store.getState(), serverId, reference.machineId)),
         [reference.machineId, serverId, store]);
     const cachedMachineName = React.useSyncExternalStore(store.subscribe, readName, readName);
     const machineName = reference.kind === 'choose' ? reference.machineName : cachedMachineName;

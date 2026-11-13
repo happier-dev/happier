@@ -34,6 +34,19 @@ function readNonblankString(value: unknown): string | null {
     return normalized.length > 0 ? normalized : null;
 }
 
+/**
+ * What a New Session draft is and what it is called: a Bot draft or a Session draft, and the name a person gave it.
+ * Its list row, the folded dock and every draft Action's confirmation read it here (QA-RERUN-1113 F5/F6), so a
+ * draft never reads as a bot in one place and a New Session (or "Untitled draft") in another.
+ */
+export type NewSessionDraftIdentity = Readonly<{ isBot: boolean; name: string | null }>;
+
+export function readNewSessionDraftIdentity(document: unknown): NewSessionDraftIdentity {
+    const facts = document ? getSessionDraftDocumentFieldValue(document, { kind: 'authoring', fieldId: 'initialSessionFacts' }) : null;
+    const name = document ? getSessionDraftDocumentFieldValue(document, { kind: 'authoring', fieldId: 'sessionName' }) : null;
+    return { isBot: Boolean(facts && typeof facts === 'object' && 'bot' in facts && facts.bot), name: readNonblankString(name) };
+}
+
 function safeFinalPathSegment(value: unknown): string | null {
     const path = readNonblankString(value);
     if (!path) return null;
@@ -115,7 +128,7 @@ export function buildNewSessionDraftRowPresentation(
     const promptLine = firstPromptLine(draft.readView?.composer.text.value ?? '');
     const automationName = readAutomationName(draft);
     const folderName = safeFinalPathSegment(readAuthoringValue(draft, 'directory'));
-    const title = promptLine ?? automationName ?? folderName ?? t('sessionDrafts.untitled');
+    const title = readNewSessionDraftIdentity(draft.document).name ?? promptLine ?? automationName ?? folderName ?? t('sessionDrafts.untitled');
     return {
         title,
         statusKey: resolveStatusKey(draft, availability),

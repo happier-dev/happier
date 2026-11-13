@@ -13,7 +13,7 @@ import type { UpdateItem } from './items/updateItem';
 import { readCapabilityResultData } from './machineCapabilitySnapshots';
 import { observeMachineUpdateRun, type useMachineUpdateRuns } from './machineUpdateRuns';
 import { buildRemoteMachineUpdateFacts, buildRemoteMachineUpdateItem, type RemoteMachineUpdateFacts } from './remoteCliUpdateItems';
-import { readMachineName } from '@/utils/sessions/machineDisplayNames';
+import { readDisplayedMachineName } from '@/utils/sessions/machineDisplayNames';
 
 export type UpdatesGroup = Readonly<{
     id: string;
@@ -120,7 +120,7 @@ export function buildMachineUpdateGroups(params: MachineUpdateGroupInputs): Read
             id: 'thisComputer',
             kind: 'thisComputer',
             // Without a name this group is titled "This computer", so absence stays absent.
-            machineName: params.machines ? readMachineName(own) : null,
+            machineName: params.machines ? readDisplayedMachineName(own) : null,
             machineId,
             online: true,
             lastSeenAt: null,

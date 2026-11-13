@@ -452,6 +452,33 @@ describe('web shell Docked composer', () => {
     await act(async () => screen.unmount());
   });
 
+  it('lets a fresh detail host read the retained draft after navigation and closes reads on retirement', async () => {
+    const { createComposerPresentationHostHandlers } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
+    const { createPluginSurfaceHostApi } = await import('@/components/plugins/surfaces/createPluginSurfaceHostApi');
+    const { screen, state } = await openDockedDraft('Unsent café 日本語');
+    const ref = { kind: 'newSession' as const, instanceId: state().draftId };
+    const surface = { pluginId: 'acme.fixture', contributionId: 'details', surfaceId: 'fresh-details',
+      placement: 'appSurface' as const, platform: 'web' as const, channel: 'internal' as const, resourceScope: [], diagnostics: [] };
+    const request = { version: 1 as const, requestId: 'composer-scope-read', surface, method: 'readComposer' as const, payload: { ref } };
+    boundary.pathname = '/plugins/happier.triage/triage/e,pr,54';
+    await screen.update(<Journey />);
+    const handlers = createComposerPresentationHostHandlers({ scope: getStorage().getState().settingsScope!, mountedComposer: ref,
+      owner: { identity: { pluginId: 'acme.fixture', localId: 'details' }, occurrenceId: 'fresh', surfaceInstanceKey: 'fresh-details' } });
+    const api = createPluginSurfaceHostApi({ surfaceContext: surface, handlers });
+    try {
+      for (const width of [1440, 390, 360, 1440]) {
+        boundary.width = width;
+        await screen.update(<Journey />);
+        expect(await api.handleRequest(request)).toMatchObject({ status: 'ready', snapshot: { ref, text: 'Unsent café 日本語' } });
+      }
+      await screen.pressByTestIdAsync('close-dock');
+      expect(await api.handleRequest(request)).toEqual({ status: 'unavailable', reason: 'scopeClosed', requestId: request.requestId });
+    } finally {
+      handlers.dispose();
+      await screen.unmount();
+    }
+  });
+
   it('stays with the screen that opened it: another screen hides it and its draft comes back on return', async () => {
     boundary.width = 390;
     boundary.pathname = '/actions';
@@ -588,12 +615,15 @@ describe('web shell Docked composer', () => {
     // QA-RERUN-1113 F5: deleting it names a bot draft, through the same draft identity.
     const { presentActionApproval } = await import('@/components/approvals/actionApprovalPresentation');
     const confirm = presentActionApproval({ actionId: 'session.draft.delete', actionArgs: { draftId: state().draftId }, kind: 'confirmation' });
-    expect(confirm.title).toContain(t('sessionDrafts.delete.botTitle'));
+    expect(confirm.title).toContain(t('sessionDrafts.botActionTitles.delete'));
     // F6 (UI refinements ruling): a named draft folds to its name; "New bot" shows only until it has one.
     await act(async () => { writeNewSessionDraft({ scope, draftId: state().draftId, materializationIntent: 'seeded', patch: { authoring: { sessionName: 'Nightly build watcher' } } }); });
     await vi.waitFor(() => expect(screen.findAllHostsByTestId('new-session-docked-pill')[0]!.props.accessibilityLabel).toBe('Nightly build watcher'));
     expect(presentActionApproval({ actionId: 'session.draft.delete', actionArgs: { draftId: state().draftId }, kind: 'confirmation' }).title)
       .toContain('Nightly build watcher');
+    // COPY-NOUN-HUNT-1113: every draft Action names the Bot draft through the same identity, not just Delete.
+    expect(presentActionApproval({ actionId: 'session.draft.open', actionArgs: { draftId: state().draftId } }).title)
+      .toContain(t('sessionDrafts.botActionTitles.open'));
     await screen.unmount();
   });
 

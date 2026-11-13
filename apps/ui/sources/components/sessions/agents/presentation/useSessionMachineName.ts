@@ -1,6 +1,6 @@
 import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
 import { getStorage, useMachine, useServerScopedMachine } from '@/sync/domains/state/storage';
-import { readMachineName } from '@/utils/sessions/machineDisplayNames';
+import { readDisplayedMachineName } from '@/utils/sessions/machineDisplayNames';
 import { readSessionOwnerHostName } from '@/utils/sessions/sessionUtils';
 
 /**
@@ -21,5 +21,5 @@ export function useSessionMachineName(sessionId: string, serverId?: string | nul
     });
     // A record whose names are still loading, locked or unnamed has a placeholder title, not a name: copy that
     // says "on {machine}" keeps the name the Session recorded instead of printing "Loading…" or "Locked machine".
-    return readMachineName(machine) ?? recordedName;
+    return readDisplayedMachineName(machine) ?? recordedName;
 }

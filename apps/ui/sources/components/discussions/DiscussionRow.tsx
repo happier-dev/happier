@@ -28,6 +28,8 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { resolveAccountActorName } from '@/sync/domains/account/accountActorPresentation';
 import { t } from '@/text';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
+import { useSessionDisplayNameProjections } from '@/sync/store/hooks';
+import { useDiscussionSessionLabelProjection } from './discussionSessionLabel';
 
 /** The protocol supplies at most three recent authors. */
 const AUTHOR_AVATAR_PX = 20;
@@ -156,7 +158,19 @@ export function readDiscussionRowAccountAvatarUrl(discussion: DiscussionOpenedSu
 }
 
 /** The last message as one quiet line, "Mei: let's ask the bot…" (lab T2-A); null when it can't be opened. */
-function readLatestPreview(discussion: DiscussionOpenedSummaryV1, viewerAccountId: string): string | null {
+const EMPTY_SESSION_ADDRESSES: readonly Readonly<{ sessionId: string; serverId: string | null }>[] = Object.freeze([]);
+
+/** The Sessions the last message mentions, so the row can name them through the participant name owner. */
+function readLatestMentionedSessionIds(discussion: DiscussionOpenedSummaryV1): string[] {
+    const content = discussion.latestMessage.content;
+    if (!content) return [];
+    const ids = new Set<string>();
+    readDiscussionMessagePreview(content, { session: (sessionId) => { ids.add(sessionId); return null; } });
+    return [...ids];
+}
+
+function readLatestPreview(discussion: DiscussionOpenedSummaryV1, viewerAccountId: string,
+    sessionName: (sessionId: string) => string | null): string | null {
     const content = discussion.latestMessage.content;
     if (!content) return null;
     const accountName = (accountId: string) => {
@@ -164,7 +178,7 @@ function readLatestPreview(discussion: DiscussionOpenedSummaryV1, viewerAccountI
             ?? (discussion.latestMessage.accountActor?.accountId === accountId ? discussion.latestMessage.accountActor : null);
         return actor ? resolveAccountActorName(actor, actor.accountId === viewerAccountId) : null;
     };
-    const text = readDiscussionMessagePreview(content, { account: accountName });
+    const text = readDiscussionMessagePreview(content, { account: accountName, session: sessionName });
     if (text === null) return null;
     const author = discussion.latestMessage.producerV1 === null
         && discussion.latestMessage.authorAccountId === viewerAccountId
@@ -268,7 +282,15 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
     // In the column the second line is the conversation itself (its latest message); what needs the viewer
     // is the row's calm status mark at its end (ruling 2026-11-01: approval and draft the amber dot, a mention the
     // ink dot); unread news is the bold title alone.
-    const preview = column ? readLatestPreview(discussion, props.viewerAccountId) : null;
+    // A mentioned agent reads by its name, as the thread names it, never as "Session participant" (R2-5).
+    const mentionedSessionKey = column ? readLatestMentionedSessionIds(discussion).join('\n') : '';
+    const mentionedSessions = React.useMemo(() => mentionedSessionKey ? mentionedSessionKey.split('\n')
+        .map(sessionId => ({ sessionId, serverId: props.serverId ?? null })) : EMPTY_SESSION_ADDRESSES, [mentionedSessionKey, props.serverId]);
+    const mentionedNames = useSessionDisplayNameProjections(mentionedSessions, useDiscussionSessionLabelProjection());
+    const preview = column ? readLatestPreview(discussion, props.viewerAccountId, (sessionId) => {
+        const index = mentionedSessions.findIndex(address => address.sessionId === sessionId);
+        return index >= 0 ? mentionedNames[index] ?? null : null;
+    }) : null;
     // The amber dot alone says it needs the viewer (ruling 2026-11-01): the "Needs you" heading carries the meaning,
     // and the word sits beside the dot only with status words on; the dot is also the request's peek.
     const statusGlyph = (column || requestRef !== null) && resolveWorkStatusRowMark(workStatus) !== 'none'

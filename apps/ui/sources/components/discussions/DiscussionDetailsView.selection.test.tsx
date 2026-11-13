@@ -1697,7 +1697,7 @@ describe('DiscussionDetailsView selection', () => {
     expect(repositoryCreate).not.toHaveBeenCalled();
     expect(
       screen.findByTestId('session-discussion-title-required')?.props.children,
-    ).toBe('Add a title to start this conversation.');
+    ).toBe('Add a title to start this Discussion.');
     expect((composerProps.current?.value as { text: string }).text).toBe(
       '@Alex',
     );
@@ -2928,7 +2928,7 @@ describe('DiscussionDetailsView selection', () => {
     expect(
       screen.findByTestId('session-discussion-message-content-message-a'),
     ).not.toBeNull();
-    expect(screen.getTextContent()).toContain('This conversation is archived.');
+    expect(screen.getTextContent()).toContain('This Discussion is archived.');
     expect(dropdownProps.current?.items).toEqual([
       expect.objectContaining({
         id: 'save-as-pattern',

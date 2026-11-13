@@ -4,6 +4,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { getSessionDraftSnapshot, subscribeSessionDraft, type SessionDraftSnapshot, type SessionDraftStatus } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { selectSessionDraftSyncBadgeStatus } from '@/components/sessions/drafts/sessionDraftStatusPresentation';
 import { getSessionDraftDocumentFieldValue } from '@/sync/ops/sessionDrafts/sessionDraftDocumentFields';
+import { readNewSessionDraftIdentity, type NewSessionDraftIdentity } from '@/components/sessions/drafts/newSessionDraftPresentation';
 
 type NewSessionDraftPresentation = Readonly<Pick<SessionDraftSnapshot, 'materialized' | 'conflict'> & {
     /** Only the status the badge shows: `pending` flips with every remote flush of a typing burst. */
@@ -54,23 +55,9 @@ export function useNewSessionDraftPresentation(scope: ServerAccountScope | null,
     return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-/**
- * What a New Session draft is and what it is called: a Bot draft or a Session draft, and the name a person gave it.
- * The folded dock and the Delete confirmation both read it here (QA-RERUN-1113 F5/F6), so a draft never reads as a
- * bot in one place and a New Session in another.
- */
-export type NewSessionDraftIdentity = Readonly<{ isBot: boolean; name: string | null }>;
-
-function readNewSessionDraftIdentity(snapshot: SessionDraftSnapshot | null): NewSessionDraftIdentity {
-    const facts = snapshot ? getSessionDraftDocumentFieldValue(snapshot.document, { kind: 'authoring', fieldId: 'initialSessionFacts' }) : null;
-    const name = snapshot ? getSessionDraftDocumentFieldValue(snapshot.document, { kind: 'authoring', fieldId: 'sessionName' }) : null;
-    return { isBot: Boolean(facts && typeof facts === 'object' && 'bot' in facts && facts.bot),
-        name: typeof name === 'string' && name.trim().length > 0 ? name.trim() : null };
-}
-
 /** The identity of a draft at one moment, for a surface that is not subscribed to it (a confirmation). */
 export function getNewSessionDraftIdentity(scope: ServerAccountScope | null, draftId: string): NewSessionDraftIdentity {
-    return readNewSessionDraftIdentity(scope ? getSessionDraftSnapshot(scope, { kind: 'newSession', draftId }) : null);
+    return readNewSessionDraftIdentity(scope ? getSessionDraftSnapshot(scope, { kind: 'newSession', draftId })?.document : null);
 }
 
 /** The folded composer's identity and text marker, without subscribing it to every draft edit. */
@@ -80,7 +67,7 @@ export function useNewSessionDraftDockPresentation(scope: ServerAccountScope | n
     ), [draftId, scope]);
     const selectPresentation = useShallow((snapshot: SessionDraftSnapshot | null) => {
         const text = snapshot ? getSessionDraftDocumentFieldValue(snapshot.document, { kind: 'composer', field: 'text' }) : null;
-        return { hasText: typeof text === 'string' && text.trim().length > 0, ...readNewSessionDraftIdentity(snapshot) };
+        return { hasText: typeof text === 'string' && text.trim().length > 0, ...readNewSessionDraftIdentity(snapshot?.document) };
     });
     const getSnapshot = React.useCallback(() => selectPresentation(scope && draftId
         ? getSessionDraftSnapshot(scope, { kind: 'newSession', draftId }) : null), [draftId, scope, selectPresentation]);

@@ -18,7 +18,7 @@ import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/
 import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
-import { readMachineName } from '@/utils/sessions/machineDisplayNames';
+import { readDisplayedMachineName } from '@/utils/sessions/machineDisplayNames';
 import { useSessionViewerSourceAccountLifetime } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import type { ComputerClipboardOperationV1, ComputerClipboardResultV1 } from '@happier-dev/protocol/computer/v1';
@@ -114,7 +114,7 @@ export function useComputerSessionControl(input: Readonly<{
             || !selectActiveServerAccountScopeForServer(accountLifetime.scope, serverId)) return null;
         // The viewer puts this name in sentences ("Opening … on {machine}"), so a Machine this device
         // cannot read yet has no name rather than the "Locked machine" / "Loading…" title placeholder.
-        return readMachineName(resolveServerScopedMachine(state, serverId, machineId));
+        return readDisplayedMachineName(resolveServerScopedMachine(state, serverId, machineId));
     }, [accountLifetime, machineId, serverId, store]);
     const subscribeCachedMachineName = React.useCallback((listener: () => void) =>
         enabled && accountLifetime && machineId ? store.subscribe(listener, {

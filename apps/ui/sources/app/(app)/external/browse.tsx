@@ -14,7 +14,7 @@ import { useExternalSessionBrowseSettings } from '@/agents/catalog/useAgentUiSet
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { getConnectedMetadataCatalog } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
 import { useMachine, useProfile } from '@/sync/store/hooks';
-import { readMachineName } from '@/utils/sessions/machineDisplayNames';
+import { readDisplayedMachineName } from '@/utils/sessions/machineDisplayNames';
 import { resolveBrowseProjectionFailureCopy } from '@/components/sessions/external/browse/browseProjectionFailureCopy';
 import { resolveExternalSessionsAgentBrowseRouteScope } from '@/components/sessions/external/browse/externalSessionBrowseNavigation';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -111,7 +111,7 @@ const ExternalSessionsBrowseRouteContent = React.memo(function ExternalSessionsB
             const copy = resolveBrowseProjectionFailureCopy({
                 phase: failedPhase,
                 failureReason: daemonMergedProjection.failureReason,
-                machineName: readMachineName(machine),
+                machineName: readDisplayedMachineName(machine),
             });
             return (
                 <SurfaceStateCard

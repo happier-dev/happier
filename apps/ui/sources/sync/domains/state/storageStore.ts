@@ -26,6 +26,7 @@ import { observeStoragePerformance } from '../../store/storagePerformance';
 import { readStorageState, scopeStorageSubscriptions } from './scopedStorage';
 import { publishSessionRelations } from '../../store/domains/sessionRelations';
 import { projectSavedSecretReferenceSettings } from '../../store/domains/settingsSavedSecretReferences';
+import { registerMachineNameInventory } from '@/utils/sessions/machineDisplayNames';
 
 export type { KnownEntitlements } from '../../store/types';
 export type { SessionListViewItem } from '../session/listing/sessionListViewData';
@@ -99,6 +100,8 @@ storage.setState = (partial: StorageState | Partial<StorageState> | ((state: Sto
 registerStorageStateReader(() => storage.getState());
 registerStorageStateSubscribe((listener, scope) => storage.subscribe(listener, scope));
 registerStorageMachineUpdateSubscribe(subscribeMachineUpdates);
+// Machine names tell same-named Machines apart from the Home lists sync holds (R2-4/R3-3).
+registerMachineNameInventory(() => storage.getState().machineListByServerId ?? null);
 
 export function getStorage() {
     return storage;

@@ -11293,8 +11293,8 @@ const ja: typeof en = {
         confirmDescription: '同期されているすべての端末からこの下書きが削除されます。',
         failedTitle: '下書きを削除できませんでした',
         launchInCustody: 'この下書きはセッションを開始中です。開始が終わったら削除できます。',
-        botTitle: 'ボットの下書きを削除',
     },
+    botActionTitles: { open: '保存したボットの下書きを開く', delete: 'ボットの下書きを削除', directorySet: 'ボットの下書きのフォルダを設定', modelSet: 'ボットの下書きのモデルを設定' },
     conflict: {
         title: '競合する変更を確認',
         description: '各項目で残す版を選んでください。置き換える前に、この端末の値をコピーできます。',

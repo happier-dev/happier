@@ -1326,6 +1326,22 @@ export function resolveActionConfirmVerb(value: ActionSpec['confirmVerb']): stri
 }
 
 /** Shared by the picker, block headings and reference labels. Plugin titles are already localized. */
+/**
+ * A New Session draft Action's title when its draft is a Bot draft ("Delete bot draft"). The draft's identity
+ * (`getNewSessionDraftIdentity`) decides the kind; this only names it, so every draft Action follows one owner.
+ */
+const BOT_DRAFT_ACTION_TITLE_KEYS = {
+    'session.draft.open': 'sessionDrafts.botActionTitles.open',
+    'session.draft.delete': 'sessionDrafts.botActionTitles.delete',
+    'session.draft.directory.set': 'sessionDrafts.botActionTitles.directorySet',
+    'session.draft.model.set': 'sessionDrafts.botActionTitles.modelSet',
+} as const satisfies Partial<Record<ActionId, TranslationKeyNoParams>>;
+
+export function resolveBotDraftActionTitle(actionId: string): string | null {
+    return Object.hasOwn(BOT_DRAFT_ACTION_TITLE_KEYS, actionId)
+        ? t(BOT_DRAFT_ACTION_TITLE_KEYS[actionId as keyof typeof BOT_DRAFT_ACTION_TITLE_KEYS]) : null;
+}
+
 export function resolveActionTitle(actionId: string, spec: Pick<ActionSpec, 'title'> | null): string {
     if (Object.hasOwn(ACTION_TITLE_KEYS, actionId)) {
         return t(ACTION_TITLE_KEYS[actionId as keyof typeof ACTION_TITLE_KEYS]);

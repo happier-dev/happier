@@ -301,3 +301,27 @@ describe('getSessionMachineLabel', () => {
             .toBe(t('machine.unlistedMachine'));
     });
 });
+
+// QA-RERUN-1113 R2-4/R3-3: every Machine name tells same-named Machines apart, as the Machine list does,
+// whether or not the caller holds the Home's inventory.
+describe('getMachineDisplayName without a caller inventory', () => {
+    it('qualifies a same-named Machine from the registered Home lists, and leaves a unique name alone', async () => {
+        const { registerMachineNameInventory } = await import('./machineDisplayNames');
+        const first = { id: '2e0f09b5-aaaa', metadata: { displayName: 'NLDW6-3-11-20', host: 'nldw6' } };
+        const second = { id: '87520e99-bbbb', metadata: { displayName: 'NLDW6-3-11-20', host: 'nldw6' } };
+        const unique = { id: 'c0ffee00-cccc', metadata: { displayName: 'Studio', host: 'studio' } };
+        const lists = { 'home-a': [first, second, unique] };
+        registerMachineNameInventory(() => lists);
+        try {
+            const listed = resolveMachineDisplayNames([first, second, unique]);
+            expect(getMachineDisplayName(first)).toBe(listed.get(first.id));
+            expect(getMachineDisplayName(second)).toBe(listed.get(second.id));
+            expect(getMachineDisplayName(first)).not.toBe(getMachineDisplayName(second));
+            expect(getMachineDisplayName(unique)).toBe('Studio');
+            // A caller's own inventory still decides when it passes one.
+            expect(getMachineDisplayName(first, [first])).toBe('NLDW6-3-11-20');
+        } finally {
+            registerMachineNameInventory(null);
+        }
+    });
+});

@@ -11288,8 +11288,8 @@ const zhHant: typeof en = {
         confirmDescription: '這會從你所有已同步的裝置上移除這個草稿。',
         failedTitle: '無法刪除這個草稿',
         launchInCustody: '這個草稿正在啟動工作階段。啟動完成後即可刪除。',
-        botTitle: '刪除機器人草稿',
     },
+    botActionTitles: { open: '開啟已儲存的機器人草稿', delete: '刪除機器人草稿', directorySet: '設定機器人草稿的資料夾', modelSet: '設定機器人草稿的模型' },
     conflict: {
         title: '檢查衝突的變更',
         description: '為每個欄位選擇要保留的版本。取代前可以先複製本裝置的版本。',

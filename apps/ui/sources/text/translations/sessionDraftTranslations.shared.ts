@@ -48,8 +48,8 @@ export const en = {
         confirmDescription: 'This removes the draft from your synced devices.',
         failedTitle: 'Couldn’t delete this draft',
         launchInCustody: 'This draft is starting a session. You can delete it once the start finishes.',
-        botTitle: 'Delete bot draft',
     },
+    botActionTitles: { open: 'Open a saved bot draft', delete: 'Delete bot draft', directorySet: 'Set bot draft folder', modelSet: 'Set bot draft model' },
     conflict: {
         title: 'Review conflicting changes',
         description: 'Choose which version to keep for each field. You can copy your device version before replacing it.',

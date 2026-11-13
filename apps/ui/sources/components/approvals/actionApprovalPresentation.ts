@@ -3,7 +3,7 @@ import { ActionIdSchema, REGISTRY_SOURCE_DELETE_ACTION_ID_V1 } from '@happier-de
 import { PROVIDER_CONNECTION_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
 import { buildApprovalPreviewSummary, readTeamCredentialApprovalSources } from '@happier-dev/protocol/actions/actionExecutor';
 import { describeApprovalActionFields, readTeamMemberApprovalPresentation, type ApprovalActionReference } from '@happier-dev/protocol/actions/actionApprovalPresentation';
-import { resolveActionConfirmVerb, resolveActionSummary, resolveActionTitle } from '@/text/actionTitles';
+import { resolveActionConfirmVerb, resolveActionSummary, resolveActionTitle, resolveBotDraftActionTitle } from '@/text/actionTitles';
 import { t } from '@/text';
 import { getPreferredLanguage } from '@/text/i18n';
 import type { RoleCatalogEntry } from '@/sync/domains/roles/roleCatalog';
@@ -112,6 +112,15 @@ export function readActionApprovalConfirmLabel(actionId: string): string | null 
     return verb === undefined ? null : resolveActionConfirmVerb(verb);
 }
 
+/** The draft a New Session draft Action targets (by `draftId`, or a `newSession` composer ref), read through its identity owner. */
+function readNewSessionDraftActionIdentity(actionId: string, actionArgs: unknown) {
+    if (resolveBotDraftActionTitle(actionId) === null || !actionArgs || typeof actionArgs !== 'object') return null;
+    const args = actionArgs as { draftId?: unknown; ref?: { kind?: unknown; draftId?: unknown } };
+    const draftId = typeof args.draftId === 'string' ? args.draftId
+        : args.ref?.kind === 'newSession' && typeof args.ref.draftId === 'string' ? args.ref.draftId : null;
+    return draftId ? getNewSessionDraftIdentity(getActiveServerAccountScope(), draftId) : null;
+}
+
 /** One UI copy boundary for confirmation, Inbox, page and preview; authored plugin copy stays authored. */
 export function presentActionApproval(input: ActionApprovalPresentationInput): Readonly<{ title: string | null; summary: string | null; confirmLabel: string | null; destructive?: boolean }> {
     const serviceControl = presentLocalServiceControlApproval({ actionId: input.actionId, actionArgs: input.actionArgs, subject: input.subject });
@@ -175,20 +184,6 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
             ...(spec.irreversible ? { destructive: true } : {}),
         };
     }
-    // A Bot draft's Delete names a bot draft, and any named draft its name, from the draft's own identity (F5).
-    if (spec.id === 'session.draft.delete' && input.kind === 'confirmation') {
-        const draft = spec.inputSchema.safeParse(input.actionArgs);
-        const identity = draft.success ? getNewSessionDraftIdentity(getActiveServerAccountScope(), draft.data.draftId) : null;
-        if (identity?.isBot || identity?.name) {
-            return {
-                title: t('actionPresentation.title', { actionId: spec.id,
-                    source: identity.isBot ? t('sessionDrafts.delete.botTitle') : t('sessionDrafts.delete.action'), subject: identity.name }),
-                summary: null,
-                confirmLabel,
-                destructive: true,
-            };
-        }
-    }
     if (serviceControl) return { ...serviceControl, confirmLabel, destructive: spec.irreversible === true };
     const role = input.role?.roleId === readActionApprovalRoleId(input) ? input.role : null;
     const roleKind = role ? role.source === 'built_in' ? t('roles.settings.sourceBuiltIn')
@@ -196,7 +191,11 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
         : role.source === 'shared' ? t('roles.settings.sourceShared') : t('roles.settings.groupPlugins') : null;
     const roleIdentity = role && roleKind ? { name: role.role.name, kind: roleKind } : undefined;
     const english = getPreferredLanguage() === 'en';
-    const titleSource = roleIdentity || !english ? resolveActionTitle(spec.id, spec) : spec.title;
+    // A draft Action names its draft by the draft's own identity: a Bot draft reads as one, a named draft by its
+    // name (QA-RERUN-1113 F5; COPY-NOUN-HUNT-1113 open, folder and model).
+    const draft = readNewSessionDraftActionIdentity(spec.id, input.actionArgs);
+    const botDraftTitle = draft?.isBot ? resolveBotDraftActionTitle(spec.id) : null;
+    const titleSource = botDraftTitle ?? (roleIdentity || !english ? resolveActionTitle(spec.id, spec) : spec.title);
     const widgetPresentation = readWidgetApprovalPresentationV1(input.preview);
     let canonicalCopySummary: string | null = null;
     const summarySource = buildApprovalPreviewSummary(spec, input.actionArgs, {
@@ -221,7 +220,7 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     // Backup authority follows the Action into both confirmation and Inbox, including authored previews.
     const disclosure = spec.id === 'relay.runtime.personal_home.backup' ? t('personalHome.settings.backupDisclosureBody') : null;
     const title = t('actionPresentation.title', { actionId: spec.id, source: titleSource,
-        subject: roleIdentity ? `${roleIdentity.name} · ${roleIdentity.kind}` : subject });
+        subject: roleIdentity ? `${roleIdentity.name} · ${roleIdentity.kind}` : subject ?? draft?.name ?? null });
     return {
         confirmLabel,
         title,

@@ -11304,8 +11304,8 @@ const pt: typeof en = {
         confirmDescription: 'Isto remove o rascunho dos seus dispositivos sincronizados.',
         failedTitle: 'Não foi possível eliminar este rascunho',
         launchInCustody: 'Este rascunho está a iniciar uma sessão. Pode eliminá-lo quando o início terminar.',
-        botTitle: 'Eliminar rascunho do bot',
     },
+    botActionTitles: { open: 'Abrir um rascunho de bot guardado', delete: 'Eliminar rascunho do bot', directorySet: 'Definir a pasta do rascunho do bot', modelSet: 'Definir o modelo do rascunho do bot' },
     conflict: {
         title: 'Rever alterações em conflito',
         description: 'Escolha que versão manter em cada campo. Pode copiar a versão do seu dispositivo antes de a substituir.',

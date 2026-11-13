@@ -11289,8 +11289,8 @@ const de: typeof en = {
         confirmDescription: 'Damit wird der Entwurf von deinen synchronisierten Geräten entfernt.',
         failedTitle: 'Entwurf konnte nicht gelöscht werden',
         launchInCustody: 'Dieser Entwurf startet gerade eine Session. Du kannst ihn löschen, sobald der Start abgeschlossen ist.',
-        botTitle: 'Bot-Entwurf löschen',
     },
+    botActionTitles: { open: 'Gespeicherten Bot-Entwurf öffnen', delete: 'Bot-Entwurf löschen', directorySet: 'Ordner des Bot-Entwurfs festlegen', modelSet: 'Modell des Bot-Entwurfs festlegen' },
     conflict: {
         title: 'Widersprüchliche Änderungen prüfen',
         description: 'Wähle für jedes Feld die Version, die bleiben soll. Du kannst deine Geräteversion kopieren, bevor du sie ersetzt.',

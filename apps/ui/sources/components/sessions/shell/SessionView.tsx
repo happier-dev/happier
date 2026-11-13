@@ -2588,6 +2588,13 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
 
     const openCompanionFullSurface = React.useCallback((): SessionPresentationMutationOutcome => {
         if (routeMobileSurface === 'companion') return { status: 'unchanged' };
+        // Beside the chat, the Companion opens in its own panel; only a phone, which has no room beside the
+        // chat, takes the full Companion page (QA-RERUN-1113 R2-2).
+        if (deviceType !== 'phone') {
+            pane.openRight({ tabId: 'companion' });
+            pane.setRightTab('companion');
+            return { status: 'applied' };
+        }
         try {
             router.push(resolveSessionRoutePathForSurface(sessionId, 'companion', {
                 serverId: routeServerId,
@@ -2596,7 +2603,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
         } catch {
             return { status: 'unavailable' };
         }
-    }, [routeMobileSurface, routeServerId, router, sessionId]);
+    }, [deviceType, pane, routeMobileSurface, routeServerId, router, sessionId]);
     const {
         openBoard: openCompanionBoardForPresentation,
         revealBoardItem: revealCompanionBoardItem,

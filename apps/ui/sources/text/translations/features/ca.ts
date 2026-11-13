@@ -11304,8 +11304,8 @@ const ca: typeof en = {
         confirmDescription: 'Això elimina l’esborrany dels vostres dispositius sincronitzats.',
         failedTitle: 'No s’ha pogut suprimir aquest esborrany',
         launchInCustody: 'Aquest esborrany està iniciant una sessió. El podreu suprimir quan acabi l’inici.',
-        botTitle: "Suprimeix l'esborrany del bot",
     },
+    botActionTitles: { open: 'Obre un esborrany de bot desat', delete: "Suprimeix l'esborrany del bot", directorySet: "Defineix la carpeta de l'esborrany del bot", modelSet: "Defineix el model de l'esborrany del bot" },
     conflict: {
         title: 'Reviseu els canvis en conflicte',
         description: 'Trieu quina versió voleu conservar per a cada camp. Podeu copiar la versió del dispositiu abans de substituir-la.',

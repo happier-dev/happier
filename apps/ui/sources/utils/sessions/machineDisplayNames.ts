@@ -87,6 +87,14 @@ export function readMachineName(machine: MachineNameInput | null | undefined): s
         displayName: machine.metadata?.displayName?.trim() || machine.managedName } : machine?.metadata);
 }
 
+/**
+ * A Machine's own name as a person reads it, `null` while it has none to show (locked, absent, unnamed): the
+ * name from {@link readMachineName}, told apart from a same-named Machine as the Machine list does (R3-3).
+ */
+export function readDisplayedMachineName(machine: MachineNameInput | null | undefined): string | null {
+    return machine && readMachineName(machine) ? getMachineDisplayName(machine) : null;
+}
+
 /** What a machine whose details cannot be read is called on screen. */
 export function lockedMachineName(): string {
     return t('machine.lockedMachine');
@@ -132,9 +140,43 @@ export function getMachineDisplayName(machine: MachineNameInput | null | undefin
  */
 export function getMachineDisplayNameParts(machine: MachineNameInput, inventory?: readonly MachineNameSource[]): Readonly<{ name: string; hint: string | null }> {
     const own = { name: machineBaseDisplayName(machine), hint: null };
+    if (!machine.id) return own;
     // Qualify just this chip through the same resolver that names its picker.
-    if (!inventory || !machine.id) return own;
-    return resolveMachineDisplayNameParts(selectMachineDisplayNamePeers(machine, inventory)).get(machine.id) ?? own;
+    if (inventory) return resolveMachineDisplayNameParts(selectMachineDisplayNamePeers(machine, inventory)).get(machine.id) ?? own;
+    // Without a caller inventory, the Home lists sync holds tell a same-named Machine apart, so every name a
+    // person reads (a chip, Git, Files, a sentence) matches the Machine list (QA-RERUN-1113 R2-4/R3-3).
+    if (machine.absence || isMachineLocked(machine) || isMachineDisplayHydrating(machine)) return own;
+    const stored = readStoredMachineNameParts(machine.id);
+    return stored && stored.name.toLocaleLowerCase() === own.name.toLocaleLowerCase() ? { name: own.name, hint: stored.hint } : own;
+}
+
+type MachineNameInventories = Readonly<Record<string, readonly MachineNameSource[] | null | undefined>>;
+let readMachineNameInventories: (() => MachineNameInventories | null) | null = null;
+const storedNamePartsByInventories = new WeakMap<MachineNameInventories, ReadonlyMap<string, Readonly<{ name: string; hint: string | null }>>>();
+
+/**
+ * Sync registers the Home Machine lists it holds (`machineListByServerId`); names resolve against them when a caller
+ * passes no inventory. Registered by the store rather than imported, so this naming owner stays free of the store graph.
+ */
+export function registerMachineNameInventory(reader: (() => MachineNameInventories | null) | null): void {
+    readMachineNameInventories = reader;
+}
+
+/** One resolution per published lists object: names stay O(1) per call and change only when a list does. */
+function readStoredMachineNameParts(machineId: string): Readonly<{ name: string; hint: string | null }> | null {
+    const inventories = readMachineNameInventories?.() ?? null;
+    if (!inventories) return null;
+    let parts = storedNamePartsByInventories.get(inventories);
+    if (!parts) {
+        const next = new Map<string, Readonly<{ name: string; hint: string | null }>>();
+        for (const list of Object.values(inventories)) {
+            if (!list?.length) continue;
+            for (const [id, value] of resolveMachineDisplayNameParts(list)) if (value.hint) next.set(id, value);
+        }
+        parts = next;
+        storedNamePartsByInventories.set(inventories, parts);
+    }
+    return parts.get(machineId) ?? null;
 }
 
 /**
@@ -227,7 +269,8 @@ export function formatMachineDisplayNameParts(parts: Readonly<{ name: string; hi
  */
 export function resolveMachineDisplayNameParts(machines: readonly MachineNameSource[]): ReadonlyMap<string, Readonly<{ name: string; hint: string | null }>> {
     return resolvePublishedMachineNameParts(machines.map(machine => ({
-        id: machine.id, name: getMachineDisplayName(machine),
+        // The bare name: this resolver decides the telling suffix itself, from exactly these peers.
+        id: machine.id, name: machineBaseDisplayName(machine),
         // A managed Machine's host is its provider's generated instance id, not something a person named:
         // same-named managed Machines are told apart by the short id instead, for owners and recipients alike.
         host: machine.absence || isMachineLocked(machine) || machine.managedName || machine.managedMachineRef

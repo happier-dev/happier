@@ -47,7 +47,7 @@ import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachabi
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { useMachineActivity } from '@/hooks/machine/useMachineActivity';
 import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
-import { getMachineDisplayName, isMachineDisplayHydrating, readMachineName } from '@/utils/sessions/machineDisplayNames';
+import { getMachineDisplayName, isMachineDisplayHydrating, readDisplayedMachineName } from '@/utils/sessions/machineDisplayNames';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
@@ -143,7 +143,7 @@ export function ManagedMachineSections(props: SectionProps) {
     // sentences that would name it say "the computer that manages it", never "Loading…" or "Unknown".
     const controllerName = controllerNameOrPending(controller, controllerMachines);
     // The page's name for this resource: its enrolled Machine's, else what Create was given.
-    const machineName = readMachineName(enrolledMachine) ?? machine.launch.name;
+    const machineName = readDisplayedMachineName(enrolledMachine) ?? machine.launch.name;
     const credentialTargets = React.useMemo(() => managedCredentialReceiptTargets(machine.launch), [machine.launch]);
     const credentialPresentation = useQualifiedConnectedAccountTargetPresentations({
         binding: props.binding ?? null, targets: credentialTargets,

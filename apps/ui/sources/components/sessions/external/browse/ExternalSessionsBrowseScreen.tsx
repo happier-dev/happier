@@ -70,7 +70,7 @@ import {
     resolveExternalSessionBrowseRpcErrorMessage,
     resolveExternalSessionBrowseThrownErrorMessage,
 } from './externalSessionBrowseErrorPresentation';
-import { readMachineName } from '@/utils/sessions/machineDisplayNames';
+import { readDisplayedMachineName } from '@/utils/sessions/machineDisplayNames';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { PhoneDestinationBackLine, usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
 import { useDestinationInstanceKey } from '@/components/appShell/workspace/destinationInstanceContext';
@@ -617,7 +617,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         if (lockScope) {
             const machine = machines?.find((candidate) => candidate.id === effectiveSelectedMachineId);
             // Same rule as the administration branch below: no name reads "this machine" in the copy.
-            return readMachineName(machine);
+            return readDisplayedMachineName(machine);
         }
         const selectedTarget = administrationTargetSelection.selectedTarget;
         const candidate = selectedTarget

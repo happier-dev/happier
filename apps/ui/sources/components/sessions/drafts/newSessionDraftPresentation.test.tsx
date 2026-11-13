@@ -47,6 +47,15 @@ describe('new Session draft Agent presentation', () => {
         expect(buildNewSessionDraftRowPresentation(draft(undefined, prompt)).title).toBe(title);
     });
 
+    // A named draft lists by its name (the same identity the dock and its Delete read), not as "Untitled draft".
+    it('lists a named draft by its name before its prompt', () => {
+        const named = draft(undefined, '');
+        const document = NewSessionDraftDocumentV2Schema.parse({ ...named.document, target: { kind: 'newSession', authoring: {
+            sessionName: { mutationId: '00000000-0000-4000-8000-000000000021', value: 'Nightly build watcher' },
+        } } });
+        expect(buildNewSessionDraftRowPresentation({ ...named, document }).title).toBe('Nightly build watcher');
+    });
+
     it('keeps retained malformed composer recovery visible with the existing fallback title and activation reference', () => {
         const publicRef = { v: 1, activationId: '00000000-0000-4000-8000-000000000015', createdOnDeviceLabel: 'Creator device' };
         const retained = {

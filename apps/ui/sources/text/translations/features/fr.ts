@@ -11305,8 +11305,8 @@ const fr: typeof en = {
         confirmDescription: 'Cela retire le brouillon de tes appareils synchronisés.',
         failedTitle: 'Impossible de supprimer ce brouillon',
         launchInCustody: 'Ce brouillon est en train de démarrer une session. Tu pourras le supprimer une fois le démarrage terminé.',
-        botTitle: 'Supprimer le brouillon du bot',
     },
+    botActionTitles: { open: 'Ouvrir un brouillon de bot enregistré', delete: 'Supprimer le brouillon du bot', directorySet: 'Définir le dossier du brouillon du bot', modelSet: 'Définir le modèle du brouillon du bot' },
     conflict: {
         title: 'Examiner les modifications en conflit',
         description: 'Choisis la version à conserver pour chaque champ. Tu peux copier la version de ton appareil avant de la remplacer.',
