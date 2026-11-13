@@ -14,7 +14,7 @@ import type { MachineCollection, MachineCollectionRow } from './machineCollectio
 installDisconnectedServerSocketBoundary();
 const { machineCollectionRowKey } = await import('./machineCollectionModel');
 const { storage } = await import('@/sync/domains/state/storageStore');
-const { useMachineCollection, useMachineCollectionRowPresence, useMachineCollectionPresenceRows } = await import('./useMachineCollection');
+const { useMachineCollection, useMachineCollectionRowPresence, useMachineCollectionPresenceRows, useMachineFleetPresence } = await import('./useMachineCollection');
 const { useMachineListByServerId } = await import('@/sync/domains/state/storage');
 const { useMachinePresenceSummary } = await import('@/sync/domains/machines/reachability/useMachinePresenceSummary');
 const { flushMachineActivityUpdates } = await import('@/sync/engine/socket/socket');
@@ -86,7 +86,7 @@ it('keeps the sidebar and header on one presence fact after Create and a facts-e
         }], [lists]);
         const inventory = useMachineCollection({ groups, groupedByHome: false });
         const rows = React.useMemo(() => inventory.sections.flatMap(section => section.rows), [inventory]);
-        return { inventory, rows: useMachineCollectionPresenceRows(rows),
+        return { inventory, counts: useMachineFleetPresence(groups), rows: useMachineCollectionPresenceRows(rows),
             header: useMachinePresenceSummary(HOME, created.id) };
     });
     try {
@@ -94,6 +94,7 @@ it('keeps the sidebar and header on one presence fact after Create and a facts-e
         const retained = read.getCurrent().inventory;
         expect(read.getCurrent().rows.find(row => row.machineId === controller.id)?.online).toBe(true);
         expect(read.getCurrent().header.presenceOnline).toBe(false);
+        expect(read.getCurrent().counts).toEqual({ online: 1, offline: 1, unknown: 0 });
         // A reconnect census or daemon-state publication can replace content
         // while the canonical presentation owner retains every displayed fact.
         await act(async () => storage.getState().applyMachines([controller, created].map(machine => ({

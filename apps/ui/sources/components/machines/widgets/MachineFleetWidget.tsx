@@ -1,6 +1,6 @@
+import { selectMachineFleet } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import * as React from 'react';
 import { resolveMachineKindGlyph } from '@/components/machines/machineKindGlyph';
-import { useShallow } from 'zustand/react/shallow';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -54,9 +54,7 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import { useMachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
 import { useMachineResourceSummary } from '@/sync/domains/machines/resources/useMachineResourceSummary';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { useIsMachineListSettled, useMachineListStatusForServer } from '@/sync/store/hooks';
-import { getStorage } from '@/sync/domains/state/storage';
-import { resolveVisibleMachinesForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
+import { useIsMachineListSettled, useMachineListStatusForServer, useMachineListForServer } from '@/sync/store/hooks';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
@@ -83,6 +81,8 @@ import {
 } from './machineWidgetKit';
 
 /** Update states that ask the person to act (the Updates surface owns the action). */
+const EMPTY_FLEET: Machine[] = [];
+
 const UPDATE_WAITING = new Set(['available', 'required']);
 
 export type FleetMachine = Readonly<{
@@ -162,7 +162,7 @@ export function useMachineFleetModel(owningServerId?: string) {
   const homeLabel = useHomeDisplayLabel(getServerProfileById(serverId));
   const identity = useServerCredentialAccountScopeBinding(serverId);
   const accountScope = identity.resolution.kind === 'bound' ? identity.resolution.scope : null;
-  const allMachines = getStorage()(useShallow(state => resolveVisibleMachinesForActiveServerFromState(state, { serverId })));
+  const allMachines = useMachineListForServer(serverId) ?? EMPTY_FLEET;
   // App data can arrive before this Home's machine list: until the list has been read, an empty fleet
   // means "still reading", never "no machines" (the same readiness owner as the Setup checklist).
   const settled = useIsMachineListSettled(serverId);
@@ -173,8 +173,7 @@ export function useMachineFleetModel(owningServerId?: string) {
   const nowMs = useMachinePresenceNowMs(allMachines);
   const thisComputerMachineId = useThisComputerMachineId();
   const fleet = React.useMemo(() => {
-    const visible = allMachines.map(machine => ({ machine, fleetPresence: resolveMachineFleetPresence(accountScope, machine, nowMs) }))
-      .filter(entry => entry.fleetPresence.member);
+    const visible = selectMachineFleet(allMachines).map(machine => ({ machine, fleetPresence: resolveMachineFleetPresence(accountScope, machine, nowMs) }));
     const names = resolveMachineDisplayNames(visible.map(entry => entry.machine));
     return orderFleetMachines(visible.map(({ machine, fleetPresence }) => {
       return { key: JSON.stringify([serverId, machine.id]), serverId, machine,

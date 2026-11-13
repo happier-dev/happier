@@ -1,3 +1,4 @@
+import { countMachineFleet } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import * as React from 'react';
 import { resolveMachineKindGlyph } from '@/components/machines/machineKindGlyph';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
@@ -46,7 +47,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useMachineCollection, useMachineCollectionPresenceRows } from '@/components/settings/machines/collection/useMachineCollection';
-import { partitionMachineFleetPresence, resolveMachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
+import { partitionMachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
 import { useReconciledStableRows } from '@/hooks/session/reconcileStableRows';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
@@ -60,6 +61,7 @@ import { MachinesNeedsYouList } from '@/components/machines/attention/MachinesNe
 import type { MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
 import { describeFleetDescription, describeFleetTitle, describeMachineAttentionWord, readMachinePublishedResources, selectAttentionSubjects, selectHeadlineReason } from '@/components/machines/summary/machineResourceSentences';
 import { MACHINE_CARD_METRICS_HEIGHT_PX, MachineCardBody } from './MachineCardBody';
+import { useMachineIndexCardAttention } from './machineIndexCardAttention';
 import { MachineSummaryStrip, machineSummaryMetricTitle } from '@/components/machines/summary/MachineSummaryStrip';
 import { useMachineSummaryFreshnessFacts } from '@/components/machines/summary/MachineSummaryFreshnessLine';
 import { formatMachineBytes, resolveMachineCoreCount } from '@/components/machines/vitals/machineVitalsPresentation';
@@ -192,11 +194,7 @@ function AllMachinesIndexBody() {
     const presence = React.useMemo(() => partitionMachineFleetPresence(items, item => item.fleetPresence), [items]);
     // Archive/display ownership does not withdraw a current Machine from its Home's fleet.
     // Only membership contributes to this total, so heartbeats need no second subscription here.
-    const fleetCount = React.useMemo(() => {
-        const { counts } = partitionMachineFleetPresence(viewModel.visibleMachineGroups.flatMap(group => group.machines
-            .map(machine => resolveMachineFleetPresence(group.accountScope, machine))), fact => fact);
-        return counts.online + counts.offline + counts.unknown;
-    }, [viewModel.visibleMachineGroups]);
+    const fleetCount = countMachineFleet(viewModel.visibleMachineGroups);
     const searchable = items.length > SEARCH_THRESHOLD;
     const normalizedQuery = searchable && !besideList ? query.trim().toLocaleLowerCase() : '';
     // A long fleet keeps its offline machines out of the table until asked for, as the list column folds them
@@ -244,20 +242,7 @@ function AllMachinesIndexBody() {
     });
     // Only the cards the Collection displays can state a reason above the dashboard.
     // A read/access reason keeps its existing priority over resource attention.
-    const cardAttention = React.useMemo(() => {
-        const stated = new Map<string, MachineAttentionEntry>();
-        if (view !== 'grid') return stated;
-        const byMachine = new Map(attentionSubjects.map(entry => [entry.key, entry]));
-        for (const section of model.sections) {
-            for (const item of section.items) {
-                if (item.reason !== null) continue;
-                const key = presetMachineKey(item);
-                const entry = key === null ? undefined : byMachine.get(key);
-                if (entry) stated.set(item.key, entry);
-            }
-        }
-        return stated;
-    }, [attentionSubjects, model.sections, view]);
+    const cardAttention = useMachineIndexCardAttention(view === 'grid', attentionSubjects, model.sections, presetMachineKey);
     const cardAttentionEntries = React.useMemo(() => [...cardAttention.values()], [cardAttention]);
     const summarySetting = useMachineSummarySettingValue();
     const anatomy = useMachineIndexAnatomy(view, summarySetting.style, summarySetting.metrics, deviceType === 'phone', cardAttention);

@@ -5,6 +5,9 @@ import { resolveMachineFleetPresence } from '@/sync/domains/machines/reachabilit
 import { describeMachineRuntimePresence } from '@/utils/sessions/machinePresenceLine';
 import { reconcileStableRows } from '@/hooks/session/reconcileStableRows';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
+import { selectMachineFleet } from '@/sync/domains/machines/identity/filterVisibleMachines';
+import { partitionMachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
+import type { ActiveSelectionMachineGroup } from '../hooks/useActiveSelectionMachineGroups';
 
 import { buildMachineCollection, reconcileMachineCollection, machineCollectionRowKey, type MachineCollection, type MachineCollectionRow } from './machineCollectionModel';
 
@@ -50,4 +53,18 @@ export function useMachineCollectionPresenceRows<Row extends MachineCollectionRo
 export function useMachineCollectionRowPresence(row: MachineCollectionRow): MachineCollectionRow {
     const rows = React.useMemo(() => [row], [row]);
     return useMachineCollectionPresenceRows(rows)[0]!;
+}
+
+/** Aggregate presence uses the Home fleet, including enrollments whose creation receipt is archived. */
+export function useMachineFleetPresence(groups: readonly ActiveSelectionMachineGroup[]) {
+    const members = React.useMemo(() => groups.flatMap(group => selectMachineFleet(group.machines)
+        .map(machine => ({ serverId: group.serverId, scope: group.accountScope, machine }))), [groups]);
+    const readMachines = React.useCallback(() => members.map(member => member.machine), [members]);
+    const readSnapshot = React.useCallback((nowMs: number) => partitionMachineFleetPresence(members,
+        member => resolveMachineFleetPresence(member.scope, member.machine, nowMs)).counts, [members]);
+    const targets = React.useMemo(() => groups.map(group => ({ serverId: group.serverId,
+        machineIds: selectMachineFleet(group.machines).map(machine => machine.id) })), [groups]);
+    const areEqual = React.useCallback((left: ReturnType<typeof readSnapshot>, right: ReturnType<typeof readSnapshot>) =>
+        left.online === right.online && left.offline === right.offline && left.unknown === right.unknown, []);
+    return useMachinePresenceSnapshot(readMachines, readSnapshot, targets, areEqual);
 }

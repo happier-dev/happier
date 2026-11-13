@@ -1,8 +1,9 @@
+import { selectVisibleMachineInventory } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import * as React from 'react';
 
 import type { ActiveServerSnapshot, ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { resolveServerProfileScopeId, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { filterVisibleMachines, resolveServerScopedMachineInventory } from '@/sync/domains/machines/resolveServerScopedMachines';
+import { resolveServerScopedMachineInventory } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { getEffectiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
 import {
     listServerProfileScopeIds,
@@ -12,6 +13,8 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import type { MachineReachabilityScope } from '@/sync/domains/machines/reachability/machineReachability';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+
+const EMPTY_MACHINES: readonly Machine[] = [];
 
 type MachineListStatus = 'idle' | 'loading' | 'signedOut' | 'error';
 
@@ -64,7 +67,7 @@ export function useActiveSelectionMachineGroups(params: Readonly<{
         const serverNameById = new Map<string, string>();
         for (const server of params.serverProfiles) {
             // Every group uses the Home label owner, including unnamed Homes.
-            const label = resolveHomeDisplayLabel(server, server.id);
+            const label = resolveHomeDisplayLabel(server, server.id, params.activeServerSnapshot.serverId);
             serverNameById.set(server.id, label);
             serverNameById.set(resolveServerProfileScopeId(server), label);
         }
@@ -78,11 +81,11 @@ export function useActiveSelectionMachineGroups(params: Readonly<{
                 machineListStatusByServerId: params.machineListStatusByServerId,
             });
             const status = inventory.status ?? 'loading';
-            const visibleMachines = filterVisibleMachines(inventory.machines ?? []);
+            const visibleMachines = selectVisibleMachineInventory(inventory.machines ?? EMPTY_MACHINES);
             return {
                 serverId,
                 accountScope: binding?.isCurrent() ? binding.scope : null,
-                serverName: serverNameById.get(serverId) ?? resolveHomeDisplayLabel(null, serverId),
+                serverName: serverNameById.get(serverId) ?? resolveHomeDisplayLabel(null, serverId, params.activeServerSnapshot.serverId),
                 machines: visibleMachines,
                 status,
             };
