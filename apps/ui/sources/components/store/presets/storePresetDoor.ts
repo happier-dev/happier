@@ -17,7 +17,7 @@ export function readStoreAppTemplateRef(item: RegistryItemV1): DeploymentTemplat
 
 /** Both App doors keep the same inert new-Project intent and exact catalog selection. */
 export function storeAppPresetItem(name: string, templateRef: DeploymentTemplateRefV1): Extract<MachinePresetItemV1, { kind: 'app' }> {
-    return { kind: 'app', definition: { name, project: { kind: 'create' }, definition: { from: 'catalogApp', templateRef } } };
+    return { kind: 'app', definition: { name, project: { kind: 'create' }, bindings: [], definition: { from: 'catalogApp', templateRef } } };
 }
 
 /** The presets the door offers, each saying whether it already sets this item up. */

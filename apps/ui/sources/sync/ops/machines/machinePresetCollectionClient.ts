@@ -1,3 +1,4 @@
+import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import {
     MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1,
     type MachinePresetActionIdV1, type MachinePresetActionInputV1, type MachinePresetActionOutputV1,
@@ -25,7 +26,7 @@ import { machinePresetEditDraftContent, machinePresetEditDraftUpdatePatch, type 
 export type MachinePresetCollectionResult<T> =
     | Readonly<{ kind: 'succeeded'; value: T }>
     | Readonly<{ kind: 'approval_pending'; approval: ActionApprovalContinuation }>
-    | Readonly<{ kind: 'failed'; code: string }>;
+    | Readonly<{ kind: 'failed'; code: string; diagnosticDetail?: string }>;
 export type MachinePresetCollectionSettledResult<T> = Exclude<MachinePresetCollectionResult<T>, { kind: 'approval_pending' }>;
 export type MachinePresetCollectionOptions<T> = Readonly<{
     signal?: AbortSignal;
@@ -86,7 +87,9 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         const create = actionId === 'machines.presets.create'
             ? MachinePresetActionInputSchemasV1['machines.presets.create'].safeParse(input) : null;
         const parsed = update ?? create ?? MachinePresetActionInputSchemasV1[actionId].safeParse(input);
-        if (!parsed.success || parsed.data.homeId !== homeId) return { kind: 'failed', code: 'invalid_parameters' };
+        if (!parsed.success) return { kind: 'failed', code: 'invalid_parameters',
+            diagnosticDetail: JSON.stringify(actionInputValidationFailure(parsed.error), null, 2) };
+        if (parsed.data.homeId !== homeId) return { kind: 'failed', code: 'invalid_parameters' };
         // Only a Plain author's delegated Team recipe publishes this plaintext label.
         // Approval continuation retains these captured bytes without another disclosure.
         if (update?.success) {

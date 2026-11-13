@@ -216,10 +216,10 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const [teamId, setTeamId] = React.useState('');
     const [limit, setLimit] = React.useState<number | undefined>();
     // One failure line for the page; it names the operation that failed so a refused Create or Save isn't told as a read.
-    const [error, setErrorState] = React.useState<Readonly<{ code: string; during: 'read' | 'create' | 'save'; reason?: string }> | null>(null);
-    const setError = React.useCallback((code: string | null, during: 'read' | 'create' | 'save' = 'read', reason?: string) =>
-        setErrorState(current => current?.code === code && current.during === during && current.reason === reason ? current
-            : code === null ? null : { code, during, ...(reason ? { reason } : {}) }), []);
+    const [error, setErrorState] = React.useState<Readonly<{ code: string; during: 'read' | 'create' | 'save'; reason?: string; diagnosticDetail?: string }> | null>(null);
+    const setError = React.useCallback((code: string | null, during: 'read' | 'create' | 'save' = 'read', reason?: string, diagnosticDetail?: string) =>
+        setErrorState(current => current?.code === code && current.during === during && current.reason === reason && current.diagnosticDetail === diagnosticDetail ? current
+            : code === null ? null : { code, during, ...(reason ? { reason } : {}), ...(diagnosticDetail ? { diagnosticDetail } : {}) }), []);
     const [readRevision, bumpReadRevision] = React.useReducer((value: number) => value + 1, 0);
     const [saved, setSaved] = React.useState<Readonly<{ id: string; name: string; serverId: string }> | null>(null);
     const continuation = props.presetContinuation;
@@ -721,9 +721,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         else if (value.kind === 'refused' && props.presetId && isMachinePresetAccessLost(value.code)) presetQuery.withdraw(value.code);
         else setError(value.kind === 'conflict' ? 'conflict' : value.code, 'save');
     };
-    const failed = (code: string, during: 'read' | 'create' | 'save') => { if (activeBinding?.isCurrent()) {
+    const failed = (code: string, during: 'read' | 'create' | 'save', diagnosticDetail?: string) => { if (activeBinding?.isCurrent()) {
         if (props.presetId && isMachinePresetAccessLost(code)) presetQuery.withdraw(code);
-        else { setBusy(false); setError(code, during); }
+        else { setBusy(false); setError(code, during, undefined, diagnosticDetail); }
     } };
     const repair = async (action: NonNullable<ManagedPrerequisiteV1['repairAction']>) => {
         if (!catalogCurrent || !activeBinding?.isCurrent() || !catalogController && !accountAcquire || !catalogProvisioner || busy) return;
@@ -764,7 +764,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                 revision: continuation?.preset?.id === preset.id ? draft?.preset?.revision ?? preset.revision : preset.revision },
         } : { id: randomUUID(), owner: teamId ? { kind: 'team' as const, teamId }
             : { kind: 'account' as const, accountId: activeBinding.accountId } }) }, callbacks);
-        if (!abort.signal.aborted) { if (result.kind === 'succeeded') completedSave(result.value); else if (result.kind === 'failed') failed(result.code, 'save'); }
+        if (!abort.signal.aborted) { if (result.kind === 'succeeded') completedSave(result.value); else if (result.kind === 'failed') failed(result.code, 'save', result.diagnosticDetail); }
         } catch { if (!abort.signal.aborted) failed('unavailable', 'save'); }
     };
     const maySaveSetupOnly = !!setupOnlyDraft && !!preset && preset.archivedAt === undefined && !!presetClient
@@ -905,7 +905,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             : error.code === 'machine_setup_conflict' ? t('machinePresets.setup.itemConflict')
             : error.during === 'create' ? resolveSystemTaskFailureMessage({ code: error.code, message: null }) ?? t('managedMachines.options.createFailed')
             : error.during === 'save' ? t('managedMachines.options.saveFailed') : t('managedMachines.options.error')}
-            diagnosticCode={error.code === 'conflict' || error.code === 'machine_setup_conflict' ? undefined : error.code} testID="managed-config.error"
+            diagnosticCode={error.code === 'conflict' || error.code === 'machine_setup_conflict' ? undefined : error.code} diagnosticDetail={error.diagnosticDetail} testID="managed-config.error"
             {...(error.code === 'conflict' || error.during === 'read' ? { action: { label: t(error.code === 'conflict' ? 'managedMachines.actions.review'
                 : 'managedMachines.actions.tryAgain'), onPress: retry } } : {})} />
     </ItemGroup> : null;

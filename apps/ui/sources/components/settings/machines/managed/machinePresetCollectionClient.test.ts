@@ -1030,3 +1030,43 @@ describe('preset collection and history through Actions', () => {
         await modalHost.unmount();
     });
 });
+
+
+it.each(['create', 'update'] as const)('saves three Store catalog apps through the real %s Action schema', async mode => {
+    const { storeAppPresetItem } = await import('@/components/store/presets/storePresetDoor');
+    const { MachinePresetActionInputSchemasV1 } = await import('@happier-dev/protocol/machines/managed/machinePresetActionsV1');
+    const { machinePresetEditDraftUpdatePatch } = await import('./machinePresetEditDraft');
+    const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
+        serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
+    const setup = { items: ['Dokploy one', 'Dokploy two', 'Dokploy three'].map((name, index) =>
+        storeAppPresetItem(name, { sourceId: 'dokploy', itemId: String(index), version: '1', ref: { kind: 'version', version: '1' } })) };
+    const draft = { name: 'Saved apps', setup };
+    const input = { homeId: 'srv_history', id: 'apps', expectedRevision: 0, patch: machinePresetEditDraftUpdatePatch(draft) };
+    const parsed = MachinePresetActionInputSchemasV1['machines.presets.update'].safeParse(input);
+    expect(parsed.success, parsed.success ? undefined : JSON.stringify(parsed.error.issues)).toBe(true);
+    const saved = { homeId: 'srv_history', id: 'apps', revision: 1, name: draft.name,
+        owner: { kind: 'account' as const, accountId: 'owner' }, setup };
+    harness.answer(serverId, '/v1/machines/presets/' + mode, { body: { kind: 'saved', preset: saved } });
+    const client = createMachinePresetCollectionClient({ serverId, accountId: 'owner' }, 'srv_history');
+    const result = await client.saveDraft({ draft, ...(mode === 'update' ? { preset: { ...saved, revision: 0 } }
+        : { id: saved.id, owner: saved.owner }) });
+    expect(result).toEqual({ kind: 'succeeded', value: { kind: 'saved', preset: saved } });
+    const request = harness.requestsFor('/v1/machines/presets/' + mode)[0];
+    expect(request?.input).toMatchObject(mode === 'update' ? { expectedRevision: 0, patch: { setup } } : { setup });
+});
+
+it('retains the canonical schema issue path when a preset save is refused before transport', async () => {
+    const { storeAppPresetItem } = await import('@/components/store/presets/storePresetDoor');
+    const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
+        serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
+    const item = storeAppPresetItem('Dokploy', { sourceId: 'dokploy', itemId: 'app', version: '1', ref: { kind: 'version', version: '1' } });
+    Reflect.deleteProperty(item.definition, 'bindings');
+    const client = createMachinePresetCollectionClient({ serverId, accountId: 'owner' }, 'srv_history');
+    const result = await client.saveDraft({ preset: { id: 'apps', revision: 0 }, draft: { name: 'Apps', setup: { items: [item] } } });
+    expect(result).toMatchObject({ kind: 'failed', code: 'invalid_parameters', diagnosticDetail: expect.any(String) });
+    if (result.kind !== 'failed' || !result.diagnosticDetail) throw new Error('Missing validation diagnostic');
+    expect(JSON.parse(result.diagnosticDetail)).toMatchObject({ details: { issues: expect.arrayContaining([{
+        code: 'invalid_type', path: ['patch', 'setup', 'items', 0, 'definition', 'bindings'], message: 'Expected array', expected: 'array',
+    }]) } });
+    expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(0);
+});
