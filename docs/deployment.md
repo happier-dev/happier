@@ -21,8 +21,8 @@ Missing or unreadable facts stay unknown. A reported push or PR refusal retains
 the SCM owner's outcome and recovery actions, without interpreting transcript
 prose or promising that a branch or remote effect was preserved. Creating a PR
 does not establish build or health validation, or make the source deployable.
-The read adds no waiting operation or polling loop; UI composition consumes its
-typed result and returns to ordinary Source review after merge.
+The read adds no waiting operation or polling loop. UI composition consumes its
+typed result; continuing after merge still requires ordinary Source review.
 
 This unpublished 0.3 input cut requires matching UI, Protocol and daemon source;
 older development readers reject the added draft. The 0.2 predecessor has no
@@ -455,10 +455,15 @@ Caddy renewal window. The underlying observation time remains visible.
 Saved subject health checks keep their investigation choice in the existing
 source configuration. Omitting that choice leaves failures in Inbox. Explicit
 `auto_start` names an existing configured Triage Action, validated against the
-live configured-Action catalog when the source is saved. Only an admitted opening
-can start that investigation; repeated evidence, recovery and rejected observations
+live configured-Action catalog when the source is saved. Only a committed opening
+can start that investigation, including an observation-only Event that creates no
+Workflow Run; repeated evidence, recovery and rejected observations
 do not start another Session. The subject remains the diagnosis target even when
 another Machine observes it.
+
+Host-health notice targets retain the portable Home identity, so another device
+can resolve the same Environment or Machine without the observer's local server
+profile name.
 
 The same notice retains the investigation outcome, including a required placement
 choice, pending approval, refusal or an uncertain start. An uncertain response is
@@ -1641,7 +1646,10 @@ on mount or for inert initial prefill.
 Development-source Duplicate uses this same create Action with explicit
 `copyFrom` source revision and choices. Preparation admits source read and
 destination Source management, resolves explicit choices before creation defaults,
-and presents a redacted copy diff. The stored create retains source identity,
+and presents a redacted copy diff. If the readable source changes before root
+admission, Create refuses with `source_changed`; refresh the review and retry.
+An unreadable or deleted source remains an authorization refusal.
+The stored create retains source identity,
 revision and an opaque host-produced copy-intent commitment, not private choices
 or plaintext content. Prepared and stored copies require that commitment; ordinary
 creation needs none. The existing create request-key owner compares this reviewed

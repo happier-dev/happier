@@ -12,10 +12,10 @@ it.each([
     { kind: 'selection', admitted: true, outcome: { v: 1, handoff: { kind: 'placement_choice_required', reason: 'ambiguous_workspace', candidates: [], agents: [] } }, visible: 'Choose' },
     { kind: 'approval', admitted: true, outcome: { kind: 'approval_request_created', artifactId: 'approval', actionId: 'investigate' }, visible: 'needs approval' },
     { kind: 'refusal', admitted: true, outcome: { ok: false, errorCode: 'permission_denied', effectAttempted: false }, visible: 'access was denied' },
-    { kind: 'not admitted', admitted: false, outcome: null, visible: 'failed' },
+    { kind: 'observation only', admitted: false, outcome: { v: 1, handoff: { kind: 'placement_choice_required', reason: 'ambiguous_workspace', candidates: [], agents: [] } }, visible: 'Choose' },
     { kind: 'inbox', admitted: true, outcome: null, visible: 'failed' },
     { kind: 'default', admitted: true, outcome: null, visible: 'failed' },
-])('starts Triage only for an admitted opening and keeps $kind on the same notice', async ({ kind, admitted, outcome, visible }) => {
+])('starts Triage for an opted-in committed opening and keeps $kind on the same notice', async ({ kind, admitted, outcome, visible }) => {
     const f = createPlainAccountArtifactHttpBoundary();
     const caller = { pluginId: 'happier.machine.services', machineId: 'observer', materializationId: 'installed' };
     const subject = { kind: 'machineService' as const, machineId: 'subject-machine', serviceId: 'nginx' };
@@ -49,7 +49,7 @@ it.each([
                 triggerId: definition.triggerId, triggerRevision: definition.triggerRevision, sourceSelectorId: definition.sourceSelectorId }],
             payload: { sourceInstanceId: definition.sourceInstanceId, subject, checkId: 'tcp', transition, observedAt: time } }) });
     expect(await consume('failed', 100)).toMatchObject({ kind: 'consumed', changed: true });
-    const starts = admitted && kind !== 'inbox' && kind !== 'default';
+    const starts = kind !== 'inbox' && kind !== 'default';
     expect(calls).toHaveLength(starts ? 2 : 0);
     if (starts) expect(calls[1]).toMatchObject({ input: { handoff: { task: 'investigate', delivery: 'send',
         context: { kind: 'healthAlert', target: { machine: { machineId: subject.machineId } } },

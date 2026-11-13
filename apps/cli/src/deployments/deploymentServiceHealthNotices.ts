@@ -99,7 +99,7 @@ export function createConfiguredHealthCheckNotices(host: ConfiguredHealthCheckNo
                 errorCode: error instanceof Error && 'code' in error ? error.code : 'notice_delivery_failed',
             });
         }
-        if (input.admitted && committed.opened === true && source.data.investigation?.mode === 'auto_start') {
+        if (committed.opened === true && source.data.investigation?.mode === 'auto_start') {
             const triage: TriageSessionHandoffHostV1 = { executeAction: host.executeAction ?? (async () => ({
                 ok: false, errorCode: 'target_unavailable', effectAttempted: false,
             })) };

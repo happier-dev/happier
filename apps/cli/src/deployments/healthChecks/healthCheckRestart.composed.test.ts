@@ -22,8 +22,8 @@ import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/
 
 afterEach(() => vi.restoreAllMocks());
 
-it.each(['admitted', 'rejoined', 'rejected', 'inbox', 'default'] as const)(
-    'cold-adopts %s health subscriptions, starts only opted-in admitted openings, and preserves settled failure across restart', async mode => {
+it.each(['admitted', 'rejoined', 'observed', 'rejected', 'inbox', 'default'] as const)(
+    'cold-adopts %s health subscriptions, starts only opted-in committed openings, and preserves settled failure across restart', async mode => {
     const notices = createPlainAccountArtifactHttpBoundary();
     const caller = { pluginId: 'happier.machine.services', machineId: 'observer', materializationId: 'installed' };
     const sourceCustody = { kind: 'managed' as const, immutableGenerationId: 'retained-generation', installSource: 'archive' as const };
@@ -125,6 +125,7 @@ it.each(['admitted', 'rejoined', 'rejected', 'inbox', 'default'] as const)(
                 admissions.push(input);
                 return { results: input.definitions.map(() => mode === 'rejected'
                     ? { kind: 'skipped', reason: 'occurrenceRejected', checkpointSafe: true }
+                    : mode === 'observed' ? { kind: 'observed', checkpointSafe: true }
                     : { kind: mode === 'rejoined' ? 'rejoined' : 'admitted', runId: randomUUID(), checkpointSafe: true }),
                     continuation: { kind: 'ready', accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } } };
             } },
@@ -167,7 +168,7 @@ it.each(['admitted', 'rejoined', 'rejected', 'inbox', 'default'] as const)(
     const accepted = mode !== 'rejected';
     expect(notices.rows.size).toBe(accepted ? 1 : 0);
     expect(notices.writes).toHaveBeenCalledTimes(accepted ? 1 : 0);
-    const starts = mode === 'admitted' || mode === 'rejoined';
+    const starts = mode === 'admitted' || mode === 'rejoined' || mode === 'observed';
     expect(handoffs).toEqual(starts ? [expect.objectContaining({ handoff: expect.objectContaining({
         task: 'investigate', context: expect.objectContaining({ kind: 'healthAlert' }),
         evidence: [expect.objectContaining({ kind: 'alert', notice: expect.objectContaining({ artifactId: [...notices.rows.keys()][0] }) })],
