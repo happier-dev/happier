@@ -562,6 +562,9 @@ export function createAppShellTransientInteractions(input: Readonly<{
         scope: Object.freeze({ kind: 'app' }),
         isOccurrenceCurrent: input.isCurrent,
         deadlineMs: null,
+        // Dispatch owns the typed, content-free failure projection. Do not turn
+        // a broken presenter into an unexplained availability refusal first.
+        propagatePresentationError: () => true,
         present: async (request, options) => await presentAppShellTransientInteraction({
             request,
             signal: options.signal,

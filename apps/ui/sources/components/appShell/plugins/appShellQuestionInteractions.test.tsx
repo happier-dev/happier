@@ -508,6 +508,19 @@ describe('app-shell transient interaction presenter', () => {
         expect(harness.modal.hide).toHaveBeenCalledWith('question-modal');
     });
 
+    it('retains presenter exceptions through the app interaction owner', async () => {
+        const harness = createModalHarness();
+        const error = new TypeError('presenter failed');
+        harness.modal.show.mockImplementation(() => { throw error; });
+        const interactions = createAppShellTransientInteractions({
+            requester: confirmationRequest().requester,
+            signal: new AbortController().signal,
+            isCurrent: () => true,
+            modal: harness.modal,
+        });
+        await expect(interactions.confirm({ kind: 'confirmation', message: 'Continue?' })).rejects.toBe(error);
+    });
+
     it('returns exact unavailable candidates when the modal host disappears or cannot present', async () => {
         const unmountHarness = createModalHarness();
         const unmounted = presentAppShellTransientInteraction({
