@@ -3,7 +3,7 @@ import { z } from 'zod/mini';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 
 import { callMcpToolWithResolvedTimeout } from '@/mcp/mcpToolCallRequestOptions';
-import { connectSessionMcpClient, readSessionMcpContextFromEnvironment } from '@/mcp/runtime/sessionMcpLocalTransport';
+import { connectSessionMcpClient, readSessionMcpContextFromEnvironment } from '@/mcp/runtime/sessionMcpLocalClient';
 import { SESSION_MCP_CONTEXT_FILE_ENV } from '@/mcp/runtime/sessionMcpLocalContext';
 import { SESSION_MCP_ACTION_REQUEST_ID_META_KEY, SESSION_MCP_TOOL_SOURCES_META_KEY, SESSION_MCP_TOOL_SOURCE_META_KEY, SESSION_MCP_TOOL_WARNINGS_META_KEY } from '@/mcp/runtime/sessionMcpToolsBridge';
 

@@ -102,6 +102,7 @@ vi.mock('@/ui/logger', async (importOriginal) => {
 
 import { runSessionLoopLifecycle, type SessionLoopLifecycleParams } from './lifecycle';
 import type { DaemonAgentRuntimeTurnContributionsBridge } from '../process/agentRuntimeDaemonTurnContributionsBridge';
+import { sessionMcpAuthorizationHeaders, sessionMcpTestTransport } from '@/mcp/runtime/sessionMcpClient.testkit';
 
 const RETIRED_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE_ENV_KEY =
   'HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE';
@@ -2522,7 +2523,7 @@ describe('runSessionLoopLifecycle runtime transcript projection', () => {
           pluginRuntimeRegistryLease: lease,
         });
         mcpClient = new Client({ name: 'host-stop-browser', version: '1.0.0' });
-        await mcpClient.connect(new StreamableHTTPClientTransport(new URL(mcpServer.url)));
+        await mcpClient.connect(sessionMcpTestTransport(mcpServer));
         pending = mcpClient.callTool({ name: 'action_execute', arguments: args });
       }
       const signal = await Promise.race([entered, pending.then(result => { throw new Error(`Tool ended before daemon dispatch: ${JSON.stringify(result)}`); })]);

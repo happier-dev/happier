@@ -10,8 +10,9 @@ const Server = z.strictObject({
   title: z.optional(z.nullable(z.string())),
   transport: z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('stdio') }),
-    z.strictObject({ kind: z.literal('http'), url: McpRemoteUrlV1Schema }),
-    z.strictObject({ kind: z.literal('sse'), url: McpRemoteUrlV1Schema }),
+    // headers: the hosted endpoint's own credential (daemon → runner over the authenticated runner channel).
+    z.strictObject({ kind: z.literal('http'), url: McpRemoteUrlV1Schema, headers: z.optional(z.record(z.string(), z.string())) }),
+    z.strictObject({ kind: z.literal('sse'), url: McpRemoteUrlV1Schema, headers: z.optional(z.record(z.string(), z.string())) }),
   ]),
 });
 

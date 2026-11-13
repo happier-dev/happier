@@ -26,6 +26,7 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import { sessionMcpAuthorizationHeaders, sessionMcpTestTransport } from '@/mcp/runtime/sessionMcpClient.testkit';
 
 const env = process.env;
 
@@ -213,6 +214,7 @@ describe('startHappyServer (MCP integration)', () => {
             path: `${url.pathname}${url.search}`,
             headers: {
               Accept: 'text/event-stream',
+              ...sessionMcpAuthorizationHeaders(server),
             },
           },
           (res) => {
@@ -376,7 +378,7 @@ describe('startHappyServer (MCP integration)', () => {
     let client: Client | null = null;
     try {
       client = new Client({ name: 'mcp-test', version: '1.0.0' }, { capabilities: {} });
-      await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+      await client.connect(sessionMcpTestTransport(server));
 
       const tools = await client.listTools();
       const names = new Set((tools.tools ?? []).map((t: any) => String(t.name)));
@@ -554,7 +556,7 @@ describe('startHappyServer (MCP integration)', () => {
     let client: Client | null = null;
     try {
       client = new Client({ name: 'mcp-test-change-title', version: '1.0.0' }, { capabilities: {} });
-      await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+      await client.connect(sessionMcpTestTransport(server));
 
       const resultRaw = await client.callTool({
         name: 'change_title',
@@ -596,7 +598,7 @@ describe('startHappyServer (MCP integration)', () => {
     let client: Client | null = null;
     try {
       client = new Client({ name: 'mcp-test-run-start-error', version: '1.0.0' }, { capabilities: {} });
-      await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+      await client.connect(sessionMcpTestTransport(server));
 
       const resultRaw = await client.callTool({
         name: 'action_execute',
@@ -652,7 +654,7 @@ describe('startHappyServer (MCP integration)', () => {
     let client: Client | null = null;
     try {
       client = new Client({ name: 'mcp-test-run-scope', version: '1.0.0' }, { capabilities: {} });
-      await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+      await client.connect(sessionMcpTestTransport(server));
 
       const startRaw = await client.callTool({
         name: 'action_execute',
@@ -739,7 +741,7 @@ describe('startHappyServer (MCP integration)', () => {
     let client: Client | null = null;
     try {
       client = new Client({ name: 'mcp-test-run-send-error', version: '1.0.0' }, { capabilities: {} });
-      await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+      await client.connect(sessionMcpTestTransport(server));
 
       const resultRaw = await client.callTool({
         name: 'action_execute',
@@ -793,7 +795,7 @@ describe('startHappyServer (MCP integration)', () => {
     let client: Client | null = null;
     try {
       client = new Client({ name: 'mcp-test-action-options-metadata', version: '1.0.0' }, { capabilities: {} });
-      await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+      await client.connect(sessionMcpTestTransport(server));
 
       const resultRaw = await client.callTool({
         name: 'action_options_resolve',
@@ -852,7 +854,7 @@ describe('startHappyServer (MCP integration)', () => {
     let client: Client | null = null;
     try {
       client = new Client({ name: 'mcp-test-disabled', version: '1.0.0' }, { capabilities: {} });
-      await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+      await client.connect(sessionMcpTestTransport(server));
 
       const tools = await client.listTools();
       const names = new Set((tools.tools ?? []).map((t: any) => String(t.name)));
@@ -899,7 +901,7 @@ describe('startHappyServer (MCP integration)', () => {
     let client: Client | null = null;
     try {
       client = new Client({ name: 'mcp-test-resources', version: '1.0.0' }, { capabilities: {} });
-      await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+      await client.connect(sessionMcpTestTransport(server));
 
       const resources = await withTimeout(client.listResources(), 'resources/list');
       const actionSpecsResource = resources.resources.find(
@@ -956,13 +958,13 @@ describe('startHappyServer (MCP integration)', () => {
       const clientA = new Client({ name: 'mcp-test-a', version: '1.0.0' }, { capabilities: {} });
       const clientB = new Client({ name: 'mcp-test-b', version: '1.0.0' }, { capabilities: {} });
 
-      await clientA.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+      await clientA.connect(sessionMcpTestTransport(server));
       const toolsA = await clientA.listTools();
       const namesA = new Set((toolsA.tools ?? []).map((t: any) => String(t.name)));
       expect(namesA.has('action_execute')).toBe(true);
       expect(namesA.has('execution_run_start')).toBe(false);
 
-      await clientB.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+      await clientB.connect(sessionMcpTestTransport(server));
       const toolsB = await clientB.listTools();
       const namesB = new Set((toolsB.tools ?? []).map((t: any) => String(t.name)));
       expect(namesB.has('action_execute')).toBe(true);

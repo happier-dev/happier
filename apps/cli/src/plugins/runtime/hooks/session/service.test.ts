@@ -23,6 +23,11 @@ async function captureRejection(operation: Promise<unknown>): Promise<unknown> {
   return await operation.then(() => null, (error: unknown) => error);
 }
 
+/** Host-generated secret the Happier-installed forwarder reads from the returned secret file. */
+async function hostSecret(server: Readonly<{ sessionHookSecretFile?: string }>): Promise<string> {
+  return await readFile(server.sessionHookSecretFile!, 'utf8');
+}
+
 async function postSessionHook(params: {
   port: number;
   body: unknown;
@@ -52,25 +57,28 @@ describe('createSessionHooksService', () => {
     const identity = { providerId: 'claude', sessionId: 'same-happier-session',
       lifecycle: { kind: 'session' as const, sessionId: 'same-happier-session' } };
     try {
-      retained = await service.startServer({ ...identity, sessionHookSecret: 'retained-secret',
+      retained = await service.startServer({ ...identity,
         onSessionHook: (_id, row) => { retainedFacts.push(row); } });
       retainedDir = await service.createPluginDir({ ...identity, files: [{ path: 'origin.txt', contents: 'retained' }] });
       invocation = await service.startServer({ ...identity, ...{ lifetime: 'invocation' as const },
-        sessionHookSecret: 'invocation-secret', onSessionHook: (_id, row) => { invocationFacts.push(row); } });
+        onSessionHook: (_id, row) => { invocationFacts.push(row); } });
       invocationDir = await service.createPluginDir({ ...identity, ...{ lifetime: 'invocation' as const },
         files: [{ path: 'origin.txt', contents: 'invocation' }] });
       expect(invocationDir).not.toBe(retainedDir);
       expect(await readFile(join(retainedDir, 'origin.txt'), 'utf8')).toBe('retained');
       const body = { session_id: 'same-native-session', hook_event_name: 'SubagentStart', agent_id: 'same-task' };
-      expect((await postSessionHook({ port: retained.port, sessionHookSecret: 'retained-secret', body })).status).toBe(200);
-      expect((await postSessionHook({ port: invocation.port, sessionHookSecret: 'invocation-secret', body })).status).toBe(200);
-      expect((await postSessionHook({ port: invocation.port, sessionHookSecret: 'retained-secret', body })).status).toBe(403);
-      expect((await postSessionHook({ port: retained.port, sessionHookSecret: 'invocation-secret', body })).status).toBe(403);
+      const retainedSecret = await hostSecret(retained);
+      const invocationSecret = await hostSecret(invocation);
+      expect(invocationSecret).not.toBe(retainedSecret);
+      expect((await postSessionHook({ port: retained.port, sessionHookSecret: retainedSecret, body })).status).toBe(200);
+      expect((await postSessionHook({ port: invocation.port, sessionHookSecret: invocationSecret, body })).status).toBe(200);
+      expect((await postSessionHook({ port: invocation.port, sessionHookSecret: retainedSecret, body })).status).toBe(403);
+      expect((await postSessionHook({ port: retained.port, sessionHookSecret: invocationSecret, body })).status).toBe(403);
       expect(retainedFacts).toEqual([body]);
       expect(invocationFacts).toEqual([body]);
       await invocation.dispose();
       await service.disposePluginDir(invocationDir);
-      expect((await postSessionHook({ port: retained.port, sessionHookSecret: 'retained-secret', body })).status).toBe(200);
+      expect((await postSessionHook({ port: retained.port, sessionHookSecret: retainedSecret, body })).status).toBe(200);
     } finally {
       await invocation?.dispose();
       await retained?.dispose();
@@ -94,14 +102,12 @@ describe('createSessionHooksService', () => {
     const server = await service.startServer({
       providerId: 'claude',
       sessionId: 'happier-session-cleanup',
-      sessionHookSecret: 'session-secret-service',
-      permissionHookSecret: 'permission-secret-service',
     });
 
     expect(server.sessionHookSecretFile).toContain(join(happyHomeDir, 'tmp'));
     expect(server.permissionHookSecretFile).toContain(join(happyHomeDir, 'tmp'));
-    await expect(readFile(server.sessionHookSecretFile!, 'utf8')).resolves.toBe('session-secret-service');
-    await expect(readFile(server.permissionHookSecretFile!, 'utf8')).resolves.toBe('permission-secret-service');
+    await expect(readFile(server.sessionHookSecretFile!, 'utf8')).resolves.toMatch(/^[A-Za-z0-9_-]{43}$/);
+    await expect(readFile(server.permissionHookSecretFile!, 'utf8')).resolves.toMatch(/^[A-Za-z0-9_-]{43}$/);
     if (process.platform !== 'win32') {
       expect((await stat(server.sessionHookSecretFile!)).mode & 0o777).toBe(0o600);
       expect((await stat(server.permissionHookSecretFile!)).mode & 0o777).toBe(0o600);
@@ -124,18 +130,18 @@ describe('createSessionHooksService', () => {
         providerId: 'claude',
         sessionId: 'happy-session-stable-endpoint',
         lifecycle: { kind: 'session', sessionId: 'happy-session-stable-endpoint' },
-        sessionHookSecret: 'first-session-secret',
-        permissionHookSecret: 'first-permission-secret',
       } as Parameters<typeof firstService.startServer>[0] & {
         lifecycle: { kind: 'session'; sessionId: string };
       });
       const firstPort = first.port;
       const firstSessionSecretFile = first.sessionHookSecretFile!;
       const firstPermissionSecretFile = first.permissionHookSecretFile!;
+      const firstSessionSecret = await hostSecret(first);
+      const firstPermissionSecret = await readFile(firstPermissionSecretFile, 'utf8');
       await first.dispose();
 
-      await expect(readFile(firstSessionSecretFile, 'utf8')).resolves.toBe('first-session-secret');
-      await expect(readFile(firstPermissionSecretFile, 'utf8')).resolves.toBe('first-permission-secret');
+      await expect(readFile(firstSessionSecretFile, 'utf8')).resolves.toBe(firstSessionSecret);
+      await expect(readFile(firstPermissionSecretFile, 'utf8')).resolves.toBe(firstPermissionSecret);
 
       const secondService = createSessionHooksService({
         happyHomeDir,
@@ -145,8 +151,6 @@ describe('createSessionHooksService', () => {
         providerId: 'claude',
         sessionId: 'happy-session-stable-endpoint',
         lifecycle: { kind: 'session', sessionId: 'happy-session-stable-endpoint' },
-        sessionHookSecret: 'replacement-session-secret',
-        permissionHookSecret: 'replacement-permission-secret',
       } as Parameters<typeof secondService.startServer>[0] & {
         lifecycle: { kind: 'session'; sessionId: string };
       });
@@ -154,15 +158,14 @@ describe('createSessionHooksService', () => {
       expect(second.port).toBe(firstPort);
       expect(second.sessionHookSecretFile).toBe(firstSessionSecretFile);
       expect(second.permissionHookSecretFile).toBe(firstPermissionSecretFile);
-      await expect(readFile(second.sessionHookSecretFile!, 'utf8')).resolves.toBe('first-session-secret');
+      await expect(readFile(second.sessionHookSecretFile!, 'utf8')).resolves.toBe(firstSessionSecret);
       await expect(postSessionHook({
         port: second.port,
-        sessionHookSecret: 'first-session-secret',
+        sessionHookSecret: firstSessionSecret,
         body: { session_id: 'provider-session-stable' },
       })).resolves.toEqual({ status: 200, text: 'ok' });
       await expect(postSessionHook({
         port: second.port,
-        sessionHookSecret: 'replacement-session-secret',
         body: { session_id: 'provider-session-stable' },
       })).resolves.toEqual({ status: 403, text: 'forbidden' });
 
@@ -183,7 +186,6 @@ describe('createSessionHooksService', () => {
         providerId: 'claude',
         sessionId: 'happy-session-endpoint-write-failure',
         lifecycle: { kind: 'session', sessionId: 'happy-session-endpoint-write-failure' },
-        sessionHookSecret: 'stable-session-secret',
       } as Parameters<typeof firstService.startServer>[0] & {
         lifecycle: { kind: 'session'; sessionId: string };
       });
@@ -209,7 +211,6 @@ describe('createSessionHooksService', () => {
         providerId: 'claude',
         sessionId: 'happy-session-endpoint-write-failure',
         lifecycle: { kind: 'session', sessionId: 'happy-session-endpoint-write-failure' },
-        sessionHookSecret: 'replacement-session-secret',
       } as Parameters<typeof replacementService.startServer>[0] & {
         lifecycle: { kind: 'session'; sessionId: string };
       })).rejects.toBeDefined();
@@ -238,7 +239,6 @@ describe('createSessionHooksService', () => {
         providerId: 'claude',
         sessionId: 'happy-session-final-cleanup',
         lifecycle: { kind: 'session', sessionId: 'happy-session-final-cleanup' },
-        sessionHookSecret: 'session-secret-final-cleanup',
       } as Parameters<typeof service.startServer>[0] & {
         lifecycle: { kind: 'session'; sessionId: string };
       });
@@ -281,7 +281,6 @@ describe('createSessionHooksService', () => {
     const server = await service.startServer({
       providerId: 'claude',
       sessionId: 'happier-session-statusline',
-      sessionHookSecret: 'statusline-service-secret',
       onStatuslineUpdate: (data) => {
         received.push(data);
       },
@@ -291,7 +290,7 @@ describe('createSessionHooksService', () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-happier-hook-secret': 'statusline-service-secret',
+        'x-happier-hook-secret': await hostSecret(server),
       },
       body: JSON.stringify({ session_id: 'claude-x', model: { id: 'claude-fable-5' } }),
     });
@@ -593,6 +592,7 @@ describe('createSessionHooksService', () => {
           session_id: 'claude-provider-session-hook-publisher',
           transcript_path: '/tmp/claude-hook-publisher.jsonl',
         },
+        sessionHookSecret: await hostSecret(server),
       });
 
       expect(response).toEqual({ status: 200, text: 'ok' });
@@ -667,7 +667,6 @@ describe('createSessionHooksService', () => {
     const server = await service.startServer({
       providerId: 'claude',
       sessionId: 'happy-session-grant',
-      sessionHookSecret: 'trusted-session-hook-secret',
       onSessionHook: async (providerSessionId, data) => {
         hookProviderSessionIds.push(providerSessionId);
         try {
@@ -694,7 +693,7 @@ describe('createSessionHooksService', () => {
           session_id: paddedProviderSessionId,
           transcript_path: transcriptPath,
         },
-        sessionHookSecret: 'trusted-session-hook-secret',
+        sessionHookSecret: await hostSecret(server),
       })).resolves.toEqual({ status: 200, text: 'ok' });
 
       expect(followError).toBeNull();
@@ -738,7 +737,6 @@ describe('createSessionHooksService', () => {
     const server = await service.startServer({
       providerId: 'claude',
       sessionId: 'happy-session-hostile-grant',
-      sessionHookSecret: 'trusted-session-hook-secret',
       onSessionHook: vi.fn(),
     });
 
@@ -750,7 +748,7 @@ describe('createSessionHooksService', () => {
           session_id: 'provider-session-hostile-grant',
           transcript_path: '/tmp/private-provider-transcript.jsonl',
         },
-        sessionHookSecret: 'trusted-session-hook-secret',
+        sessionHookSecret: await hostSecret(server),
       })).resolves.toEqual({ status: 200, text: 'ok' });
 
       expect(logDebug).toHaveBeenCalledWith(
@@ -762,7 +760,7 @@ describe('createSessionHooksService', () => {
     }
   });
 
-  it('does not grant SessionStart transcript paths from unauthenticated hook servers', async () => {
+  it('refuses unauthenticated SessionStart callers before any transcript grant', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-hooks-'));
     const transcriptDir = await mkdtemp(join(tmpdir(), 'happier-session-hooks-transcript-'));
     const transcriptPath = join(transcriptDir, 'provider-session.jsonl');
@@ -831,12 +829,11 @@ describe('createSessionHooksService', () => {
           session_id: 'provider-session-1',
           transcript_path: transcriptPath,
         },
-      })).resolves.toEqual({ status: 200, text: 'ok' });
+      })).resolves.toEqual({ status: 403, text: 'forbidden' });
 
+      // Every host hook server has a secret now: an unauthenticated caller reaches no grant and no plugin.
       expect(grantRequests).toEqual([]);
-      expect(followError).toMatchObject({
-        code: 'PLUGIN_TRANSCRIPTS_FILE_FOLLOW_PATH_DENIED',
-      });
+      expect(followError).toBeNull();
     } finally {
       server.stop();
     }

@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { connectSessionMcpClient, supportsSessionMcpLocalTransport } from './sessionMcpLocalTransport';
+import { supportsSessionMcpLocalTransport } from './sessionMcpLocalTransport';
+import { connectSessionMcpClient } from './sessionMcpLocalClient';
 
 describe.skipIf(!supportsSessionMcpLocalTransport())('Session MCP socket credential transport', () => {
   it.each([

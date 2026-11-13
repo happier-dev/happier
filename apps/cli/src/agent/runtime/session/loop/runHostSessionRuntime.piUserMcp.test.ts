@@ -831,7 +831,7 @@ it.each((['fresh', 'resume', 'member', 'member-native', 'member-native-path-a', 
       const bridgeContext = JSON.parse(readFileSync(contextFile!, 'utf8'));
       expect(bridgeContext.v).toBe(1);
       expect(typeof bridgeContext.socketPath).toBe('string');
-      expect(typeof bridgeContext.bearerToken).toBe('string');
+      expect(bridgeContext).not.toHaveProperty('bearerToken');
       expect(params.mcpServersStrictMode).toBe(true);
       expect(Object.keys(params.mcpServers)).toEqual(kind === 'legacy-empty' ? [] : ['selected']);
       if (kind === 'legacy-empty') throw opened;

@@ -30,7 +30,35 @@ function createDeferred<T>() {
     return { promise, resolve, reject };
 }
 
+function authenticatedTransport(server: Awaited<ReturnType<typeof startPluginHostedMcpLoopbackServer>>) {
+    return new StreamableHTTPClientTransport(new URL(server.endpoint.url), { requestInit: { headers: { ...server.endpoint.headers } } });
+}
+
 describe('startPluginHostedMcpLoopbackServer', () => {
+    it('refuses local callers that do not present the endpoint credential', async () => {
+        const handler = vi.fn(async () => ({ content: [] }));
+        const server = await startPluginHostedMcpLoopbackServer({ pluginId: 'acme', spec: {
+            id: 'acme.auth', name: 'acme-auth', transport: { kind: 'hosted', exposure: { kind: 'loopbackHttp', requested: true } },
+            hosted: { tools: [{ name: 'ext.acme.secret', inputSchema: { type: 'object' }, handler }] },
+        } });
+        const initialize = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
+            protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'intruder', version: '1' } } });
+        const post = (headers: Record<string, string>) => fetch(server.endpoint.url, { method: 'POST', body: initialize,
+            headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...headers } });
+        try {
+            expect([(await post({})).status, (await post({ authorization: 'Bearer wrong' })).status]).toEqual([401, 401]);
+            expect((await post({ authorization: `${server.endpoint.headers.authorization}x` })).status).toBe(401);
+            const intruder = new Client({ name: 'intruder', version: '1' });
+            await expect(withTimeout(intruder.connect(new StreamableHTTPClientTransport(new URL(server.endpoint.url))),
+                'unauthenticated connect')).rejects.toThrow();
+            const client = new Client({ name: 'owner', version: '1' });
+            await withTimeout(client.connect(authenticatedTransport(server)), 'authenticated connect');
+            expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(['ext.acme.secret']);
+            await client.close();
+            expect(handler).not.toHaveBeenCalled();
+        } finally { await server.dispose(); }
+    });
+
     it('presents hosted plugin unions as object fields while keeping strict call validation', async () => {
         const inputs: unknown[] = [];
         const server = await startPluginHostedMcpLoopbackServer({ pluginId: 'acme', spec: {
@@ -42,7 +70,7 @@ describe('startPluginHostedMcpLoopbackServer', () => {
         } });
         const client = new Client({ name: 'hosted-union-test', version: '1' });
         try {
-            await client.connect(new StreamableHTTPClientTransport(new URL(server.endpoint.url)));
+            await client.connect(authenticatedTransport(server));
             const tool = (await client.listTools()).tools.find(tool => tool.name === 'ext.acme.union')!;
             expect(tool.inputSchema).toMatchObject({ type: 'object', properties: { kind: expect.any(Object), text: { type: 'string' }, count: { type: 'integer' } }, required: ['kind'] });
             for (const key of ['oneOf', 'anyOf', 'allOf']) expect(tool.inputSchema).not.toHaveProperty(key);
@@ -111,7 +139,7 @@ describe('startPluginHostedMcpLoopbackServer', () => {
         const client = new Client({ name: 'plugin-hosted-tools-test', version: '1.0.0' }, { capabilities: {} });
         try {
             await withTimeout(
-                client.connect(new StreamableHTTPClientTransport(new URL(server.endpoint.url))),
+                client.connect(authenticatedTransport(server)),
                 'connect hosted MCP endpoint',
             );
 
@@ -216,7 +244,7 @@ describe('startPluginHostedMcpLoopbackServer', () => {
 
             client = new Client({ name: 'plugin-hosted-test', version: '1.0.0' }, { capabilities: {} });
             await withTimeout(
-                client.connect(new StreamableHTTPClientTransport(new URL(server.endpoint.url))),
+                client.connect(authenticatedTransport(server)),
                 'connect hosted MCP endpoint',
             );
 
@@ -228,7 +256,7 @@ describe('startPluginHostedMcpLoopbackServer', () => {
 
         const closedClient = new Client({ name: 'plugin-hosted-closed-test', version: '1.0.0' }, { capabilities: {} });
         await expect(withTimeout(
-            closedClient.connect(new StreamableHTTPClientTransport(new URL(server.endpoint.url))),
+            closedClient.connect(authenticatedTransport(server)),
             'connect disposed hosted MCP endpoint',
             500,
         )).rejects.toThrow();
@@ -268,7 +296,7 @@ describe('startPluginHostedMcpLoopbackServer', () => {
         const client = new Client({ name: 'plugin-hosted-invalid-input-test', version: '1.0.0' }, { capabilities: {} });
         try {
             await withTimeout(
-                client.connect(new StreamableHTTPClientTransport(new URL(server.endpoint.url))),
+                client.connect(authenticatedTransport(server)),
                 'connect hosted MCP endpoint',
             );
 
@@ -320,7 +348,7 @@ describe('startPluginHostedMcpLoopbackServer', () => {
         const client = new Client({ name: 'plugin-hosted-invalid-schema-test', version: '1.0.0' }, { capabilities: {} });
         try {
             await withTimeout(
-                client.connect(new StreamableHTTPClientTransport(new URL(server.endpoint.url))),
+                client.connect(authenticatedTransport(server)),
                 'connect hosted MCP endpoint',
             );
 
@@ -364,7 +392,7 @@ describe('startPluginHostedMcpLoopbackServer', () => {
         const client = new Client({ name: 'plugin-hosted-error-redaction-test', version: '1.0.0' }, { capabilities: {} });
         try {
             await withTimeout(
-                client.connect(new StreamableHTTPClientTransport(new URL(server.endpoint.url))),
+                client.connect(authenticatedTransport(server)),
                 'connect hosted MCP endpoint',
             );
 
@@ -420,7 +448,7 @@ describe('startPluginHostedMcpLoopbackServer', () => {
         const client = new Client({ name: 'plugin-hosted-abort-test', version: '1.0.0' }, { capabilities: {} });
         try {
             await withTimeout(
-                client.connect(new StreamableHTTPClientTransport(new URL(server.endpoint.url))),
+                client.connect(authenticatedTransport(server)),
                 'connect hosted MCP endpoint',
             );
             const call = client.callTool({ name: 'ext.acme.waits', arguments: {} }).catch((error: unknown) => error);
@@ -470,7 +498,7 @@ describe('startPluginHostedMcpLoopbackServer', () => {
         const client = new Client({ name: 'plugin-hosted-invalid-output-test', version: '1.0.0' }, { capabilities: {} });
         try {
             await withTimeout(
-                client.connect(new StreamableHTTPClientTransport(new URL(server.endpoint.url))),
+                client.connect(authenticatedTransport(server)),
                 'connect hosted MCP endpoint',
             );
 

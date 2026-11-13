@@ -10,6 +10,7 @@ import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { startHappyServer } from '@/mcp/startHappyServer';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { sessionMcpAuthorizationHeaders } from '@/mcp/runtime/sessionMcpClient.testkit';
 
 function listen(server: http.Server): Promise<{ port: number }> {
   return new Promise((resolve, reject) => {
@@ -606,7 +607,7 @@ describe('daemon control client plugin changes', () => {
         updateMetadata: () => {},
       });
       available = false;
-      const response = await fetch(mcp.url, { method: 'POST', body: '{}' });
+      const response = await fetch(mcp.url, { method: 'POST', body: '{}', headers: sessionMcpAuthorizationHeaders(mcp) });
       expect(response.status).toBe(503);
       await expect(response.json()).resolves.toMatchObject({ errorCode: 'daemon_plugin_catalog_unavailable' });
     } finally {

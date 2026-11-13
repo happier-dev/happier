@@ -132,6 +132,7 @@ vi.mock('@/session/transport/http/sessionSystemRecordsHttp', async (importOrigin
 });
 
 import { startHappyServer, type HappyMcpSessionClient } from '@/mcp/startHappyServer';
+import { sessionMcpTestTransport } from '@/mcp/runtime/sessionMcpClient.testkit';
 
 const COMPANION_PLUGIN_ID = 'examples.public-sdk-review-assistant';
 const COMPANION_TOOL_ID = 'review-summary';
@@ -483,10 +484,10 @@ function createUnmanagedDaemonTool(): ProjectedPluginToolCatalogEntry {
   return Object.freeze(tool);
 }
 
-async function listToolNames(url: string): Promise<ReadonlySet<string>> {
+async function listToolNames(server: Parameters<typeof sessionMcpTestTransport>[0]): Promise<ReadonlySet<string>> {
   const client = new Client({ name: 'composition-turn-test', version: '1.0.0' }, { capabilities: {} });
   try {
-    await client.connect(new StreamableHTTPClientTransport(new URL(url)));
+    await client.connect(sessionMcpTestTransport(server));
     const tools = await client.listTools();
     return new Set((tools.tools ?? []).map((tool) => String(tool.name)));
   } finally {
@@ -494,10 +495,10 @@ async function listToolNames(url: string): Promise<ReadonlySet<string>> {
   }
 }
 
-async function callTool(url: string, name: string, args: Record<string, unknown>): Promise<unknown> {
+async function callTool(server: Parameters<typeof sessionMcpTestTransport>[0], name: string, args: Record<string, unknown>): Promise<unknown> {
   const client = new Client({ name: 'composition-turn-test', version: '1.0.0' }, { capabilities: {} });
   try {
-    await client.connect(new StreamableHTTPClientTransport(new URL(url)));
+    await client.connect(sessionMcpTestTransport(server));
     return await client.callTool({ name, arguments: args });
   } finally {
     await client.close();
@@ -507,7 +508,7 @@ async function callTool(url: string, name: string, args: Record<string, unknown>
 async function runComposedTurn(params: Readonly<{
   agentId: string;
   runtimeRegistry: CompositionResolutionRegistry;
-  serverUrl: string;
+  mcpServer: Parameters<typeof sessionMcpTestTransport>[0];
   selection: { current: AgentCompositionToolSelection | null };
   abortOnCompletion?: boolean;
   onBeforeProviderSend?: () => void | Promise<void>;
@@ -533,7 +534,7 @@ async function runComposedTurn(params: Readonly<{
     sendTurnPrompt: vi.fn(async (prompt: string) => {
       providerPrompt = prompt;
       await params.onBeforeProviderSend?.();
-      namesDuringProviderSend = await listToolNames(params.serverUrl);
+      namesDuringProviderSend = await listToolNames(params.mcpServer);
       toolCallDuringProviderSend = await params.onProviderSend?.();
     }),
     steerInFlightTurn: vi.fn(async () => undefined),
@@ -635,8 +636,8 @@ describe('startHappyServer Agent composition turn', () => {
         ),
       });
       try {
-        expect(await listToolNames(server.url)).toContain(COMPANION_TOOL_NAME);
-        await expect(callTool(server.url, COMPANION_TOOL_NAME, {
+        expect(await listToolNames(server)).toContain(COMPANION_TOOL_NAME);
+        await expect(callTool(server, COMPANION_TOOL_NAME, {
           transcript: 'The scoped Runner executes this exact reviewed generation.',
         })).resolves.toMatchObject({
           isError: false,
@@ -681,7 +682,7 @@ describe('startHappyServer Agent composition turn', () => {
       ),
     });
     try {
-      expect(await listToolNames(disabledServer.url)).not.toContain(COMPANION_TOOL_NAME);
+      expect(await listToolNames(disabledServer)).not.toContain(COMPANION_TOOL_NAME);
     } finally {
       disabledServer.stop();
     }
@@ -703,8 +704,8 @@ describe('startHappyServer Agent composition turn', () => {
       ),
     });
     try {
-      expect(await listToolNames(approvalServer.url)).toContain(COMPANION_TOOL_NAME);
-      await expect(callTool(approvalServer.url, COMPANION_TOOL_NAME, {
+      expect(await listToolNames(approvalServer)).toContain(COMPANION_TOOL_NAME);
+      await expect(callTool(approvalServer, COMPANION_TOOL_NAME, {
         transcript: 'This handler must not run without canonical approval custody.',
       })).resolves.toMatchObject({ isError: true });
     } finally {
@@ -724,7 +725,7 @@ describe('startHappyServer Agent composition turn', () => {
     });
     try {
       await lease.release();
-      await expect(callTool(retiredServer.url, COMPANION_TOOL_NAME, {
+      await expect(callTool(retiredServer, COMPANION_TOOL_NAME, {
         transcript: 'A released generation must fail closed.',
       })).resolves.toMatchObject({ isError: true });
       expect(daemonCatalogBoundary.read).not.toHaveBeenCalled();
@@ -793,7 +794,7 @@ describe('startHappyServer Agent composition turn', () => {
           const companionTurnG = await runComposedTurn({
             agentId: 'review-agent',
             runtimeRegistry: runtimeG.runtimeRegistry,
-            serverUrl: server.url,
+            mcpServer: server,
             selection,
           });
           expect(companionTurnG.resolution.managedPluginIds).toEqual([COMPANION_PLUGIN_ID]);
@@ -820,7 +821,7 @@ describe('startHappyServer Agent composition turn', () => {
           const selectedTurnG = await runComposedTurn({
             agentId: 'claude',
             runtimeRegistry: runtimeG.runtimeRegistry,
-            serverUrl: server.url,
+            mcpServer: server,
             selection,
             onBeforeProviderSend: () => {
               // The daemon reload publishes a real H catalog while this
@@ -830,7 +831,7 @@ describe('startHappyServer Agent composition turn', () => {
                 createUnmanagedDaemonTool(),
               ]);
             },
-            onProviderSend: async () => await callTool(server.url, COMPANION_TOOL_NAME, {
+            onProviderSend: async () => await callTool(server, COMPANION_TOOL_NAME, {
               transcript: 'Summarize the selected occurrence.',
             }),
           });
@@ -861,15 +862,15 @@ describe('startHappyServer Agent composition turn', () => {
           // With G's selection cleared, the next composition reads the real
           // H registry and H's ordinary daemon catalog rather than retaining
           // a G registry lease or a second catalog owner in MCP.
-          const nextTurnCatalog = await listToolNames(server.url);
+          const nextTurnCatalog = await listToolNames(server);
           expect(nextTurnCatalog).toContain(COMPANION_TOOL_NAME);
           expect(nextTurnCatalog).toContain(UNMANAGED_TOOL_NAME);
           const selectedTurnH = await runComposedTurn({
             agentId: 'claude',
             runtimeRegistry: runtimeH.runtimeRegistry,
-            serverUrl: server.url,
+            mcpServer: server,
             selection,
-            onProviderSend: async () => await callTool(server.url, COMPANION_TOOL_NAME, {
+            onProviderSend: async () => await callTool(server, COMPANION_TOOL_NAME, {
               transcript: 'Summarize the reloaded occurrence.',
             }),
           });
@@ -894,7 +895,7 @@ describe('startHappyServer Agent composition turn', () => {
           const cancelledTurnH = await runComposedTurn({
             agentId: 'claude',
             runtimeRegistry: runtimeH.runtimeRegistry,
-            serverUrl: server.url,
+            mcpServer: server,
             selection,
             abortOnCompletion: true,
           });

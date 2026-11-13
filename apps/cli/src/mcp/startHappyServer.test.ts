@@ -58,12 +58,14 @@ import { registerHappierSessionAgentToolRpc, startHappyServer } from '@/mcp/star
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
-import { connectSessionMcpClient, readSessionMcpContextFromEnvironment, SESSION_MCP_CONTEXT_FILE_ENV } from './runtime/sessionMcpLocalTransport';
+import { SESSION_MCP_CONTEXT_FILE_ENV } from './runtime/sessionMcpLocalTransport';
+import { connectSessionMcpClient, readSessionMcpContextFromEnvironment } from './runtime/sessionMcpLocalClient';
 import { McpError, ResourceUpdatedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { waitForExecutionRun } from '@/session/services/executionRuns';
 import { ExecutionRunWaitConditionSchema, waitForExecutionRunTerminal } from '@happier-dev/protocol/execution/runs/waitForTerminal';
 import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import { sessionMcpAuthorizationHeaders, sessionMcpTestTransport } from '@/mcp/runtime/sessionMcpClient.testkit';
 
 function sendLocalSessionRequest(socketPath: string, authorization?: string, body = '{', method = 'POST') {
     return new Promise<{ status: number; body: string }>((resolve, reject) => {
@@ -97,7 +99,7 @@ describe('startHappyServer notification stream', () => {
         daemonCatalogBoundary.read.mockResolvedValue({ kind: 'available', plugins: [], tools: [] });
         const session = createMutableApiSessionClientFixture({ sessionId: 'socket-cleanup-retry' });
         const server = await startHappyServer(session, { localTransport: { agentUid: process.getuid!() } });
-        if (!server.localContext) throw new Error('missing_local_context');
+        if (!server.localContext || !('socketPath' in server.localContext)) throw new Error('missing_local_context');
         const context = server.localContext;
         socketRemovalBoundary.path = dirname(context.socketPath);
         socketRemovalBoundary.failNext = true;
@@ -147,7 +149,7 @@ describe('startHappyServer notification stream', () => {
         const session = createMutableApiSessionClientFixture({ sessionId: 'stateless-local' });
         const server = await startHappyServer(session, { localTransport: { agentUid: process.getuid!() } });
         try {
-            if (!server.localContext) throw new Error('missing_local_context');
+            if (!server.localContext || !('socketPath' in server.localContext)) throw new Error('missing_local_context');
             const context = server.localContext;
             const send = (body: unknown) => sendLocalSessionRequest(context.socketPath, `Bearer ${context.bearerToken}`, JSON.stringify(body));
             for (const id of [1, 2]) {
@@ -207,7 +209,7 @@ describe('startHappyServer notification stream', () => {
             sessionCredentials: { token: 'watch-test-only', encryption: null }, accountSettings: accountSettingsParse({}) });
         let connection: Awaited<ReturnType<typeof connectSessionMcpClient>> | undefined;
         try {
-            if (!server.localContext) throw new Error('missing_local_context');
+            if (!server.localContext || !('socketPath' in server.localContext)) throw new Error('missing_local_context');
             connection = await connectSessionMcpClient(server.localContext);
             const notifications: string[] = [];
             connection.client.setNotificationHandler(ResourceUpdatedNotificationSchema, n => { notifications.push(n.params.uri); });
@@ -294,7 +296,7 @@ describe('startHappyServer notification stream', () => {
                 const server = await startHappyServer(session, { localTransport: { agentUid: process.getuid!() } });
                 servers.push(server);
                 expect(server.localContext).toBeDefined();
-                if (!server.localContext) throw new Error('Missing Session context');
+                if (!server.localContext || !('socketPath' in server.localContext)) throw new Error('Missing Session context');
                 return { server, context: server.localContext };
             };
             const a = await open(sessionA);
@@ -362,7 +364,7 @@ describe('startHappyServer notification stream', () => {
             server = await startHappyServer(session, { localTransport: { agentUid: 12345 } });
             const context = server.localContext;
             expect(context).toBeDefined();
-            if (!context) throw new Error('Missing isolated Session context');
+            if (!context || !('socketPath' in context)) throw new Error('Missing isolated Session context');
             const catalogReads = daemonCatalogBoundary.read.mock.calls.length;
             const aclCommands = acl.mock.calls.length;
             for (const method of ['POST', 'GET', 'DELETE']) {
@@ -400,7 +402,7 @@ describe('startHappyServer notification stream', () => {
             expect(config).toContain('mcp_servers.happier.enabled=true');
             const transportArgs: unknown = JSON.parse(config.find(entry => entry.startsWith('mcp_servers.happier.args='))!.split('=').slice(1).join('='));
             const [url] = z.parse(z.array(z.string()), transportArgs);
-            await client.connect(new StreamableHTTPClientTransport(new URL(url)));
+            await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { ...sessionMcpAuthorizationHeaders(server) } } }));
             const tools = (await client.listTools()).tools;
             // The native default is discoverable-only. Neither a dotted Action id
             // nor its absent dedicated Tool is a callable Codex tool name.
@@ -475,7 +477,7 @@ describe('startHappyServer notification stream', () => {
             // Do not let the global fetch pool's idle socket lifetime decide
             // this catalog test while rebuilding its large tool schemas.
             await client.connect(new StreamableHTTPClientTransport(new URL(server.url), {
-                requestInit: { headers: { connection: 'close' } },
+                requestInit: { headers: { connection: 'close', ...sessionMcpAuthorizationHeaders(server) } },
             }));
             const names = async (nextPhase: string) => {
                 phase = nextPhase;
@@ -533,7 +535,7 @@ describe('startHappyServer notification stream', () => {
         const failures: unknown[] = [];
         let phase = 'original connect';
         try {
-            await original.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+            await original.connect(sessionMcpTestTransport(server));
             phase = 'original inventory';
             expect((await original.listTools()).tools.map(tool => tool.name)).toContain('action_execute');
             phase = 'original close';
@@ -542,7 +544,7 @@ describe('startHappyServer notification stream', () => {
 
             // Native session resume discovers tools before the next host turn is admitted.
             phase = 'resumed connect';
-            await resumed.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+            await resumed.connect(sessionMcpTestTransport(server));
             phase = 'resumed inventory';
             expect((await resumed.listTools()).tools.map(tool => tool.name)).toContain('action_execute');
             expect(await server.readToolNames()).toContain('action_execute');
@@ -645,7 +647,8 @@ describe('startHappyServer notification stream', () => {
         });
         const server = await startHappyServer(session);
         const pending = fetch(server.url, {
-            method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+            method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream',
+                ...sessionMcpAuthorizationHeaders(server) },
             body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'action_execute', arguments: {
                 actionId: 'browser.view.open', input: { kind: 'openView', commandId: 'catalog-stop',
                     browserSessionId: session.sessionId, viewId: 'view', platform: 'web',
@@ -694,7 +697,7 @@ describe('startHappyServer notification stream', () => {
         const failures: unknown[] = [];
         let phase = 'connect';
         try {
-            await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+            await client.connect(sessionMcpTestTransport(server));
             let inventoryRead = 0;
             const names = async () => {
                 phase = `inventory read ${++inventoryRead}`;
@@ -751,7 +754,7 @@ describe('startHappyServer notification stream', () => {
         const notificationStream = new AbortController();
         try {
             const response = await fetch(server.url, {
-                headers: { Accept: 'text/event-stream' },
+                headers: { Accept: 'text/event-stream', ...sessionMcpAuthorizationHeaders(server) },
                 signal: notificationStream.signal,
             });
             expect(response.status).toBe(200);
@@ -760,7 +763,8 @@ describe('startHappyServer notification stream', () => {
 
             const toolResponse = await fetch(server.url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream',
+                    ...sessionMcpAuthorizationHeaders(server) },
                 body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
             });
             expect(toolResponse.status).toBe(503);

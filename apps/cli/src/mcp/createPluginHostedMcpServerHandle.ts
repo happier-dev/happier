@@ -87,6 +87,9 @@ function assertSanitizedHostedEndpoint(endpoint: HostedMcpRuntimeEndpoint): void
         || !Number.isInteger(endpoint.port)
         || endpoint.port <= 0
         || endpoint.port > 65535
+        // Loopback is reachable by every local process and OS user: the endpoint must demand a bearer.
+        || typeof endpoint.headers?.authorization !== 'string'
+        || !/^Bearer [A-Za-z0-9_-]{43}$/u.test(endpoint.headers.authorization)
     ) {
         throw new Error('Hosted MCP runtime endpoint must be a sanitized loopback endpoint');
     }

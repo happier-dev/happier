@@ -1,4 +1,5 @@
 import { expect, it, vi } from 'vitest';
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { ConnectedAccountAttemptResponseSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
@@ -11,6 +12,7 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import * as daemonControl from '@/daemon/controlClient';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import * as persistence from '@/persistence';
+import { sessionMcpAuthorizationHeaders, sessionMcpTestTransport } from '@/mcp/runtime/sessionMcpClient.testkit';
 
 it.each([false, true])('retains authored Account manual authentication across MCP requests (required configuration: %s)', async requireAccountConfiguration => {
     const origin = `http://mcp-portable-authentication-${requireAccountConfiguration ? 'configured' : 'manual'}.test`;
@@ -19,20 +21,22 @@ it.each([false, true])('retains authored Account manual authentication across MC
     const daemon = vi.spyOn(daemonControl, 'readDaemonPluginCatalog').mockRejectedValue(new Error('No daemon in portable Account fixture'));
     const nativeRpc = vi.spyOn(machineRpc, 'callMachineRpc').mockRejectedValue(new Error('No Machine in portable Account fixture'));
     const credentialFiles = vi.spyOn(persistence, 'readCredentials').mockRejectedValue(new Error('Credential files are unavailable in this fixture'));
-    const session = createMutableApiSessionClientFixture({ sessionId: 'mcp-portable-authentication', overrides: {
+    // The live MCP client owns the permission witness; ApiSessionClient does not.
+    const session = Object.assign(createMutableApiSessionClientFixture({ sessionId: 'mcp-portable-authentication', overrides: {
         getServerBinding: () => ({ serverId: 'mcp-portable', serverUrl: origin }),
         getServerFeaturesSnapshot: () => ({ status: 'ready', features }),
         getWorkDepth: () => 0,
         getHostTurnWorkDepth: () => 0,
-        getActiveTurnPermissionWitness: () => ({ turnId: 'portable-authentication-turn',
-            causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
-        }),
         getActiveTurnAdmissionWitness: () => ({ turnId: 'portable-authentication-turn', inputId: 'portable-authentication-input',
             userMessageSeq: 1, userMessageSeqs: [1], callerPermissionMode: 'default',
             causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
             agentStartCaller: { kind: 'session', sessionId: 'mcp-portable-authentication', starterDepth: 0, turnDepth: 0 },
         }),
-    } });
+    } }), {
+        getActiveTurnPermissionWitness: () => ({ turnId: 'portable-authentication-turn',
+            causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'default' as const },
+        }),
+    });
     const client = new Client({ name: 'portable-account-authentication', version: '1' });
     let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
     let server: Awaited<ReturnType<typeof startHappyServer>> | undefined;
@@ -47,9 +51,9 @@ it.each([false, true])('retains authored Account manual authentication across MC
         const parentRegistry = registry;
         const lease = { registry, source: 'ephemeral' as const, durableRevision: -1, release: () => parentRegistry.dispose() };
         server = await startHappyServer(session, { credentials, accountSettings: settings, pluginRuntimeRegistryLease: lease });
-        await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+        await client.connect(sessionMcpTestTransport(server));
         const execute = async (actionId: string, input: unknown) => {
-            const response = await client.callTool({ name: 'action_execute', arguments: { actionId, input } });
+            const response = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: { actionId, input } }));
             if (response.isError) {
                 const text = response.content.find(item => item.type === 'text');
                 const failure: unknown = text?.type === 'text' ? JSON.parse(text.text) : null;

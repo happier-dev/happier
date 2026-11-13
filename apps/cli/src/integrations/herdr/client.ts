@@ -157,6 +157,22 @@ function request(socketPath: string, method: string, params: JsonRecord, timeout
   });
 }
 
+/**
+ * `detached: true` makes the spawned server lead its own POSIX process group, so signalling the
+ * group also reaches anything it forked. Windows has no herdr attach; the direct child is retired.
+ */
+function retireSpawnedServer(server: ReturnType<typeof spawn>): void {
+  if (process.platform !== 'win32' && typeof server.pid === 'number') {
+    try {
+      process.kill(-server.pid, 'SIGTERM');
+      return;
+    } catch {
+      // The group is already gone; the direct-child signal below is a no-op then.
+    }
+  }
+  server.kill();
+}
+
 export function createHerdrClient(params: Readonly<{
   binary: string;
   sessionName: string;
@@ -234,21 +250,28 @@ export function createHerdrClient(params: Readonly<{
     let spawnError: Error | null = null;
     server.once('error', (error) => { spawnError = error; });
     server.unref();
-    const deadline = Date.now() + params.startupTimeoutMs;
-    while (Date.now() < deadline) {
-      const session = await findSession(context?.env);
-      if (spawnError) throw spawnError;
-      if (session?.running) {
-        if (context && (session.socketPath !== context.socketPath || session.sessionDir !== context.sessionDir)) {
-          throw new HerdrApiError('recorded_server_endpoint_mismatch');
+    try {
+      const deadline = Date.now() + params.startupTimeoutMs;
+      while (Date.now() < deadline) {
+        const session = await findSession(context?.env);
+        if (spawnError) throw spawnError;
+        if (session?.running) {
+          if (context && (session.socketPath !== context.socketPath || session.sessionDir !== context.sessionDir)) {
+            throw new HerdrApiError('recorded_server_endpoint_mismatch');
+          }
+          socketPath = session.socketPath;
+          await assertServerVersion();
+          return socketPath;
         }
-        socketPath = session.socketPath;
-        await assertServerVersion();
-        return socketPath;
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      throw new HerdrApiError('server_start_timeout');
+    } catch (error) {
+      // This startup spawned the detached server and is failing (timeout, wrong endpoint or
+      // unsupported version): retire it so nothing outlives the refusal. A later attempt starts afresh.
+      retireSpawnedServer(server);
+      throw error;
     }
-    throw new HerdrApiError('server_start_timeout');
   }
 
   async function restoreRecordedServer(): Promise<string> {

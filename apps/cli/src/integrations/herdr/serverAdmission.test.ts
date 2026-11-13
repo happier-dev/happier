@@ -128,6 +128,44 @@ describe('Herdr CLI entrypoint admission', () => {
     }));
   });
 
+  it('retires the server it spawned when that startup fails, and never one it adopted', async () => {
+    executable.sessionList.mockReturnValue([{ name: 'work', socket_path: '/never/herdr.sock', running: false }]);
+    const kill = vi.fn(() => true);
+    executable.spawn.mockImplementation(() => Object.assign(new EventEmitter(), { unref: () => {}, kill }));
+    const client = createHerdrClient({ binary: 'herdr', sessionName: 'work', actionTimeoutMs: 1000, startupTimeoutMs: 150 });
+    await expect(client.ensureServer()).rejects.toMatchObject({ code: 'server_start_timeout' });
+    expect(executable.spawn).toHaveBeenCalledTimes(1);
+    expect(kill).toHaveBeenCalledTimes(1);
+  });
+
+  it.skipIf(process.platform === 'win32')('retires the whole process group of a spawned server that daemonizes a child', async () => {
+    const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+    executable.sessionList.mockReturnValue([{ name: 'work', socket_path: '/never/herdr.sock', running: false }]);
+    let grandchildPid = 0;
+    const reported = new Promise<void>(resolve => {
+      executable.spawn.mockImplementation((_binary: string, _args: string[], options: Parameters<typeof actual.spawn>[2]) => {
+        // A forking fake: the direct child starts a grandchild in its group and reports its pid.
+        const child = actual.spawn(process.execPath, ['-e', `const c = require('node:child_process').spawn(process.execPath,
+          ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); console.log(c.pid); setInterval(() => {}, 1000);`],
+          { ...options, stdio: ['ignore', 'pipe', 'ignore'] });
+        child.stdout?.once('data', chunk => { grandchildPid = Number(String(chunk).trim()); resolve(); });
+        return child;
+      });
+    });
+    const client = createHerdrClient({ binary: 'herdr', sessionName: 'work', actionTimeoutMs: 1000, startupTimeoutMs: 1500 });
+    const startup = client.ensureServer();
+    await reported;
+    try {
+      await expect(startup).rejects.toMatchObject({ code: 'server_start_timeout' });
+      await vi.waitFor(() => {
+        expect(() => process.kill(grandchildPid, 0)).toThrow();
+      }, { timeout: 3000 });
+    } finally {
+      // The test owns this fixture tree; never leave it running on RED.
+      for (const pid of [grandchildPid]) { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
+    }
+  });
+
   it('refuses a lost selected endpoint rather than substituting a live ambient server', async () => {
     await withHerdrApi(async selected => await withHerdrApi(async ambient => {
       await selected.stop();

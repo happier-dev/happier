@@ -15,8 +15,8 @@ import { bindRequesterSessionCredentialScope, writeStoredCredentialsForServerId 
 import { adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import type { HappyMcpSessionClient } from './startHappyServer';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
-import { resolveRunnerMcpServers } from './runtime/resolveRunnerMcpServers';
-import { connectSessionMcpClient } from './runtime/sessionMcpLocalTransport';
+import { resolveRunnerMcpServers, type RunnerMcpServersBridgeResult } from './runtime/resolveRunnerMcpServers';
+import { connectSessionMcpClient } from './runtime/sessionMcpLocalClient';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { accountSettingsParse } from '@happier-dev/protocol';
@@ -87,7 +87,7 @@ describe('createHappierMcpServer plugin tools', () => {
         getServerFeaturesSnapshot: () => ({ status: 'ready' as const, provenance: 'authenticated' as const, features }),
         enqueueSessionEventCommitted: async () => ({ persisted: true as const, delivered: true as const }) };
       let closeClient: () => Promise<void> = async () => {};
-      let bridge: Awaited<ReturnType<typeof resolveRunnerMcpServers>> | undefined;
+      let bridge: RunnerMcpServersBridgeResult | undefined;
       try {
         // No profile credential exists: the admitted requester context owns currentness.
         // A standalone caller requires a stored sign-in. The requester bridge

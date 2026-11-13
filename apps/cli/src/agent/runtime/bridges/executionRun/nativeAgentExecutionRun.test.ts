@@ -417,13 +417,13 @@ it.each(['finite', 'retained'] as const)('isolates %s child hook resources from 
     const hooks = createSessionHooksService({ happyHomeDir, hasCapability: capability => capability === 'sessionHooks' });
     const identity = { providerId: 'acme.voice/agents/default', sessionId: 'session-parent',
         lifecycle: { kind: 'session' as const, sessionId: 'session-parent' } };
-    const parent = await hooks.startServer({ ...identity, sessionHookSecret: 'parent-fixture-secret' });
+    const parent = await hooks.startServer({ ...identity });
     const parentDir = await hooks.createPluginDir({ ...identity, files: [{ path: 'origin.txt', contents: 'parent' }] });
     const child: { server: Awaited<ReturnType<typeof hooks.startServer>> | null; dir: string | null } = { server: null, dir: null };
     // An external Agent SDK fixture consumes the real public host hook services.
     // The host adapter, context binding, loopback server and filesystem remain real.
     const runtime: AgentRuntime = { sessions: { async open(_request, context) {
-        child.server = await context.session.services.sessionHooks.startServer({ sessionHookSecret: 'child-fixture-secret' });
+        child.server = await context.session.services.sessionHooks.startServer({});
         child.dir = await context.session.services.sessionHooks.createPluginDir({ files: [{ path: 'origin.txt', contents: 'child' }] });
         return {
             async send() { return { status: 'admitted' as const }; },

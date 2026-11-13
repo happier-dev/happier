@@ -226,7 +226,7 @@ export async function observeAgentIsolationNativeReadiness(input: Readonly<{
     transport = await prepareSessionMcpLocalTransport({ agentUid: identity.uid });
     await transport.listen(server);
     const context = transport.localContext;
-    if (!context) return unavailable(phase);
+    if (!context || !('socketPath' in context)) return unavailable(phase);
     const privateFile = join(dirname(context.socketPath), 'daemon-private');
     await writeFile(privateFile, randomBytes(32), { mode: 0o600, flag: 'wx' });
     phase = 'workspace_not_ready';

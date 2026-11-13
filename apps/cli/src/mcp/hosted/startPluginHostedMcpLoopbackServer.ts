@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 
 import type { PluginHostedMcpServerSpec } from './runtimeTypes';
 import type { HostedMcpRuntimeEndpoint } from '../runtimeTypes';
+import { createLocalMcpBearer } from '../runtime/localMcpBearer';
 
 export type PluginHostedMcpLoopbackServer = Readonly<{
     endpoint: Extract<HostedMcpRuntimeEndpoint, Readonly<{ kind: 'loopbackHttp' }>>;
@@ -33,7 +34,14 @@ export async function startPluginHostedMcpLoopbackServer(params: Readonly<{
     ]);
     assertHostedMcpHandlerSpec(params);
     const requestCleanups = new Set<() => Promise<void>>();
+    // Any local process or OS user can reach 127.0.0.1; only the Session's launch material holds this bearer.
+    const bearer = createLocalMcpBearer();
+    const authorization = bearer.authorization;
     const server = createServer(async (req, res) => {
+        if (!bearer.authenticate(req.headers.authorization)) {
+            res.writeHead(401, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'unauthorized' }));
+            return;
+        }
         const mcp = new McpServer({
             name: `${params.pluginId}:${params.spec.name}`,
             version: '1.0.0',
@@ -96,6 +104,9 @@ export async function startPluginHostedMcpLoopbackServer(params: Readonly<{
         server.once('error', onError);
         server.once('listening', onListening);
         server.listen(0, '127.0.0.1');
+    }).catch((error: unknown) => {
+        bearer.retire();
+        throw error;
     });
 
     let disposed = false;
@@ -104,6 +115,7 @@ export async function startPluginHostedMcpLoopbackServer(params: Readonly<{
             return;
         }
         disposed = true;
+        bearer.retire();
         await Promise.all([...requestCleanups].map((cleanup) => cleanup()));
         await closeHttpServer(server);
     };
@@ -114,6 +126,7 @@ export async function startPluginHostedMcpLoopbackServer(params: Readonly<{
             url: `http://127.0.0.1:${port}`,
             host: '127.0.0.1',
             port,
+            headers: Object.freeze({ authorization }),
         }),
         dispose,
     });

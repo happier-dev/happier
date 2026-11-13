@@ -1,12 +1,6 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
-
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
-function safeTokenEquals(provided: string, expected: string): boolean {
-  const providedHash = createHash('sha256').update(provided).digest();
-  const expectedHash = createHash('sha256').update(expected).digest();
-  return timingSafeEqual(providedHash, expectedHash);
-}
+import { secretEquals as safeTokenEquals } from '@/utils/crypto/secretEquals';
 
 export function createDaemonControlAuthGuard(
   controlToken: string,

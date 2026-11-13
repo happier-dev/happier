@@ -9,6 +9,7 @@ import {
 } from '@happier-dev/plugin-sdk/sessions/external';
 
 import { logger } from '@/ui/logger';
+import { secretEquals } from '@/utils/crypto/secretEquals';
 
 export type SessionHookPayload = Record<string, unknown> & Readonly<{
     session_id?: string;
@@ -216,10 +217,12 @@ function resolveSessionIdentity(options: StartSessionHookServerOptions): Session
     return typeof options.session === 'function' ? options.session() : options.session;
 }
 
-function hasValidHookSecret(req: IncomingMessage, expectedSecret: string): boolean {
+/** Fails closed: a route without a configured secret admits nobody (loopback reaches every local process and user). */
+function hasValidHookSecret(req: IncomingMessage, expectedSecret: string | null | undefined): boolean {
+    if (!expectedSecret) return false;
     const providedSecret = req.headers['x-happier-hook-secret'];
     const providedSecretValue = Array.isArray(providedSecret) ? providedSecret[0] : providedSecret;
-    return providedSecretValue === expectedSecret;
+    return secretEquals(providedSecretValue, expectedSecret);
 }
 
 async function readJsonRequestBody<TPayload extends Record<string, unknown>>(
@@ -412,8 +415,8 @@ async function handleSessionHook(
     options: StartSessionHookServerOptions,
 ): Promise<void> {
     const expectedSecret = readString(options.sessionHookSecret);
-    if (expectedSecret && !hasValidHookSecret(req, expectedSecret)) {
-        logger.debug('[sessionHookServer] Forbidden session hook request (secret mismatch)');
+    if (!hasValidHookSecret(req, expectedSecret)) {
+        logger.debug('[sessionHookServer] Forbidden session hook request (secret missing or mismatched)');
         res.writeHead(403).end('forbidden');
         return;
     }
@@ -479,8 +482,8 @@ async function handlePermissionHook(
     options: StartSessionHookServerOptions,
 ): Promise<void> {
     const expectedSecret = readString(options.permissionHookSecret);
-    if (expectedSecret && !hasValidHookSecret(req, expectedSecret)) {
-        logger.debug('[sessionHookServer] Forbidden permission hook request (secret mismatch)');
+    if (!hasValidHookSecret(req, expectedSecret)) {
+        logger.debug('[sessionHookServer] Forbidden permission hook request (secret missing or mismatched)');
         res.writeHead(403).end('forbidden');
         return;
     }
@@ -577,8 +580,8 @@ async function handleStatuslineHook(
     options: StartSessionHookServerOptions,
 ): Promise<void> {
     const expectedSecret = readString(options.sessionHookSecret);
-    if (expectedSecret && !hasValidHookSecret(req, expectedSecret)) {
-        logger.debug('[sessionHookServer] Forbidden statusline hook request (secret mismatch)');
+    if (!hasValidHookSecret(req, expectedSecret)) {
+        logger.debug('[sessionHookServer] Forbidden statusline hook request (secret missing or mismatched)');
         res.writeHead(403).end('forbidden');
         return;
     }

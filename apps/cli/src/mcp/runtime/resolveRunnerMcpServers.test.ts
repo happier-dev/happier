@@ -31,7 +31,7 @@ import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createSessionOwnerMetadataV1, projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { resolveRunnerMcpMaterialV1 } from '@happier-dev/protocol/ephemeralRunner/runnerMcpMaterial';
 import { materializeRunnerMcpMaterial } from '../servers/materializeRunnerMcpMaterial';
-import { connectSessionMcpClient } from './sessionMcpLocalTransport';
+import { connectSessionMcpClient } from './sessionMcpLocalClient';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import { ServerBoundPermissionRpcHandlerManager } from '@/agent/permissions/testkit/serverBoundPermissionRpcHandlerManager';
@@ -87,7 +87,7 @@ function session(): HappyMcpSessionClient & Required<Pick<HappyMcpSessionClient,
 function holdExactHomeProfileAtStorageBoundary(profileId = 'test-home', homeId = 'srv_test-home') {
   vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6, onboardingCompleted: true,
     servers: { [profileId]: { id: profileId, name: 'Test', serverUrl: 'https://test-home.example.test',
-      webappUrl: 'https://test-home.example.test', createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+      webappUrl: 'https://test-home.example.test', createdAt: 1, updatedAt: 1,
       homeConnectionDescriptor: { v: 1, homeServerIdentityId: homeId, canonicalServerUrl: 'https://test-home.example.test',
         revision: 1, endpoints: [{ kind: 'https', url: 'https://test-home.example.test' }] },
     } } });
@@ -184,7 +184,7 @@ describe('resolveRunnerMcpServers catalog admission', () => {
     let profile: Awaited<ReturnType<typeof resolveRunnerMcpServers>> | undefined;
     try {
       const pending = runWithServerHttpBaseUrl(owner.getServerBinding().serverUrl, () => resolveRunnerMcpServers({
-        session: owner, credentials: scopedCredentials, accountSettingsSnapshot: selected, machineId: 'machine-1',
+        session: owner, credentials: scopedCredentials, accountSettings: null, accountSettingsSnapshot: selected, machineId: 'machine-1',
         directory: root, agentId: 'claude', agentAcceptsUserMcp: true, pluginMcpRuntimeRegistry: registry,
         includeHappierMcpServer: false, localWorkflow: kind !== 'member', isolationEnabled: kind === 'member', env: { HOME: root },
       }));
@@ -200,7 +200,7 @@ describe('resolveRunnerMcpServers catalog admission', () => {
       ? persistence.bindRequesterSessionCredentialScope({ ...credentials }, {
         serverId: 'test-home', serverHttpBaseUrl: 'https://test-home.example.test' })
       : credentials;
-    await expect(resolveRunnerMcpServersFromHost({ session: session(), credentials: unbound,
+    await expect(resolveRunnerMcpServersFromHost({ session: session(), credentials: unbound, accountSettings: null,
       localWorkflow: kind === 'server-only-scope', machineId: 'machine-1', directory: '/tmp/repo',
       includeHappierMcpServer: false })).rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
   });
@@ -335,7 +335,7 @@ describe('resolveRunnerMcpServers catalog admission', () => {
       const root = await mkdtemp(join(tmpdir(), 'happier-custom-permission-'));
       const calledPath = join(root, 'called');
       const selected = { ...server('selected'), tools: { default: 'ask' as const,
-        overrides: delivery === 'native' ? {} : { echo: 'off' as const } },
+        overrides: delivery === 'native' ? {} : { echo: 'off' } satisfies Readonly<Record<string, 'allow' | 'ask' | 'off'>> },
         stdio: { command: process.execPath, args: ['-e', `
           require('node:readline').createInterface({input:process.stdin}).on('line', line => {
             const request=JSON.parse(line);

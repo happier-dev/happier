@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -51,7 +51,9 @@ describe('Claude hook lifecycle composition', () => {
         try {
             const disconnect = new AbortController();
             const request = fetch(`http://127.0.0.1:${server.port}/hook/permission-request`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                // As the installed forwarder: present the host-generated permission secret.
+                method: 'POST', headers: { 'Content-Type': 'application/json',
+                    'x-happier-hook-secret': await readFile(server.permissionHookSecretFile!, 'utf8') },
                 signal: disconnect.signal,
                 body: JSON.stringify({ hook_event_name: 'PermissionRequest', tool_use_id: 'expired-call',
                     tool_name: 'Bash', tool_input: { command: 'pwd' } }),

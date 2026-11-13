@@ -9,8 +9,8 @@ import { withSessionMcpAgentLaunchMaterial } from '@/daemon/agentIsolation/agent
 import { startHappyServer } from '@/mcp/startHappyServer';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
-import { readSessionMcpContextFromEnvironment, SESSION_MCP_CONTEXT_FILE_ENV,
-  supportsSessionMcpLocalTransport } from './sessionMcpLocalTransport';
+import { SESSION_MCP_CONTEXT_FILE_ENV, supportsSessionMcpLocalTransport } from './sessionMcpLocalTransport';
+import { readSessionMcpContextFromEnvironment } from './sessionMcpLocalClient';
 
 // Daemon IPC is outside the Session process. Keep the shell command, context
 // reader, SDK, Unix HTTP transport, tool registration and Action executor real.

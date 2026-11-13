@@ -143,10 +143,11 @@ describe('startup borrowed-terminal reattachment', () => {
         const hooks = createSessionHooksService({ happyHomeDir: fixtureHome, hasCapability: capability => capability === 'sessionHooks' });
         const endpoint = await hooks.startServer({
             providerId: 'claude', sessionId, lifecycle: { kind: 'session', sessionId },
-            sessionHookSecret: 'retained-provider-secret', permissionHookSecret: 'retained-permission-secret',
         });
         const oldPort = endpoint.port;
         const secretFile = endpoint.sessionHookSecretFile!;
+        // The host owns the secret; the retained one must survive reattachment.
+        const retainedSecret = await readFile(secretFile, 'utf8');
         hookRemoval.target = dirname(dirname(dirname(secretFile)));
         await endpoint.dispose();
         try {

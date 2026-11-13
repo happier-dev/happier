@@ -71,8 +71,6 @@ export type AgentSessionHookServerStartRequest = Readonly<{
   defaultPermissionHookResponse?: (
     data: AgentSessionHookProviderPayload,
   ) => unknown | Promise<unknown>;
-  sessionHookSecret?: string;
-  permissionHookSecret?: string;
   permissionRequestTimeoutMs?: number | null;
   permissionRequestTimeoutMsForTool?: (
     toolName: string | null,
@@ -81,6 +79,7 @@ export type AgentSessionHookServerStartRequest = Readonly<{
 
 export type AgentSessionHookServerHandle = Readonly<{
   port: number;
+  /** Host-generated secrets (the host owns them; every hook route refuses callers without them). */
   sessionHookSecretFile?: string;
   permissionHookSecretFile?: string;
   stop(): void;

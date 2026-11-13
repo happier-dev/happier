@@ -1,4 +1,4 @@
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -42,7 +42,7 @@ describe('createNativeAgentSessionHostServiceOwners', () => {
         let observationDone!: () => void;
         const observed = new Promise<void>(resolve => { observationDone = resolve; });
         const server = await owners.sessionHooks.startServer({
-            providerId: 'claude', sessionId: 'parent-session', sessionHookSecret: 'synthetic-run-hook-secret',
+            providerId: 'claude', sessionId: 'parent-session',
             onStatuslineUpdate: async () => {
                 try {
                     const handle = await owners.transcripts.fileFollow.follow({
@@ -61,7 +61,7 @@ describe('createNativeAgentSessionHostServiceOwners', () => {
             });
             expect(refused.status).toBe(403);
             const response = await fetch(`http://127.0.0.1:${server.port}/hook/statusline`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json', 'x-happier-hook-secret': 'synthetic-run-hook-secret' },
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'x-happier-hook-secret': await readFile(server.sessionHookSecretFile!, 'utf8') },
                 body: JSON.stringify({ session_id: 'run-native', transcript_path: transcriptPath }),
             });
             expect(response.status).toBe(200);

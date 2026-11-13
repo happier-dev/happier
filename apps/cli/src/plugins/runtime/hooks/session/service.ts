@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 
@@ -324,21 +324,18 @@ async function createHookSecretFiles(params: Readonly<{
     happyHomeDir: string;
     providerId: string;
     lifecycle?: HostSessionHookServerStartRequest['lifecycle'];
-    sessionHookSecret?: string;
-    permissionHookSecret?: string;
 }>): Promise<Readonly<{
     secretDir: string | null;
     retained: boolean;
-    sessionHookSecret?: string;
-    permissionHookSecret?: string;
-    sessionHookSecretFile?: string;
-    permissionHookSecretFile?: string;
+    sessionHookSecret: string;
+    permissionHookSecret: string;
+    sessionHookSecretFile: string;
+    permissionHookSecretFile: string;
 }>> {
-    const sessionHookSecret = params.sessionHookSecret;
-    const permissionHookSecret = params.permissionHookSecret;
-    if (!sessionHookSecret && !permissionHookSecret) {
-        return { secretDir: null, retained: false };
-    }
+    // This service is the only secret owner: every hook server gets both secrets, so no route can
+    // run unauthenticated on a loopback port that every local process and OS user can reach.
+    const sessionHookSecret = randomBytes(32).toString('base64url');
+    const permissionHookSecret = randomBytes(32).toString('base64url');
 
     const retained = params.lifecycle?.kind === 'session';
     const secretsRoot = retained
@@ -354,14 +351,12 @@ async function createHookSecretFiles(params: Readonly<{
         : join(secretsRoot, `${providerSegment}-${process.pid}-${secretDirSequence++}`);
     await createPrivateDirectoryTree(secretsRoot, secretDir);
 
-    const out: {
-        secretDir: string | null;
-        retained: boolean;
-        sessionHookSecret?: string;
-        permissionHookSecret?: string;
-        sessionHookSecretFile?: string;
-        permissionHookSecretFile?: string;
-    } = { secretDir, retained };
+    const out = {
+        secretDir, retained,
+        sessionHookSecretFile: join(secretDir, 'session.secret'),
+        permissionHookSecretFile: join(secretDir, 'permission.secret'),
+        sessionHookSecret, permissionHookSecret,
+    };
     const resolveStableSecret = async (filePath: string, proposed: string): Promise<string> => {
         if (retained) {
             const existing = await readFile(filePath, 'utf8').catch(() => null);
@@ -371,14 +366,8 @@ async function createHookSecretFiles(params: Readonly<{
         return proposed;
     };
     try {
-        if (sessionHookSecret) {
-            out.sessionHookSecretFile = join(secretDir, 'session.secret');
-            out.sessionHookSecret = await resolveStableSecret(out.sessionHookSecretFile, sessionHookSecret);
-        }
-        if (permissionHookSecret) {
-            out.permissionHookSecretFile = join(secretDir, 'permission.secret');
-            out.permissionHookSecret = await resolveStableSecret(out.permissionHookSecretFile, permissionHookSecret);
-        }
+        out.sessionHookSecret = await resolveStableSecret(out.sessionHookSecretFile, sessionHookSecret);
+        out.permissionHookSecret = await resolveStableSecret(out.permissionHookSecretFile, permissionHookSecret);
     } catch (error) {
         if (!retained) await rm(secretDir, { recursive: true, force: true });
         throw error;
@@ -478,8 +467,6 @@ export function createSessionHooksService(
                 happyHomeDir: params.happyHomeDir,
                 providerId: request.providerId,
                 lifecycle,
-                sessionHookSecret: request.sessionHookSecret,
-                permissionHookSecret: request.permissionHookSecret,
             });
             const sessionRoot = lifecycle?.kind === 'session'
                 ? resolveHookSessionRoot({
@@ -500,11 +487,9 @@ export function createSessionHooksService(
                     onSessionHook: request.onSessionHook
                         ? async (providerSessionId: string, data: SessionHookPayload) => {
                             try {
-                                // Command observations reach this owner only after the existing
-                                // HTTP secret check. Owned stdio observations enter it directly.
-                                if (readString(request.sessionHookSecret)) {
-                                    await observeSessionHook({ ...request, providerSessionId, payload: data });
-                                }
+                                // Command observations reach this owner only after the HTTP secret
+                                // check (always configured). Owned stdio observations enter it directly.
+                                await observeSessionHook({ ...request, providerSessionId, payload: data });
                             } catch {
                                 logger.debug('[sessionHookServer] Session hook transcript grant failed');
                             }
@@ -517,7 +502,7 @@ export function createSessionHooksService(
                     onStatuslineUpdate: request.onStatuslineUpdate
                         ? async (data: StatuslineHookPayload) => {
                             const providerSessionId = readString(data.session_id);
-                            if (readString(request.sessionHookSecret) && providerSessionId) {
+                            if (providerSessionId) {
                                 try {
                                     await observeSessionHook({ ...request, providerSessionId,
                                         payload: { ...data, hook_event_name: 'Statusline' } });
@@ -569,8 +554,8 @@ export function createSessionHooksService(
             params.addDisposable?.(cleanup);
             return {
                 ...server,
-                ...(secretFiles.sessionHookSecretFile ? { sessionHookSecretFile: secretFiles.sessionHookSecretFile } : {}),
-                ...(secretFiles.permissionHookSecretFile ? { permissionHookSecretFile: secretFiles.permissionHookSecretFile } : {}),
+                sessionHookSecretFile: secretFiles.sessionHookSecretFile,
+                permissionHookSecretFile: secretFiles.permissionHookSecretFile,
                 dispose: cleanup.dispose,
             };
         },

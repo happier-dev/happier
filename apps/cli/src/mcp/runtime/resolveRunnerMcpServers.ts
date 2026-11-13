@@ -267,6 +267,8 @@ type HappierMcpBridgeHandle = HappierMcpServerHandle & {
   contextFilePath?: string;
   readToolNames: (signal?: AbortSignal) => Promise<readonly string[]>;
 };
+/** The result when the built-in Happier MCP bridge is included (the default). */
+export type RunnerMcpServersBridgeResult = RunnerMcpServersResult<HappierMcpBridgeHandle>;
 
 export function resolveRunnerMcpServers(params: RunnerMcpServersParams & { includeHappierMcpServer?: true }): Promise<RunnerMcpServersResult<HappierMcpBridgeHandle>>;
 export function resolveRunnerMcpServers(params: RunnerMcpServersParams & { includeHappierMcpServer: false }): Promise<RunnerMcpServersResult<HappierMcpServerHandle>>;

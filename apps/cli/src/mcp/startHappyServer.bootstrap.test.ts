@@ -31,6 +31,7 @@ vi.mock('@/daemon/controlClient', async importOriginal => ({
 
 import { resolveRunnerMcpServers } from './runtime/resolveRunnerMcpServers';
 import { registerHappierSessionAgentToolRpc } from './startHappyServer';
+import { sessionMcpAgentTransport, sessionMcpAuthorizationHeaders, sessionMcpTestFetch, sessionMcpTestTransport } from '@/mcp/runtime/sessionMcpClient.testkit';
 
 afterEach(() => {
     vi.unstubAllEnvs();
@@ -136,7 +137,7 @@ it('reads the daemon catalog only on projection changes or a missed-signal recon
     const client = new Client({ name: 'offline-catalog-signal', version: '1.0.0' });
     try {
         expect(daemonCatalogBoundary.read).toHaveBeenCalledTimes(1);
-        await client.connect(new StreamableHTTPClientTransport(new URL(runtime.happierMcpServer.url)));
+        await client.connect(sessionMcpTestTransport(runtime.happierMcpServer));
         const observed = await client.listTools();
         expect(observed.tools.some(entry => entry.name === 'acme_echo')).toBe(true);
         const naming = await runtime.resolveMcpToolNaming!({ serverName: 'happier', toolNameMaxLength: 40 });
@@ -291,7 +292,7 @@ it('keeps absent optional Action policy as cheap as explicit defaults through Se
         const errorConstructionCount = errorFunctions
             .filter(fn => fn.functionName === 'initializer')
             .reduce((sum, fn) => sum + (fn.ranges[0]?.count ?? 0), 0);
-        await client.connect(new StreamableHTTPClientTransport(new URL(runtime.happierMcpServer.url)));
+        await client.connect(sessionMcpTestTransport(runtime.happierMcpServer));
         const first = await client.listTools();
         const second = await client.listTools();
         expect(first.tools.some(tool => tool.name === 'change_title')).toBe(true);
@@ -347,11 +348,13 @@ it('retains pending catalog preparation and admits built-in startup after option
         expect(readSessionCapabilityNoticeV1(events[0])).toEqual({ v: 1, items: [{
             kind: 'mcp_server', name: 'MCP plugin tools', code: 'daemon_plugin_catalog_unavailable',
         }] });
-        const stream = await fetch(runtime.happierMcpServer.url, { headers: { Accept: 'text/event-stream' }, signal: notificationStream.signal });
+        const mcpFetch = sessionMcpTestFetch(runtime.happierMcpServer);
+        const auth = sessionMcpAuthorizationHeaders(runtime.happierMcpServer);
+        const stream = await mcpFetch(runtime.happierMcpServer.url, { headers: { Accept: 'text/event-stream', ...auth }, signal: notificationStream.signal });
         expect(stream.status).toBe(200);
         notificationStream.abort();
-        const unavailable = await fetch(runtime.happierMcpServer.url, { method: 'POST',
-            headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+        const unavailable = await mcpFetch(runtime.happierMcpServer.url, { method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...auth },
             body: JSON.stringify({ jsonrpc: '2.0', id: 'optional-catalog', method: 'tools/list' }),
         });
         expect(unavailable.status).toBe(503);
@@ -361,7 +364,7 @@ it('retains pending catalog preparation and admits built-in startup after option
             toolName: 'action_spec_get', args: { id: 'browser.view.open' },
         })).toMatchObject({ ok: false, errorCode: 'daemon_plugin_catalog_unavailable' });
         daemonCatalogBoundary.read.mockResolvedValue({ kind: 'available', plugins: [], tools: [] });
-        await client.connect(new StreamableHTTPClientTransport(new URL(runtime.happierMcpServer.url)));
+        await client.connect(sessionMcpTestTransport(runtime.happierMcpServer));
         expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['action_execute', 'action_spec_get']));
     } finally {
         notificationStream.abort(); await client.close(); runtime.happierMcpServer.stop();
@@ -415,8 +418,8 @@ it('reuses the admitted Action inventory across stateless MCP requests', async (
         }
         const prepared = await measure('bootstrap', async () => { runtime = await bootstrap(); });
         if (!runtime) throw new Error('bootstrap_missing');
-        const url = runtime.happierMcpServer.url;
-        await measure('initialize+notification+GET', async () => await client.connect(new StreamableHTTPClientTransport(new URL(url))));
+        const mcpServer = runtime.happierMcpServer;
+        await measure('initialize+notification+GET', async () => await client.connect(sessionMcpTestTransport(mcpServer)));
         await measure('tools/list', async () => await client.listTools());
         const second = await measure('tools/list repeated', async () => await client.listTools());
         // Account writes require the real daemon Session capability. This

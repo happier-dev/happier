@@ -146,6 +146,7 @@ describe('createPluginHostedMcpServerRegistry', () => {
                     url: 'http://127.0.0.1:49152',
                     host: '127.0.0.1',
                     port: 49152,
+                    headers: { authorization: 'Bearer AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
                 },
                 dispose: async () => {
                     endpointDisposeCalls.push('disposed');
@@ -159,6 +160,7 @@ describe('createPluginHostedMcpServerRegistry', () => {
             url: 'http://127.0.0.1:49152',
             host: '127.0.0.1',
             port: 49152,
+            headers: { authorization: 'Bearer AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
         });
 
         await handle.dispose();
@@ -210,11 +212,30 @@ describe('createPluginHostedMcpServerRegistry', () => {
                     url: 'http://127.0.0.1:49152?token=raw-secret',
                     host: '127.0.0.1',
                     port: 49152,
+                    headers: { authorization: 'Bearer AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
                 },
                 dispose: async () => undefined,
             }),
         }))).rejects.toThrow(/sanitized loopback endpoint/);
 
+        expect(registry.has('plugin-a', 's1')).toBe(false);
+    });
+
+    it.each([undefined, {}, { authorization: '' }, { authorization: 'Basic x' }])(
+        'rejects a loopback endpoint that admits callers without a bearer (%o)', async (headers) => {
+        const registry = createPluginHostedMcpServerRegistry();
+        const endpointDisposeCalls: string[] = [];
+        await expect(Promise.resolve(createPluginHostedMcpServerHandle({
+            pluginId: 'plugin-a',
+            spec: { ...makeSpec('s1'), transport: { kind: 'hosted', exposure: { kind: 'loopbackHttp', requested: true } } },
+            registry,
+            startRuntimeEndpoint: async () => ({
+                endpoint: { kind: 'loopbackHttp', url: 'http://127.0.0.1:49152', host: '127.0.0.1', port: 49152,
+                    ...(headers ? { headers } : {}) } as never,
+                dispose: async () => { endpointDisposeCalls.push('disposed'); },
+            }),
+        }))).rejects.toThrow(/sanitized loopback endpoint/);
+        expect(endpointDisposeCalls).toEqual(['disposed']);
         expect(registry.has('plugin-a', 's1')).toBe(false);
     });
 
@@ -261,6 +282,7 @@ describe('createPluginHostedMcpServerRegistry', () => {
                     url: 'http://127.0.0.1:49152/raw-secret',
                     host: '127.0.0.1',
                     port: 49152,
+                    headers: { authorization: 'Bearer AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
                 },
                 dispose: async () => undefined,
             }),

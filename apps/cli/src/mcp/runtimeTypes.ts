@@ -8,6 +8,8 @@ export type HostedMcpRuntimeEndpoint =
         url: string;
         host: '127.0.0.1';
         port: number;
+        /** Endpoint credential; carried only through private launch material. */
+        headers: Readonly<{ authorization: string }>;
         expiresAtMs?: number;
     }>;
 
@@ -32,7 +34,7 @@ export type ResolvedSessionMcpScope = Readonly<{
 export type ResolvedSessionMcpTransport =
     | Readonly<{ kind: 'hosted' }>
     | Readonly<{ kind: 'stdio' }>
-    | Readonly<{ kind: 'http' | 'sse'; url: string }>;
+    | Readonly<{ kind: 'http' | 'sse'; url: string; headers?: Readonly<Record<string, string>> }>;
 
 export type ResolvedSessionMcpServer = Readonly<{
     id: string;

@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { connectSessionMcpClient, readSessionMcpContextFromEnvironment, SESSION_MCP_CONTEXT_FILE_ENV,
-  supportsSessionMcpLocalTransport } from './sessionMcpLocalTransport';
+import { SESSION_MCP_CONTEXT_FILE_ENV, supportsSessionMcpLocalTransport } from './sessionMcpLocalTransport';
+import { connectSessionMcpClient, readSessionMcpContextFromEnvironment } from './sessionMcpLocalClient';
 
 describe.skipIf(!supportsSessionMcpLocalTransport())('Session MCP failure diagnostics', () => {
   it('identifies context-file failures without exposing the selected path', async () => {

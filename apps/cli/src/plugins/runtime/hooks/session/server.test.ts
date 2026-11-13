@@ -24,6 +24,12 @@ vi.mock('@/ui/logger', () => ({
   },
 }));
 
+/** Every hook route fails closed without its secret; ordinary cases run with one configured. */
+const HOOK_TEST_SECRET = 'hook-test-secret';
+function startTestHookServer(options: Parameters<typeof startSessionHookServer>[0]) {
+  return startSessionHookServer({ sessionHookSecret: HOOK_TEST_SECRET, permissionHookSecret: HOOK_TEST_SECRET, ...options });
+}
+
 async function postSessionHook(params: {
   port: number;
   secret?: string;
@@ -33,7 +39,7 @@ async function postSessionHook(params: {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(params.secret ? { 'x-happier-hook-secret': params.secret } : {}),
+      'x-happier-hook-secret': params.secret ?? HOOK_TEST_SECRET,
     },
     body: JSON.stringify(params.body),
   });
@@ -49,7 +55,7 @@ async function postPermissionHook(params: {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(params.secret ? { 'x-happier-hook-secret': params.secret } : {}),
+      'x-happier-hook-secret': params.secret ?? HOOK_TEST_SECRET,
     },
     body: JSON.stringify(params.body),
   });
@@ -99,6 +105,7 @@ async function openIncompletePost(params: {
         `POST ${params.path} HTTP/1.1`,
         'Host: 127.0.0.1',
         'Content-Type: application/json',
+        `x-happier-hook-secret: ${HOOK_TEST_SECRET}`,
         `Content-Length: ${Buffer.byteLength(body)}`,
         '',
         firstChunk,
@@ -240,13 +247,13 @@ describe('startSessionHookServer', () => {
   }
 
   it('can reclaim an exact persisted port after the previous hook server closes', async () => {
-    const first = await startSessionHookServer({});
+    const first = await startTestHookServer({});
     servers.push(first);
     const persistedPort = first.port;
     first.stop();
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    const second = await startSessionHookServer({
+    const second = await startTestHookServer({
       requestedPort: persistedPort,
     } as Parameters<typeof startSessionHookServer>[0] & { requestedPort: number });
     servers.push(second);
@@ -260,7 +267,7 @@ describe('startSessionHookServer', () => {
     const onQualifiedExternalSessionHook = vi.fn()
       .mockRejectedValueOnce(new Error('hook request body exceeded maximum size'))
       .mockRejectedValueOnce(hostile.proxy);
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       onQualifiedExternalSessionHook,
     });
     servers.push(server);
@@ -298,7 +305,7 @@ describe('startSessionHookServer', () => {
       payload?: unknown,
     ) => Promise<void>>(async () => {});
     const onSessionHook = vi.fn();
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       session: {
         providerId: 'claude',
         sessionId: 'happier-session-1',
@@ -346,7 +353,7 @@ describe('startSessionHookServer', () => {
       payload?: unknown,
     ) => Promise<void>>(async () => {});
     const onSessionHook = vi.fn();
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       session: {
         providerId: 'claude',
         sessionId: 'happier-session-padded',
@@ -385,7 +392,7 @@ describe('startSessionHookServer', () => {
       name: string,
       payload?: unknown,
     ) => Promise<void>>(async () => {});
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       session: {
         providerId: 'claude',
         sessionId: 'happier-session-legacy-failure',
@@ -426,7 +433,7 @@ describe('startSessionHookServer', () => {
     const privatePayloadText = 'private-session-hook-payload-claim45';
     const rawTranscriptPath = join(tmpdir(), 'happier-secret-home', 'claude-session.jsonl');
     const rawCwd = join(tmpdir(), 'happier-secret-home');
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       session: {
         providerId: 'claude',
         sessionId: 'happier-session-redaction',
@@ -460,7 +467,7 @@ describe('startSessionHookServer', () => {
     const privatePayloadText = 'private-permission-hook-payload-claim45';
     const rawTranscriptPath = join(tmpdir(), 'happier-secret-home', 'claude-permission.jsonl');
     const rawCwd = join(tmpdir(), 'happier-secret-home');
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       session: {
         providerId: 'claude',
         sessionId: 'happier-session-permission-redaction',
@@ -493,13 +500,30 @@ describe('startSessionHookServer', () => {
     expect(serializedLogs).toContain('[redacted-path]');
   });
 
+  it('refuses every legacy hook route when the server has no secret for it (fails closed)', async () => {
+    const onSessionHook = vi.fn();
+    const onPermissionHook = vi.fn(async () => ({ decision: 'allow' }));
+    const onStatuslineUpdate = vi.fn();
+    const server = await startSessionHookServer({ onSessionHook, onPermissionHook, onStatuslineUpdate });
+    servers.push(server);
+    const post = async (path: string) => (await fetch(`http://127.0.0.1:${server.port}${path}`, {
+      method: 'POST', headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'forged', tool_name: 'Bash' }),
+    })).status;
+    expect([await post('/hook/session-start'), await post('/hook/permission-request'), await post('/hook/statusline')])
+      .toEqual([403, 403, 403]);
+    expect(onSessionHook).not.toHaveBeenCalled();
+    expect(onPermissionHook).not.toHaveBeenCalled();
+    expect(onStatuslineUpdate).not.toHaveBeenCalled();
+  });
+
   it('returns 403 when the session hook secret header is missing or mismatched', async () => {
     const onSessionHook = vi.fn();
     const options = {
       onSessionHook,
       sessionHookSecret: 'session-secret-1',
     } as Parameters<typeof startSessionHookServer>[0] & { sessionHookSecret: string };
-    const server = await startSessionHookServer(options);
+    const server = await startTestHookServer(options);
     servers.push(server);
 
     const missingSecret = await postSessionHook({
@@ -523,7 +547,7 @@ describe('startSessionHookServer', () => {
       name: string,
       payload?: unknown,
     ) => Promise<void>>(async () => {});
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       session: {
         providerId: 'claude',
         sessionId: 'happy-timeout-session',
@@ -556,7 +580,7 @@ describe('startSessionHookServer', () => {
 
   it('routes PostToolUse session hooks through the generic session hook endpoint', async () => {
     const onSessionHook = vi.fn();
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       onSessionHook,
     });
     servers.push(server);
@@ -583,7 +607,7 @@ describe('startSessionHookServer', () => {
       onSessionHook,
       sessionHookSecret: 'session-forwarder-secret',
     } as Parameters<typeof startSessionHookServer>[0] & { sessionHookSecret: string };
-    const server = await startSessionHookServer(options);
+    const server = await startTestHookServer(options);
     servers.push(server);
     const secretFile = await createSecretFile('session-forwarder-secret');
 
@@ -605,7 +629,7 @@ describe('startSessionHookServer', () => {
   });
 
   it.each(['PostToolUse', 'SessionStart'])('keeps %s non-controlling when the hook server rejects delivery', async hookEventName => {
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       sessionHookSecret: 'expected-session-forwarder-secret',
     } as Parameters<typeof startSessionHookServer>[0] & { sessionHookSecret: string });
     servers.push(server);
@@ -629,12 +653,12 @@ describe('startSessionHookServer', () => {
   });
 
   it.each(['SubagentStop', 'UserPromptSubmit'])('keeps %s non-controlling when the hook server connection is refused', async hookEventName => {
-    const server = await startSessionHookServer({});
+    const server = await startTestHookServer({});
     servers.push(server);
     const refusedPort = server.port;
     server.stop();
     await server.closed;
-    const secretFile = await createSecretFile('unused-session-forwarder-secret');
+    const secretFile = await createSecretFile(HOOK_TEST_SECRET);
 
     const result = await runSessionForwarder({
       port: refusedPort,
@@ -658,7 +682,7 @@ describe('startSessionHookServer', () => {
     let entered!: () => void;
     const pending = new Promise<void>(done => { release = done; });
     const received = new Promise<void>(done => { entered = done; });
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       onSessionHook: async () => {
         deliveryAttempts += 1;
         entered();
@@ -666,7 +690,7 @@ describe('startSessionHookServer', () => {
       },
     });
     servers.push(server);
-    const secretFile = await createSecretFile('unused-session-forwarder-secret');
+    const secretFile = await createSecretFile(HOOK_TEST_SECRET);
     let exited = false;
     const outcome = runSessionForwarder({
       port: server.port,
@@ -691,9 +715,9 @@ describe('startSessionHookServer', () => {
     let entered!: () => void;
     const pending = new Promise<void>(done => { release = done; });
     const received = new Promise<void>(done => { entered = done; });
-    const server = await startSessionHookServer({ onSessionHook: async () => { entered(); await pending; } });
+    const server = await startTestHookServer({ onSessionHook: async () => { entered(); await pending; } });
     servers.push(server);
-    const secretFile = await createSecretFile('proof-forwarder-secret');
+    const secretFile = await createSecretFile(HOOK_TEST_SECRET);
     let exited = false;
     const outcome = runSessionForwarder({ port: server.port, hookEventName, secretFile,
       body: { session_id: 'native-proof-session' } }).then(result => { exited = true; return result; });
@@ -719,7 +743,7 @@ describe('startSessionHookServer', () => {
     try {
       const address = server.address();
       if (!address || typeof address === 'string') throw new Error('Missing host response endpoint');
-      const secretFile = await createSecretFile('proof-forwarder-secret');
+      const secretFile = await createSecretFile(HOOK_TEST_SECRET);
       expect(await runSessionForwarder({ port: address.port, hookEventName: 'SessionStart', secretFile,
         body: { session_id: 'native-proof-session' } })).toEqual({ code: 0, stdout: '', stderr: '' });
     } finally { await new Promise<void>(done => { server.close(() => done()); }); }
@@ -730,9 +754,9 @@ describe('startSessionHookServer', () => {
     let entered!: () => void;
     const pending = new Promise<void>(done => { release = done; });
     const received = new Promise<void>(done => { entered = done; });
-    const server = await startSessionHookServer({ onSessionHook: async () => { entered(); await pending; } });
+    const server = await startTestHookServer({ onSessionHook: async () => { entered(); await pending; } });
     servers.push(server);
-    const secretFile = await createSecretFile('proof-forwarder-secret');
+    const secretFile = await createSecretFile(HOOK_TEST_SECRET);
     const nativeOwner: { child: ReturnType<typeof spawn> | null } = { child: null };
     const outcome = runSessionForwarder({ port: server.port, hookEventName, secretFile,
       body: { session_id: 'native-proof-session' }, onSpawn: spawned => { nativeOwner.child = spawned; } });
@@ -749,9 +773,9 @@ describe('startSessionHookServer', () => {
 
   it('drops oversized hook input before delivery without affecting the Agent', async () => {
     const onSessionHook = vi.fn();
-    const server = await startSessionHookServer({ onSessionHook });
+    const server = await startTestHookServer({ onSessionHook });
     servers.push(server);
-    const secretFile = await createSecretFile('unused-session-forwarder-secret');
+    const secretFile = await createSecretFile(HOOK_TEST_SECRET);
 
     const result = await runSessionForwarder({
       port: server.port,
@@ -769,7 +793,7 @@ describe('startSessionHookServer', () => {
 
   it.each(['invalid_port', 'refused', 'unauthorized', 'missing_decision'] as const)(
     'denies a confined pre-tool call when permission forwarding is %s', async (failure) => {
-      const server = await startSessionHookServer({
+      const server = await startTestHookServer({
         permissionHookSecret: 'confined-hook-secret',
         onPermissionHook: async () => ({ continue: true, suppressOutput: true }),
         defaultPermissionHookResponse: buildDefaultPermissionHookResponse,
@@ -790,7 +814,7 @@ describe('startSessionHookServer', () => {
   );
 
   it('preserves an authoritative allow through confined permission forwarding', async () => {
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       permissionHookSecret: 'confined-allow-secret',
       onPermissionHook: async () => ({ continue: true, suppressOutput: true,
         hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' } }),
@@ -833,7 +857,7 @@ describe('startSessionHookServer', () => {
       },
     }));
 
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       onPermissionHook,
       defaultPermissionHookResponse: buildDefaultPermissionHookResponse,
       permissionHookSecret: 'secret-1',
@@ -854,7 +878,7 @@ describe('startSessionHookServer', () => {
       continue: true,
       suppressOutput: true,
     }));
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       onPermissionHook,
       defaultPermissionHookResponse: buildDefaultPermissionHookResponse,
       requestReadTimeoutMs: 20,
@@ -893,7 +917,7 @@ describe('startSessionHookServer', () => {
       };
     });
 
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       onPermissionHook,
       defaultPermissionHookResponse: buildDefaultPermissionHookResponse,
       permissionHookSecret: 'secret-2',
@@ -924,7 +948,7 @@ describe('startSessionHookServer', () => {
       };
     });
 
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       onPermissionHook,
       defaultPermissionHookResponse: buildDefaultPermissionHookResponse,
       permissionHookSecret: 'secret-interactive',
@@ -950,7 +974,7 @@ describe('startSessionHookServer', () => {
       return { continue: true, suppressOutput: true };
     });
 
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       onPermissionHook,
       defaultPermissionHookResponse: buildDefaultPermissionHookResponse,
       permissionHookSecret: 'secret-noninteractive',
@@ -976,7 +1000,7 @@ describe('startSessionHookServer', () => {
       observedEvent: data.hook_event_name,
     }));
     const permissionRequestTimeoutMsForTool = vi.fn(async () => null);
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       defaultPermissionHookResponse,
       permissionRequestTimeoutMsForTool,
       permissionHookSecret: 'secret-async-resolvers',
@@ -1004,7 +1028,7 @@ describe('startSessionHookServer', () => {
   });
 
   it('falls through to the canonical safe response when async resolvers reject', async () => {
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       defaultPermissionHookResponse: async () => {
         throw new Error('default response unavailable');
       },
@@ -1041,7 +1065,7 @@ describe('startSessionHookServer', () => {
       };
     });
 
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       onPermissionHook,
       defaultPermissionHookResponse: buildDefaultPermissionHookResponse,
       permissionHookSecret: 'secret-3',
@@ -1072,7 +1096,7 @@ describe('startSessionHookServer', () => {
       },
     }));
 
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       onPermissionHook,
       defaultPermissionHookResponse: buildDefaultPermissionHookResponse,
       permissionHookSecret: 'secret-pre-tool-use',
@@ -1108,7 +1132,7 @@ describe('startSessionHookServer', () => {
   });
 
   it('preserves the parsed PreToolUse event name when permission handling throws', async () => {
-    const server = await startSessionHookServer({
+    const server = await startTestHookServer({
       onPermissionHook: async () => {
         throw new Error('permission handler failed');
       },
@@ -1147,7 +1171,7 @@ describe('startSessionHookServer', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(params.secret ? { 'x-happier-hook-secret': params.secret } : {}),
+          'x-happier-hook-secret': params.secret ?? HOOK_TEST_SECRET,
         },
         body: params.rawBody ?? JSON.stringify(params.body),
       });
@@ -1156,7 +1180,7 @@ describe('startSessionHookServer', () => {
 
     it('delivers statusline payloads to onStatuslineUpdate with unknown fields preserved', async () => {
       const onStatuslineUpdate = vi.fn();
-      const server = await startSessionHookServer({
+      const server = await startTestHookServer({
         sessionHookSecret: 'statusline-secret-1',
         onStatuslineUpdate,
       });
@@ -1186,7 +1210,7 @@ describe('startSessionHookServer', () => {
       const privatePayloadText = 'private-statusline-hook-payload-claim45';
       const rawTranscriptPath = join(tmpdir(), privatePayloadText, 'claude-statusline.jsonl');
       const onStatuslineUpdate = vi.fn();
-      const server = await startSessionHookServer({
+      const server = await startTestHookServer({
         session: {
           providerId: 'claude',
           sessionId: 'happier-session-statusline-redaction',
@@ -1217,7 +1241,7 @@ describe('startSessionHookServer', () => {
 
     it('returns 403 when the statusline secret header is missing or mismatched', async () => {
       const onStatuslineUpdate = vi.fn();
-      const server = await startSessionHookServer({
+      const server = await startTestHookServer({
         sessionHookSecret: 'statusline-secret-2',
         onStatuslineUpdate,
       });
@@ -1237,7 +1261,7 @@ describe('startSessionHookServer', () => {
 
     it('responds 200 without invoking the consumer for malformed payloads', async () => {
       const onStatuslineUpdate = vi.fn();
-      const server = await startSessionHookServer({
+      const server = await startTestHookServer({
         sessionHookSecret: 'statusline-secret-3',
         onStatuslineUpdate,
       });
@@ -1254,7 +1278,7 @@ describe('startSessionHookServer', () => {
     });
 
     it('responds 200 when the statusline consumer throws', async () => {
-      const server = await startSessionHookServer({
+      const server = await startTestHookServer({
         sessionHookSecret: 'statusline-secret-4',
         onStatuslineUpdate: () => {
           throw new Error('consumer failed');
@@ -1312,7 +1336,7 @@ describe('startSessionHookServer', () => {
 
     it('POSTs the payload with the secret read from the secret file (never from argv) and exec-chains the original', async () => {
       const onStatuslineUpdate = vi.fn();
-      const server = await startSessionHookServer({
+      const server = await startTestHookServer({
         sessionHookSecret: 'forwarder-secret-file-only',
         onStatuslineUpdate,
       });
@@ -1344,7 +1368,7 @@ describe('startSessionHookServer', () => {
     });
 
     it('prints a minimal model line when no original statusline is configured', async () => {
-      const server = await startSessionHookServer({
+      const server = await startTestHookServer({
         sessionHookSecret: 'forwarder-secret-fallback',
         onStatuslineUpdate: vi.fn(),
       });
