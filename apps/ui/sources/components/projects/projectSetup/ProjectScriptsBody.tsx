@@ -793,7 +793,7 @@ function SetupRow(
   const review = useProjectSetupReviewDecision(props.workspace, props.controller, props.operation);
   const reviewMachine = review.machine;
   const stop = props.controller.setupStop;
-  const output = useProjectCommandOutputOpener();
+  const output = useProjectCommandOutputOpener(props.operation);
   const toolchainName = nativeToolchainNameFor(props.manifest);
   const presentation = presentProjectRun(
     props.operation,

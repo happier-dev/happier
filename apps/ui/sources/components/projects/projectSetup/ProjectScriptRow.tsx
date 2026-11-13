@@ -158,7 +158,7 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
   const tone = props.failureCode ? 'danger' : waitsForSetup ? 'quiet' : presentation.tone;
   // Output opens as the host's bottom terminal tab named after the script and its actual Machine
   // (plan 21 §8); hosts without one (phone, widgets) open the operation detail.
-  const output = useProjectCommandOutputOpener();
+  const output = useProjectCommandOutputOpener(props.operation);
   const openOutput = output.open;
   const outputTitle = targetName ? `${props.name} · ${targetName}` : props.name;
   const openDetail = () => {

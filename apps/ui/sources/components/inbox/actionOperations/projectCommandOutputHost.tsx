@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { SessionTerminalTargetV1 } from '@happier-dev/protocol/terminal/workspace';
 
 import { parseProjectPaneScopeId } from '@/components/projects/detail/projectPaneScope';
 import { parseSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
@@ -100,7 +101,7 @@ export function useProjectCommandOutputDocked(attachment: OutputTerminalRef | nu
  * never ensures, restarts or stops the process. On a phone a project command opens its output page;
  * otherwise it opens the operation detail.
  */
-export function useProjectCommandOutputOpener() {
+export function useProjectCommandOutputOpener(operation?: ActionOperationProjection | null) {
   const scopeId = React.useContext(ProjectCommandOutputHostContext);
   const phone = useDeviceType() === 'phone';
   const execute = useSessionTerminalActionExecute(scopeId ?? '');
@@ -115,9 +116,8 @@ export function useProjectCommandOutputOpener() {
         const server = scopeId ? scopeServerId(scopeId) : null;
         const workspace = attachment?.kind === 'projectCommand'
           ? readProjectCommandOutputWorkspace(attachment, readProjectWorkspaceRefs(storage.getState())) : null;
-        if (scopeId && !phone && attachment?.terminalId && server
-          && areServerProfileIdentifiersEquivalent(server, attachment.serverId)
-          && (attachment.kind !== 'projectCommand' || workspace)) {
+        if (scopeId && !phone && attachment?.kind === 'projectCommand' && attachment.terminalId && workspace && server
+          && areServerProfileIdentifiersEquivalent(server, attachment.serverId)) {
           const open = findOutputTerminalInHost(scopeId, attachment);
           const result = open
             ? await execute('session.terminals.focus', { terminalId: open.id })
@@ -127,9 +127,8 @@ export function useProjectCommandOutputOpener() {
                   machineId: attachment.machineId,
                   terminalId: attachment.terminalId,
                   terminalKey: `project-command:${attachment.terminalId}`,
-                  ...(attachment.kind === 'projectCommand' ? { cwd: attachment.cwd,
-                    ...(workspace ? { workspace } : {}) } : {}),
-                },
+                  cwd: attachment.cwd, workspace,
+                } satisfies SessionTerminalTargetV1,
                 title: options.title,
               });
           if (result.ok) {
@@ -164,5 +163,5 @@ export function useProjectCommandOutputOpener() {
   );
   // Desktop hosts with a bottom terminal open output there; a phone opens a project command's output
   // page; elsewhere it opens the operation detail.
-  return { open, opensInTerminal: scopeId !== null && !phone } as const;
+  return { open, opensInTerminal: scopeId !== null && !phone && operation?.snapshot.domainRef?.kind === 'projectCommand' } as const;
 }

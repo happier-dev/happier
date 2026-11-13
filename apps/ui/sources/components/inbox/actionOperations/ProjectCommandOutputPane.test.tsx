@@ -39,6 +39,8 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
   (await import('@/dev/testkit/mocks/serverScopedRpc')).createServerScopedMachineRpcBoundaryMock(rpc));
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({ translate: key => key }));
 
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
@@ -109,7 +111,7 @@ describe('Project command output with a docked terminal', () => {
       domainRef: { kind: 'projectCommand', purpose: 'script', serverId: 'home', machineId: 'machine',
         workspaceRefId: 'workspace', cwd: '/repo', terminalId: 'pty-1' } },
   };
-  const render = async (host = true, openInTerminal = true, owner?: 'wait' | 'script') => {
+  const render = async (host = true, openInTerminal = true, owner?: 'wait' | 'script' | 'setup') => {
     viewportWidth = openInTerminal ? 1200 : 390;
     const serverId = await homes.addHome({ name: 'Project Home', serverUrl: 'https://project-output.test', accountId: 'account' });
     storage.getState().activateProfileScope({ serverId, accountId: 'account' });
@@ -133,7 +135,9 @@ describe('Project command output with a docked terminal', () => {
     const running: ActionOperationProjection = { ...withTerminal, serverId, snapshot: { ...withTerminal.snapshot,
       domainRef: { kind: 'projectCommand', purpose: 'script', serverId, machineId: 'machine',
         workspaceRefId: 'workspace', cwd: '/repo', terminalId: 'pty-1' } } };
-    const operation: ActionOperationProjection = owner ? { ...running,
+    const operation: ActionOperationProjection = owner === 'setup' ? { ...running,
+      snapshot: ActionOperationSnapshotV1Schema.parse({ ...running.snapshot, actionId: 'machines.setup.apply', startedAt: 2,
+        domainRef: { kind: 'machineSetup', serverId, machineId: 'machine', terminalId: 'pty-1' } }) } : owner ? { ...running,
       snapshot: ActionOperationSnapshotV1Schema.parse({ ...running.snapshot, state: 'failed', revision: 2, startedAt: 2, settledAt: 3,
         error: { errorCode: 'project_command_step_failed', error: 'failed' },
         domainRef: { ...running.snapshot.domainRef, exitCode: 1 } }) } : running;
@@ -144,8 +148,10 @@ describe('Project command output with a docked terminal', () => {
     const { ProjectCommandToolTimelineRowHeader } = await import('@/components/tools/shell/views/timeline/ProjectCommandToolTimelineRowHeader');
     const { readTranscriptProjectCommandCall } = await import('@/components/sessions/transcript/references/transcriptProjectCommandReference');
     const { ProjectScriptRow } = await import('@/components/projects/projectSetup/ProjectScriptRow');
+    let openThroughAction: ((fallbackToDetail?: boolean) => Promise<boolean>) | undefined;
     function OutputPane() {
-      const output = useProjectCommandOutputOpener();
+      const output = useProjectCommandOutputOpener(operation);
+      openThroughAction = (fallbackToDetail = true) => output.open(operation, { title: 'Setup', fallbackToDetail });
       if (owner === 'wait') {
         const input = WaitActionInputV1Schema.parse({ target: { kind: 'action_operation', serverId, machineId: 'machine', operationId: 'op' }, condition: { kind: 'terminal' } });
         const tool = { name: 'mcp__happier__wait', input, state: 'completed' as const,
@@ -181,7 +187,10 @@ describe('Project command output with a docked terminal', () => {
     const openOutput = () => dispatch({ type: 'terminalWorkspace', scopeId, command: { type: 'open', terminal: {
       id: 'output-member', target: { kind: 'terminal_view', machineId: 'machine', terminalId: 'pty-1', terminalKey: 'output-key', cwd: '/repo' },
     } } });
-    return { screen, scopeId, dispatch, openOutput };
+    return { screen, scopeId, dispatch, openOutput, openThroughAction: (fallbackToDetail?: boolean) => {
+      if (!openThroughAction) throw new Error('Output opener not mounted');
+      return openThroughAction(fallbackToDetail);
+    } };
   };
 
   const expectInline = (screen: Awaited<ReturnType<typeof renderScreen>>) => {
@@ -193,6 +202,22 @@ describe('Project command output with a docked terminal', () => {
     expect(Boolean(screen.findHostByTestId('project-command-output.docked'))).toBe(true);
     expect(Boolean(screen.findByTestId('project-command-output.openInTerminal'))).toBe(true);
   };
+
+  it('opens Machine Setup output in operation detail instead of a project terminal', async () => {
+    const { Modal } = await import('@/modal');
+    const { screen, scopeId, openThroughAction } = await render(true, true, 'setup');
+    vi.mocked(Modal.show).mockClear();
+    expect(screen.findByTestId('project-command-output.openInTerminal')).toBeNull();
+    await act(async () => { expect(await openThroughAction()).toBe(false); });
+    expect(Modal.show).toHaveBeenCalledWith(expect.objectContaining({
+      props: expect.objectContaining({ operationId: 'op' }),
+    }));
+    expect(readSessionTerminalWorkspaceForScope(scopeId)?.tabs).toEqual([]);
+    vi.mocked(Modal.show).mockClear();
+    await act(async () => { expect(await openThroughAction(false)).toBe(false); });
+    expect(Modal.show).not.toHaveBeenCalled();
+    await screen.unmount();
+  });
 
   it('mounts the PTY inline when the host tab does not show it', async () => {
     const { screen } = await render();

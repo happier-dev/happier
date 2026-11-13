@@ -100,7 +100,7 @@ function RunningHereRow(
     command?.sourceWorkspace?.machineId ?? '',
   );
   const presentation = presentProjectRun(props.operation, props.machineName, '');
-  const output = useProjectCommandOutputOpener();
+  const output = useProjectCommandOutputOpener(props.operation);
   const name =
     command?.script?.name ??
     props.operation.snapshot.title ??
