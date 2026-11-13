@@ -9,7 +9,12 @@ for its dependency on Apple's private CoreSimulator/SimulatorKit frameworks (fin
 
 Capturing a booted simulator's framebuffer and injecting native input requires Apple's
 **private** `CoreSimulator` and `SimulatorKit` frameworks. These are not part of the public SDK;
-they live inside the active Xcode developer directory under `Library/PrivateFrameworks`.
+their locations depend on the installed Xcode and CoreSimulator tooling.
+
+Daemon discovery resolves `simctl` through `xcrun --find simctl`, then enumerates booted devices
+through `xcrun simctl list devices booted --json`. Apple tooling owns developer selection (including
+`DEVELOPER_DIR`) and CoreSimulator location resolution. Discovery does not infer framework paths:
+booted devices remain visible when the separate capture-helper health check reports unavailable.
 
 The posture that keeps this defensible and App-Store-safe:
 
@@ -24,9 +29,11 @@ The posture that keeps this defensible and App-Store-safe:
   itself does not link the private frameworks; it speaks a JSON wire protocol over stdio. A
   private-framework symbol/availability mismatch surfaces as a typed `unavailable` reason rather than
   crashing or tainting the host.
-- **dlopen, not build-time link.** The helper resolves the private frameworks at runtime from the
-  active developer dir via `dlopen`; it does not weak-link them at build time, so the build does not
-  depend on their presence and an incompatible Xcode fails closed (`private_framework_symbol_mismatch`).
+- **dlopen, not build-time link.** The helper loads the private frameworks at runtime via `dlopen`;
+  it does not weak-link them at build time. Its current resolver checks `Library/PrivateFrameworks`
+  under the active developer directory, so installations with CoreSimulator elsewhere report
+  unavailable. Framework loading and symbol checks belong to helper health, separately from device
+  discovery; an incompatible symbol surface fails closed (`private_framework_symbol_mismatch`).
 - **Trusted, signed, notarized.** The helper is treated as a trusted first-party diagnostics/control
   channel. It is launched only after Developer ID signature + notarization + digest verification, and
   only ever through the daemon's binary-safe process starter (which refuses Node/package-manager

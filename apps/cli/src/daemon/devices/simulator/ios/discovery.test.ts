@@ -41,11 +41,6 @@ describe('discoverIosSimulatorResources', () => {
         await expect(mod.discoverIosSimulatorResources({
             resolveXcodeEnvironment: async () => ({
                 ok: true,
-                developerDir: '/Applications/Xcode.app/Contents/Developer',
-                privateFrameworks: {
-                    CoreSimulator: '/CoreSimulator.framework',
-                    SimulatorKit: '/SimulatorKit.framework',
-                },
             }),
             resolveHelperArtifact: async () => ({
                 ok: false,
@@ -95,11 +90,6 @@ describe('discoverIosSimulatorResources', () => {
         await expect(mod.discoverIosSimulatorResources({
             resolveXcodeEnvironment: async () => ({
                 ok: true,
-                developerDir: '/Applications/Xcode.app/Contents/Developer',
-                privateFrameworks: {
-                    CoreSimulator: '/CoreSimulator.framework',
-                    SimulatorKit: '/SimulatorKit.framework',
-                },
             }),
             resolveHelperArtifact: async () => ({
                 ok: true,
@@ -160,11 +150,6 @@ describe('discoverIosSimulatorResources', () => {
         const input = {
             resolveXcodeEnvironment: async () => ({
                 ok: true,
-                developerDir: '/Applications/Xcode.app/Contents/Developer',
-                privateFrameworks: {
-                    CoreSimulator: '/CoreSimulator.framework',
-                    SimulatorKit: '/SimulatorKit.framework',
-                },
             }),
             resolveHelperArtifact: async () => ({
                 ok: true,
@@ -258,7 +243,7 @@ describe('discoverIosSimulatorResources', () => {
         })).resolves.toBe(false);
     });
 
-    it('builds an injectable default discovery reader for startup wiring', async () => {
+    it('discovers booted devices through platform tooling without assuming private framework locations', async () => {
         const mod = await import('./discovery').catch(() => null);
 
         expect(mod?.createDefaultIosSimulatorResourcesDiscovery).toBeTypeOf('function');
@@ -266,19 +251,23 @@ describe('discoverIosSimulatorResources', () => {
 
         const discovery = mod.createDefaultIosSimulatorResourcesDiscovery({
             platform: 'darwin',
-            pathExists: async () => true,
             resolveHelperArtifact: async () => ({
                 ok: false,
                 reasonCode: 'helper_artifact_missing',
                 diagnostics: [{ code: 'helper_missing' }],
             }),
             runCommand: async (input) => {
-                if (input.command === 'xcode-select') {
+                // The OS boundary models xcrun resolving the selected developer tools,
+                // including a DEVELOPER_DIR override, rather than an Xcode directory layout.
+                if (input.command === 'xcrun' && input.args.join(' ') === '--find simctl') {
                     return {
                         exitCode: 0,
-                        stdout: '/Applications/Xcode.app/Contents/Developer\n',
+                        stdout: '/Volumes/Developer Tools/Xcode.app/Contents/Developer/usr/bin/simctl\n',
                         stderr: '',
                     };
+                }
+                if (input.command !== 'xcrun' || input.args.join(' ') !== 'simctl list devices booted --json') {
+                    return { exitCode: 1, stdout: '', stderr: 'unsupported developer tool' };
                 }
                 return {
                     exitCode: 0,

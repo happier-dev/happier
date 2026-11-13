@@ -1,5 +1,3 @@
-import { access } from 'node:fs/promises';
-
 import type {
     IosSimulatorAdapterHealthV1,
     SimulatorDeviceResourceV1,
@@ -100,7 +98,6 @@ export type CreateDefaultIosSimulatorResourcesDiscoveryInput = Readonly<{
     platform?: NodeJS.Platform | string;
     runCommand?: IosSimulatorXcodeCommandRunner;
     runHelper?: IosSimulatorHelperProbeRunner;
-    pathExists?: (path: string) => Promise<boolean> | boolean;
     verifyHelperSignature?: (path: string) => Promise<IosSimulatorHelperSignatureResult>;
     resolveHelperArtifact?: () => Promise<IosSimulatorHelperArtifactResolution>;
     expectedHelperVersion?: string;
@@ -322,15 +319,6 @@ export async function discoverIosSimulatorResources(
     };
 }
 
-async function defaultPathExists(path: string): Promise<boolean> {
-    try {
-        await access(path);
-        return true;
-    } catch {
-        return false;
-    }
-}
-
 function createDefaultCommandRunner(runner: SimulatorToolRunner): IosSimulatorXcodeCommandRunner {
     return async (input) => await runner({
         command: input.command,
@@ -353,14 +341,12 @@ export function createDefaultIosSimulatorResourcesDiscovery(
     const sharedRunner = defaultSimulatorToolRunner;
     const runCommand = input.runCommand ?? createDefaultCommandRunner(sharedRunner);
     const runHelper = input.runHelper ?? createDefaultHelperRunner(sharedRunner);
-    const pathExists = input.pathExists ?? defaultPathExists;
     const timeoutMs = input.timeoutMs ?? 5_000;
 
     return async () => await discoverIosSimulatorResources({
         resolveXcodeEnvironment: async () => await resolveIosSimulatorXcodeEnvironment({
             ...(input.platform ? { platform: input.platform } : {}),
             runCommand,
-            pathExists: async (path) => await pathExists(path),
             timeoutMs,
         }),
         resolveHelperArtifact: input.resolveHelperArtifact ?? (async () => await resolveIosSimulatorHelperArtifact({

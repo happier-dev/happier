@@ -1,17 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { resolveIosSimulatorXcodeEnvironment } from './xcode';
+
 describe('resolveIosSimulatorXcodeEnvironment', () => {
     it('does not run Xcode commands on unsupported hosts', async () => {
-        const mod = await import('./xcode').catch(() => null);
-
-        expect(mod?.resolveIosSimulatorXcodeEnvironment).toBeTypeOf('function');
-        if (!mod?.resolveIosSimulatorXcodeEnvironment) return;
-
         const runCommand = vi.fn();
-        await expect(mod.resolveIosSimulatorXcodeEnvironment({
+        await expect(resolveIosSimulatorXcodeEnvironment({
             platform: 'linux',
             runCommand,
-            pathExists: async () => true,
         })).resolves.toMatchObject({
             ok: false,
             reasonCode: 'unsupported_host',
@@ -19,55 +15,31 @@ describe('resolveIosSimulatorXcodeEnvironment', () => {
         expect(runCommand).not.toHaveBeenCalled();
     });
 
-    it('returns xcode_unavailable when selected Xcode cannot be resolved', async () => {
-        const mod = await import('./xcode').catch(() => null);
-
-        expect(mod?.resolveIosSimulatorXcodeEnvironment).toBeTypeOf('function');
-        if (!mod?.resolveIosSimulatorXcodeEnvironment) return;
-
-        await expect(mod.resolveIosSimulatorXcodeEnvironment({
+    it.each([
+        { exitCode: 1, stdout: '', stderr: 'xcrun: unable to find simctl' },
+        { exitCode: 0, stdout: '\n', stderr: '' },
+    ])('returns xcode_unavailable when platform tooling cannot resolve simctl: %j', async (result) => {
+        await expect(resolveIosSimulatorXcodeEnvironment({
             platform: 'darwin',
-            runCommand: async () => ({ exitCode: 1, stdout: '', stderr: 'xcode-select: error' }),
-            pathExists: async () => true,
+            runCommand: async () => result,
         })).resolves.toMatchObject({
             ok: false,
             reasonCode: 'xcode_unavailable',
         });
     });
 
-    it('requires CoreSimulator and SimulatorKit private frameworks', async () => {
-        const mod = await import('./xcode').catch(() => null);
-
-        expect(mod?.resolveIosSimulatorXcodeEnvironment).toBeTypeOf('function');
-        if (!mod?.resolveIosSimulatorXcodeEnvironment) return;
-
-        await expect(mod.resolveIosSimulatorXcodeEnvironment({
+    it('accepts simctl resolved by xcrun without deriving framework paths', async () => {
+        await expect(resolveIosSimulatorXcodeEnvironment({
             platform: 'darwin',
-            runCommand: async () => ({ exitCode: 0, stdout: '/Applications/Xcode.app/Contents/Developer\n', stderr: '' }),
-            pathExists: async (path) => !path.includes('SimulatorKit.framework'),
-        })).resolves.toMatchObject({
-            ok: false,
-            reasonCode: 'xcode_private_frameworks_unavailable',
-        });
-    });
-
-    it('returns selected Xcode and private framework paths on supported hosts', async () => {
-        const mod = await import('./xcode').catch(() => null);
-
-        expect(mod?.resolveIosSimulatorXcodeEnvironment).toBeTypeOf('function');
-        if (!mod?.resolveIosSimulatorXcodeEnvironment) return;
-
-        await expect(mod.resolveIosSimulatorXcodeEnvironment({
-            platform: 'darwin',
-            runCommand: async () => ({ exitCode: 0, stdout: '/Applications/Xcode.app/Contents/Developer\n', stderr: '' }),
-            pathExists: async () => true,
-        })).resolves.toEqual({
-            ok: true,
-            developerDir: '/Applications/Xcode.app/Contents/Developer',
-            privateFrameworks: {
-                CoreSimulator: '/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/PrivateFrameworks/CoreSimulator.framework',
-                SimulatorKit: '/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/PrivateFrameworks/SimulatorKit.framework',
+            // xcrun is the platform boundary for the active developer selection.
+            runCommand: async ({ command, args }) => {
+                expect({ command, args }).toEqual({ command: 'xcrun', args: ['--find', 'simctl'] });
+                return {
+                    exitCode: 0,
+                    stdout: '/Volumes/Developer Tools/Xcode.app/Contents/Developer/usr/bin/simctl\n',
+                    stderr: '',
+                };
             },
-        });
+        })).resolves.toEqual({ ok: true });
     });
 });
