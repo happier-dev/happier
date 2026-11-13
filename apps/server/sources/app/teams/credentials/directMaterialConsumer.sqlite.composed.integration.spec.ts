@@ -1,5 +1,27 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyRequest } from "fastify";
+import tweetnacl from "tweetnacl";
+import { signAccountContentKeyBindingV1 } from "@happier-dev/protocol";
+import { deriveBoxPublicKeyFromSeed } from "@happier-dev/protocol/crypto/boxBundle";
+import { createConnectedAccountEstablishedRuntimeOwner, type QualifiedConnectedAccountMaterialSnapshot,
+    type ConnectedAccountEstablishedRuntimeRegistry, type ConnectedAccountEstablishedReadScope } from "@happier-dev/cli-common/connectedAccounts";
+import { PluginConnectedAccountDescriptorContributionV2Schema } from "@happier-dev/protocol/connect/plugin-connected-account-authentication-v2";
+import { QualifiedConnectedAccountCredentialSnapshotV4Schema } from "@happier-dev/protocol/connect/qualified-connected-account-projections";
+import { QualifiedConnectedAccountCredentialMutationSuccessV4Schema } from "@happier-dev/protocol/connect/qualifiedConnectedAccountsV4";
+import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from "@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope";
+import { registerQualifiedConnectedAccountCredentialRoutesV4 } from "@/app/api/routes/connect/qualifiedConnectedAccounts/registerQualifiedConnectedAccountCredentialRoutesV4";
+import {
+    TeamCredentialDirectMaterialPreparationResponseV1Schema,
+    TeamCredentialDirectMaterialUpsertResponseV1Schema,
+    TeamCredentialDirectMaterialCensusOutputV1Schema,
+    TEAM_CREDENTIAL_MANUAL_CONNECTED_ACCOUNT_DIRECT_CONTRACT_V1,
+    type TeamCredentialSourceBindingV1,
+    type TeamCredentialSourceMemberV1,
+    type TeamCredentialDirectMaterialPreparationResponseV1,
+    type TeamCredentialDirectMaterialUpsertRequestV1,
+} from "@happier-dev/protocol/teams";
+import { mutateQualifiedConnectedServiceCredential } from "@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository";
+import { createServiceAccountTokenIdentityFields } from "@/app/api/routes/connect/qualifiedConnectedAccounts/identity";
 
 import {
     computeTeamCredentialSourceMemberKeyV1,
@@ -51,6 +73,187 @@ describe("Team credential direct material consumed boundary (SQLite integration)
     }, 180_000);
 
     afterAll(async () => harness.close());
+
+    it("keeps two E2EE recipients ready across runtime occurrences and opens rotated Connected Account material", async () => {
+        const identities = [7, 9].map(value => {
+            const seed = new Uint8Array(32).fill(value);
+            const signing = tweetnacl.sign.keyPair();
+            const contentPublicKey = deriveBoxPublicKeyFromSeed(seed);
+            return { seed, signing, contentPublicKey, signature: signAccountContentKeyBindingV1({
+                accountSigningSecretKey: signing.secretKey, contentPublicKey,
+            }) };
+        });
+        const accounts = await Promise.all(identities.map(identity => db.account.create({ data: {
+            encryptionMode: "e2ee", publicKey: Buffer.from(identity.signing.publicKey).toString("hex"),
+            contentPublicKey: Buffer.from(identity.contentPublicKey), contentPublicKeySig: Buffer.from(identity.signature),
+        } })));
+        const custodian = accounts[0]!;
+        const recipient = accounts[1]!;
+        const team = await db.team.create({ data: { name: "Reconciled direct team" } });
+        await Promise.all(accounts.map((account, index) => db.teamMembership.create({ data: {
+            teamId: team.id, accountId: account.id, role: index === 0 ? "owner" : "member",
+        } })));
+        const account = { service: { pluginId: "example.accounts", localId: "service" }, accountId: "source" };
+        let revision: string | null = null;
+        const cryptoMaterial = { type: "legacy" as const, secret: identities[0]!.seed };
+        async function writeSource(value: string) {
+            const content = sealQualifiedConnectedAccountContentEnvelope({ kind: "credential", accountMode: "e2ee",
+                material: cryptoMaterial, payload: { v: 1, values: { token: value } },
+                randomBytes: length => crypto.getRandomValues(new Uint8Array(length)) });
+            const result = await mutateQualifiedConnectedServiceCredential({ accountId: custodian.id, ref: account,
+                authenticationModeId: "api-key", content, metadata: { scopes: [], kind: "token" },
+                expectedCredentialRevision: revision, ...(revision ? { expectedConfigurationRevision: null } : {}) });
+            if (result.status !== "written") throw new Error(`Source fixture write failed: ${result.status}`);
+            revision = result.credentialRevision;
+        }
+        await writeSource("initial");
+        const credential = await db.serviceAccountToken.findFirstOrThrow({ where: {
+            accountId: custodian.id, ...createServiceAccountTokenIdentityFields({ ref: account, authenticationModeId: "api-key" }),
+        } });
+        const source = { v: 1 as const, kind: "connected_account" as const,
+            target: { kind: "account" as const, account }, credentialIncarnation: credential.id };
+        const resource = await db.teamCredentialResource.create({ data: {
+            teamId: team.id, custodianAccountId: custodian.id, displayName: "Reconciled Connected Account",
+            disclosureCeiling: "direct_allowed", sessionUsePolicy: "team_visibility_required",
+            allMembersDeliveryMode: "direct", sourceBindingJson: JSON.stringify(source),
+        } });
+        const sourceMember = { kind: "connected_account" as const, service: account.service, connectedAccountId: account.accountId };
+        const sourceMemberKey = computeTeamCredentialSourceMemberKeyV1(sourceMember);
+        type Snapshot = Readonly<{ currentness: Readonly<{ sourceMember: TeamCredentialSourceMemberV1;
+            sourceVersion: string; isCurrent(): Promise<boolean> }>; material: TeamCredentialDirectMaterialPayloadV1["material"] }>;
+        const { createConnectedAccountTeamCredentialSourceSnapshot } = await importTestModule<{
+            createConnectedAccountTeamCredentialSourceSnapshot(input: Readonly<{
+                source: Extract<TeamCredentialSourceBindingV1, { kind: "connected_account" }>;
+                material: QualifiedConnectedAccountMaterialSnapshot; authenticationKind: "manual";
+                isPersistedSourceCurrent(): boolean;
+            }>): Snapshot | null;
+        }>("../../../../../cli/src/providers/broker/teamCredentialSourceSnapshot");
+        const { reconcileTeamCredentialDirectMaterial } = await importTestModule<{
+            reconcileTeamCredentialDirectMaterial(input: Readonly<{
+                teamId: string; resourceId: string; sourceMemberKey: string;
+                fetchPreparation(): Promise<TeamCredentialDirectMaterialPreparationResponseV1>;
+                resolveSourceSnapshot(): Promise<Snapshot | null>;
+                upsert(item: TeamCredentialDirectMaterialUpsertRequestV1["items"][number]): Promise<
+                    Readonly<{ ok: true }> | Readonly<{ ok: false; reason: string }>>;
+                withdrawPublication(body: unknown): Promise<Readonly<{ ok: boolean }>>;
+            }>): Promise<Readonly<{ ok: boolean; prepared: number; reason?: string }>>;
+        }>("../../../../../cli/src/daemon/connectedServices/directMaterial/reconcileTeamCredentialDirectMaterial");
+        const session = await db.session.create({ data: {
+            accountId: recipient.id, tag: `reconciled-direct-${crypto.randomUUID()}`, metadata: "{}", encryptionMode: "e2ee",
+            currentStorageState: "hosted", metadataLayoutVersion: 1, agentState: null, active: true,
+        } });
+        const purpose = { consumer: { pluginId: "example.agent", localId: "runtime" }, purpose: "model-request" };
+        await db.sessionTeamCredentialBinding.create({ data: {
+            sessionId: session.id, slotKind: "connected_service_purpose:direct",
+            slotKey: Buffer.from(encodeSessionTeamCredentialSlotKeyV1({ kind: "connected_service_purpose", purpose })),
+            resourceId: resource.id, resourceRevision: resource.revision,
+        } });
+        await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id, accessLevel: "edit",
+            canApprovePermissions: false, effectiveAt: new Date() } });
+        const app = createAuthenticatedTestApp();
+        app.addHook("onRequest", async (request: FastifyRequest) => {
+            request.headers["x-test-user-id"] = request.headers.authorization === "Bearer custodian" ? custodian.id : recipient.id;
+        });
+        registerTeamCredentialResourceRoutes(app);
+        registerQualifiedConnectedAccountCredentialRoutesV4(app);
+        await app.listen({ host: "127.0.0.1", port: 0 });
+        try {
+            const address = app.server.address();
+            if (!address || typeof address === "string") throw new Error("expected TCP test address");
+            const serverUrl = `http://127.0.0.1:${address.port}`;
+            const url = `${serverUrl}/v2/teams/${team.id}/credential-resources/${resource.id}/direct-material`;
+            const headers = { Authorization: "Bearer custodian", "Content-Type": "application/json" };
+            const { createHttpTeamCredentialDirectMaterialClient } = await importTestModule<{
+                createHttpTeamCredentialDirectMaterialClient(input: Readonly<{ token: string; teamId: string; serverUrl: string;
+                    readRecipientEncryptionMaterial(): Promise<Readonly<{ mode: "e2ee"; secretKeyOrSeed: Uint8Array }>> }>): DirectMaterialClient;
+            }>("../../../../../cli/src/daemon/connectedServices/directMaterial/teamCredentialDirectMaterialClient");
+            const client = createHttpTeamCredentialDirectMaterialClient({ token: "recipient", teamId: team.id, serverUrl,
+                readRecipientEncryptionMaterial: async () => ({ mode: "e2ee", secretKeyOrSeed: identities[1]!.seed }) });
+            const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({ id: account.service.localId, title: "Source",
+                authentication: { defaultModeId: "api-key", modes: [{ id: "api-key", kind: "manual", fields: [],
+                    outcomeReconciliation: "none", directExport: { contractVersion: TEAM_CREDENTIAL_MANUAL_CONNECTED_ACCOUNT_DIRECT_CONTRACT_V1 } }] } });
+            type Registry = NonNullable<ConnectedAccountEstablishedRuntimeRegistry["connectedAccountContributions"]>;
+            const { createConnectedAccountContributionRegistry } = await importTestModule<{
+                createConnectedAccountContributionRegistry(input: Readonly<{
+                    descriptors: readonly Readonly<{ pluginId: string; definition: typeof descriptor }>[];
+                    activateOnDemand(): Promise<void>; readRegistrations(): readonly never[];
+                    readPluginOccurrenceId(): string; readPluginSourceCustody(): Readonly<{ kind: "bundled_first_party";
+                        packagedRuntime: Readonly<{ kind: "source_declaration"; packageName: string }> }>;
+                    isPluginOccurrenceCurrent(pluginId: string, occurrenceId: string): boolean;
+                }>): Registry;
+            }>("../../../../../cli/src/plugins/runtime/connectedAccounts/contributionRegistry");
+            const { createEstablishedAccountReadScope } = await importTestModule<{
+                createEstablishedAccountReadScope(input: Readonly<Record<string, never>>): ConnectedAccountEstablishedReadScope;
+            }>("../../../../../cli/src/daemon/connectedServices/establishedAccountRead");
+            let occurrence = "source:1";
+            const createRegistry = () => createConnectedAccountContributionRegistry({
+                descriptors: [{ pluginId: account.service.pluginId, definition: descriptor }],
+                activateOnDemand: async () => { throw new Error("Direct export does not activate a plugin runtime"); },
+                readRegistrations: () => [], readPluginOccurrenceId: () => occurrence,
+                readPluginSourceCustody: () => ({ kind: "bundled_first_party", packagedRuntime: { kind: "source_declaration", packageName: "example.accounts" } }),
+                isPluginOccurrenceCurrent: (_pluginId, captured) => captured === occurrence,
+            });
+            let registry = { connectedAccountContributions: createRegistry() };
+            const established = createConnectedAccountEstablishedRuntimeOwner({
+                reloadController: { acquireRuntimeRegistry: async () => ({ registry, release: async () => {} }),
+                    isRuntimeRegistryCurrent: captured => captured === registry },
+                readScope: createEstablishedAccountReadScope({}), getAccountEncryptionMode: async () => "e2ee",
+                readCredential: async () => {
+                    const response = await fetch(`${serverUrl}/v4/connect/qualified/credential?ref=${encodeURIComponent(JSON.stringify(account))}`, { headers });
+                    const body = await response.json();
+                    expect(response.status, JSON.stringify(body)).toBe(200);
+                    return QualifiedConnectedAccountCredentialSnapshotV4Schema.parse(body);
+                },
+                readConfiguration: async () => null,
+                publishCredentialHealth: async ({ patch }) => {
+                    const response = await fetch(`${serverUrl}/v4/connect/qualified/credential/health`, {
+                        method: "PATCH", headers, body: JSON.stringify(patch),
+                    });
+                    expect(response.status).toBe(200);
+                    return QualifiedConnectedAccountCredentialMutationSuccessV4Schema.parse(await response.json());
+                },
+                configuration: { read: async () => null, secrets: { admit: async () => {}, has: async () => false, read: async () => null } },
+                openContent: ({ kind, envelope }) => openQualifiedConnectedAccountContentEnvelope({ kind, envelope, accountMode: "e2ee", material: cryptoMaterial }),
+                sealCredentialContent: (_mode, payload) => sealQualifiedConnectedAccountContentEnvelope({ kind: "credential", accountMode: "e2ee",
+                    material: cryptoMaterial, payload, randomBytes: length => crypto.getRandomValues(new Uint8Array(length)) }),
+            });
+            for (const value of ["initial", "rotated"]) {
+                if (value === "rotated") {
+                    await writeSource(value);
+                }
+                const snapshot = createConnectedAccountTeamCredentialSourceSnapshot({ source, authenticationKind: "manual",
+                    material: await established.readMaterialSnapshot({ account }), isPersistedSourceCurrent: () => true });
+                const result = await reconcileTeamCredentialDirectMaterial({ teamId: team.id, resourceId: resource.id, sourceMemberKey,
+                    fetchPreparation: async () => TeamCredentialDirectMaterialPreparationResponseV1Schema.parse(
+                        await (await fetch(`${url}?view=preparation&sourceMemberKey=${sourceMemberKey}`, { headers })).json()),
+                    resolveSourceSnapshot: async () => snapshot,
+                    upsert: async item => {
+                        const response = TeamCredentialDirectMaterialUpsertResponseV1Schema.parse(await (await fetch(url, {
+                            method: "PUT", headers, body: JSON.stringify({ items: [item] }),
+                        })).json()).results[0]!;
+                        return response.status === "stored" ? { ok: true } : { ok: false, reason: response.reason };
+                    },
+                    withdrawPublication: async body => ({ ok: (await fetch(url, { method: "DELETE", headers,
+                        body: JSON.stringify(body) })).ok }),
+                });
+                expect(result).toEqual({ ok: true, prepared: 2 });
+                // A fresh process/reloaded registry has its own occurrence, but the persisted declaration contract is unchanged.
+                occurrence += ":next";
+                registry = { connectedAccountContributions: createRegistry() };
+                await established.refreshExportProjection({ account });
+                const census = TeamCredentialDirectMaterialCensusOutputV1Schema.parse(
+                    await (await fetch(`${url}?view=census`, { headers })).json());
+                expect(census.recipients.map(row => row.readiness)).toEqual(["ready", "ready"]);
+                const opened = await client.open({ teamId: team.id, resourceId: resource.id,
+                    consumer: { kind: "session", sessionId: session.id }, slot: { kind: "connected_service_purpose", purpose },
+                    disclosedMember: account });
+                expect(opened.ok, JSON.stringify(opened)).toBe(true);
+                expect(opened).toMatchObject({ payload: { material: { credential: { values: { token: value } } } } });
+            }
+        } finally {
+            await app.close();
+        }
+    });
 
     it("fetches recipient material over authenticated HTTP and feeds the real Provider credential consumer", async () => {
         const custodian = await db.account.create({ data: { encryptionMode: "plain", publicKey: null } });

@@ -1,6 +1,7 @@
 import { resolveConnectedAccountDirectExportContractV1, type ConnectedAccountDirectExportProjectionV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { QualifiedConnectedAccountCredentialMetadataV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { QualifiedConnectedAccountCredentialPayloadV1Schema, QualifiedConnectedAccountCredentialSecretUnavailableError } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import { parseQualifiedConnectedAccountCredentialPlaintextV1, projectQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
 import { HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1, sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -225,6 +226,15 @@ export type QualifiedConnectedAccountCredentialReplacementPreparation =
     directExportContract?: ConnectedAccountDirectExportProjectionV1['directExportContract'];
     contributionContractVersion?: string;
   }>;
+
+// Persist the declared contract, never the process-local occurrence used by runtime fences.
+function connectedAccountContributionContractVersion(
+  contribution: Pick<ConnectedAccountEstablishedContribution, 'ref' | 'descriptor'>,
+): string {
+  return computeCanonicalDomainSeparatedDigest('happier.connected-account-contribution-contract.v1', [
+    createCanonicalJsonSigningInput({ ref: contribution.ref, descriptor: contribution.descriptor }),
+  ]);
+}
 
 function sameService(
   left: QualifiedConnectedAccountRef['service'],
@@ -499,7 +509,7 @@ export function createConnectedAccountEstablishedRuntimeOwner<
       const mode = contribution.descriptor.authentication.modes.find(candidate => candidate.id === snapshot.authenticationModeId);
       const directExportContract = mode ? resolveConnectedAccountDirectExportContractV1(mode, snapshot.metadata.kind) : null;
       await publishExportProjection(snapshot,
-        declarationExportProjection(snapshot, directExportContract, contribution.occurrenceId), signal);
+        declarationExportProjection(snapshot, directExportContract, connectedAccountContributionContractVersion(contribution)), signal);
     } finally { await lease.release(); }
   }
 
@@ -570,6 +580,7 @@ export function createConnectedAccountEstablishedRuntimeOwner<
     let credential = resolvedCredential.credential;
     const registryLease = await params.reloadController.acquireRuntimeRegistry();
     let contributionContractVersion: string;
+    let contributionOccurrenceId: string;
     let mode: PluginConnectedAccountAuthenticationModeV2;
     let sourceCustody: ConnectedAccountSourceCustodyV1;
     let isContributionCurrent: () => boolean;
@@ -580,7 +591,8 @@ export function createConnectedAccountEstablishedRuntimeOwner<
         || !params.reloadController.isRuntimeRegistryCurrent(registryLease.registry)) {
         throw new Error('Connected-account contribution contract is unavailable');
       }
-      contributionContractVersion = contribution.occurrenceId;
+      contributionContractVersion = connectedAccountContributionContractVersion(contribution);
+      contributionOccurrenceId = contribution.occurrenceId;
       mode = selectedMode;
       sourceCustody = contribution.sourceCustody;
       isContributionCurrent = () => contribution.isCurrent()
@@ -654,7 +666,7 @@ export function createConnectedAccountEstablishedRuntimeOwner<
       // reference admission before creating the read-only direct projection.
       const admitted = await configurationOwner.admit({
         intent: 'reconnect', service: input.account.service, account: input.account,
-        mode, occurrenceId: contributionContractVersion, sourceCustody,
+        mode, occurrenceId: contributionOccurrenceId, sourceCustody,
         ...(record ? { expectedConfigurationRevision: record.revision } : {}),
       });
       if (admitted.status !== 'ready' || !record
@@ -734,7 +746,7 @@ export function createConnectedAccountEstablishedRuntimeOwner<
               );
               return Boolean(
                 latestContribution
-                && latestContribution.occurrenceId === contributionContractVersion
+                && latestContribution.occurrenceId === contributionOccurrenceId
                 && latestContribution.isCurrent()
                 && params.reloadController.isRuntimeRegistryCurrent(latestRegistryLease.registry),
               );
@@ -831,7 +843,7 @@ export function createConnectedAccountEstablishedRuntimeOwner<
           throw new Error('Connected-account authentication mode is unavailable in the current descriptor');
         }
         const exportProjection = declarationExportProjection(initial.credential,
-          resolveConnectedAccountDirectExportContractV1(mode, initial.credential.metadata.kind), runtimeLease.occurrenceId);
+          resolveConnectedAccountDirectExportContractV1(mode, initial.credential.metadata.kind), connectedAccountContributionContractVersion(runtimeLease));
         await publishExportProjection(initial.credential, exportProjection, input.signal);
         const descriptorConfiguration =
           'configuration' in mode ? mode.configuration : undefined;
@@ -1332,7 +1344,7 @@ export function createConnectedAccountEstablishedRuntimeOwner<
       const runtimeLease = await lease.registry.resolveConnectedAccountRuntime?.(input.account.service);
       if (!runtimeLease
         || (input.operation !== 'completionPublication' && (!('quota' in runtimeLease.runtime) || !runtimeLease.runtime.quota))
-        || runtimeLease.occurrenceId !== materialSnapshot.contributionContractVersion
+        || connectedAccountContributionContractVersion(runtimeLease) !== materialSnapshot.contributionContractVersion
         || !sameService(runtimeLease.ref, input.account.service)) return null;
       const isCurrent = async () => {
         if (!await materialSnapshot.isCurrent()

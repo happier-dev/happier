@@ -973,6 +973,15 @@ callback dispatch. The daemon's former modules are adapters to that owner, not
 parallel implementations. Account hosts use the same owner without importing
 daemon services or Node crypto.
 
+The established owner derives the persisted `contributionContractVersion` from
+the canonical qualified service ref and descriptor. Process-local occurrence ids
+remain in memory for runtime retirement and configuration admission. Starting
+another host or reloading the same declaration therefore preserves delivered
+Team material; a changed declaration still changes its source version. Existing
+0.3 development version strings remain readable and are replaced on the next
+natural export projection or material acquisition. Reload Account hosts and
+daemons together so an older writer cannot republish a process-local counter.
+
 `createConnectedAccountPurposePort(...).bind(...)` consumes the declared purpose,
 authorized `serviceRefs` and launch-bound `purposeBindings`; an Action's exact
 selected Account is supplied as `expectedAccount`. It does not select a durable
@@ -7889,8 +7898,13 @@ Delivery failure is logged and never rolls back truthful credential health.
 The development Account runtime reads Machine source declarations through
 `DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ` with `readMode: sourceDeclarations`.
 The daemon selects `sourcePluginId` before projecting bodies; targeted discovery
-omits it. `sourceRevision` derives from selected admitted occurrence/custody
-identities, including membership. `knownSourceRevision` returns
+omits it. The reply carries the admission owner's secret-free `unavailablePlugins`
+diagnostics beside the declarations, including disabled plugins that have no
+current occurrence. Account targeting keeps both in one snapshot; it never
+substitutes the Account catalog's exclusions for the selected Machine's cause.
+An authoritative disable has a plugin id and code, without an invented Request ID.
+`sourceRevision` derives from selected admitted occurrence/custody
+identities, membership and exclusions. `knownSourceRevision` returns
 `sourceDeclarationsUnchanged` when equal, without traversing Action schemas.
 One reader per Account registry retains admitted bodies by exact Machine, target
 and source selection and shares in-flight reads. Every later read still checks

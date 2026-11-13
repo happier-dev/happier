@@ -220,7 +220,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       expect((await owner.readMaterialSnapshot({ account })).directExportFailure).toBeUndefined();
       expect(stored.exportProjection?.directExportFailure).toBeUndefined();
       expect(enrichmentAttempts).toBe(2);
-      expect(projectionPublications).toBe(3);
+      expect(projectionPublications).toBe(2);
       return;
     }
     expect(snapshot.credential.values).toMatchObject({
@@ -280,36 +280,40 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     });
     // Startup enumerates existing accounts and uses this credential-only preparation.
     await owner.refreshExportProjection({ account: target });
-    expect(stored.exportProjection).toEqual({ directExportContract: accessOnlyExport.contractVersion, contributionContractVersion: occurrence });
+    expect(stored.exportProjection).toEqual({ directExportContract: accessOnlyExport.contractVersion, contributionContractVersion: expect.any(String) });
+    const originalVersion = stored.exportProjection?.contributionContractVersion;
     expect(publications).toBe(1);
     await owner.refreshExportProjection({ account: target });
     expect(publications).toBe(1);
-    // Reload changes the current declaration occurrence without reconnecting or rotating credentials.
+    // A fresh process or reload changes local occurrence without changing the persisted declaration contract.
     occurrence = 'declaration-2';
     await owner.refreshExportProjection({ account: target });
-    expect(stored.exportProjection?.contributionContractVersion).toBe(occurrence);
-    expect(publications).toBe(2);
+    expect(stored.exportProjection?.contributionContractVersion).toBe(originalVersion);
+    expect(publications).toBe(1);
     // The next ordinary acquisition also repairs an older stored projection.
     occurrence = 'declaration-3';
+    stored = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ...stored,
+      exportProjection: { ...stored.exportProjection, contributionContractVersion: 'external.oauth:3289' } });
     allowCredentialOpening = true;
     await owner.readMaterialSnapshot({ account: target });
-    expect(stored.exportProjection?.contributionContractVersion).toBe(occurrence);
-    expect(publications).toBe(3);
+    expect(stored.exportProjection?.contributionContractVersion).toBe(originalVersion);
+    expect(publications).toBe(2);
     allowCredentialOpening = false;
     current = PluginConnectedAccountDescriptorContributionV2Schema.parse({ ...current, authentication: { ...current.authentication,
       modes: current.authentication.modes.map(({ accessOnlyExport: _removed, ...mode }) => mode) } });
     occurrence = 'declaration-4';
     await owner.refreshExportProjection({ account: target });
-    expect(stored.exportProjection).toEqual({ directExportContract: null, contributionContractVersion: occurrence });
-    expect(publications).toBe(4);
+    expect(stored.exportProjection).toEqual({ directExportContract: null, contributionContractVersion: expect.any(String) });
+    expect(stored.exportProjection?.contributionContractVersion).not.toBe(originalVersion);
+    expect(publications).toBe(3);
     // A declaration does not export a credential of the wrong actual kind.
     current = PluginConnectedAccountDescriptorContributionV2Schema.parse({ ...current, authentication: { ...current.authentication,
       modes: current.authentication.modes.map(mode => ({ ...mode, accessOnlyExport })) } });
     occurrence = 'declaration-5';
     stored = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ...stored, metadata: { ...stored.metadata, kind: 'token' } });
     await owner.refreshExportProjection({ account: target });
-    expect(stored.exportProjection).toEqual({ directExportContract: null, contributionContractVersion: occurrence });
-    expect(publications).toBe(5);
+    expect(stored.exportProjection).toEqual({ directExportContract: null, contributionContractVersion: expect.any(String) });
+    expect(publications).toBe(4);
   });
   it.each([['host', false], ['plugin', false], ['host', true], ['plugin', true]] as const)('verifies requester currentness at materialization boundaries rather than for every field (%s, configured=%s)', async (kind, configured) => {
     const diagnostics = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
@@ -517,7 +521,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     // Acquisition repairs the pre-declaration account despite its already healthy status.
     expect(storedExportProjection).toEqual({
       directExportContract: 'happier.team-credential-manual-connected-account-direct.v1',
-      contributionContractVersion: runtimeLease.occurrenceId,
+      contributionContractVersion: expect.any(String),
     });
     expect(exportPublications).toBe(1);
     const beforeConnectionTest = { account: accountCurrentnessChecks, credential: credentialReads };
@@ -1233,7 +1237,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
         accessTokenKey: 'token', expiresAtMsKey: 'expiresAtMs', metadataKeys: [] },
       credentialRevision: requestAuthCredentialRevision,
       configurationRevision: scope === 'account' ? 'configuration-1' : null,
-      contributionContractVersion: 'plugin-contract-1',
+      contributionContractVersion: expect.any(String),
       configuration: {
         values: { endpoint: 'https://api.example.test', region: 'us' },
         secretValues: { clientSecret: 'resolved-configuration-secret' },
