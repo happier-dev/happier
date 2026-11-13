@@ -69,6 +69,8 @@ import { markPendingActivationAuthorizationFailedInTx, mapPendingActivationAutho
 import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { measure } from './managedProjectionVolume.testkit';
+import { eventRouter } from '@/app/events/eventRouter';
+import { emitPendingChanged } from '@/app/session/pending/publishPendingMutation';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 
 describe('finite managed wake original Action authority (real storage)', () => {
@@ -186,6 +188,46 @@ describe('finite managed wake original Action authority (real storage)', () => {
             expect(await listPendingMessages(input)).toMatchObject({ ok: true, pending: [{ localId,
                 status: 'queued', deliveryState: null, content: input.content }] });
         } finally { restoreEnv(envBefore); }
+    });
+
+    it('publishes accepted input to the installed controller after unused retention stops its guest', async () => {
+        const test = await setup();
+        await db.managedMachine.update({ where: { id: test.row.id }, data: {
+            intentRevision: 7, retention: { kind: 'unused', afterMs: 60_000, effect: 'stop' },
+        } });
+        await db.machine.update({ where: { id: test.guest.id }, data: {
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } },
+        } });
+        const session = await db.session.create({ data: { accountId: test.account.id, tag: randomUUID(),
+            metadata: '{}', encryptionMode: 'plain', active: false } });
+        expect(await inTx(tx => createSessionMachineAccessKeyInTx(tx, { accountId: test.account.id,
+            sessionId: session.id, machineId: test.guest.id, data: 'private-key-ciphertext' }))).toMatchObject({ ok: true });
+        const input = { actorUserId: test.account.id, authentication: createPresentUserSessionAccessAuthentication(),
+            sessionId: session.id, localId: randomUUID(), targetMachineId: test.guest.id,
+            requestedAction: { v: 1, kind: 'enqueue' },
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'retained input' } } } } as const;
+        const env = snapshotEnv();
+        applyEnvValues({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' });
+        // Outbound Socket.IO delivery is the boundary; admission and publication remain real.
+        const emitted = vi.spyOn(eventRouter, 'emitUpdate').mockImplementation(() => {});
+        try {
+            expect(await enqueuePendingMessage(input)).toMatchObject({ ok: true });
+            const result = await updatePendingRequestedAction({ ...input, resumeWhenAvailable: true });
+            expect(result).toMatchObject({ ok: true, didUpdate: true });
+            if (!result.ok || !result.activationTarget) throw new Error('Expected armed activation');
+            expect(await db.accountChange.findFirst({ where: { accountId: test.account.id,
+                kind: 'account', entityId: test.row.id } })).toMatchObject({
+                hint: { managedMachinePolicy: true, machineId: test.controller.id },
+            });
+            await emitPendingChanged({ sessionId: session.id, changedByAccountId: test.account.id,
+                pendingCount: result.pendingCount, pendingVersion: result.pendingVersion,
+                recipientCursors: result.recipientCursors, activationTarget: result.activationTarget });
+            expect(emitted).toHaveBeenCalledWith(expect.objectContaining({
+                recipientFilter: { type: 'machine-only', machineId: test.controller.id },
+                payload: expect.objectContaining({ body: expect.objectContaining({ managedWakeTargetV1:
+                    expect.objectContaining({ managedId: test.row.id, expectedIntentRevision: 7 }) }) }),
+            }));
+        } finally { emitted.mockRestore(); restoreEnv(env); }
     });
 
     it.each([false, true])('reads one current resource without fleet wake discovery (controller-free: %s)', async controllerFree => {
@@ -399,8 +441,9 @@ describe('finite managed wake original Action authority (real storage)', () => {
                     machineId: test.guest.id, origin: test.target.origin }))).toBeUndefined();
             }
             expect(await db.accountChange.findUnique({ where: { accountId_kind_entityId: {
-                accountId: test.account.id, kind: 'machine', entityId: test.controller.id,
-            } } })).toMatchObject({ cursor: enqueue.ok && 'activationTarget' in enqueue
+                accountId: test.account.id, kind: 'account', entityId: test.row.id,
+            } } })).toMatchObject({ hint: { managedMachinePolicy: true, machineId: test.controller.id },
+                cursor: enqueue.ok && 'activationTarget' in enqueue
                 ? enqueue.activationTarget?.managedControllerPublication?.cursor : undefined });
             const replaced = await updatePendingRequestedAction({ actorUserId: requester.id, authentication,
                 sessionId: session.id, localId, requestedAction: { v: 1, kind: 'enqueue' }, resumeWhenAvailable: true });

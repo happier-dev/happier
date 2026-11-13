@@ -9,9 +9,9 @@ import type { SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions
 import { TransactionReplayRequiredError, type Tx } from '@/storage/inTx';
 import { acquireSessionAccountCursorLocksInTx } from '@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx';
 import { getActivePrismaRuntime } from '@/storage/db';
-import { readManagedPendingActivationHoldReasonInTx, resolveManagedWakeTargetInTx } from '@/app/machines/managed/managedWake';
+import { publishManagedWakeChangeInTx, readManagedPendingActivationHoldReasonInTx, resolveManagedWakeTargetInTx } from '@/app/machines/managed/managedWake';
 import { projectManagedMachine } from '@/app/machines/managed/managedRows';
-import { markAccountChanged, type AccountChangePublication } from '@/app/changes/markAccountChanged';
+import type { AccountChangePublication } from '@/app/changes/markAccountChanged';
 import { isCurrentSessionInputMachineTargetInTx, areCurrentSessionInputMachineTargetsInTx } from '@/app/session/messages/sessionInputAdmission';
 import { readPendingSessionInputAdmission } from './pendingInputAdmission';
 export { readPendingOwnerInputAdmission } from './pendingInputAdmission';
@@ -81,7 +81,8 @@ export function shouldArmPendingActivationAuthorization(params: Readonly<{
     resumeWhenAvailable?: boolean;
 }>): boolean {
     return params.requestedAction.kind !== 'reset_start' && (params.resumeWhenAvailable === true
-        || (params.resumeWhenAvailable !== false && params.requestedAction.kind === 'send_now'));
+        || (params.resumeWhenAvailable !== false
+            && (params.requestedAction.kind === 'send_now' || params.requestedAction.kind === 'steer_now')));
 }
 
 /** Queue diagnostics use current admitted placement; they never create activation or block ordinary delivery. */
@@ -94,7 +95,8 @@ export async function readPendingActivationHoldReasonsInTx(tx: Tx, input: Readon
     const candidates = input.rows.flatMap(row => {
         const action = PendingRequestedActionV1StoredSchema.safeParse(row.requestedAction ?? { v: 1, kind: 'enqueue' });
         if (row.status !== 'queued' || row.targetExecutionRunId != null || row.deliveryState != null
-            || row.providerAction != null || !action.success || !['enqueue', 'send_now'].includes(action.data.kind)) return [];
+            || row.providerAction != null || !action.success
+            || !(action.data.kind === 'enqueue' || shouldArmPendingActivationAuthorization({ requestedAction: action.data }))) return [];
         const receipt = readPendingSessionInputAdmission({ sessionId: input.sessionId, accountId: session.accountId,
             pending: { messageRole: typeof row.messageRole === 'string' ? row.messageRole : null,
                 authorAccountId: row.authorAccountId, inputAdmissionReceipt: row.inputAdmissionReceipt } });
@@ -267,13 +269,8 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
     if (managedTarget) {
         if (managedTarget.controller) {
             const controller = await params.tx.machine.findUniqueOrThrow({ where: { id: managedTarget.controller.machineId }, select: { accountId: true } });
-            managedControllerPublication = await markAccountChanged(params.tx, {
-                accountId: controller.accountId, kind: 'machine', entityId: managedTarget.controller.machineId,
-            });
-        } else managedControllerPublication = await markAccountChanged(params.tx, {
-            accountId: session.accountId, kind: 'account', entityId: managedTarget.managedId,
-            hint: { managedMachinePolicy: true },
-        });
+            managedControllerPublication = await publishManagedWakeChangeInTx(params.tx, managedTarget, controller.accountId);
+        } else managedControllerPublication = await publishManagedWakeChangeInTx(params.tx, managedTarget, session.accountId);
     }
     const targetMachine = admittedTarget ? await params.tx.machine.findUniqueOrThrow({ where: { id: admittedTarget.machineId }, select: { accountId: true } }) : undefined;
     return { accountId: session.accountId, requestId: params.requestId,
