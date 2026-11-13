@@ -1025,10 +1025,39 @@ describe('Environment draft Machine Home', () => {
       if (!linkRefused) {
         // The agent front door accepts the person's draft, and returns the provider content the UI saved.
         const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
-        const agentResult = await createFrontDoorActionExecute()('action.invoke', {
+        const execute = createFrontDoorActionExecute();
+        const inspect = () => execute('action.invoke', {
           action: { pluginId, localId: 'inspect-beta' }, input: inspections[0],
         }, { surface: 'cli', serverId, expectedAccountId: 'alice' });
-        expect(agentResult).toMatchObject({ ok: true, result: JSON.parse(linkedContent.body) });
+        const { PluginProjectionV2Schema, PluginProjectedActionV2Schema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+        const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+          actionsById: Object.fromEntries(authoredPlugin.manifest.contributes.actions.map(action =>
+            [`${pluginId}/${action.id}`, {
+              ...Object.fromEntries(Object.entries(action).filter(([key]) => Object.hasOwn(PluginProjectedActionV2Schema.shape, key))),
+              pluginId, occurrenceId: 'runtime-plugin:1', available: true,
+            }])) });
+        const rpc = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
+        const { answerMachineProjectionDescribeAtRpcBoundary } = await import('@/dev/testkit/mocks/machineProjectionRpc');
+        const describe = answerMachineProjectionDescribeAtRpcBoundary(machineId => {
+          expect(machineId).toBe('runtime');
+          return { supported: true, projection };
+        });
+        const receiverProjection = vi.spyOn(rpc, 'machineRpcWithServerScope')
+          .mockImplementation(async <R, A>(params: Parameters<typeof rpc.machineRpcWithServerScope<R, A>>[0]): Promise<R> =>
+            // The RPC boundary's generic payload is validated by the real projection reader.
+            await describe(params) as R);
+        try {
+          // Automatic Account placement needs an own receiver, unlike the UI's explicit target.
+          expect(await inspect()).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+          const runtime = createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() });
+          const access = { custodian: { accountId: 'other-account', displayName: 'Other owner' },
+            role: 'manage' as const, resourceMode: 'plain' as const, accessState: 'ready' as const };
+          await publishMachineInventoryForTest(account.accountLifetime.scope, [{ ...runtime, access }]);
+          expect(await inspect()).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+          await publishMachineInventoryForTest(account.accountLifetime.scope,
+            [{ ...runtime, access: { ...access, custodian: { accountId: 'alice', displayName: 'Alice' } } }]);
+          expect(await inspect()).toMatchObject({ ok: true, result: JSON.parse(linkedContent.body) });
+        } finally { receiverProjection.mockRestore(); }
       }
       if (linkRefused) {
         expect(saved).toEqual([]);
