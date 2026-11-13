@@ -38,7 +38,7 @@ it('admits current Event setup and typed picker mounts through their declared co
         async resolveContributes(happyHomeDir) { return createResolvedContributionRegistry(projectLoadedPluginContributes({
             loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external' })); },
         runtimeOptions: { resolveCurrentMachineId: () => machineId,
-            resolveCurrentMachineExecutionOriginContext: () => ({ serverIdentityId: 'srv_embedded', machineId }) },
+            resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'srv_embedded', machineId }) },
     });
     try {
         const { registry } = fixture;

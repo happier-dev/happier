@@ -1,4 +1,4 @@
-import type { CanonicalPluginManifestIngestionDiagnostic } from './ingest';
+import { projectPluginSettingsDeclarationDiagnostic, type CanonicalPluginManifestIngestionDiagnostic } from './ingest';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { projectPluginFailureMessage } from '@happier-dev/protocol/plugins/failureProjection';
 import { PluginLocalSettingsDeclarationError } from '@/plugins/settings/localSettingsContributions';
@@ -10,7 +10,7 @@ export function projectPluginAttributedCompatibilityFailure(
 ): Readonly<{ code: string; message: string }> | undefined {
   const diagnostic = diagnostics instanceof Error
     ? diagnostics instanceof PluginLocalSettingsDeclarationError || diagnostics instanceof PluginSettingsProjectionError
-      ? projectPluginManifestCompatibilityDiagnostic(diagnostics)
+      ? projectPluginManifestCompatibilityDiagnostic(projectPluginSettingsDeclarationDiagnostic(diagnostics))
       : undefined
     : diagnostics?.find(entry => entry.code === 'plugin_manifest_engine_incompatible' || entry.contribution);
   if (diagnostic?.code === 'plugin_manifest_engine_incompatible') {

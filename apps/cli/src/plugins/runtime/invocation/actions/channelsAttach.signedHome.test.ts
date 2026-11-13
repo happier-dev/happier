@@ -14,6 +14,7 @@ import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadAction
 import { ExternalActionExecutionAuthorizationV1Schema,
     EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
 } from '@happier-dev/protocol/actions/externalActionApi';
+import type { ExternalActionRequestEnvelopeV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1,
 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -188,7 +189,7 @@ async function fixture(options: Readonly<{ signingBinding?: boolean }> = {}) {
     await runtime.registry.activateContributionsOnDemand([{ pluginId: CHANNELS_PLUGIN.manifest.id,
         family: 'actions', localId,
     }]);
-    function admit(input: Parameters<typeof computeExternalActionRequestEnvelopeDigestV1>[0]['input'], requesterAccountId: string, requestId: string) {
+    function admit(input: ExternalActionRequestEnvelopeV1['input'], requesterAccountId: string, requestId: string) {
         const target = { kind: 'machine' as const, machineId };
         authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1,
             token: 'synthetic-home-admission-proof', binding: {
@@ -211,7 +212,7 @@ async function fixture(options: Readonly<{ signingBinding?: boolean }> = {}) {
         listContributedActionDefinitions: createCommittedContributedActionDefinitionLister({
             tryAcquireRuntimeRegistryLease: runtime.controller.tryAcquireRuntimeRegistry,
         }),
-        async invoke(input: unknown, requesterAccountId = accountId) {
+        async invoke(input: ExternalActionRequestEnvelopeV1['input'], requesterAccountId = accountId) {
             const externalActionContext = admit(input, requesterAccountId, randomUUID());
             return runWithServerHttpBaseUrl(homeUrl, () => runtime.registry.targetActionInvocations!.invoke({
                 pluginId: CHANNELS_PLUGIN.manifest.id, localId, input, surface: 'cli',
@@ -219,7 +220,7 @@ async function fixture(options: Readonly<{ signingBinding?: boolean }> = {}) {
                 externalActionContext,
             }));
         },
-        async invokeAdmittedAction(input: unknown, requestId: string) {
+        async invokeAdmittedAction(input: ExternalActionRequestEnvelopeV1['input'], requestId: string) {
             const externalActionContext = admit(input, accountId, requestId);
             return runWithServerHttpBaseUrl(homeUrl, () => executeContributedAction({
                 runtimeRegistry: runtime.registry,

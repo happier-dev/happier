@@ -1,9 +1,9 @@
-import { definePlugin } from '@happier-dev/plugin-sdk';
+import { definePlugin, type JsonValue } from '@happier-dev/plugin-sdk';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import type { ManagedServices } from '@happier-dev/plugin-sdk/managed-services';
 
 /** Public author fixture: the host supplies admission, not an authority operand. */
-export async function exerciseManagedWorkload(managedServices: ManagedServices, serviceId: string) {
+export async function exerciseManagedWorkload(managedServices: ManagedServices, serviceId: string): Promise<JsonValue> {
     const result = await managedServices.observeWorkload({ serviceId });
     if (result.kind !== 'ready') return { kind: result.kind, reason: result.reason };
     const workload = result.workload;

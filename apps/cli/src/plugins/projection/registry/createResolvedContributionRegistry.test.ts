@@ -525,14 +525,14 @@ describe('getResolvedContributionRegistry', () => {
         kind: 'event' as const,
         title: localized ? { key: `${pluginId}.event.title`, fallback: `${pluginId} event ({count})`, params: { count: 2 } } : `${pluginId} event`,
         description: localized ? { key: `${pluginId}.event.description`, fallback: `${pluginId} description` } : `${pluginId} description`,
-        payloadSchema: { type: 'object', additionalProperties: false },
+        payloadSchema: { type: 'object' as const, additionalProperties: false },
         automation: {
           v: 1 as const,
           eligible: true as const,
           source: {
             sourceContractVersion: 1,
             supportedObservationTransports: ['checkpointedPull' as const],
-            sourceConfigSchema: { type: 'object', additionalProperties: false },
+            sourceConfigSchema: { type: 'object' as const, additionalProperties: false },
             setupActionRef: { pluginId, localId: setupActionLocalId },
             ...(historyGapResetActionLocalId
               ? { historyGapResetActionRef: { pluginId, localId: historyGapResetActionLocalId } }

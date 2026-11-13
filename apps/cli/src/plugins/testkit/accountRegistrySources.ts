@@ -23,13 +23,13 @@ export function accountMarketplaceUserSourceFixture(input:Readonly<{sourceUrl:st
     enabled:input.enabled??true,addedAt:0,...(input.registryProfileId?{npmRegistryProfileId:input.registryProfileId}:{})};
 }
 export const curatedMarketplaceSourceFixture=()=>{
-  const source=BUILT_IN_REGISTRY_SOURCES_V1.find(source=>source.format==='happier-catalog');
-  if(!source)throw new Error('Curated registry source not registered');
+  const source=BUILT_IN_REGISTRY_SOURCES_V1.find(source=>source.format==='happier-catalog'&&!('packageContent' in source));
+  if(!source||'packageContent' in source)throw new Error('Curated registry source not registered');
   return {id:source.id,title:source.title,sourceUrl:source.url,enabled:source.enabled,origin:'curated' as const};
 };
 export const communityMarketplaceSourceFixture=()=>{
-  const source=BUILT_IN_REGISTRY_SOURCES_V1.find(source=>source.format==='happier-npm');
-  if(!source)throw new Error('Community npm registry source not registered');
+  const source=BUILT_IN_REGISTRY_SOURCES_V1.find(source=>source.format==='happier-npm'&&!('packageContent' in source));
+  if(!source||'packageContent' in source)throw new Error('Community npm registry source not registered');
   return {id:source.id,title:source.title,sourceUrl:source.url,enabled:source.enabled,origin:'community-npm' as const};
 };
 export async function publishMarketplaceUserBindingFixture(input:Parameters<typeof accountMarketplaceUserSourceFixture>[0]) {

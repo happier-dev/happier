@@ -1,3 +1,4 @@
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -253,6 +254,7 @@ describe('live Runner Agent generation retention', () => {
   it('retains only exact live Agent and managed-source pins without an effect-authority document', async () => {
       const marker: DaemonSessionMarker = {
         pid: 4_201,
+        trackingKey: legacyPidSessionTrackingKey(4_201),
         happySessionId: 'session-live-runner',
         happyHomeDir: '/private/happier',
         createdAt: 1,
@@ -285,6 +287,7 @@ describe('live Runner Agent generation retention', () => {
       };
       const secondMarker: DaemonSessionMarker = {
         pid: secondRunner.pid,
+        trackingKey: legacyPidSessionTrackingKey(secondRunner.pid),
         happySessionId: 'session-live-runner-g2',
         happyHomeDir: '/private/happier',
         createdAt: 2,
@@ -347,6 +350,7 @@ describe('live Runner Agent generation retention', () => {
   it('retains exact Agent, Provider, and dependency generations when cleanup cannot prove the last runner stopped', async () => {
     const marker: DaemonSessionMarker = {
       pid: 4_211,
+      trackingKey: legacyPidSessionTrackingKey(4_211),
       happySessionId: 'session-unknown-runner',
       happyHomeDir: '/private/happier',
       createdAt: 1,
@@ -438,6 +442,7 @@ describe('live Runner Agent generation retention', () => {
   it('releases exact pins only after an identity-consistent verified stop', async () => {
       const marker: DaemonSessionMarker = {
         pid: 4_201,
+        trackingKey: legacyPidSessionTrackingKey(4_201),
         happySessionId: 'session-live-runner',
         happyHomeDir: '/private/happier',
         createdAt: 1,
@@ -840,6 +845,7 @@ describe('live Runner Agent generation retention', () => {
     };
     const marker: DaemonSessionMarker = {
       pid: 4_203,
+      trackingKey: legacyPidSessionTrackingKey(4_203),
       happySessionId: 'session-provider-live-p',
       happyHomeDir,
       createdAt: 1,

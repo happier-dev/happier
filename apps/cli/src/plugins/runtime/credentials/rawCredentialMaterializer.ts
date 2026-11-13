@@ -85,7 +85,11 @@ export type CurrentPluginPermissionGrantAuthoritySourceReader =
 
 export type PluginRawCredentialMaterializerBinding = Readonly<{
   /** Exact installed/admitted G manifest. Desired-H inequality alone does not retire this authority. */
-  manifest: Pick<CanonicalPluginManifest, 'id' | 'contributes'>;
+  manifest: Readonly<{
+    id: CanonicalPluginManifest['id'];
+    /** Only the voice provider declarations are read for credential disclosure. */
+    contributes: Pick<CanonicalPluginManifest['contributes'], 'voiceProviders'>;
+  }>;
   contribution: PluginContributionIdentityV1;
   realm: 'web' | 'ios' | 'android' | 'daemon';
   phase: VoiceCredentialAccessPhase;

@@ -15,7 +15,7 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 
 it('projects the adopted compiled Resource declaration instead of borrowing it from the moving source catalog', () => {
     const pluginId = 'acme.account-relay';
-    const resource = { id: 'target-options', source: 'dynamic' as const, type: 'config' as const, scope: 'global' as const,
+    const resource = { kindVersion: 1 as const, id: 'target-options', source: 'dynamic' as const, type: 'config' as const, scope: 'global' as const,
         execution: { target: 'account' as const, account: { artifactId: 'account-runtime', exportName: 'activateAccount' } } };
     const declaration = { id: resource.id, source: resource.source, kind: resource.type, scope: resource.scope,
         execution: resource.execution, contentType: 'application/json' };
@@ -33,7 +33,7 @@ it('projects the adopted compiled Resource declaration instead of borrowing it f
             manifest: { ...source, contributes: { resources: compiledResources } } }));
         const compiledAccountManifest = readGeneratedPluginCompiledManifestSync(root, pluginId);
         const registry = createResolvedContributionRegistry({ pluginDeclarations: [{ pluginId, pluginRootPath: root, manifestPath: '',
-            daemonEntryPath: null, devDaemonEntryPath: null, sourceSpec: { kind: 'bundled', locator: '@acme/relay' },
+            daemonEntryPath: null, devDaemonEntryPath: null, sourceSpec: { kind: 'bundled', locator: '@acme/relay', trustPolicy: 'local_trusted', installPolicy: 'link' },
             manifest: normalizePluginManifestV2(source), ...(compiledAccountManifest ? { compiledAccountManifest } : {}),
         }], resources: [{ pluginId, pluginVersion: '1.0.0', identity: createPluginContributionIdentity({ pluginId, localId: resource.id }),
             definition: resource, provenance: 'first_party', sourceKind: 'bundled' }] });

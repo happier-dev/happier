@@ -392,7 +392,7 @@ describe('managed-services SVC09 public feature completeness', () => {
             try {
                 const handle = await harness.services.supervise({ id: 'health-cause',
                     mode: { kind: 'attach', baseUrl: 'http://127.0.0.1:43120' },
-                    healthCheck: { kind: 'http', path: '/health' },
+                    healthCheck: { kind: 'http', target: { kind: 'servicePath', path: '/health' } },
                 });
                 await expect(handle.waitUntilHealthy({ timeoutMs: 1 })).rejects.toMatchObject({
                     code: 'plugin_managed_service_health_timeout',

@@ -1803,6 +1803,7 @@ const AGENT_AUXILIARY_RUNTIME_REGISTRATION_KEYS = Object.freeze([
     'cliSessionCommand',
     'cliAuth',
     'connectedAccountLaunch',
+    'accountSettings',
     'preflightSessionControls',
     'terminalPromptSubmitVerification',
     'sessionStartup',

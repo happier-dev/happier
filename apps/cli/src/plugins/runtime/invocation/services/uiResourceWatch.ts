@@ -304,7 +304,7 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
             let observedDigest: string | undefined;
             const publish: HostResourceWatchEmit = (digest, pages) => {
                 if (pages) {
-                    if (!isWatchCurrent(watch)) return;
+                    if (!isWatchCurrent(watch)) return undefined;
                     // These are ordered finite results of THIS admitted observer.
                     // Awaiting handOff keeps the existing single pending slot as
                     // backpressure, including while the observer is attaching.
@@ -312,11 +312,11 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
                         version: 1, subscriptionId, kind: 'pages', pages,
                     }));
                 }
-                if (!isWatchCurrent(watch) || observedDigest === digest) return;
+                if (!isWatchCurrent(watch) || observedDigest === digest) return undefined;
                 observedDigest = digest;
                 // Binding can observe before it returns its admitted baseline.
                 // Keep the latest fact here, then compare it to that baseline.
-                if (!watch.producer) return;
+                if (!watch.producer) return undefined;
                 const event = invalidatedEvent(subscriptionId, digest);
                 if (watch.waiter) settleWaiter(watch, { status: 'event', event });
                 else {
@@ -324,6 +324,7 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
                     watch.pending?.release();
                     watch.pending = { event, release() {} };
                 }
+                return undefined;
             };
             try {
                 const producer = await openParams.bind(watch.bindingController.signal, publish,

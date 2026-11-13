@@ -1,3 +1,4 @@
+import { createDeferred } from '@/testkit/async/deferred';
 import { describe, expect, it } from 'vitest';
 import { createManagedServicesOwner } from './managedServicesOwner';
 import { createManagedServiceProcessSupervisorHost } from './managedProcessSupervisor';
@@ -23,7 +24,7 @@ function fixture() {
     let logWatchesDisposed = 0;
     let inspections = 0;
     let nativeObservation: ((value: ManagedServiceNativeObservationV1) => void) | undefined;
-    const subscribed = Promise.withResolvers<void>();
+    const subscribed = createDeferred<void>();
     const configuration = projectNativeComposeReview({ services: { web: { ports: [
         { target: 8080, published: '8080', host_ip: '127.0.0.1', protocol: 'tcp' },
     ] } } }, process.cwd(), value => value).services[0]!;
@@ -153,7 +154,7 @@ describe('host-admitted managed workload binding', () => {
             for (let i = 0; i < 100; i++) result.workload.snapshot();
             expect(f.observations().inspections).toBe(inspections);
             const snapshots: string[] = [];
-            const down = Promise.withResolvers<void>();
+            const down = createDeferred<void>();
             const subscription = result.workload.observe(row => {
                 snapshots.push(row.health?.status ?? 'unknown');
                 if (row.health?.status === 'down') down.resolve();
@@ -182,10 +183,10 @@ describe('host-admitted managed workload binding', () => {
         await first.dispose();
         expect(f.counts().stops).toBe(0);
         const recovered = f.createOwner(); let recoveries = 0;
-        const restore = () => recovered.restoreEnvironmentServices(target, async () => {
+        const restore = async () => { await recovered.restoreEnvironmentServices(target, async () => {
             recoveries++;
             await recovered.superviseProject(f.supervision);
-        });
+        }); };
         try {
             const attach = f.admission(recovered, 'owner', restore);
             const [a, b] = await Promise.all([attach({ serviceId }), attach({ serviceId })]);

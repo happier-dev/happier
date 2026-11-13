@@ -3,6 +3,7 @@ import type { DaemonPluginUiComposerSurfaceCatalogEntryV1, DaemonPluginUiTargete
 import { DaemonPluginUiTargetedSurfaceSelectedRendererV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { selectPluginUiRendererChainMemberV1 } from '@happier-dev/protocol/plugins/contributions/ui/surfaceRegistry';
 import type { PluginUiRendererChainBindingV1, PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
+import { projectPluginUiTargetedContributionsWireV1 } from '@happier-dev/protocol/plugins/ui/targetedContributions';
 
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import type { StablePluginDeclarativeModel } from '@/plugins/runtime/invocation/services/declarativeModel';
@@ -295,7 +296,7 @@ export function projectDaemonComposerSurfaceCatalog(input: Readonly<{
             selectedRenderer: rendered.selectedRenderer,
             executionOrigin,
             resourceCapability,
-            contributorTargetedContributions,
+            contributorTargetedContributions: projectPluginUiTargetedContributionsWireV1(contributorTargetedContributions),
         }));
     }
     return Object.freeze(catalog);

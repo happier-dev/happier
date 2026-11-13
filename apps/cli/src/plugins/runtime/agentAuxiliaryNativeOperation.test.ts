@@ -43,7 +43,7 @@ it.skipIf(process.platform !== 'linux')('retains member native defaults across i
           expect(snapshot.localTransport).toEqual({ agentUid: 2401, agentGid: 2401 });
           const selected = snapshot.launch!;
           runtimes.push(selected.runtimeHome);
-          const dispatch = createUnixAgentIdentityLaunch({ ...selected, executable: process.execPath,
+          const dispatch = createUnixAgentIdentityLaunch({ ...selected, environment: selected.environment ?? {}, executable: process.execPath,
             args: ['-e', 'process.stdout.write(process.env.XDG_DATA_HOME)'], cwd: identity.workspaceRoot,
             memberIdentity: identity });
           const frame = await readAgentLaunchFrame(Readable.from([dispatch.stdinPreamble], { objectMode: false }));

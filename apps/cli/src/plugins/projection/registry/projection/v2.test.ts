@@ -2404,7 +2404,6 @@ describe('buildPluginProjectionV2', () => {
                     provenance: 'external',
                     source: { kind: 'path' },
                     pluginId: 'acme.ambiguous',
-                    pluginVersion: '1.0.0',
                     definition: invalidDefinition,
                 }],
             },
@@ -2445,7 +2444,6 @@ describe('buildPluginProjectionV2', () => {
                     provenance: 'external',
                     source: { kind: 'path' },
                     pluginId: 'acme.invalid-declaration',
-                    pluginVersion: '1.0.0',
                     definition: {
                         id: 'settings',
                         version: 1,
@@ -2485,7 +2483,6 @@ describe('buildPluginProjectionV2', () => {
                     provenance: 'external',
                     source: { kind: 'path' },
                     pluginId: 'acme.lossy',
-                    pluginVersion: '1.0.0',
                     definition: {
                         id: 'settings',
                         version: 1,
@@ -2516,7 +2513,6 @@ describe('buildPluginProjectionV2', () => {
                     provenance: 'external',
                     source: { kind: 'path' },
                     pluginId: 'acme.contradictory',
-                    pluginVersion: '1.0.0',
                     definition: {
                         id: 'settings',
                         version: 1,

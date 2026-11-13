@@ -2,6 +2,7 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { projectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions';
 import { PluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
@@ -35,8 +36,7 @@ export function projectStructuredMessageActionFailure(result: Readonly<{
 }>) {
   const { diagnostics: _diagnostics, ...authorPayload } = readPluginActionFailureAuthorPayload(result.data);
   const requestId = readPluginErrorRequestIdV1({ details: authorPayload.details });
-  const effectAttempted = authorPayload.details && typeof authorPayload.details === 'object' && !Array.isArray(authorPayload.details)
-    ? authorPayload.details.effectAttempted : undefined;
+  const effectAttempted = isJsonObject(authorPayload.details) ? authorPayload.details.effectAttempted : undefined;
   // Target invocation already redacts its failures; observer failures use the same projection.
   const message = result.error.trim();
   return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({

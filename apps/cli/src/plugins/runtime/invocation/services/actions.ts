@@ -30,7 +30,7 @@ import type {
 } from '@happier-dev/plugin-sdk/interactions';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionIdSchema, isPluginRetainedInputActionIdV1, isScmReviewWorkspaceMaterializationActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
-import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { isJsonObject, sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionPluginCaller, ActionCaller, ActionId } from '@happier-dev/protocol/actions';
 import { arePluginMachineMaterializationRefsEqual, getPluginMachineExecutionRouting, PluginMachineExecutionOriginV1Schema, PluginMachineExecutionRoutingV1Schema, type PluginMachineExecutionRoutingV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -140,7 +140,7 @@ export function projectContributedActionExecuteResult(result: ActionExecuteResul
     if (result.ok) return { status: 'executed', value: StrictJsonValueSchema.parse(result.result) };
     const projected = StrictJsonValueSchema.safeParse(result.details);
     const data = projected.success ? projected.data : null;
-    const record = data && typeof data === 'object' && !Array.isArray(data) ? data : null;
+    const record = isJsonObject(data) ? data : null;
     const pluginFailure = record?.name === 'PluginError' && record.code === result.errorCode
         && (record.message ?? record.code) === result.error ? record : null;
     return { status: 'failed', code: result.errorCode, message: result.error,

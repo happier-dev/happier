@@ -319,7 +319,7 @@ describe('plugin invocation ActionsService', () => {
         const child = { pluginId: 'example.session-recipient', localId: 'update' };
         const definition: ActionDefinitionV1 = {
             kindVersion: 1, id: 'example.session-recipient/actions/update', title: 'Update', description: 'Update one Session',
-            safety: 'safe', sideEffectClass: 'write', placements: [], slash: null, bindings: null, examples: null,
+            safety: 'safe', sideEffectClass: 'write', placements: [], slash: null, bindings: null, examples: null, inputHints: null,
             surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false, api: true, plugin: true },
             sessionTarget: { field: 'recipient.sessionId', cardinality: 'one' },
             inputSchema: { type: 'object' },
@@ -1770,7 +1770,7 @@ describe('plugin invocation ActionsService', () => {
     });
 
     it.each(['witness', 'contributed'] as const)('keeps native Realtime decisions denied through the %s origin and the real executor', async (origin) => {
-        const delivered: string[] = [];
+        const delivered: Array<string | undefined> = [];
         const settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.permission.respond': ['agent'] } });
         const executor = createActionExecutorForTest({
             isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
@@ -2381,13 +2381,13 @@ describe('plugin invocation ActionsService', () => {
         });
     });
 
-    it.each([
+    it.each<{ details: JsonValue; direct?: true }>([
         { details: { requestId: 'target-request', field: 'title', attempted: 2 } },
         { details: { field: 'title', attempted: 2 } },
         { details: 'author-defined-details' },
         { details: ['author-defined-details'] },
         { details: { requestId: 'target-request' }, direct: true },
-    ] satisfies ReadonlyArray<{ details: JsonValue; direct?: true }>)('carries a target plugin canonical error retryable and data across a plugin-to-plugin failure ($details, direct: $direct)', async scenario => {
+    ])('carries a target plugin canonical error retryable and data across a plugin-to-plugin failure ($details, direct: $direct)', async scenario => {
         const { details } = scenario;
         // Plugins are trusted code. A target's own published failure payload is
         // the failure its caller receives, not a bare taxonomy code.

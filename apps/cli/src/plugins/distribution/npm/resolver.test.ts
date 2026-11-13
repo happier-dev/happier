@@ -12,12 +12,13 @@ function compatibilityProjection(
   version: string,
   engines: Record<string, unknown> | undefined = { happier: '>=0.0.0' },
   entries: readonly Record<string, unknown>[] = [],
+  pluginId = 'acme.compatibility-fixture',
 ): Record<string, unknown> {
   return {
     version: 1,
     manifest: {
       schemaVersion: 2,
-      id: 'acme.compatibility-fixture',
+      id: pluginId,
       version,
       displayName: 'Compatibility fixture',
       ...(engines ? { engines } : {}),
@@ -47,8 +48,7 @@ describe('resolveNpmArtifactMetadata', () => {
   };
 
   it('selects first-party registry compatibility using the requested npm identity', async () => {
-    const projection = compatibilityProjection('1.0.0');
-    projection.manifest.id = 'happier.asciinema';
+    const projection = compatibilityProjection('1.0.0', undefined, [], 'happier.asciinema');
     const packageName = '@happier-dev/plugins-asciinema';
     const result = await resolveNpmArtifactMetadata({
       request: { ...base, packageName, selection: { ...base.selection, packageName }, selector: { kind: 'tag', value: 'latest' } },
@@ -57,7 +57,7 @@ describe('resolveNpmArtifactMetadata', () => {
           dist: { integrity, tarball: 'https://registry.example.test/plugin.tgz' } },
       } }),
     });
-    expect(result.compatibility.automaticEligible).toBe(true);
+    expect(result.compatibility?.automaticEligible).toBe(true);
   });
 
   it('resolves a range to one highest immutable exact version', async () => {

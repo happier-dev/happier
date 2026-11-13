@@ -85,7 +85,7 @@ describe('managed dependency plugin contributions', () => {
             'gh', 'az', 'difftastic', 'local-embeddings', 'local-voice-runtime',
         ]));
         expect(entries.some((entry) => entry.experimental)).toBe(true);
-        expect(projection.familiesById?.managedDependencies.entriesById.gh).toMatchObject({
+        expect(projection.familiesById?.managedDependencies?.entriesById.gh).toMatchObject({
             pluginId: 'happier.core', key: 'gh',
         });
         const withoutPluginRuntimes = buildPluginProjectionV2({ registry: {

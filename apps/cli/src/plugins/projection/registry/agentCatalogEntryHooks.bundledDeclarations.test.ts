@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import type { PluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
+import type { PluginManifest } from '@happier-dev/protocol/plugins/manifest';
 
 import { BUNDLED_FIRST_PARTY_PLUGIN_METADATA } from './sources/generatedBundledPluginManifests';
 import { projectAgentConnectedAccountLaunchCatalogEntry } from './agentCatalogEntryHooks';
@@ -12,7 +12,7 @@ describe('bundled Agent launch declaration consistency', () => {
         async ({ pluginPackageId }) => {
             const sourceRoot = fileURLToPath(new URL(`../../../../../../packages/plugins/${pluginPackageId}/src/`, import.meta.url));
             type ActivationModule = Parameters<typeof createPluginTestkit>[0]['module'];
-            const authored = await import(`${sourceRoot}manifest.ts`) as { PLUGIN_MANIFEST: PluginManifestV2 } & Partial<ActivationModule>;
+            const authored = await import(`${sourceRoot}manifest.ts`) as { PLUGIN_MANIFEST: PluginManifest } & Partial<ActivationModule>;
             const { PLUGIN_MANIFEST } = authored;
             const module = authored.activate ? { activate: authored.activate } : await import(`${sourceRoot}activate.ts`) as ActivationModule;
             const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module });

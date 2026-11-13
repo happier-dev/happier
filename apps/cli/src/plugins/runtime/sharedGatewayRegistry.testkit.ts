@@ -164,7 +164,7 @@ export function createSharedGatewayRegistryTestkit(input: Readonly<{
             connectedAccounts: purposeBindingOwner,
             ...(serving ? { servingPluginOccurrences: serving.occurrencesByPluginId, retainedActivationRegistryLeases: serving.leases } : {}),
             managedProviderOperationAuthority: operationAuthority, resolveCurrentMachineId: () => 'machine',
-            externalActionHomeBinding: { serverId: configuration.activeServerId, serverApiUrl: configuration.apiServerUrl, serverIdentityId: 'home' },
+            externalActionHomeBinding: { serverId: configuration.activeServerId, serverIdentityId: 'home' },
             readDaemonRequesterWorkAttribution: () => {
                 const installation = readInstallationIdentityIfExistsSync(join(happyHomeDir, 'installation-identity.json'));
                 return projectDaemonRequesterWorkAttribution(installation ? { serverId: configuration.activeServerId,

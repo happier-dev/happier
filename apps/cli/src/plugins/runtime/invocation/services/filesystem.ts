@@ -110,7 +110,7 @@ export function createPluginFileSystemService(params: Readonly<{
   signal: AbortSignal;
   retirementSignal?: AbortSignal;
   isOccurrenceCurrent(): boolean;
-}>): FileSystemService {
+}>): Omit<FileSystemService, 'prepareDownload'> {
   function guard(signal?: AbortSignal): void {
     if (!params.isOccurrenceCurrent()) fail('plugin_generation_stale', 'Plugin occurrenceId is stale');
     guardCancellation(signal);
@@ -163,7 +163,7 @@ export function createPluginFileSystemService(params: Readonly<{
     await realpath(checked).catch(() => fail('plugin_fs_not_found', 'Filesystem path does not exist'));
     return candidate;
   }
-  const implementation: FileSystemService = {
+  const implementation: Omit<FileSystemService, 'prepareDownload'> = {
     async observeMachinePath(input, emit, options) {
       guard(options?.signal);
       if (params.machineNative !== true) fail('plugin_fs_machine_context_required', 'Native filesystem observation requires Machine execution');
@@ -185,10 +185,6 @@ export function createPluginFileSystemService(params: Readonly<{
       return await observeMachinePath({ absolutePath, signal: AbortSignal.any([params.signal,
         ...(params.retirementSignal ? [params.retirementSignal] : []),
         ...(options?.signal ? [options.signal] : [])]), read, emit });
-    },
-    async prepareDownload() {
-      return { success: false, status: 'failed', errorCode: 'filesystem_transfer_custody_required',
-        error: 'An admitted file-writing Action and its exact destination are required.' };
     },
     async readFile(path, options) {
       guard(options?.signal);
@@ -281,7 +277,7 @@ export function createPluginFileSystemService(params: Readonly<{
       await rm(absolutePath, { recursive: options?.recursive === true, force: false });
     },
   };
-  const service: FileSystemService = {
+  const service: Omit<FileSystemService, 'prepareDownload'> = {
     observeMachinePath: (input, emit, options) => withStableFileSystemErrors(() => implementation.observeMachinePath(input, emit, options)),
     readFile: (path, options) => withStableFileSystemErrors(() => implementation.readFile(path, options)),
     writeFile: (path, data, options) => withStableFileSystemErrors(() => implementation.writeFile(path, data, options)),

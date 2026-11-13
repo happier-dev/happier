@@ -447,8 +447,8 @@ describe('Account activation source assembly', () => {
         });
         await app.ready();
         const restore = installAxiosFastifyAdapter({ app, origin: 'http://account-machine-placement.test' });
-        const invoke = () => executeAccountPluginAction({ host: { token: 'fixture',
-            credentials: { token: 'fixture', encryption: null }, happyHomeDir: home, sessionId: 'cli-global',
+        const invoke = () => executeAccountPluginAction({ host: {
+            credentials: { token: 'fixture', encryption: null }, happyHomeDir: home,
             mode: 'plain', ctx: null, serverId: 'machine-placement', serverHttpBaseUrl: 'http://account-machine-placement.test' },
             deps: createUnavailableActionTransportDeps(), actionId: 'action.invoke',
             input: { action: { pluginId: action.pluginId, localId: action.definition.id }, input: {} }, context: { surface: 'cli' } });

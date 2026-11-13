@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { readTargetActionDiagnosticConfidentiality } from './diagnostics';
 import { projectContributedActionExecuteResult } from './services/actions';
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
@@ -615,7 +616,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 const messageAction = invocation.messageAction
                     ? Object.freeze({ ...invocation.messageAction })
                     : undefined;
-                const destination = input !== null && typeof input === 'object' && !Array.isArray(input)
+                const destination = isJsonObject(input)
                     ? FileDownloadDestinationV1Schema.safeParse(input.destination) : null;
                 const fileDownload = invocation.approvalContext?.prepareFileDownload
                     && (registration.definition.dangerLevel === 'writesLocal' || registration.definition.dangerLevel === 'destructive')

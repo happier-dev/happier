@@ -1,7 +1,7 @@
 import { MarketplaceIndexQueryResultV1Schema } from '@happier-dev/protocol/marketplace/marketplaceIndexV1';
 import type { MarketplaceIndexQueryResultV1, MarketplaceIndexSourceKindV1 } from '@happier-dev/protocol';
 import { PUBLIC_NPM_REGISTRY_ORIGIN_V1 } from '@happier-dev/protocol/marketplace/communityNpmDiscoveryV1';
-import { registryMarketplaceSourceV1, type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
+import { registryMarketplaceSourceV1, registrySourceSupportsKindV1, type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
 import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
 import { readStoredCredentials } from '@/persistence';
 import { createNpmRegistryProfileService } from '@/plugins/distribution/npm/profiles/service';
@@ -157,7 +157,7 @@ export function createMarketplaceIndexService(params?: Readonly<{
         return await (await registryHost()).withSource(sourceId, async (descriptor, fetchRequest): Promise<ExactMarketplaceQueryResult> => {
           const source = projectMarketplaceInstallSource(descriptor);
           if (!source) return { ok: false, code: 'install_unavailable', message: 'No Account marketplace source is configured for this Install and trust action.' };
-          const kind = source.registrySource.kinds.includes('plugin') ? 'plugin' : 'agent';
+          const kind = registrySourceSupportsKindV1(source.registrySource, 'plugin') ? 'plugin' : 'agent';
           let itemId = source.origin === 'community-npm' ? exact.packageName : pluginId;
           // Plugin-id-only callers discover the package through the same
           // admitted source. Clicked listings already carry the exact package.

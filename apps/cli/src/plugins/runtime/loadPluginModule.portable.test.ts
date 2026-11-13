@@ -75,7 +75,7 @@ describe('portable CommonJS plugin host modules', () => {
         }
     });
 
-    it.each(['node', 'bun-source', 'bun-compiled'] as const)('executes shared host bindings in the %s payload', async (runtime, context) => {
+    it.for(['node', 'bun-source', 'bun-compiled'] as const)('executes shared host bindings in the %s payload', async (runtime, context) => {
         if (runtime !== 'node' && !hasBun) return context.skip();
         const repoRoot = resolve(import.meta.dirname, '../../../../..');
         const payloadRoot = await mkdtemp(join(repoRoot, '.project/tmp/cli-cjs-payload-'));

@@ -1642,6 +1642,7 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                         availability: unavailable.availability,
                         logger: unavailable.logger,
                         sessions: unavailable.sessions,
+                        deploymentSource: unavailable.deploymentSource,
                         managedServices:
                             unavailable.managedServices,
                         machineProvisioners: unavailable.machineProvisioners,
@@ -1952,6 +1953,7 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                         availability: unavailable.availability,
                         logger: unavailable.logger,
                         sessions: unavailable.sessions,
+                        deploymentSource: unavailable.deploymentSource,
                         managedServices:
                             unavailable.managedServices,
                         machineProvisioners: unavailable.machineProvisioners,
@@ -2574,6 +2576,7 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                         services: Object.freeze({
                             dependencies: providerDependencies,
                             supervise: providerSupervise,
+                            observeWorkload: createUnavailablePluginServices().managedServices.observeWorkload,
                         }),
                         providerPluginHardRevocationRevisionAtAdmission: 0,
                     });

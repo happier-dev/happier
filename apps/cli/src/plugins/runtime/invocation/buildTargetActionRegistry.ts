@@ -8,6 +8,7 @@ import type { PluginActionPresentUserGatePolicy, PluginSourceCustodyV1 } from '@
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveEffectiveInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
+import { isRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import type { InputOption } from '@happier-dev/protocol/inputs';
 import { resolveInputTypeOptions, readInputFieldOptionsConstraint, readInputFieldSelectedValues, validateInputTypeValue, validateInputFieldValue } from '@happier-dev/protocol/inputs/runtime';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
@@ -527,7 +528,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                     let cursor: string | undefined;
                     do {
                         const resolved = await resolveInputTypeOptions({ deps: inputTypeDeps, ctx: context, identity: field.inputType,
-                            query: { draftInput: input.input, fieldPath: field.path, ...(cursor === undefined ? {} : { cursor }) },
+                            query: { draftInput: isRecord(input.input) ? input.input : undefined, fieldPath: field.path, ...(cursor === undefined ? {} : { cursor }) },
                             ...(input.sessionId ? { sessionId: input.sessionId } : {}),
                             readFailure: result => {
                                 const parsed = ActionExecuteFailureSchema.safeParse(result);
@@ -628,7 +629,8 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                         // Spend the registry's existing exact Action admission; the
                         // issuer supplies its private signed child transport proof.
                         const projected = await invokeHostReviewedChildV1({ parent: reviewed.parent, context,
-                            child: { action, role: 'action_invoke', input: input.input }, admittedReview: reviewed,
+                            child: { action, role: 'action_invoke', input: input.input },
+                            admittedReview: { action, role: 'action_invoke', surface: context.surface ?? 'plugin' },
                             execute: async (_input, childContext) => ({ context: childContext }) });
                         if ('context' in projected) context = projected.context;
                     }

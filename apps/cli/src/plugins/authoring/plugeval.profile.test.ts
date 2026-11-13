@@ -85,10 +85,10 @@ it.skipIf(process.env.PLUGEVAL_PROFILE === '1')('resolves a cold candidate witho
     let unlimitedCaptures = 0;
     let missingJsStats = 0;
     const stat = fs.statSync;
-    fs.statSync = ((...args: Parameters<typeof fs.statSync>) => {
+    const statSpy = vi.spyOn(fs, 'statSync').mockImplementation(((...args: Parameters<typeof fs.statSync>) => {
         if (args[0] === join(root, 'src/child.js')) missingJsStats += 1;
         return Reflect.apply(stat, fs, args);
-    }) as typeof fs.statSync;
+    }) as typeof fs.statSync);
     const capture = Error.captureStackTrace;
     const spy = vi.spyOn(Error, 'captureStackTrace').mockImplementation((...args) => {
         if (Error.stackTraceLimit === Infinity) unlimitedCaptures += 1;
@@ -111,7 +111,7 @@ it.skipIf(process.env.PLUGEVAL_PROFILE === '1')('resolves a cold candidate witho
         expect(unlimitedCaptures).toBe(0);
     } finally {
         spy.mockRestore();
-        fs.statSync = stat;
+        statSpy.mockRestore();
         await rm(root, { recursive: true, force: true });
     }
 });
@@ -133,10 +133,10 @@ it.runIf(process.env.PLUGEVAL_PROFILE === '1').each(['channels', 'channel-email'
             let stats = 0, unlimitedCaptures = 0;
             const stat = fs.statSync;
             const capture = Error.captureStackTrace;
-            fs.statSync = ((...args: Parameters<typeof fs.statSync>) => {
+            const statSpy = vi.spyOn(fs, 'statSync').mockImplementation(((...args: Parameters<typeof fs.statSync>) => {
                 stats += 1;
                 return Reflect.apply(stat, fs, args);
-            }) as typeof fs.statSync;
+            }) as typeof fs.statSync);
             Error.captureStackTrace = (...args) => {
                 if (Error.stackTraceLimit === Infinity) unlimitedCaptures += 1;
                 return capture(...args);
@@ -183,7 +183,7 @@ it.runIf(process.env.PLUGEVAL_PROFILE === '1').each(['channels', 'channel-email'
                     cpu: process.cpuUsage(cpuStart), configMs, aliasesMs, aliases: Object.keys(aliases).length,
                     scopeMs, loadMs, projectionMs, projectionError, maxLagMs, transforms: observed.transforms.length, stats, unlimitedCaptures, packages }));
             } finally {
-                clearInterval(heartbeat); fs.statSync = stat; Error.captureStackTrace = capture;
+                clearInterval(heartbeat); statSpy.mockRestore(); Error.captureStackTrace = capture;
             }
         }
     } finally {

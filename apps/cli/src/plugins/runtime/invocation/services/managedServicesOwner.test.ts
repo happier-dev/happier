@@ -136,6 +136,12 @@ import { createStablePluginConnectedAccountsHost } from './connectedAccounts';
 import { createXaiConnectedAccountRuntime } from '../../../../../../../packages/plugins/grok/src/connectedAccounts/runtime';
 import type { ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 
+/** These fixtures never retain a stopped Project process across a daemon restart. */
+const NO_PROJECT_PROCESS_RECOVERY = {
+    captureProjectProcess: async () => null,
+    restoreProjectProcess: async () => { throw new Error('No retained Project process in this fixture'); },
+} satisfies Pick<ManagedServiceProcessSupervisorHost, 'captureProjectProcess' | 'restoreProjectProcess'>;
+
 type CredentialFileMaterializeInput = Parameters<
     ManagedServiceCredentialFileOwner['materialize']
 >[0];
@@ -596,6 +602,7 @@ function createHarness(
     const owner = createManagedServicesOwner({
         processSupervisorHost: Object.freeze({
             custodyOwner,
+            ...NO_PROJECT_PROCESS_RECOVERY,
             bind: vi.fn(() => Object.freeze({ supervise })),
         }),
         dependencies: Object.freeze({}) as never,
@@ -5190,6 +5197,7 @@ describe('managed-services SVC09 owner', () => {
         const owner = createManagedServicesOwner({
             processSupervisorHost: Object.freeze({
                 custodyOwner: 'daemon' as const,
+                ...NO_PROJECT_PROCESS_RECOVERY,
                 bind: () => Object.freeze({ supervise }),
             }),
             dependencies: Object.freeze({}) as never,
@@ -5319,6 +5327,7 @@ describe('managed-services SVC09 owner', () => {
             const owner = createManagedServicesOwner({
                 processSupervisorHost: Object.freeze({
                     custodyOwner: 'daemon' as const,
+                    ...NO_PROJECT_PROCESS_RECOVERY,
                     bind: () => Object.freeze({ supervise }),
                 }),
                 dependencies: Object.freeze({}) as never,
@@ -6414,6 +6423,7 @@ describe('managed-services SVC09 owner', () => {
         const owner = createManagedServicesOwner({
             processSupervisorHost: Object.freeze({
                 custodyOwner: 'daemon' as const,
+                ...NO_PROJECT_PROCESS_RECOVERY,
                 bind: () => Object.freeze({ supervise }),
             }),
             dependencies: Object.freeze({}) as never,
@@ -6503,6 +6513,7 @@ describe('managed-services SVC09 owner', () => {
         const owner = createManagedServicesOwner({
             processSupervisorHost: Object.freeze({
                 custodyOwner: 'daemon' as const,
+                ...NO_PROJECT_PROCESS_RECOVERY,
                 bind: () => Object.freeze({ supervise }),
             }),
             dependencies: Object.freeze({}) as never,
@@ -7164,6 +7175,7 @@ describe('managed-services SVC09 owner', () => {
         const owner = createManagedServicesOwner({
             processSupervisorHost: Object.freeze({
                 custodyOwner: 'daemon' as const,
+                ...NO_PROJECT_PROCESS_RECOVERY,
                 bind: () => Object.freeze({ supervise }),
             }),
             dependencies: Object.freeze({}) as never,
@@ -7278,6 +7290,7 @@ describe('managed-services SVC09 owner', () => {
         const owner = createManagedServicesOwner({
             processSupervisorHost: Object.freeze({
                 custodyOwner: 'daemon' as const,
+                ...NO_PROJECT_PROCESS_RECOVERY,
                 bind: () => Object.freeze({ supervise }),
             }),
             dependencies: Object.freeze({}) as never,
@@ -8102,6 +8115,7 @@ describe('managed-services SVC09 owner', () => {
         const owner = createManagedServicesOwner({
             processSupervisorHost: Object.freeze({
                 custodyOwner: 'daemon' as const,
+                ...NO_PROJECT_PROCESS_RECOVERY,
                 bind: () => Object.freeze({ supervise }),
             }),
             dependencies: Object.freeze({}) as never,
@@ -8221,6 +8235,7 @@ describe('managed-services SVC09 owner', () => {
         const owner = createManagedServicesOwner({
             processSupervisorHost: Object.freeze({
                 custodyOwner: 'daemon' as const,
+                ...NO_PROJECT_PROCESS_RECOVERY,
                 bind: () => Object.freeze({ supervise }),
             }),
             dependencies: Object.freeze({}) as never,
@@ -8317,6 +8332,7 @@ describe('managed-services SVC09 owner', () => {
         const owner = createManagedServicesOwner({
             processSupervisorHost: Object.freeze({
                 custodyOwner: 'daemon' as const,
+                ...NO_PROJECT_PROCESS_RECOVERY,
                 bind: () => Object.freeze({ supervise }),
             }),
             dependencies: Object.freeze({}) as never,

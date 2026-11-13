@@ -507,9 +507,13 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 serverIdentityId: 'srv_runtime_origin_fixture',
                 machineId: currentExecutionOriginMachineId,
             }),
-            managedProviderOperationAuthority: Object.freeze({
-                activate: activateOperationAuthority,
-            }),
+            managedProviderOperationAuthority: (() => {
+                const authority: ManagedProviderOperationAuthority = Object.freeze({
+                    activate: activateOperationAuthority,
+                    forPurposeBindingOwner: () => authority,
+                });
+                return authority;
+            })(),
         });
         try {
             expect(runtimeRegistry.activatedPluginIds.has(pluginId)).toBe(false);
@@ -948,6 +952,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 sessionId: 'startup-remote-session', machineId: 'machine-1', basis: hubBasis,
                 metadata: hubMetadata, hardRevocationRevision: 0, registry: runtimeRegistry,
                 signal: new AbortController().signal, isBootstrapCurrent: () => true,
+                revalidateAdmission: async () => true,
                 isCurrent: async () => hubPolicyCurrent && acquired.find(entry => entry.localId === 'external-gateway')?.runtime?.isCurrent() === true,
                 installConsumerCleanup: cleanup => { closeConsumer = cleanup; },
                 cleanup: async () => { const cleanup = closeConsumer; closeConsumer = null; await cleanup?.(); },

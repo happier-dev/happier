@@ -77,6 +77,7 @@ describe('Agent CLI system-tool binding (integration)', () => {
     it('resolves managed Oh My Pi through its declared tool when omp is absent from PATH', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-omp-managed-binding-'));
         const spec = getAgentCliRuntimeSpec('ohMyPi');
+        if (!spec) throw new Error('Expected the Oh My Pi CLI runtime spec');
         const command = resolveAgentCliManagedCommandPathForRuntime(spec, { happyHomeDir });
         await mkdir(dirname(command), { recursive: true });
         await writeFile(command, process.platform === 'win32' ? 'managed-fixture' : '#!/bin/sh\nexit 0\n');

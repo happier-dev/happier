@@ -21,6 +21,16 @@ export type CanonicalPluginManifestIngestionDiagnostic = Omit<PluginManifestInge
     fieldId?: string;
   }>;
 
+/** One ingestion diagnostic for a settings declaration failure; never carries the error's free-form reason. */
+export function projectPluginSettingsDeclarationDiagnostic(
+  error: PluginLocalSettingsDeclarationError | PluginSettingsProjectionError,
+): CanonicalPluginManifestIngestionDiagnostic {
+  return { code: error.code, message: error.message,
+    pluginId: error.pluginId, contributionId: error.contributionId,
+    ...(error.fieldId ? { fieldId: error.fieldId } : {}),
+  };
+}
+
 export type CanonicalPluginManifestIngestionResult =
   | Readonly<{ ok: true; manifest: CanonicalPluginManifest; diagnostics?: readonly CanonicalPluginManifestIngestionDiagnostic[] }>
   | Readonly<{ ok: false; manifest?: CanonicalPluginManifest; diagnostics: readonly CanonicalPluginManifestIngestionDiagnostic[] }>;
@@ -100,10 +110,7 @@ export function ingestCanonicalPluginManifest(
     assertPluginManifestSettingsValid(validation.manifest);
   } catch (error) {
     if (!(error instanceof PluginLocalSettingsDeclarationError) && !(error instanceof PluginSettingsProjectionError)) throw error;
-    return { ok: false, diagnostics: [{ code: error.code, message: error.message,
-      pluginId: error.pluginId, contributionId: error.contributionId,
-      ...(error.fieldId ? { fieldId: error.fieldId } : {}),
-    }] };
+    return { ok: false, diagnostics: [projectPluginSettingsDeclarationDiagnostic(error)] };
   }
   return { ok: true, manifest: validation.manifest,
     ...(diagnostics.length ? { diagnostics } : {}) };

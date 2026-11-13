@@ -114,6 +114,7 @@ describe('Account marketplace sources and exact install seam', () => {
     const home = await createTempDir('happier-marketplace-declaration-u3-'); homes.push(home);
     const source = createPluginRegistrySourceDescriptorV1({ pluginId: 'com.acme.sources', suppliers: ['installed-source-plugin'],
       definition: { id: 'team', title: 'Team declaration', format: 'happier-catalog', kinds: ['plugin'], url: sourceUrl } });
+    if ('packageContent' in source) throw new Error('Expected a remote registry source declaration');
     let pluginSources = [source];
     const readRegistrySources = async () => listRegistrySourcesV1({ record: { v: 2, sources: [], disabledSourceIds: [] }, pluginSources });
     const body = catalog();

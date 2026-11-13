@@ -1,3 +1,4 @@
+import type { PluginUiArtifactsManifestV2 } from '@happier-dev/protocol/plugins/ui/uiArtifactsManifest';
 import { describe, expect, it } from 'vitest';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
@@ -13,8 +14,8 @@ describe('mounted caller Action projection', () => {
         const callerId = 'acme.triage';
         const calleeId = 'acme.source';
         const pluginIds = [callerId, calleeId, ...Array.from({ length: 65 }, (_, index) => `acme.unrelated${index}`)];
-        const artifact = {
-            artifactId: 'view', tier: 'reactNative' as const,
+        const artifact: PluginUiArtifactsManifestV2['entries'][number] = {
+            artifactId: 'view', tier: 'reactNative',
             entry: 'react-native/view/entry.cjs.bundle',
             files: [{ relativePath: 'react-native/view/entry.cjs.bundle', digest: `sha256:${'5'.repeat(64)}`, byteSize: 1 }],
             digest: `sha256:${'6'.repeat(64)}`,

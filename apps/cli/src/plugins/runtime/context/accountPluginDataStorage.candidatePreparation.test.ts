@@ -497,7 +497,11 @@ it('publishes the V6 delivery reader and promotes a stored V5 row through a real
     });
     const account = host.bind({ pluginId: manifest.id, occurrenceId: 'delivery-upgrade-reader',
         signal: new AbortController().signal, isOccurrenceCurrent: () => true });
-    await expect(account.collection(readerDeclaration).get(value.id)).resolves.toEqual({
+    if (!account) throw new Error('Expected bound Collection');
+    // The reader's runtime collection never migrates in this delivery-upgrade read.
+    const readerCollection = { ...readerDeclaration, migrations: readerDeclaration.migrations.map(migration => ({ ...migration,
+        migrate: (): never => { throw new Error('Reader fixture never migrates'); } })) };
+    await expect(account.collection(readerCollection).get(value.id)).resolves.toEqual({
         rowId: value.id, revision: 22, value,
     });
     expect(reader).toEqual(target);

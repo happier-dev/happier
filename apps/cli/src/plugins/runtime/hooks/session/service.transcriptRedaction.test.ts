@@ -25,7 +25,10 @@ describe('session hook secrets and the Agent transcript', () => {
     try {
       const secrets = await Promise.all(
         [server.sessionHookSecretFile, server.permissionHookSecretFile].map(
-          async (file) => (await readFile(file, 'utf8')).trim(),
+          async (file) => {
+            if (!file) throw new Error('The started hook server must name both secret files');
+            return (await readFile(file, 'utf8')).trim();
+          },
         ),
       );
       for (const secret of secrets) {
@@ -36,7 +39,7 @@ describe('session hook secrets and the Agent transcript', () => {
         ).toBe(false);
       }
       const payload = buildOutboundSessionMessagePayload(
-        { mode: 'plain' },
+        { mode: 'plain', ctx: null },
         {
           role: 'agent',
           content: {

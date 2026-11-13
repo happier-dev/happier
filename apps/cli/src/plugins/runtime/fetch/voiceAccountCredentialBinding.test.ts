@@ -1223,7 +1223,7 @@ describe('Voice account Plugin fetch credential binding', () => {
         const service = createCatalogService(async () => ({
             status,
             finalUrl: 'https://voice.example.test/v1/voices',
-            headers: jsonHeader ? { 'content-type': 'application/json' } : {},
+            headers: jsonHeader ? { 'content-type': 'application/json' } : Object.freeze<Record<string, string>>({}),
             body: new TextEncoder().encode(bytes),
         }), undefined, [{
             pluginId: 'acme.voice',

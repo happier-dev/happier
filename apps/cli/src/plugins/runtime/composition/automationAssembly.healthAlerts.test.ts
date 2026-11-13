@@ -2,6 +2,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { AutomationDefinitionDetailSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
 import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 import { HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1 } from '@happier-dev/protocol/plugins/events/hostV1';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
@@ -29,8 +31,9 @@ it('borrows one current source refresh after a definitions push, with zero idle 
         census++;
         if (unavailable) throw Object.assign(new Error('Source read refused'), { code: 'source_read_refused' });
         if (malformed) return { status: 200, data: { automations: null, nextCursor: null } };
-        const binding = { v: 1 as const, automationId: 'saved-health', triggerId, triggerRevision: revision,
-            triggerKind: 'pluginEvent' as const, eventRef, sourceSelectorId: 'c79a9957-537c-4f21-a08d-289245801c05' };
+        const binding = { v: 1 as const, automationId: 'saved-health', triggerId: AutomationTriggerIdSchema.parse(triggerId),
+            triggerRevision: revision, triggerKind: 'pluginEvent' as const, eventRef,
+            sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse('c79a9957-537c-4f21-a08d-289245801c05') };
         return { status: 200, data: { automations: [AutomationDefinitionDetailSchema.parse({
             id: binding.automationId, name: 'Saved health', description: null, enabled: true, targetType: null,
             existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [],
@@ -61,7 +64,10 @@ it('borrows one current source refresh after a definitions push, with zero idle 
     const subscription = broker.subscribeHost({
         target: { eventId: HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1, scope: { kind: 'account' } },
         isCurrent: () => true,
-        listener: event => { if (event.payload.definitionsChanged !== false) assembly.invalidateSourceDefinitions(); },
+        listener: event => {
+            if (event.eventId !== HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1) return;
+            if (event.payload.definitionsChanged !== false) assembly.invalidateSourceDefinitions();
+        },
     });
     const push = (definitionsChanged: boolean) => broker.publishHostEventEnvelope({
         eventId: HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1,

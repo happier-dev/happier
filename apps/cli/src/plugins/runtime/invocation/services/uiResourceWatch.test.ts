@@ -46,7 +46,7 @@ describe('native host Resource binding', () => {
             return { contentType: 'application/json', bytesBase64: bytes.toString('base64'), digest: digest(bytes) };
         };
         const pages = [page('first\n'), page('second\n')];
-        let emit!: (digest: string, pages?: typeof pages) => void | Promise<void>;
+        let emit!: (digest: string, delivered?: typeof pages) => void | Promise<void>;
         let disposed = 0;
         await owner.openHost({ accountId: 'account', subscriptionId: 'pages', resource,
             async bind(_signal, publish) { emit = publish; return { digest: digest(Buffer.from('initial')),

@@ -1628,7 +1628,7 @@ export function createStablePluginExecService(params: Readonly<{
             };
             const prepared = Object.freeze({ ...authorized, env,
                 ...(deploymentRuntimeProjection ? { retireDeploymentRuntimeFiles: () => consumed.retireRuntimeFiles() } : {}),
-                secretRedactionLease: redaction, deploymentSecretRefs: refs, deploymentReferenceAddresses: consumed.referenceAddresses,
+                secretRedactionLease: redaction, deploymentSecretRefs: refs, deploymentReferenceAddresses: [...consumed.referenceAddresses],
                 async recheckInputs() {
                     if (retired || !retained) fail('unavailable', 'Deployment execution environment is unavailable');
                     const current = retained;

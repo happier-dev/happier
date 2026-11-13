@@ -35,6 +35,8 @@ const PLUGIN_DIAGNOSTIC_USABILITY_CLASS: Readonly<Record<
     plugin_manifest_duplicate_id: 'declaration',
     plugin_manifest_semantic_invalid: 'declaration',
     plugin_manifest_engine_range_invalid: 'declaration',
+    // Engine-incompatible manifests fail ingestion: no declaration is produced.
+    plugin_manifest_engine_incompatible: 'declaration',
     // Bundled publication excluded the plugin: its package or UI artifact never
     // reached the host, so nothing it declares is available.
     plugin_package_build_failed: 'declaration',
@@ -129,6 +131,8 @@ const PLUGIN_DIAGNOSTIC_USABILITY_CLASS: Readonly<Record<
     descriptor_semantic_invalid: 'runtime',
     surface_semantic_invalid: 'runtime',
     plugin_contribution_skipped: 'runtime',
+    // The owning contribution stays available; only an optional reference is missing.
+    plugin_optional_reference_unavailable: 'runtime',
 } satisfies Record<PluginDiagnosticCode, PluginDiagnosticUsabilityClass>);
 
 /**

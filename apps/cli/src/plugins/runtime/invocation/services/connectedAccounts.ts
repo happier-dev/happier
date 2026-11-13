@@ -58,7 +58,10 @@ export type ConnectedAccountMaterializationCredentialRevisionBasis = Readonly<{
 
 export type StablePluginConnectedAccountsOwner = Readonly<{
     /** Host-private snapshot for finite SCM Action credential admission. */
-    resolveCurrentSessionPurposeBindingSnapshot?: import('@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner').ConnectedAccountPurposeBindingOwner['resolveCurrentSessionPurposeBindingSnapshot'];
+    resolveCurrentSessionPurposeBindingSnapshot?(input: Readonly<{
+        authorizedPurposes: readonly import('@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner').ConnectedAccountPurposeAuthorizationScope[];
+        signal: AbortSignal;
+    }>): Promise<import('@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner').ConnectedAccountCurrentSessionPurposeBindingSnapshot>;
     /** Host Agent factories bind an already-admitted Run, rather than durable defaults. */
     readExecutionRunPurposeBindingSubjectId?(runId: string): string | null;
     getBinding(

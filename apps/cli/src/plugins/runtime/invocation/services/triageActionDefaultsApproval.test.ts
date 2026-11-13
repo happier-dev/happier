@@ -5,6 +5,8 @@ import { fingerprintPluginAccountActionConfirmation, pluginActionRequiresPresent
 import { createProfileOperations } from '@happier-dev/protocol/profiles/profileOperations';
 import { createProfileActionExecuteV1 } from '@happier-dev/protocol/profiles/profileActionsV1';
 import type { ProfileRecordV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { resolvePromptDocCreateActionInputV1 } from '@happier-dev/protocol/prompts/library/promptDocV2';
+import { PluginManifestV2Schema } from '@happier-dev/protocol';
 import { createPromptDocInLibrary, type PromptLibraryArtifactStore, type PromptLibraryStoredArtifact } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import type { PromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
@@ -36,7 +38,7 @@ describe('Triage Save defaults approval through the Account host', () => {
         { label: 'explicit Ask approved different operands', ask: true, confirm: true, direct: false, change: 'input' },
         { label: 'explicit Ask without consent', ask: true, confirm: false, direct: false },
     ])('saves only reviewed Profile and prompt effects: $label', async scenario => {
-        const declaration = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === TRIAGE_SAVE_ACTION_DEFAULTS_ACTION_REF_V1.localId)!;
+        const declaration = PluginManifestV2Schema.parse(PLUGIN_MANIFEST).contributes.actions?.find(action => action.id === TRIAGE_SAVE_ACTION_DEFAULTS_ACTION_REF_V1.localId)!;
         const action = { pluginId: PLUGIN_MANIFEST.id, localId: declaration.id };
         const input = { action, input: { v: 1, kind: 'saveDefaults', actionId: 'fix', label: 'Repair carefully',
             promptText: 'Fix it with a regression test.', profileId: null, placement: 'ask', checkout: 'ask', launchMode: 'review' } };
@@ -90,7 +92,7 @@ describe('Triage Save defaults approval through the Account host', () => {
                 effectContexts.push(context);
                 return createProfileActionExecuteV1({ operations })(request, context);
             },
-            promptDocCreate: async request => createPromptDocInLibrary({ store, request }),
+            promptDocCreate: async request => createPromptDocInLibrary({ store, request: resolvePromptDocCreateActionInputV1(request) }),
             promptStacks: { serverId: 'home', assertCurrent() {},
                 readCatalog: async () => ({ catalog: { status: 'ready', rows: [{ record: invocationRecord, revision: 0 }], tombstones: [], diagnostics: [] } }),
                 writeRecord: async ({ record }) => { invocationRecord = record; return { status: 'updated', revision: 1, cursor: 1 }; },
@@ -135,7 +137,7 @@ describe('Triage Save defaults approval through the Account host', () => {
         const envelope = { v: 1 as const, requestId: 'save-defaults', target, input };
         // The Account relay retains the real caller: an own host UI press, or
         // a plugin's automation ceiling with separately reviewed intent.
-        const context: ActionExecutorContext = { surface: 'ui', authority: scenario.direct ? 'present_user' : 'account_automation', actionCaller: scenario.direct ? { kind: 'host' } : {
+        let context: ActionExecutorContext = { surface: 'ui', authority: scenario.direct ? 'present_user' : 'account_automation', actionCaller: scenario.direct ? { kind: 'host' } : {
             kind: 'plugin', pluginId: action.pluginId, contributionLocalId: action.localId,
             occurrenceId, sourceCustody, originSurface: 'ui',
         },
@@ -155,13 +157,13 @@ describe('Triage Save defaults approval through the Account host', () => {
         // consent uses the exact production Account wrapper fingerprint.
         if (scenario.confirm && pluginActionRequiresPresentUserIntent({ ...declaration,
             ...(scenario.ask ? { approvalRequiredByActionSettings: true } : {}) }, 'ui', input.input, 'present_user')) {
-            context.presentUserConfirmation = { actionId: 'action.invoke', requestId: envelope.requestId,
+            context = { ...context, presentUserConfirmation: { actionId: 'action.invoke', requestId: envelope.requestId,
                 accountId: scenario.change === 'account' ? 'other-owner' : 'owner', serverId: 'home', target,
                 inputDigest: fingerprintPluginAccountActionConfirmation({
                     input: scenario.change === 'input' ? { ...input, input: { ...input.input, label: 'Other approved label' } } : input,
                     pluginId: PLUGIN_MANIFEST.id,
                     pluginVersion: PLUGIN_MANIFEST.version, declaration, sourceCustody })!,
-            };
+            } };
         }
         try {
             const result = await executor.execute('action.invoke', input, context);

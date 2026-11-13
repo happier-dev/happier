@@ -6,11 +6,14 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionsService } from '@happier-dev/plugin-sdk/actions';
 import type { HealthCheckSourceConfigV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
 import type { AutomationEventStoredDefinitionProjectionV1 } from '@happier-dev/protocol';
 import { createAutomationEventAdoptedDefinitionSetHostV1 } from '@/plugins/runtime/automations/automationEventAdoptedDefinitionSetHost';
 import type { PluginInvocationServicesSeed } from '@/plugins/runtime/invocation/services/types';
 import { createSavedHealthChecksHost } from '@/deployments/healthChecks/savedHealthChecks';
-import { createPluginHttpService } from '@/plugins/runtime/fetch/service';
+import { createStablePluginHttpHost } from '@/plugins/runtime/fetch/service';
+import { createPluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
 import { createGlobalFetchRuntime } from '@/plugins/runtime/fetch/globalFetchRuntime';
 import {
   PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
@@ -219,8 +222,9 @@ describe('finite heartbeat Home client', () => {
     const occurrenceSignal = new AbortController();
     const sourceCustody = { kind: 'managed' as const, immutableGenerationId: 'generation', installSource: 'archive' as const };
     const eventRef = { pluginId: caller.pluginId, localId: 'health-status' };
-    const binding = { v: 1 as const, automationId: 'automation', triggerId: 'trigger', triggerRevision: 1,
-      triggerKind: 'pluginEvent' as const, eventRef, sourceSelectorId: '11111111-1111-4111-8111-111111111111' };
+    const binding = { v: 1 as const, automationId: 'automation', triggerId: AutomationTriggerIdSchema.parse('trigger'), triggerRevision: 1,
+      triggerKind: 'pluginEvent' as const, eventRef,
+      sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse('11111111-1111-4111-8111-111111111111') };
     const owner = createAutomationEventAdoptedDefinitionSetHostV1({
       credentials: { token: 'synthetic-heartbeat-account', encryption: null }, caller, occurrenceId: 'occurrence', sourceCustody,
       transport: { kind: 'checkpointedPull' }, occurrenceSignal: occurrenceSignal.signal,
@@ -261,7 +265,9 @@ describe('finite heartbeat Home client', () => {
       nativeInstance: { adapter: { pluginId: 'happier.machine.services', localId: 'systemd' }, nativeResourceId: 'example.service' },
       capabilities: { start: true, stop: true, restart: true, logs: true, accounting: false },
     } }) } as unknown as ActionsService;
-    const service = host.bind(seed, { actions, http: createPluginHttpService({ adapter: createGlobalFetchRuntime() }) });
+    const http = createStablePluginHttpHost({ adapter: createGlobalFetchRuntime() })
+      .bind(seed, createPluginInvocationServiceBinding(seed.occurrenceId, 'heartbeat-grant'));
+    const service = host.bind(seed, { actions, http });
     if (!service) throw new Error('Saved heartbeat service must bind');
     saved = await service.setup({ sourceInstanceId: 'health-source', sourceConfig: draft, heartbeatContributionId: 'heartbeat' });
     expect(saved.checks[0]?.config).toEqual({ graceMs: 200, webhookEndpointId: endpointId });

@@ -32,7 +32,7 @@ describe('plugin session launch binding', () => {
     // qualification still pass through their actual canonical owners.
     vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6, onboardingCompleted: true,
       servers: { 'profile-normalizer': { id: 'profile-normalizer', name: 'Normalizer',
-        serverUrl: scope.serverHttpBaseUrl, webappUrl: scope.serverHttpBaseUrl, createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+        serverUrl: scope.serverHttpBaseUrl, webappUrl: scope.serverHttpBaseUrl, createdAt: 1, updatedAt: 1,
         homeConnectionDescriptor: { v: 1, homeServerIdentityId: 'srv_normalizer', canonicalServerUrl: scope.serverHttpBaseUrl,
           revision: 1, endpoints: [{ kind: 'https', url: scope.serverHttpBaseUrl }] },
       } } });

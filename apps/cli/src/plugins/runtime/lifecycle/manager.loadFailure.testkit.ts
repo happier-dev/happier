@@ -47,7 +47,7 @@ export async function observeFailure(input: Readonly<{ root: string; entryPath: 
         contributes: { ...contributes, activationTargets: [{
             pluginId, manifest: admitted.manifest, provenance: 'first_party', source: { kind: 'bundled' },
             manifestPath: join(root, 'plugin.json'), daemonEntryPath: entryPath, activationEvents: ['startup'],
-            sourceSpec: { kind: 'package', locator: '@acme/loaderreason', trustPolicy: 'bundled_trusted', installPolicy: 'copy' },
+            sourceSpec: { kind: 'package', locator: '@acme/loaderreason', trustPolicy: 'local_trusted', installPolicy: 'copy' },
         }] }, generation: 1, pluginIds: [pluginId], retryFailedPreparation: true,
         resolveActivationSource: () => name === 'preparation syntax error'
             ? { kind: 'bundled', moduleId: root, prepare: async () => {

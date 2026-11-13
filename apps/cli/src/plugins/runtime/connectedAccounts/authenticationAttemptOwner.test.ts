@@ -483,7 +483,7 @@ describe('addressed manual attempts', () => {
         const api = createConnectedAccountAttemptTransactionApiBoundary();
         const transactions = createQualifiedConnectedAccountAttemptTransactionAdapters({
             credentials: { token: 'account-token', encryption: null },
-            getAccountEncryptionMode: async () => 'plain', getMachineId: () => null, now: () => 1_000, api,
+            getAccountEncryptionMode: async () => 'plain', getMachineId: () => undefined, now: () => 1_000, api,
         });
         const makeHost = () => {
             const store = createConnectedAccountAttemptConfigurationStore({ createRevision: () => 'configuration-2', transactions });

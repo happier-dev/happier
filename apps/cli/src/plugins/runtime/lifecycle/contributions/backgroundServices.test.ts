@@ -424,7 +424,7 @@ describe('background service runner host', () => {
         let observedCode: string | undefined;
         const runner = vi.fn(async (context: BackgroundServiceContext) => {
             try {
-                await context.services.http.request({ method: 'GET', url: 'https://gateway.example.test' });
+                await context.services.http.request({ method: 'GET', url: 'https://gateway.example.test', redirect: 'error' });
             } catch (error) {
                 if (!(error instanceof PluginError)) throw error;
                 observedCode = error.code;

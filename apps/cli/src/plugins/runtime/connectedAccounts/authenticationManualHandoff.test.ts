@@ -26,7 +26,7 @@ it.each(modes)('restores the unsubmitted manual mode $service.pluginId/$service.
             isRuntimeCurrent: () => true,
         });
         return createConnectedAccountAuthenticationAttemptOwner({
-            createAttemptId: () => 'manual-handoff', now: Date.now,
+            createAttemptId: () => 'manual-handoff', createAccountId: () => 'manual-handoff-account', now: Date.now,
             accounts: { readExact: async () => null }, configuration,
             runtime: {
                 // This is the external plugin registration boundary. No callback

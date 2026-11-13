@@ -61,6 +61,13 @@ type AuthoredAdmittedPluginRuntimeFixture = Awaited<ReturnType<typeof createAdmi
 }>;
 
 /** Retire a fixture's publication without ending the caller-owned daemon lifetime. */
+/** Authored fixtures that ship a daemon module name its declared entry file; a manifest without one is a fixture error. */
+export function requireDaemonEntrypoint(manifest: Readonly<{ entrypoints?: Readonly<{ daemon?: string }> }>): string {
+    const daemon = manifest.entrypoints?.daemon;
+    if (!daemon) throw new Error('Fixture manifest declares no daemon entrypoint');
+    return daemon;
+}
+
 export async function retireAdmittedPluginRuntimeRegistry(params: Readonly<{
     controller: PluginReloadController;
     registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>>;

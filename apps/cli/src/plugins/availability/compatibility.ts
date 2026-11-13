@@ -1,6 +1,5 @@
-import { createPluginCompatibilityProjectionV1, PluginCompatibilityProjectionV1Schema } from '@happier-dev/protocol/plugins/availability/compatibilityProjectionV1';
+import { createPluginCompatibilityProjectionV1, PluginCompatibilityProjectionEnvelopeV1Schema } from '@happier-dev/protocol/plugins/availability/compatibilityProjectionV1';
 import type { PluginCompatibilityProjectionV1 } from '@happier-dev/protocol';
-import { z } from 'zod/mini';
 
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
 import { projectPluginManifestCompatibilityDiagnostic } from '@/plugins/manifest/diagnostics';
@@ -10,9 +9,7 @@ import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnos
 const INVALID_COMPATIBILITY_PROJECTION_DIAGNOSTIC = 'Plugin compatibility projection is invalid.';
 // Validate generated facts here; only the canonical admission owner interprets
 // the manifest. Parsing the author schema first would reject healthy siblings.
-const CompatibilityProjectionEnvelopeSchema = z.extend(PluginCompatibilityProjectionV1Schema, {
-  manifest: z.unknown(),
-});
+const CompatibilityProjectionEnvelopeSchema = PluginCompatibilityProjectionEnvelopeV1Schema;
 
 export type PluginCompatibilityProjectionEvaluation =
   | Readonly<{

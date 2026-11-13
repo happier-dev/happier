@@ -105,7 +105,7 @@ export function managedQueryProviderHttp(postgres: ManagedQueryPostgres, request
         const [guard, caller] = body.queries;
         if (!guard || !caller || typeof guard !== 'object' || typeof caller !== 'object'
             || !('query' in guard) || typeof guard.query !== 'string' || !('query' in caller) || typeof caller.query !== 'string'
-            || !('params' in caller) || !Array.isArray(caller.params) || !caller.params.every(value => typeof value === 'string')) {
+            || !('params' in caller) || !Array.isArray(caller.params) || !caller.params.every((value: unknown) => typeof value === 'string')) {
             return { ...managedQueryResponse({ code: 'invalid_request' }, 400), finalUrl: request.url };
         }
         if (caller.query === 'SELECT 1; SELECT 2') {

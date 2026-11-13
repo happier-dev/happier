@@ -118,7 +118,7 @@ function buildActionInputV1(claim: DeliveryClaimV1, credentials: StoredCredentia
     },
     verified: {
       verifier: content.verified.verifier,
-      ...(content.verified.eventType ? { eventType: content.verified.eventType } : {}),
+      ...('eventType' in content.verified && content.verified.eventType ? { eventType: content.verified.eventType } : {}),
     },
   });
 }

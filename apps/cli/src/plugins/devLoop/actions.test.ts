@@ -122,8 +122,9 @@ describe('executePluginDevLoopAction', () => {
       resolvePluginInstallRegistry: async () => ({ ok: true, registry: null }),
     });
     if (!deps.buildApprovalPreview) throw new Error('Expected approval preview owner');
+    const input = { path: '/workspace/plugin', dev: true };
     await expect(deps.buildApprovalPreview({ actionId: 'plugins.install',
-      input: { path: '/workspace/plugin', dev: true }, context: { surface: 'cli' }, defaultPreview: {},
+      input, context: { surface: 'cli' }, defaultPreview: { actionId: 'plugins.install', actionArgs: input, summary: 'Install plugin' },
     })).resolves.toMatchObject({ ok: false, errorCode: 'plugin_change_failed', failureCause });
   });
 

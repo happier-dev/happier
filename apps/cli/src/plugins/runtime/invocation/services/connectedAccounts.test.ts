@@ -1,3 +1,4 @@
+import { createUnavailablePluginServices } from './unavailable';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { logger } from '@/ui/logger';
 import { readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
@@ -46,7 +47,7 @@ import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots'
 import { createPurposeTargetResolver } from '@happier-dev/cli-common/connectedAccounts';
 import { PluginConnectedAccountAuthenticationV2Schema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol';
 import { prepareOpenCodeQualifiedConnectedAccounts } from '../../../../../../../packages/plugins/opencode/src/agent/auth/services/qualifiedPurposeLaunch';
-import { OPEN_CODE_CONNECTED_ACCOUNT_PURPOSE_IDS } from '../../../../../../../packages/plugins/opencode/src/agent/auth/services/purposes';
+import { OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS } from '../../../../../../../packages/plugins/opencode/src/agent/auth/services/purposes';
 import { buildOpenCodeManagedServerSpawnSpec } from '../../../../../../../packages/plugins/opencode/src/agent/runtime/server/spawnSpec';
 import { OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV } from '../../../../../../../packages/plugins/opencode/src/agent/auth/services/requestAuth/env';
 import { OPEN_CODE_SYSTEM_TOOL_ID } from '../../../../../../../packages/plugins/opencode/src/agent/systemTool';
@@ -221,7 +222,7 @@ describe('stable plugin Connected Accounts host', () => {
         const consumer = { pluginId: 'happier.agent.opencode', localId: 'opencode' };
         const actionConsumer = { ...consumer, localId: 'nested-action' };
         const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
-        const purposes = OPEN_CODE_CONNECTED_ACCOUNT_PURPOSE_IDS.map(purpose => ({ consumer, purpose }));
+        const purposes = OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS.map(({ declaration }) => ({ consumer, purpose: declaration.purpose }));
         const selectedPurpose = purposes.find(entry => entry.purpose === 'openai-codex-model-request')!;
         const binding = (accountId: string) => ({ purpose: selectedPurpose,
             target: { kind: 'account' as const, account: { service, accountId } } });
@@ -1082,8 +1083,9 @@ describe('stable plugin Connected Accounts host', () => {
             materializeAccount: async input => openAiCodexConnectedAccountRuntime.materialize(input.request, {
                 account: input.account, signal: input.signal, credentials: { get: async key => values.get(key) ?? null },
                 configuration: { target: { kind: 'account', account, modeId: 'oauth' }, revision: 'fixture-config', values: {}, getSecret: async () => null },
-                services: {},
-            } as Parameters<typeof openAiCodexConnectedAccountRuntime.materialize>[1]),
+                plugin: seed.plugin, contribution: seed.contribution, surface: 'background', invokedAtMs: 1,
+                services: createUnavailablePluginServices(),
+            }),
         });
         const host = createStablePluginConnectedAccountsHost(fixture.owner);
         try {
@@ -1820,7 +1822,8 @@ describe('Coder options with established token material', () => {
         const context = { signal: seed.signal, invokedAtMs: 1, services: { connectedAccounts: host.bind(seed, [scope]), http: { request: http } } } as unknown as PluginInvocationContext;
         try {
             if (failure !== 'ok') {
-                const failureResult = await handlers.get('options')!({ organizationId: 'org' }, context).catch(error => readPluginActionError(error));
+                const failureResult = await Promise.resolve(handlers.get('options')!({ organizationId: 'org' }, context))
+                    .catch((error: unknown) => readPluginActionError(error));
                 expect(failureResult).toMatchObject({
                     code: 'plugin_action_execution_failed', data: { failureCause: { phase: 'connected_accounts.materialize',
                         errorCode: failure === 'io' ? 'EIO' : 'credential_snapshot_unavailable' } },

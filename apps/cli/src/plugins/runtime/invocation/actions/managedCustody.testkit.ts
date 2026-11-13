@@ -285,11 +285,7 @@ export function fixture(options: Readonly<{
             resourceSelections: [], scopedGrants: [], operatingSystemAuthorization: [],
         }),
         resolveHostBinding: options.resolveHostBinding ?? createTargetActionHostBindingResolver(options.credentialOwner || options.nativeCommandArgs || options.nativeCredentialService ? {
-            createServiceBinding: options.createHostServiceBinding ?? ((occurrence, id, requests) => {
-                const binding = createPluginInvocationServiceBinding(occurrence, id);
-                const execBinding = options.nativeCommandArgs ? binding : binding;
-                return options.credentialOwner ? execBinding : execBinding;
-            }),
+            createServiceBinding: options.createHostServiceBinding ?? createPluginInvocationServiceBinding,
         } : undefined),
         createServices(seed, binding) {
             if (options.createServices) return options.createServices(seed, binding);

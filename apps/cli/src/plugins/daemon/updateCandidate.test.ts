@@ -9,11 +9,13 @@ import { readInstalledPluginUpdateCandidate } from './updateCandidate';
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 async function home() { const root = await mkdtemp(join(tmpdir(), 'plugin-update-read-')); roots.push(root); return root; }
-function record(pluginId = 'acme.example'): PluginStateRecord {
+type TrustDistribution = NonNullable<NonNullable<PluginStateRecord['install']>['trust']>['distribution'];
+function record(pluginId = 'acme.example',
+  distribution: TrustDistribution = { kind: 'npm', packageName: '@acme/example', registryOrigin: 'https://registry.npmjs.org' }): PluginStateRecord {
   return { source: { kind: 'package', locator: '@acme/example', trustPolicy: 'prompt', installPolicy: 'managed_install',
     resolvedPath: '/installed', manifestPath: '/installed/plugin.json' }, compatibility: { status: 'compatible', diagnostics: [] },
     install: { mode: 'managed_install', manifestVersion: '1.0.0', updatePolicy: 'allowed', trust: { pluginId, state: 'trusted', approvedAtMs: 1,
-      distribution: { kind: 'npm', packageName: '@acme/example', registryOrigin: 'https://registry.npmjs.org' } } }, state: { enabled: true } };
+      distribution } }, state: { enabled: true } };
 }
 it('reads the existing npm selector without downloading, installing or changing the baseline', async () => {
   const happyHomeDir = await home();
@@ -49,8 +51,7 @@ it('reads a trusted local source and refuses a substituted plugin identity', asy
   const manifestPath = join(source, '.happier-plugin/plugin.json');
   const manifest = { schemaVersion: 2, id: 'acme.example', version: '1.2.0', displayName: 'Example', engines: { happier: '>=0.0.0' }, runtime: { apiVersion: 1 }, contributes: {} };
   await writeFile(manifestPath, JSON.stringify(manifest));
-  const installed = record();
-  installed.install.trust!.distribution = { kind: 'localPath', canonicalPath: source };
+  const installed = record('acme.example', { kind: 'localPath', canonicalPath: source });
   expect(await readInstalledPluginUpdateCandidate({ pluginId: 'acme.example', installed, happyHomeDir })).toMatchObject({ state: 'resolved', candidateVersion: '1.2.0' });
   await writeFile(manifestPath, JSON.stringify({ ...manifest, id: 'acme.substitute' }));
   expect(await readInstalledPluginUpdateCandidate({ pluginId: 'acme.example', installed, happyHomeDir })).toMatchObject({ state: 'unavailable', reason: { code: 'plugin_update_identity_mismatch' } });
@@ -63,8 +64,7 @@ it('reads an archive manifest without invoking its package scripts or preparing 
     { name: 'package/package.json', body: JSON.stringify({ name: '@acme/example', version: '1.3.0', keywords: ['happier-plugin'], files: ['.happier-plugin'], happier: { manifest: '.happier-plugin/plugin.json' }, scripts: { preinstall: 'exit 1' } }) },
     { name: 'package/.happier-plugin/plugin.json', body: JSON.stringify({ schemaVersion: 2, id: 'acme.example', version: '1.3.0', displayName: 'Example', engines: { happier: '>=0.0.0' }, runtime: { apiVersion: 1 }, contributes: {} }) },
   ]));
-  const installed = record();
-  installed.install.trust!.distribution = { kind: 'archive', source: { kind: 'localFile', canonicalPath: archivePath } };
+  const installed = record('acme.example', { kind: 'archive', source: { kind: 'localFile', canonicalPath: archivePath } });
   expect(await readInstalledPluginUpdateCandidate({ pluginId: 'acme.example', installed, happyHomeDir })).toEqual({ pluginId: 'acme.example', installedVersion: '1.0.0', state: 'resolved', candidateVersion: '1.3.0' });
   expect(await readdir(happyHomeDir)).toEqual(['source.tgz']);
 });
