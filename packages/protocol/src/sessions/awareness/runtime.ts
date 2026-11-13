@@ -67,7 +67,7 @@ export function hasProjectedActiveTurnV1(
 /** Presence and the Session's own persisted turn are independent, clock-free facts. */
 export function isProjectedSessionStalledV1(input: Readonly<{
   active?: boolean | null;
-  latestTurnStatus: string | null | undefined;
+  latestTurnStatus?: string | null;
 }>): boolean {
   return input.active === false && hasProjectedActiveTurnV1(input.latestTurnStatus);
 }
