@@ -1,3 +1,6 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { parseExplicitSpawnEnvKeysFromProcessEnv } from '@/daemon/spawn/spawnExplicitEnvKeysMarker';
+
 type AccountSettingsEnvInput = Readonly<Record<string, unknown> & {
   scmIncludeCoAuthoredBy?: boolean;
   actionsSettingsV1?: unknown;
@@ -5,75 +8,90 @@ type AccountSettingsEnvInput = Readonly<Record<string, unknown> & {
   backendCliSourcePreferenceByTargetKey?: unknown;
 }>;
 
-let backendCliSourcePreferencesManagedBySettings = false;
-let backendCliSourcePreferencesLastManagedValue: string | null = null;
-let scmIncludeCoAuthoredByManagedBySettings = false;
-let scmIncludeCoAuthoredByLastManagedValue: string | null = null;
-let actionsSettingsManagedBySettings = false;
-let actionsSettingsLastManagedValue: string | null = null;
+const accountSettingsEnvironmentFields = [
+  ['backendCliSourcePreferences', 'HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON'],
+  ['scmIncludeCoAuthoredBy', 'HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY'],
+  ['actionsSettings', 'HAPPIER_ACTIONS_SETTINGS_V1'],
+] as const;
+
+type AccountSettingsEnvironmentProjection = Record<typeof accountSettingsEnvironmentFields[number][0], string | null>;
+
+// Ownership of a settings-managed value follows its environment, so another Session's
+// explicit override cannot retire this Session's managed defaults.
+let projectionByEnvironment = new WeakMap<NodeJS.ProcessEnv, AccountSettingsEnvironmentProjection>();
 
 export function __resetApplyAccountSettingsToProcessEnvStateForTests(): void {
-  backendCliSourcePreferencesManagedBySettings = false;
-  backendCliSourcePreferencesLastManagedValue = null;
-  scmIncludeCoAuthoredByManagedBySettings = false;
-  scmIncludeCoAuthoredByLastManagedValue = null;
-  actionsSettingsManagedBySettings = false;
-  actionsSettingsLastManagedValue = null;
+  projectionByEnvironment = new WeakMap();
+}
+
+export function readAccountSettingsEnvironmentOverrideKeys(environment: NodeJS.ProcessEnv): readonly string[] {
+  const projection = projectionByEnvironment.get(environment);
+  return accountSettingsEnvironmentFields.flatMap(([field, key]) => (
+    typeof environment[key] === 'string' && environment[key] !== projection?.[field] ? [key] : []
+  ));
 }
 
 export function applyAccountSettingsToProcessEnv(params: Readonly<{
   settings: AccountSettingsEnvInput;
 }>): void {
-  const currentScmEnvValue = typeof process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY === 'string'
-    ? process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY
-    : null;
-  if (scmIncludeCoAuthoredByManagedBySettings && currentScmEnvValue !== scmIncludeCoAuthoredByLastManagedValue) {
-    scmIncludeCoAuthoredByManagedBySettings = false;
-    scmIncludeCoAuthoredByLastManagedValue = null;
+  const environment = sessionProcessEnvironment();
+  const explicitKeys = parseExplicitSpawnEnvKeysFromProcessEnv(environment);
+  let projection = projectionByEnvironment.get(environment);
+  if (!projection) {
+    // A daemon-admitted carrier identifies inherited Account defaults even across
+    // the separate host process. Unmarked shell callers retain their explicit values.
+    const inheritedValue = (key: string) => explicitKeys !== null && !explicitKeys.includes(key)
+      ? environment[key] ?? null : null;
+    projection = {
+      backendCliSourcePreferences: inheritedValue('HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON'),
+      scmIncludeCoAuthoredBy: inheritedValue('HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY'),
+      actionsSettings: inheritedValue('HAPPIER_ACTIONS_SETTINGS_V1'),
+    };
+    projectionByEnvironment.set(environment, projection);
   }
-  if (currentScmEnvValue === null || scmIncludeCoAuthoredByManagedBySettings) {
+  const currentScmEnvValue = typeof environment.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY === 'string'
+    ? environment.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY
+    : null;
+  if (projection.scmIncludeCoAuthoredBy !== null && currentScmEnvValue !== projection.scmIncludeCoAuthoredBy) {
+    projection.scmIncludeCoAuthoredBy = null;
+  }
+  if (!explicitKeys?.includes('HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY')
+    && (currentScmEnvValue === null || projection.scmIncludeCoAuthoredBy !== null)) {
     const raw = params.settings?.scmIncludeCoAuthoredBy;
     if (typeof raw === 'boolean') {
       const nextValue = raw ? '1' : '0';
-      process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY = nextValue;
-      scmIncludeCoAuthoredByManagedBySettings = true;
-      scmIncludeCoAuthoredByLastManagedValue = nextValue;
-    } else if (scmIncludeCoAuthoredByManagedBySettings) {
-      delete process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY;
-      scmIncludeCoAuthoredByManagedBySettings = false;
-      scmIncludeCoAuthoredByLastManagedValue = null;
+      environment.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY = nextValue;
+      projection.scmIncludeCoAuthoredBy = nextValue;
+    } else if (projection.scmIncludeCoAuthoredBy !== null) {
+      delete environment.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY;
+      projection.scmIncludeCoAuthoredBy = null;
     }
   }
 
-  const currentActionsEnvValue = typeof process.env.HAPPIER_ACTIONS_SETTINGS_V1 === 'string'
-    ? process.env.HAPPIER_ACTIONS_SETTINGS_V1
+  const currentActionsEnvValue = typeof environment.HAPPIER_ACTIONS_SETTINGS_V1 === 'string'
+    ? environment.HAPPIER_ACTIONS_SETTINGS_V1
     : null;
-  if (actionsSettingsManagedBySettings && currentActionsEnvValue !== actionsSettingsLastManagedValue) {
-    actionsSettingsManagedBySettings = false;
-    actionsSettingsLastManagedValue = null;
+  if (projection.actionsSettings !== null && currentActionsEnvValue !== projection.actionsSettings) {
+    projection.actionsSettings = null;
   }
-  if (currentActionsEnvValue === null || actionsSettingsManagedBySettings) {
-    const rawActions = (params.settings as any)?.actionsSettingsV1;
+  if (!explicitKeys?.includes('HAPPIER_ACTIONS_SETTINGS_V1')
+    && (currentActionsEnvValue === null || projection.actionsSettings !== null)) {
+    const rawActions = params.settings.actionsSettingsV1;
     const parsed = rawActions && typeof rawActions === 'object' ? rawActions : null;
     if (parsed) {
       try {
         const serialized = JSON.stringify(parsed);
-        process.env.HAPPIER_ACTIONS_SETTINGS_V1 = serialized;
-        actionsSettingsManagedBySettings = true;
-        actionsSettingsLastManagedValue = serialized;
+        environment.HAPPIER_ACTIONS_SETTINGS_V1 = serialized;
+        projection.actionsSettings = serialized;
       } catch {
         // ignore
       }
-    } else if (actionsSettingsManagedBySettings) {
-      delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
-      actionsSettingsManagedBySettings = false;
-      actionsSettingsLastManagedValue = null;
+    } else if (projection.actionsSettings !== null) {
+      delete environment.HAPPIER_ACTIONS_SETTINGS_V1;
+      projection.actionsSettings = null;
     }
   }
 
-  if (typeof process.env.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON !== 'string') {
-    // Allow explicit env var overrides (for debugging / CI) on the first write only.
-  }
   const rawPreferences = params.settings.backendCliSourcePreferenceByTargetKey ?? params.settings.backendCliSourcePreferenceById;
   const parsed =
     rawPreferences && typeof rawPreferences === 'object' && !Array.isArray(rawPreferences)
@@ -83,26 +101,24 @@ export function applyAccountSettingsToProcessEnv(params: Readonly<{
           ),
         )
       : null;
-  const envAlreadySet = typeof process.env.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON === 'string';
-  const currentEnvValue = envAlreadySet ? process.env.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON ?? null : null;
-  if (backendCliSourcePreferencesManagedBySettings && currentEnvValue !== backendCliSourcePreferencesLastManagedValue) {
-    backendCliSourcePreferencesManagedBySettings = false;
-    backendCliSourcePreferencesLastManagedValue = null;
+  const envAlreadySet = typeof environment.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON === 'string';
+  const currentEnvValue = envAlreadySet ? environment.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON ?? null : null;
+  if (projection.backendCliSourcePreferences !== null && currentEnvValue !== projection.backendCliSourcePreferences) {
+    projection.backendCliSourcePreferences = null;
   }
-  if (!envAlreadySet || backendCliSourcePreferencesManagedBySettings) {
+  if (!explicitKeys?.includes('HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON')
+    && (!envAlreadySet || projection.backendCliSourcePreferences !== null)) {
     if (parsed && Object.keys(parsed).length > 0) {
       try {
         const serialized = JSON.stringify(parsed);
-        process.env.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON = serialized;
-        backendCliSourcePreferencesManagedBySettings = true;
-        backendCliSourcePreferencesLastManagedValue = serialized;
+        environment.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON = serialized;
+        projection.backendCliSourcePreferences = serialized;
       } catch {
         // ignore
       }
-    } else if (backendCliSourcePreferencesManagedBySettings) {
-      delete process.env.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON;
-      backendCliSourcePreferencesManagedBySettings = false;
-      backendCliSourcePreferencesLastManagedValue = null;
+    } else if (projection.backendCliSourcePreferences !== null) {
+      delete environment.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON;
+      projection.backendCliSourcePreferences = null;
     }
   }
 }

@@ -37,6 +37,7 @@ import {
 import { resolveConcreteBackendTargetRefV2 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 import { dispatchDaemonSpawnHookEvent } from '@/plugins/runtime/hooks/execution/dispatchDaemonSpawnHookEvent';
 import { HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR } from './spawnExplicitEnvKeysMarker';
+import { readAccountSettingsEnvironmentOverrideKeys } from '@/settings/applyAccountSettingsToProcessEnv';
 import type { ConnectedServicesMaterializationDiagnostic } from '@/daemon/connectedServices/materialization/materializer';
 import {
   type AgentSpawnQualifiedPurposeBindingSnapshot,
@@ -522,6 +523,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
   }
 
   const explicitEnvKeysForChild = Array.from(new Set<string>([
+    ...readAccountSettingsEnvironmentOverrideKeys(params.processEnv),
     ...Object.keys(profileEnv),
     ...Object.keys(sanitizedAuthEnv),
   ]));
@@ -928,11 +930,9 @@ async function resolveSpawnChildEnvironmentImpl(params: {
   }
   extraEnvForChild[SESSION_MACHINE_WORKSPACE_PATH_ENV] = params.options.directory;
   const uniqueExplicitEnvKeysForChild = Array.from(new Set(explicitEnvKeysForChild));
-  if (uniqueExplicitEnvKeysForChild.length > 0) {
-    extraEnvForChild[HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR] = JSON.stringify(
-      uniqueExplicitEnvKeysForChild,
-    );
-  }
+  extraEnvForChild[HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR] = JSON.stringify(
+    uniqueExplicitEnvKeysForChild,
+  );
 
   return {
     ok: true,

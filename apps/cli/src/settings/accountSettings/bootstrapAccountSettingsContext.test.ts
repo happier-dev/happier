@@ -21,11 +21,15 @@ import type { Credentials, StoredCredentials, TokenOnlyCredentials } from '@/per
 import * as persistence from '@/persistence';
 import { deriveSettingsSecretsReadKeysForCredentials } from '@/settings/secrets/settingsSecretsKey';
 
-import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextForTests } from './bootstrapAccountSettingsContext';
+import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextForTests, type AccountSettingsContext } from './bootstrapAccountSettingsContext';
 import { beginActivePromptLibraryCatalogRefresh, getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, setActiveAccountSettingsSnapshot } from './activeAccountSettingsSnapshot';
 import { createAccountSettingsScopeKey } from './accountSettingsScopeKey';
 import { resolveAccountSettingsCachePath, writeAccountSettingsCacheAtomic } from './accountSettingsCache';
 import { createDeferred } from '@/testkit/async/deferred';
+import { runAddedHostedSession, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { __resetApplyAccountSettingsToProcessEnvStateForTests } from '@/settings/applyAccountSettingsToProcessEnv';
+import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
+import { buildSpawnChildProcessEnv } from '@/daemon/spawn/buildSpawnChildProcessEnv';
 
 function createCredentialsStub(): Credentials {
   return {
@@ -76,6 +80,120 @@ describe('bootstrapAccountSettingsContext', () => {
 
   beforeEach(() => {
     resetInMemoryAccountSettingsContextForTests();
+  });
+
+  it('projects refreshed Account defaults into each hosted Session while preserving explicit overrides and host defaults', async () => {
+    const keys = ['HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY', 'HAPPIER_ACTIONS_SETTINGS_V1',
+      'HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON'] as const;
+    const previous = keys.map(key => [key, process.env[key]] as const);
+    for (const key of keys) delete process.env[key];
+    __resetApplyAccountSettingsToProcessEnvStateForTests();
+    Object.assign(mutableConfigurationForTest(), { clientEncryptionRequirement: 'follow_account' });
+    const credentials = createTokenOnlyCredentialsStub();
+    const target = 'agent:happier.agent.codex/codex';
+    const rawSettings = (enabled: boolean) => ({ scmIncludeCoAuthoredBy: enabled,
+      actionsSettingsV1: { v: 1, actions: { 'review.start': { enabled, disabledSurfaces: [], disabledPlacements: [] } } },
+      backendCliSourcePreferenceByTargetKey: { [target]: enabled ? 'managed-first' : 'system-first' } });
+    let settingsVersion = 1;
+    let settings: Record<string, unknown> = rawSettings(true);
+    // Persistent cache and server reads are system boundaries; publication and projection stay real.
+    const fetchFromServer = vi.fn(async () => ({
+      settingsContent: { t: 'plain' as const, v: settings }, settingsVersion,
+    }));
+    const bootstrap = () => bootstrapAccountSettingsContext({ credentials, mode: 'blocking', refresh: 'force',
+      honorAccountSettingsModeEnv: false, deps: { resolveCachePath: () => '/tmp/hosted-account-settings.cache',
+        readCache: async () => null, writeCache: async () => {}, fetchFromServer } });
+    const readProjection = () => keys.map(key => sessionProcessEnvironment()[key]);
+    const expectedProjection = (context: AccountSettingsContext) => [
+      context.settings.scmIncludeCoAuthoredBy ? '1' : '0', JSON.stringify(context.settings.actionsSettingsV1),
+      JSON.stringify(context.settings.backendCliSourcePreferenceByTargetKey),
+    ];
+    const defaultsEnvironment = { ...process.env };
+    const explicitValues = ['0', JSON.stringify(rawSettings(false).actionsSettingsV1),
+      JSON.stringify(rawSettings(false).backendCliSourcePreferenceByTargetKey)];
+    const explicitEnvironment = { ...process.env, ...Object.fromEntries(keys.map((key, index) => [key, explicitValues[index]])) };
+    try {
+      await runAddedHostedSession({ environment: defaultsEnvironment, workingDirectory: '/session/defaults', end() {} }, async () => {
+        const first = await bootstrap();
+        expect(readProjection()).toEqual(expectedProjection(first));
+        await runAddedHostedSession({ environment: explicitEnvironment, workingDirectory: '/session/explicit', end() {} }, async () => {
+          await bootstrap();
+          expect(readProjection()).toEqual(explicitValues);
+        });
+        settingsVersion = 2;
+        settings = rawSettings(false);
+        const refreshed = await bootstrap();
+        expect(readProjection()).toEqual(expectedProjection(refreshed));
+        settingsVersion = 3;
+        settings = {};
+        const cleared = await bootstrap();
+        expect(readProjection()).toEqual([undefined, JSON.stringify(cleared.settings.actionsSettingsV1), undefined]);
+      });
+      expect(keys.map(key => explicitEnvironment[key])).toEqual(explicitValues);
+      expect(keys.map(key => process.env[key])).toEqual([undefined, undefined, undefined]);
+      settingsVersion = 4;
+      settings = rawSettings(true);
+      const host = await bootstrap();
+      expect(keys.map(key => process.env[key])).toEqual(expectedProjection(host));
+      const capturedHostValues = keys.map(key => process.env[key]);
+      const prepareChild = async (explicit: boolean, unsetScm = false) => {
+        const resolved = await resolveSpawnChildEnvironment({ options: { directory: '.' },
+          profileEnvironmentVariables: explicit
+            ? Object.fromEntries(keys.map(key => [key, String(process.env[key])])) : {},
+          ...(unsetScm ? { providerEnvironmentOverlay: [{ source: 'provider' as const, name: keys[0], value: null }] } : {}),
+          processEnv: process.env, daemonSpawnHooks: null, connectedServiceAuth: null,
+          logDebug() {}, logInfo() {}, logWarn() {},
+        });
+        if (!resolved.ok) throw new Error(`Spawn environment refused: ${resolved.errorMessage}`);
+        return buildSpawnChildProcessEnv({ processEnv: process.env, extraEnv: resolved.extraEnvForChild,
+          unsetEnvKeys: resolved.unsetEnvKeys });
+      };
+      const inheritedChild = await prepareChild(false);
+      const authoredChild = await prepareChild(true);
+      const authoredUnsetChild = await prepareChild(true, true);
+      // The daemon launches a separate host process: only the admitted environment
+      // crosses that boundary, never this process's projection bookkeeping.
+      __resetApplyAccountSettingsToProcessEnvStateForTests();
+      settingsVersion = 5;
+      settings = rawSettings(false);
+      await runAddedHostedSession({ environment: inheritedChild, workingDirectory: '/session/inherited', end() {} }, async () => {
+        const inherited = await bootstrap();
+        expect(readProjection()).toEqual(expectedProjection(inherited));
+        await runAddedHostedSession({ environment: authoredChild, workingDirectory: '/session/authored', end() {} }, async () => {
+          await bootstrap();
+          expect(readProjection()).toEqual(capturedHostValues);
+        });
+        await runAddedHostedSession({ environment: authoredUnsetChild, workingDirectory: '/session/unset', end() {} }, async () => {
+          await bootstrap();
+          expect(readProjection()).toEqual([undefined, ...capturedHostValues.slice(1)]);
+        });
+        settingsVersion = 6;
+        settings = rawSettings(true);
+        const refreshed = await bootstrap();
+        expect(readProjection()).toEqual(expectedProjection(refreshed));
+      });
+      expect(keys.map(key => process.env[key])).toEqual(capturedHostValues);
+      // A shell value in the fresh host remains deliberate, even when it equals
+      // an earlier Account default from the daemon process.
+      process.env[keys[0]] = '1';
+      settingsVersion = 7;
+      settings = rawSettings(false);
+      await bootstrap();
+      const shellOverrideChild = await prepareChild(false);
+      settingsVersion = 8;
+      await runAddedHostedSession({ environment: shellOverrideChild, workingDirectory: '/session/shell', end() {} }, async () => {
+        await bootstrap();
+        expect(sessionProcessEnvironment()[keys[0]]).toBe('1');
+      });
+      // One admitted forced bootstrap performs one server read, with no Session fan-out.
+      expect(fetchFromServer).toHaveBeenCalledTimes(11);
+    } finally {
+      __resetApplyAccountSettingsToProcessEnvStateForTests();
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 
   it('shares requester reads across different version floors but checks each publication and cancellation independently', async () => {
