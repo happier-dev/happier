@@ -410,6 +410,8 @@ function refineSessionResponsibilityFields(value: {
 }
 
 export const V2SessionRecordSchema = lazyZodSchema(() => z.looseObject({
+    /** Home-projected routing hint for a Session participant who already holds Machine Manage. */
+    computerMachineBinding: z.optional(z.strictObject({ homeId: z.string().check(z.minLength(1)), machineId: z.string().check(z.minLength(1)) })),
     displayProjectionV1: z.optional(SessionDisplayProjectionV1Schema),
     /** Owner detail only: Home-written inference selection witness, never caller metadata or current broker authority. */
     acceptedTeamCredentialBinding: z.optional(z.nullable(SessionTeamCredentialBindingIntentV1Schema)),

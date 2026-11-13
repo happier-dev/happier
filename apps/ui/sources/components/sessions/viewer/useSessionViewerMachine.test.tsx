@@ -35,6 +35,27 @@ function seed(machineSeed: Parameters<typeof createMachineFixture>[0] | null) {
 }
 
 describe('the Machine name the viewer says', () => {
+    it('opens a shared layout-1 Session from the Home Manage-only Computer binding without owner metadata', async () => {
+        seed({});
+        const session = getStorage().getState().sessions.s1!;
+        getStorage().setState({ sessions: { s1: { ...session, metadataLayoutVersion: 1,
+            metadata: { v: 1 }, ownerMetadataView: null,
+            computerMachineBinding: { homeId: serverId, machineId: 'm1' } } } });
+        function Wrapper(props: React.PropsWithChildren) {
+            return React.createElement(SessionViewerControllerProvider, {
+                sessionId: 's1', serverId, phone: false, canPresentSource: () => true, openDocked: vi.fn(),
+            }, props.children);
+        }
+        const hook = await renderHook(() => useOpenSessionComputerScreen({ sessionId: 's1', serverId }), { wrapper: Wrapper });
+        expect(hook.getCurrent()).not.toBeNull();
+        await act(async () => getStorage().setState({ sessions: { s1: { ...session,
+            metadataLayoutVersion: 1, metadata: { v: 1 }, ownerMetadataView: null,
+            computerMachineBinding: { homeId: 'another-home', machineId: 'm1' } } } }));
+        expect(hook.getCurrent()).toBeNull();
+        await act(async () => getStorage().setState({ sessions: { s1: { ...session,
+            metadataLayoutVersion: 1, metadata: { v: 1 }, ownerMetadataView: null } } }));
+        expect(hook.getCurrent()).toBeNull();
+    });
     it('keeps an offline Computer launcher disabled and refuses another requested Machine', async () => {
         seed({ active: false, activeAt: Date.now() - 120_000 });
         const openDocked = vi.fn();

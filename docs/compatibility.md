@@ -8487,6 +8487,17 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 authenticated Session detail adds optional `computerMachineBinding`
+with a closed `{ homeId, machineId }` object. C79 limits this recipient projection
+to Session participants with existing Machine Manage. It is a routing hint, never
+Computer admission, and is absent for other recipients and older producers.
+The outer Session record remains additive-open/preserve; older readers ignore the
+unrecognized hint. The inspected `../0.2` frontier
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` uses a passthrough
+`V2SessionRecordSchema` in `sessionControl/contract.ts`. Current readers validate
+the known closed binding. No shared ciphertext, owner envelope, database schema,
+wire epoch, request field, compatibility adapter or capability changes.
+
 Unreleased 0.3 Machine Services list/detail rows add optional `failureCause`
 using the existing closed `ActionFailureCauseV1` schema. A failed retained
 source is an inert unavailable row; healthy services remain readable through the

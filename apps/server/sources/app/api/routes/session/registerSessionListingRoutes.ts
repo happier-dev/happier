@@ -1,5 +1,6 @@
 import { buildAccountStoredContentUpgradeRequired, type AccountStoredContentCompatibilityEvaluation } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import { z } from "zod/mini";
+import { readSessionComputerBindingsInTx } from '@/app/session/metadata/sessionComputerBinding';
 
 import { AnyClientUpgradeRequiredV1Schema } from '@happier-dev/protocol/clientCompatibility/upgradeRequiredV1';
 import { OperationUpdateRequiredV1Schema } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
@@ -29,7 +30,8 @@ import { loadSessionRuleReadStatesInTx } from "@/app/session/personal/readState"
 import { readAccountFollowRuleProjectionRowsInTx, projectAccountFollowRuleReceiverCounts } from "@/app/session/follow/accountFollowRuleService";
 import { createV2SessionListServerTiming } from "@/app/session/listing/timing";
 import { registerSessionFilteredListingRoute } from "./registerSessionFilteredListingRoute";
-import { parseProjectedSessionByIdResponse } from './sessionRecordResponse';
+import { assembleProjectedSessionRecord, parseProjectedSessionByIdResponse } from './sessionRecordResponse';
+import { readSessionTurnsForRowsInTx } from './readSessionTurns';
 import {
     createSessionMetadataListRepresentabilityWhere,
     createSessionMetadataPrivacyUpgradeRequiredResponse,
@@ -43,7 +45,7 @@ import {
     enforceCurrentAccountStoredContentCompatibilityForHttpRequest,
     readAccountStoredContentCompatibilityForHttpRequest,
 } from "@/app/clientCompatibility/accountStoredContentCompatibility";
-import { resolveSessionAccessForRowsInTx, SESSION_ACCESS_SESSION_BATCH_SIZE, type SessionAccessOperationDecision } from "@/app/session/access/sessionAccess";
+import { resolveSessionAccessForRowsInTx, resolveSessionAccessCapabilitiesForRowsInTx, SESSION_ACCESS_SESSION_BATCH_SIZE, type SessionAccessOperationDecision } from "@/app/session/access/sessionAccess";
 import { readSessionAccessAuthenticationFromRequest, type SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { listQueuedExecutionRunPendingTargetsForSessions } from "@/app/session/pending/pendingMessageService";
 import { loadPendingActivationPublicationsInTx } from '@/app/session/pending/publishPendingMutation';
@@ -139,6 +141,11 @@ type SessionDetailInput = Readonly<{ userId: string; authentication: SessionAcce
     usageProjection?: boolean;
     /** Internal evidence authority from the existing recipient projector, never a wire field. */
     onUsageStateAdmission?: (sessionId: string, admitted: boolean) => void;
+    /**
+     * Read-batch's turns component, filled from the same Session rows for every admitted
+     * detail. The component decides its own `readTranscript` permission from those rows.
+     */
+    turnResults?: Map<string, PromiseSettledResult<Awaited<ReturnType<typeof readSessionTurnsForRowsInTx>> extends ReadonlyMap<string, infer R> ? (R extends PromiseSettledResult<infer V> ? V : never) : never>>;
 }>;
 export type SessionDetailResponse =
     | { status: 200; body: z.infer<typeof V2SessionByIdResponseSchema> }
@@ -199,9 +206,12 @@ export async function readSessionDetails(input: SessionDetailInput & Readonly<{ 
                 const result = new Map<string, SessionDetailCapture>();
                 const rows = await findV2SessionDetailRowsInTx(tx, { ...input,
                     sessionIds: managedIds ? batch.filter(id => managedIds.has(id)) : batch });
+                const combined = !runtimeManagedSubtree && input.turnResults
+                    ? await resolveSessionAccessCapabilitiesForRowsInTx(tx, { accountId: userId, authentication }, rows,
+                        [{ accessMode }, { capability: 'readTranscript' }]) : undefined;
                 const admissions = runtimeManagedSubtree
                     ? new Map<string, SessionAccessOperationDecision>(rows.map(row => [row.id, { status: 'allowed', access: viewAccess(row.id) }]))
-                    : await resolveSessionAccessForRowsInTx(tx, admissionInput, rows);
+                    : combined?.[0] ?? await resolveSessionAccessForRowsInTx(tx, admissionInput, rows);
                 let candidates = rows.filter(session => admissions.get(session.id)?.status === 'allowed'
                     && (session.metadataLayoutVersion !== SESSION_METADATA_LAYOUT_VERSION_V1 || input.storedContentCompatibility.supportsCurrentProtocol));
                 for (const id of batch) {
@@ -253,18 +263,35 @@ export async function readSessionDetails(input: SessionDetailInput & Readonly<{ 
                 const bindings = await readAcceptedSessionTeamCredentialProviderModelBindingsInTx(tx, ownerIds);
                 const activations = await loadPendingActivationPublicationsInTx(tx, ownerIds);
                 const owners = new Set(ownerIds);
+                const computerBindings = await readSessionComputerBindingsInTx(tx, {
+                    accountId: userId, sessions: verifiedSessionRuntimePrincipal ? [] : projected,
+                });
                 for (const session of projected) {
                     try {
                         const binding = bindings.get(session.id);
                         if (binding?.status === 'rejected') throw binding.reason;
-                        const payload = parseProjectedSessionByIdResponse({ session: runtimeManagedSubtree
-                            ? SessionRuntimeManagedSubtreeSnapshotRecordV1Schema.parse(session)
-                            : owners.has(session.id) ? { ...session,
-                            acceptedTeamCredentialBinding: binding?.status === 'fulfilled' ? binding.value : null,
-                            pendingActivationAuthorization: activations.get(session.id), pendingExecutionRunIds: pendingRuns.get(session.id) ?? [],
-                        } : session });
+                        // A runtime credential's record is admitted by its own subtree schema; every
+                        // other record is the producer's validated record, emitted without a re-parse.
+                        const payload = runtimeManagedSubtree
+                            ? parseProjectedSessionByIdResponse({ session: SessionRuntimeManagedSubtreeSnapshotRecordV1Schema.parse(session) })
+                            : { session: assembleProjectedSessionRecord(owners.has(session.id) ? { ...session,
+                                acceptedTeamCredentialBinding: binding?.status === 'fulfilled' ? binding.value : null,
+                                pendingActivationAuthorization: activations.get(session.id), pendingExecutionRunIds: pendingRuns.get(session.id) ?? [],
+                            } : { ...session, ...(computerBindings.has(session.id)
+                                ? { computerMachineBinding: computerBindings.get(session.id) } : {}) }) };
                         result.set(session.id, { kind: 'found', session: payload.session, observationCursor });
                     } catch (error) { result.set(session.id, sessionDetailFailure(error)); }
+                }
+                if (input.turnResults) {
+                    const admittedIds = batch.filter(id => result.get(id)?.kind === 'found');
+                    try {
+                        const turns = await readSessionTurnsForRowsInTx(tx, { userId, authentication, sessionIds: admittedIds,
+                            rows: new Map(rows.map(row => [row.id, row])), decisions: combined?.[1] });
+                        for (const [id, turn] of turns) input.turnResults.set(id, turn);
+                    } catch (reason) {
+                        // The turns component fails alone; its detail rows are already projected.
+                        for (const id of admittedIds) input.turnResults.set(id, { status: 'rejected', reason });
+                    }
                 }
                 return result;
             });
@@ -273,7 +300,10 @@ export async function readSessionDetails(input: SessionDetailInput & Readonly<{ 
                     session: row.session, ...(row.observationCursor !== undefined ? { observationCursor: row.observationCursor } : {}),
                 } } : row.response });
         } catch (reason) {
-            for (const id of batch) results.set(id, { status: 'rejected', reason });
+            for (const id of batch) {
+                results.set(id, { status: 'rejected', reason });
+                input.turnResults?.set(id, { status: 'rejected', reason });
+            }
         }
     }
     return results;
@@ -451,7 +481,8 @@ export function registerSessionListingRoutes(app: Fastify) {
         },
     }, async (request, reply) => {
         const result = await readSessionDetail({ userId: request.userId, sessionId: request.params.sessionId, authentication: readSessionAccessAuthenticationFromRequest(request), accessProjectionVersion: request.query?.accessProjectionVersion, storedContentCompatibility: readAccountStoredContentCompatibilityForHttpRequest(request) });
-        if (result.status === 200) return reply.serializer(JSON.stringify).code(200).send(parseProjectedSessionByIdResponse(result.body));
+        // readSessionDetails admitted this body with the same response schema.
+        if (result.status === 200) return reply.serializer(JSON.stringify).code(200).send(result.body);
         return reply.code(result.status).send(result.body);
     });
 }

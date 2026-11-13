@@ -1,4 +1,5 @@
 import type { TranscriptAccountActorMetadata } from "@happier-dev/session-core/messages";
+import type { V2SessionRecord } from '@happier-dev/protocol/sessions/control/contract';
 import { z } from "zod/mini";
 import type { PermissionMode, ModelMode } from "@/sync/domains/permissions/permissionTypes";
 import type {
@@ -133,6 +134,8 @@ export interface Session {
      */
     hasOtherNamedCollaborator?: boolean,
     metadataLayoutVersion?: number,
+    /** Recipient-safe Computer routing supplied by Home only for Machine managers. */
+    computerMachineBinding?: V2SessionRecord['computerMachineBinding'],
     /** Producer-owned memory-only route projection; never changes the Session access role. */
     metadataProjection?: 'sessionOnly' | 'displayOnly',
     metadata: Metadata | null,

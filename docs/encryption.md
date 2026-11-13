@@ -5990,6 +5990,16 @@ require a current caller declaration. Release readiness remains gated by mixed-v
 proof and the remaining integration/live checks, not by an operator activation mode or
 legacy socket drainage.
 
+In unreleased 0.3, C79 (2026-11-13) permits one recipient-safe routing exception:
+authenticated Session detail reads may carry optional `computerMachineBinding`
+(`homeId`, `machineId`) for a participant who already holds Manage on that Machine.
+The Home projects its accepted Session placement using the existing Machine permission
+decision. Use-only participants, public recipients and Session runtime credentials do
+not receive it. This is outside the shared encrypted document, whose key holders all
+read the same bytes. No owner envelope, workspace path or owner display leaf is
+disclosed. The binding opens the Session's Computer entry; existing server-side
+Manage admission still governs viewing the owner's real display.
+
 The canonical 0.3 compact list carries document descriptors rather than these full
 documents. Its shared `agentStateDocument: 'redacted'` records the tombstone;
 `'omitted'` means an owner document was not requested and never authorizes clearing

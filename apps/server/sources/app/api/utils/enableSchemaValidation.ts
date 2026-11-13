@@ -60,6 +60,117 @@ export function recordAssembledResponse<T extends object>(schema: object, value:
     return value;
 }
 
+type DeclaredOrder = Readonly<{ keys: readonly string[]; members: readonly (object | undefined)[] }>;
+const declaredOrders = new WeakMap<object, DeclaredOrder | null>();
+
+function readDefinition(schema: object): Record<string, unknown> | undefined {
+    const internals: unknown = Reflect.get(schema, '_zod');
+    const definition: unknown = internals !== null && typeof internals === 'object' ? Reflect.get(internals, 'def') : undefined;
+    return definition !== null && typeof definition === 'object' ? definition as Record<string, unknown> : undefined;
+}
+
+// Optional/nullable/readonly wrappers and arrays carry their inner schema's order; unions, pipes and
+// every other kind are left as produced (their parse output order is the producer's choice).
+type InnerSchema = Readonly<{ kind: 'object' | 'array'; schema: object }> | null;
+const innerSchemas = new WeakMap<object, InnerSchema>();
+
+function innerObjectOrArraySchema(schema: object): InnerSchema {
+    let inner = innerSchemas.get(schema);
+    if (inner === undefined) {
+        inner = resolveInnerObjectOrArraySchema(schema) ?? null;
+        innerSchemas.set(schema, inner);
+    }
+    return inner;
+}
+
+function resolveInnerObjectOrArraySchema(schema: object): Readonly<{ kind: 'object' | 'array'; schema: object }> | undefined {
+    let current: object | undefined = schema;
+    for (let depth = 0; current && depth < 8; depth++) {
+        const definition = readDefinition(current);
+        if (!definition) return undefined;
+        if (definition.type === 'object') return { kind: 'object', schema: current };
+        if (definition.type === 'array') return typeof definition.element === 'object' && definition.element !== null
+            ? { kind: 'array', schema: definition.element } : undefined;
+        if (definition.type !== 'optional' && definition.type !== 'nullable' && definition.type !== 'readonly') return undefined;
+        current = typeof definition.innerType === 'object' && definition.innerType !== null ? definition.innerType : undefined;
+    }
+    return undefined;
+}
+
+function declaredOrder(schema: object): DeclaredOrder | null {
+    let order = declaredOrders.get(schema);
+    if (order === undefined) {
+        const shape = readDefinition(schema)?.shape;
+        order = shape !== null && typeof shape === 'object' ? {
+            keys: Object.keys(shape),
+            // Only members whose order can differ (objects and arrays, possibly wrapped) are visited.
+            members: Object.values(shape as Record<string, unknown>).map(member =>
+                member !== null && typeof member === 'object' && innerObjectOrArraySchema(member) ? member : undefined),
+        } : null;
+        declaredOrders.set(schema, order);
+    }
+    return order;
+}
+
+function orderValue(schema: object, value: unknown): unknown {
+    if (value === null || typeof value !== 'object') return value;
+    const inner = innerObjectOrArraySchema(schema);
+    if (!inner) return value;
+    if (inner.kind === 'array') return Array.isArray(value) ? orderArray(inner.schema, value) : value;
+    return Array.isArray(value) ? value : orderObject(inner.schema, value as Record<string, unknown>);
+}
+
+function orderObject(schema: object, source: Record<string, unknown>): Record<string, unknown> {
+    const order = declaredOrder(schema);
+    if (!order) return source;
+    // Members already in declared order (and unchanged below) keep the producer's object.
+    let changed = false;
+    let values: Map<string, unknown> | undefined;
+    for (let index = 0; index < order.keys.length; index++) {
+        const member = order.members[index];
+        const key = order.keys[index]!;
+        if (member === undefined || !Object.hasOwn(source, key)) continue;
+        const value = orderValue(member, source[key]);
+        if (value !== source[key]) { (values ??= new Map()).set(key, value); changed = true; }
+    }
+    if (!changed) {
+        // Declared members must lead, in declaration order; pass-through members follow.
+        let expected = 0;
+        for (const key in source) {
+            while (expected < order.keys.length && !Object.hasOwn(source, order.keys[expected]!)) expected++;
+            if (expected === order.keys.length) break;
+            if (key !== order.keys[expected]) { changed = true; break; }
+            expected++;
+        }
+        if (!changed) return source;
+    }
+    const ordered: Record<string, unknown> = {};
+    for (const key of order.keys) {
+        if (Object.hasOwn(source, key)) ordered[key] = values?.has(key) ? values.get(key) : source[key];
+    }
+    for (const key of Object.keys(source)) if (!Object.hasOwn(ordered, key)) ordered[key] = source[key];
+    return ordered;
+}
+
+function orderArray(schema: object, source: readonly unknown[]): readonly unknown[] {
+    let ordered: unknown[] | undefined;
+    for (let index = 0; index < source.length; index++) {
+        const value = orderValue(schema, source[index]);
+        if (value !== source[index]) (ordered ??= source.slice())[index] = value;
+    }
+    return ordered ?? source;
+}
+
+/**
+ * A producer-admitted value with its members in the order the schema's parse emitted them:
+ * declared members in declaration order (through objects, arrays and optional/nullable
+ * wrappers), then pass-through members in their own order. Values are carried as they are;
+ * nothing is validated here: the producer that built the value is its validation point.
+ */
+export function orderAsDeclared<T extends object>(schema: object, value: T): T {
+    return orderValue(schema, value) as T;
+}
+
 const admittedResponseSerializerCompiler: typeof serializerCompiler = route => {
     const validateAndSerialize = serializerCompiler(route);
     const declared = route.schema !== null && typeof route.schema === 'object'

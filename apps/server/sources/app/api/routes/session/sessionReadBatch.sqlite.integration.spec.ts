@@ -102,6 +102,45 @@ describe('Session id-batched reads (SQLite integration)', () => {
 
     sessionReadBatchCostContract('sqlite');
 
+    it('discloses the Session Computer binding only to a participant with Machine Manage (C79)', async () => {
+        const owner = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
+        const participant = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
+            metadata: '{}', installationId: crypto.randomUUID() } });
+        const id = crypto.randomUUID();
+        const homeId = await getOrCreateServerIdentityId();
+        await db.session.create({ data: { id, tag: id, accountId: owner.id, encryptionMode: 'plain',
+            metadataLayoutVersion: 1, metadata: '{"v":1}', ownerMetadata: JSON.stringify({ t: 'plain', v: { v: 1 } }),
+            runtimeMachineTarget: { homeId, accountId: owner.id, sessionId: id, machineId: machine.id, installationId: machine.installationId } } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: id, accountId: participant.id,
+            createdByAccountId: owner.id, accessLevel: 'edit' } });
+        const grant = await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id,
+            accountId: participant.id, createdByAccountId: owner.id, accessLevel: 'view' } });
+        try {
+            await withAuthenticatedTestApp(registerSessionListingRoutes, async app => {
+                const read = async (accountId: string) => {
+                    const response = await app.inject({ method: 'GET', url: `/v2/sessions/${id}`,
+                        headers: { 'x-test-user-id': accountId, ...currentAccountStoredContentCompatibilityHeaders } });
+                    expect(response.statusCode, response.body).toBe(200);
+                    return V2SessionByIdResponseSchema.parse(response.json()).session;
+                };
+                expect((await read(participant.id)).computerMachineBinding).toBeUndefined();
+                await db.machineGrant.update({ where: { id: grant.id }, data: { accessLevel: 'admin' } });
+                const shared = await read(participant.id);
+                expect(shared.computerMachineBinding).toEqual({ homeId, machineId: machine.id });
+                expect(shared.ownerMetadata).toBeUndefined();
+                expect(shared.agentState).toBeNull();
+                expect((await read(owner.id)).ownerMetadata).toBeDefined();
+                await db.machineGrant.delete({ where: { id: grant.id } });
+                expect((await read(participant.id)).computerMachineBinding).toBeUndefined();
+            });
+        } finally {
+            await db.session.delete({ where: { id } });
+            await db.machine.delete({ where: { id: machine.id } });
+            await db.account.deleteMany({ where: { id: { in: [owner.id, participant.id] } } });
+        }
+    });
+
     async function measureSessionHttpFlow(route: 'list' | 'read-batch') {
         const owner = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
         // FLOWBUDGET's foreground corpus is about 1k Sessions. Demand remains

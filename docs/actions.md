@@ -7770,6 +7770,11 @@ then issues the closed v2 relay carrier with the custodian source and exact gues
 The additive personal relay-start method verifies that Home signature before capture and
 uses the same stream, shared Machine cipher, sideband controls and retirement signal. The
 raw relay-start method requires Manage, preserving host-display authority while refusing
+Use-only host viewing. In unreleased 0.3, a Session participant with Machine Manage
+can open that Session's Computer view through the Home's optional recipient-safe
+`computerMachineBinding` (`homeId`, `machineId`) detail projection (C79, 2026-11-13).
+Other participants receive no binding; owner metadata stays owner-only. This routing
+hint changes no server refusal or Machine authority floor. The raw route still refuses
 Use on older receivers; the v1 grant mint remains custodian-only. On the host route, `computer.targets.list` without a
 `displayId` lists the daemon's own X11 desktop (`DISPLAY`) or macOS's logical `primary` desktop; a machine without one returns
 `computer_display_unavailable` and an unsupported desktop returns a typed `target_unsupported`

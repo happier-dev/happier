@@ -4,6 +4,7 @@ import {
 } from '@/components/sessions/model/useSessionMachineTarget';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { t } from '@/text';
+import { useSessionSelector } from '@/sync/store/hooks';
 
 import { useOptionalSessionViewerController } from './SessionViewerController';
 import type { SessionViewerSource } from './sessionViewerPresentation';
@@ -17,10 +18,14 @@ export function useSessionViewerMachineId(
   sessionId: string,
   serverId: string | null,
 ): string | null {
+  const sharedMachineId = useSessionSelector(sessionId, serverId, session => {
+    const binding = session?.computerMachineBinding;
+    return binding && binding.homeId === session?.serverId ? binding.machineId : null;
+  });
   const reachable =
     useSessionMachineTarget(sessionId, serverId)?.machineId ?? null;
   const named = useSessionMachineDisplayIdentity(sessionId, serverId).machineId;
-  return reachable ?? (named || null);
+  return sharedMachineId ?? reachable ?? (named || null);
 }
 
 /**
