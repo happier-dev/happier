@@ -1036,11 +1036,23 @@ it.each(['create', 'update'] as const)('saves three Store catalog apps through t
     const { storeAppPresetItem } = await import('@/components/store/presets/storePresetDoor');
     const { MachinePresetActionInputSchemasV1 } = await import('@happier-dev/protocol/machines/managed/machinePresetActionsV1');
     const { machinePresetEditDraftUpdatePatch } = await import('./machinePresetEditDraft');
+    const { machinePresetEditContinuationDraft } = await import('./machinePresetEditDraft');
     const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
         serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
-    const setup = { items: ['Dokploy one', 'Dokploy two', 'Dokploy three'].map((name, index) =>
-        storeAppPresetItem(name, { sourceId: 'dokploy', itemId: String(index), version: '1', ref: { kind: 'version', version: '1' } })) };
-    const draft = { name: 'Saved apps', setup };
+    const scripts = [{ body: 'echo setup', affects: 'none' as const }, { body: 'echo software', affects: 'none' as const }];
+    const recipes = [
+        { kind: 'setupRecipe' as const, selection: { ref: { pluginId: 'tools.example', recipeId: 'automatic-security-updates', revision: '1' }, inputs: {} } },
+        { kind: 'softwareRecipe' as const, selection: { ref: { pluginId: 'tools.example', recipeId: 'docker-engine', revision: '1' }, inputs: {} } },
+    ];
+    let draft: import('./machinePresetEditDraft').MachinePresetEditDraft = { name: 'Saved apps', setup: { items: recipes, scripts } };
+    const apps = ['Redis', 'Dokploy two', 'Dokploy three'].map((name, index) =>
+        storeAppPresetItem(name, { sourceId: 'catalog', itemId: String(index), version: '1', ref: { kind: 'version', version: '1' } }));
+    for (const item of apps) {
+        const continuation = machinePresetEditContinuationDraft({ draft, item, onReturn: () => undefined });
+        if (!continuation.ok) throw new Error('Store App must join the retained draft');
+        draft = continuation.draft;
+    }
+    const setup = { items: [...recipes, ...apps], scripts };
     const input = { homeId: 'srv_history', id: 'apps', expectedRevision: 0, patch: machinePresetEditDraftUpdatePatch(draft) };
     const parsed = MachinePresetActionInputSchemasV1['machines.presets.update'].safeParse(input);
     expect(parsed.success, parsed.success ? undefined : JSON.stringify(parsed.error.issues)).toBe(true);
