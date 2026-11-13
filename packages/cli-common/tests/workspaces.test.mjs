@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { bundleWorkspacePackage, findRepoRoot } from '../dist/workspaces/index.js';
 
-test('bundled cli-common source runtime retains its private import closure', async () => {
+test('rebundled cli-common source runtime retains its private import closure', async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'happier-cli-common-source-bundle-'));
   try {
     const destDir = join(tempRoot, 'cli-common');
@@ -16,7 +16,13 @@ test('bundled cli-common source runtime retains its private import closure', asy
       srcDir: fileURLToPath(new URL('..', import.meta.url)),
       destDir,
     });
-    const runtime = await import(pathToFileURL(join(destDir, 'sourceRuntimeEntries.mjs')).href);
+    const authorDir = join(tempRoot, 'author-cli-common');
+    bundleWorkspacePackage({
+      packageName: '@happier-dev/cli-common',
+      srcDir: destDir,
+      destDir: authorDir,
+    });
+    const runtime = await import(pathToFileURL(join(authorDir, 'sourceRuntimeEntries.mjs')).href);
     assert.equal(runtime.resolveWorkspaceSource(new Map([
       ['example', { root: destDir, manifest: { exports: {
         './*': { 'happier-source': './src/*.ts' },

@@ -140,9 +140,7 @@ export function sanitizeBundledPackageJson(raw: any): any {
     engines,
   } = raw ?? {};
   const preservesPrepublicationAuthoringMetadata = isPrepublicationAuthorPackage(raw);
-  const prepublicationAuthoringFiles = preservesPrepublicationAuthoringMetadata
-    ? collectPrepublicationAuthoringFileEntries(raw)
-    : undefined;
+  const declaredFiles = collectBundledPackageFileEntries(raw);
 
   // `bin` is runtime input, not source-only package metadata: a bundled
   // workspace package whose executable entrypoint ships inside `dist` is
@@ -171,11 +169,13 @@ export function sanitizeBundledPackageJson(raw: any): any {
       ? optionalDependencies
       : stripInternalBundledWorkspaceDependencies(optionalDependencies),
     engines,
+    // Private runtime siblings must survive a second materialization, including
+    // dependencies nested beneath a public SDK author package.
+    ...(declaredFiles === undefined ? {} : { files: declaredFiles }),
     ...(preservesPrepublicationAuthoringMetadata
       ? {
           happier: { publicSdkRelease: raw.happier.publicSdkRelease },
           bundledDependencies: readBundledDependencyNames(raw),
-          ...(prepublicationAuthoringFiles === undefined ? {} : { files: prepublicationAuthoringFiles }),
         }
       : {}),
   };
@@ -596,7 +596,7 @@ function collectWorkspacePackageReferencedFiles(rawPackageJson: any, includeType
   return referencedFiles;
 }
 
-function collectPrepublicationAuthoringFileEntries(rawPackageJson: any): string[] | undefined {
+function collectBundledPackageFileEntries(rawPackageJson: any): string[] | undefined {
   if (rawPackageJson?.files === undefined) return undefined;
 
   // The workspace copier already owns the relative-path/pattern validation for
@@ -679,12 +679,10 @@ function copyBundledWorkspacePackageContents(params: Readonly<{
 }
 
 /**
- * The resources a plugin manifest declares are runtime input for the same reason the manifest
- * itself is, and the `files` selection above cannot carry them across a second generation:
- * `sanitizeBundledPackageJson` strips `files` from every package tree this bundler writes, so
- * re-bundling an already-published tree — which is exactly how the daemon artifact payload is
- * produced — selects nothing. Shipping the manifest without its declared bytes produces an
- * artifact the runtime correctly refuses to start from.
+ * Plugin manifest resources are runtime input. Older sanitized package trees may
+ * lack `files`, so retain manifest-declared resources when rebundling those trees
+ * into daemon payloads as well. Shipping a manifest without its declared bytes
+ * produces an artifact the runtime correctly refuses to start from.
  */
 function copyBundledPluginManifestResources(srcDir: string, destDir: string): void {
   for (const relativePath of readBundledPluginPackageResourceRelativePaths(srcDir)) {

@@ -129,7 +129,7 @@ describe('Transformers isolated runtime closure', () => {
 });
 
 describe('sanitizeBundledPackageJson', () => {
-  it('preserves the exact prepublication author file inventory while stripping ordinary package files', () => {
+  it('preserves declared file inventories for author roots and their private dependencies', () => {
     const declaredAuthorFiles = [
       'dist',
       'package.json',
@@ -160,7 +160,7 @@ describe('sanitizeBundledPackageJson', () => {
       name: '@happier-dev/plugins-example',
       version: '0.0.0',
       files: ['dist', 'README.md'],
-    })).not.toHaveProperty('files');
+    }).files).toEqual(['dist', 'README.md']);
   });
 
   it('keeps the executable entrypoint declaration for every bundled workspace package', () => {
