@@ -3187,6 +3187,114 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(readSection().draft.adds).toEqual([{ clientId: 'schedule-1', trigger }]);
     });
 
+    it('adopts a serialized MCP edit receipt in the mounted editor with changed rows and Undo', async () => {
+        const boundary = await serveMountedDraftActionHome();
+        const [{ registerHappierMcpBuiltInTools }, { createActionToolExecutorBridge },
+            { createActionExecutor, createWorkflowDefinitionActions, createWorkflowActionExecutor, createRoleSourceReaderV1 },
+            { normalizeRawMessage, RawRecordSchema },
+            { WorkflowDefinitionEditRequestV1Schema, WorkflowDefinitionEditResultV1Schema }] = await Promise.all([
+            import('../../../../../cli/src/mcp/server/registerHappierMcpBuiltInTools'),
+            import('../../../../../cli/src/agent/tools/happierTools/createActionToolExecutorBridge'),
+            import('@happier-dev/protocol'), import('@happier-dev/session-core/raw'),
+            import('@happier-dev/protocol/workflows/actionsV1'),
+        ]);
+        const sessionId = 'authoring-session';
+        getStorage().getState().applySessions([createSessionFixture({ id: sessionId, seq: 0 })]);
+        const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved',
+            definitionId: SAVED_TRIGGER_WORKFLOW_ID, authoringSessionId: sessionId }} />);
+        const original = readBodyProps()!.draftStore.get();
+        const { getWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+        const originalSaved = await getWorkflowDefinition({ definitionId: SAVED_TRIGGER_WORKFLOW_ID });
+        const originalDraftRevision = readBodyProps()!.mountedDraftActions!.getSnapshot()!.draftRevision;
+        const editedBlockId = original.blocks[0]!.id;
+        const input = WorkflowDefinitionEditRequestV1Schema.parse({ definitionId: SAVED_TRIGGER_WORKFLOW_ID,
+            expectedRevision: originalSaved.revision,
+            ops: [{ kind: 'set_step_prompt', blockId: editedBlockId, text: 'Edited through the real MCP Action' }] });
+        // READY195's Muse caller supplied JSON-string operands inside action_execute.input.
+        // This is external Agent input, not a saved-result fixture; dispatch parses it for real.
+        const args = { actionId: 'workflow.definition.edit', input: JSON.stringify(input) };
+        const callId = 'serialized-workflow-edit';
+        const publish = (seq: number, type: 'assistant' | 'user', content: unknown[]) => {
+            const raw = RawRecordSchema.parse({ role: 'agent', content: { type: 'output',
+                data: { type, uuid: `receipt-${seq}`, message: { role: type, content } } } });
+            const normalized = normalizeRawMessage(`receipt-${seq}`, null, seq, raw, { seq, messageRole: 'agent' });
+            if (!normalized) throw new Error('Expected the real transcript normalizer to accept the MCP event');
+            getStorage().getState().applyMessages(sessionId, [normalized]);
+        };
+        await act(async () => publish(1, 'assistant', [{ type: 'tool_use', id: callId, name: 'mcp__happier__action_execute', input: args }]));
+        const [{ captureLazyActionAccountContext }, { createActionExecutorBoundaryFixture },
+            { resolveCliAgentStartContextV1 }, { getServerFeaturesSnapshot },
+            { resolveRuntimeFeatureDecisionFromSnapshot }] = await Promise.all([
+            import('@/sync/ops/actions/actionAccountContext'), import('@/dev/testkit/fixtures/actionExecutorBoundary'),
+            import('../../../../../cli/src/session/actions/resolveCliAgentStartContextV1'),
+            import('@/sync/api/capabilities/serverFeaturesClient'), import('@/sync/domains/features/featureDecisionRuntime'),
+        ]);
+        const account = await captureLazyActionAccountContext(boundary.scope.serverId);
+        const settings = await account.readSettings();
+        const roleSourceInventory = await createRoleSourceReaderV1({})();
+        const agentTarget = original.defaults!.agentTarget!;
+        // The shared definition owner is the CLI producer too. Its real Artifact adapter
+        // writes the same HTTP boundary observed by the mounted editor; only remote Machine
+        // availability is supplied here. Materialization and permission admission stay real.
+        const definitions = createWorkflowDefinitionActions({ artifactStore: account.workflowArtifacts,
+            encodeListCursor: account.encodeArtifactListCursor,
+            resolveMaterializer: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+        });
+        const workflowAction = createWorkflowActionExecutor({ definitions,
+            isWorkflowFeatureEnabled: async () => resolveRuntimeFeatureDecisionFromSnapshot({ featureId: 'workflows', settings,
+                snapshot: await getServerFeaturesSnapshot({ serverId: account.serverId }) })?.state === 'enabled',
+            runs: { execute: async () => { throw new Error('Unexpected Workflow run transport'); } },
+        });
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ workflowAction,
+            resolveAgentStartContext: async () => resolveCliAgentStartContextV1({ sessionId, machineId: 'machine-a', directory: '/repo',
+                backendTarget: agentTarget, metadata: {}, appliedChildSelection: { status: 'applied',
+                    backendTarget: agentTarget, modelId: null, connectedServices: null },
+                starterDepth: 0, turnDepth: 0, callerPermissionMode: 'default', settings,
+                accountRoleOverrides: { status: 'ready', overrides: {} }, roleSourceInventory }),
+        }));
+        // Session MCP uses the Agent surface (createHappierMcpServer), so the
+        // authenticated host snapshot supplies its permission ceiling and depth.
+        const bridge = createActionToolExecutorBridge({ surface: 'agent', executor,
+            resolveCallerPermissionMode: () => 'default', sessionAgentSpawnPolicyV1: { v: 1 } });
+        type Registrar = import('../../../../../cli/src/mcp/server/registerHappierMcpBuiltInTools').ToolRegistrar;
+        const handlers = new Map<string, Parameters<Registrar['registerTool']>[2]>();
+        // The MCP registration/transport boundary captures real handlers and their serialized reply.
+        registerHappierMcpBuiltInTools({ registerTool: (name, _metadata, handler) => { handlers.set(name, handler); } }, {
+            sessionId, surface: 'agent', deps: { ...bridge,
+                changeTitle: async () => { throw new Error('Unexpected title tool'); },
+                resolveActionOptions: request => bridge.resolveActionOptions(request, sessionId),
+            },
+        });
+        const execute = handlers.get('action_execute');
+        if (!execute) throw new Error('The real MCP inventory did not register action_execute');
+        const receipt = await execute(args);
+        expect(receipt.isError, JSON.stringify(receipt)).toBe(false);
+        const text = receipt.content.find(part => part.type === 'text');
+        if (!text || text.type !== 'text') throw new Error('Expected the MCP text serializer');
+        const saved = WorkflowDefinitionEditResultV1Schema.parse(JSON.parse(text.text));
+        expect(saved.revision).toEqual({ headerVersion: 2, bodyVersion: 2 });
+        expect(saved.changedBlockIds).toEqual([editedBlockId]);
+        expect(boundary.updates).toHaveLength(1);
+        await act(async () => publish(2, 'user', [{ type: 'tool_result', tool_use_id: callId,
+            content: receipt.content, is_error: receipt.isError }]));
+        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.draftRevision).toBeGreaterThan(originalDraftRevision);
+        expect(readBodyProps()!.draftStore.get().blocks[0]).toMatchObject({ document: { text: 'Edited through the real MCP Action' } });
+        expect(readBodyProps()!.highlightedBlockIds).toEqual(saved.changedBlockIds);
+        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved', byAgent: true });
+        await act(async () => readBodyProps()!.history!.undo());
+        expect(readBodyProps()!.draftStore.get()).toEqual(original);
+        expect(readBodyProps()!.saveStatus?.kind).toBe('unsaved');
+        // Undo stays local; saving it uses the agent's acknowledged revision rather than stale CAS.
+        expect(boundary.updates).toHaveLength(1);
+        await saveDirectlyFromUi();
+        expect(boundary.updates[1]).toMatchObject({ expectedHeaderVersion: saved.revision.headerVersion,
+            expectedBodyVersion: saved.revision.bodyVersion });
+        expect((await getWorkflowDefinition({ definitionId: SAVED_TRIGGER_WORKFLOW_ID })).revision)
+            .toEqual({ headerVersion: 3, bodyVersion: 3 });
+        account.dispose();
+        await screen.unmount();
+    });
+
     it.each([false, true])('opens the exact agent-returned revision despite clock skew (delayed history=%s)', async (delayedHistory) => {
         getStorage().setState({ sessionMessages: {}, sessions: {
             'author-session': createSessionFixture({ id: 'author-session', seq: 100 }),

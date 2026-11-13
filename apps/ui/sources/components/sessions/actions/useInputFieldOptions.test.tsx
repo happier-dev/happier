@@ -19,13 +19,20 @@ import { recordMachineRequestFailed } from '@/sync/domains/machines/reachability
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { readBuiltinWidgetDescriptorV1 } from '@happier-dev/protocol/widgets/builtinWidgetDescriptorV1';
 import { V2SessionRecordSchema } from '@happier-dev/protocol/sessions/control/contract';
-import { createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionCurrentProjectionRecordFixture, createSessionAccessFixture, createSessionFixture, createSessionOwnerViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { InputOptionSchema } from '@happier-dev/protocol/inputs';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
 import { workflowInputToFieldHint } from '@happier-dev/protocol/workflows/workflowV1';
+import { captureWorkflowDiscussionV1 } from '@happier-dev/protocol/workflows/workflowDiscussionCaptureV1';
+import { DiscussionOpenedMessageV1Schema } from '@happier-dev/protocol/discussions/actions';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
+import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema } from '@happier-dev/protocol/sessions';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 
 // Hoist the physical transport before cross-package imports can capture Socket.IO.
 vi.mock('socket.io-client', async importOriginal => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+vi.mock('@/utils/web/radixCjs', async () => (await import('@/dev/testkit/mocks/radixCjs')).createRadixCjsModuleMock());
 installApprovalCommonModuleMocks({ text: async () => vi.importActual<typeof import('@/text')>('@/text') });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
@@ -41,7 +48,8 @@ installDisconnectedServerSocketBoundary(socket => {
         for (const listener of socket.listeners('connect')) listener();
         return socket;
     });
-    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event) => {
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload) => {
+        if (event === SESSION_CONSUMPTION_REPLACE_EVENT) return { ok: true, ...SessionConsumptionReplaceV1Schema.parse(payload) };
         if (event !== 'rpc-call') throw new Error(`Unexpected options transport event: ${event}`);
         throw new Error('Native contributed options must use the private Account HTTP carrier');
     });
@@ -72,8 +80,16 @@ afterEach(async () => {
 const field = { path: 'repository', inputType: repositoryInputTypeRef };
 const periodField = { path: 'period', inputType: { hostType: 'usageQuery', field: 'period' } } as const;
 
-const participantField = workflowInputToFieldHint({ name: 'participant_1', valueType: 'json', required: true,
-    inputType: { hostType: 'agentParticipant' } });
+function captureParticipantDraft(serverId: string) {
+    const discussion = { serverId, discussionId: 'captured-discussion' };
+    return captureWorkflowDiscussionV1({ discussion, messageIds: ['answer'], choices: [{ messageId: 'answer', role: 'step' }] }, [DiscussionOpenedMessageV1Schema.parse({
+        id: 'answer', seq: 1, discussionId: discussion.discussionId, localId: null, authorAccountId: null, accountActor: null,
+        producerV1: { v: 1, kind: 'agent', sessionId: 'source-agent' },
+        content: { v: 1, parts: [{ t: 'text', text: 'Captured answer' }] }, mentionedAccountIds: [], createdAt: 1,
+        messageRef: { kind: 'discussion', discussion, messageId: 'answer' },
+    })]);
+}
+const participantField = workflowInputToFieldHint(captureParticipantDraft('capture-home').definition!.inputs[0]!);
 function DraftParticipantOptionsProbe(props: Readonly<{ serverId: string; machineId: string | null }>) {
     const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
     const options = useInputFieldOptions({ serverId: props.serverId, machineId: props.machineId,
@@ -197,6 +213,70 @@ function reply(label: string) {
 }
 
 describe('qualified input field options scope', () => {
+    it('selects a real capture participant in an unsaved composer and starts without inventing an inventory', async () => {
+        const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+        await loadSyncSingletonForTests();
+        const { WorkflowRunComposer } = await import('@/components/workflows/run/WorkflowRunComposer');
+        const { WorkflowAccountLifetimeProvider } = await import('@/components/workflows/workflowAccountScope');
+        const serverUrl = 'https://capture-start.example';
+        const serverId = await harness.addHome({ name: 'Capture Start', serverUrl,
+            serverIdentityId: 'srv_capture_start', accountId: 'viewer', currentAccount: true });
+        const features = createRootLayoutFeaturesResponse({ features: { sessions: { enabled: true, filteredListing: { enabled: true } } },
+            capabilities: { serverIdentity: { serverIdentityId: 'srv_capture_start' } } });
+        harness.answer(serverId, '/v1/features', { body: features });
+        harness.answer(serverId, '/v1/features/authenticated', { body: features });
+        const session = createSessionFixture({ id: 'capture-reviewer', serverId, encryptionMode: 'plain', active: true, activeAt: Date.now() });
+        const sessionPage = createSessionListSourceFixture({
+            sessions: [{ ...createPlainSessionCurrentProjectionRecordFixture({ id: session.id, active: true, activeAt: session.activeAt }),
+                viewer: createSessionOwnerViewerFixture(session) }], nextCursor: null, hasNext: false,
+            attentionNextCursor: null, attentionHasNext: false,
+        });
+        for (const route of ['POST /v2/sessions/query', 'GET /v2/sessions', 'GET /v2/sessions/active']) {
+            harness.answer(serverId, route, { body: sessionPage });
+        }
+        harness.answer(serverId, 'GET /v1/machines', { body: [] });
+        harness.answer(serverId, '/v1/teams/list', { body: { items: [], nextCursor: null } });
+        const connection = await restoreServerAccountForTest({ serverUrl, serverIdentityId: 'srv_capture_start', accountId: 'viewer',
+            request: (url, init) => harness.request(url, init) });
+        installHomeGovernanceBoundaries(harness);
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        setRuntimeFetch(harness.request);
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        await getServerFeaturesSnapshot({ serverId, force: true });
+        const captured = captureParticipantDraft(serverId);
+        expect(captured.status).toBe('ready');
+        if (!captured.definition) throw new Error('capture_draft_missing');
+        const definition = captured.definition;
+        const onRun = vi.fn();
+        function Composer() {
+            const { binding } = useServerCredentialAccountScopeBinding(serverId);
+            const [values, onChangeValues] = React.useState<Record<string, JsonValue>>({});
+            return <WorkflowAccountLifetimeProvider value={binding}><WorkflowRunComposer serverId={serverId}
+                definition={definition} inputs={definition.inputs} values={values} onChangeValues={onChangeValues}
+                onRun={onRun} onCancel={() => {}} /></WorkflowAccountLifetimeProvider>;
+        }
+        const restorePopoverGlobals = withPopoverWebGlobals();
+        const screen = await renderScreen(<Composer />);
+        try {
+            expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
+            await screen.pressByTestIdAsync('workflow-run-inputs-participant_1-chip');
+            await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-participant_1-picker')?.props.disabled).toBe(false));
+            await screen.pressByTestIdAsync('workflow-run-inputs-participant_1-picker');
+            await vi.waitFor(() => expect(screen.findByTestId('executable-participant-picker-back')).not.toBeNull());
+            await screen.pressByTestIdAsync('executable-participant-picker-back');
+            expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
+            expect(onRun).not.toHaveBeenCalled();
+            await screen.pressByTestIdAsync('workflow-run-inputs-participant_1-picker');
+            await vi.waitFor(() => expect(screen.findByTestId('second-opinion.reviewer:capture-reviewer'), screen.getTextContent()).not.toBeNull());
+            await screen.pressByTestIdAsync('second-opinion.reviewer:capture-reviewer');
+            await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled, screen.getTextContent()).toBe(false));
+            await screen.pressByTestIdAsync('workflow-run-inputs-run');
+            expect(onRun).toHaveBeenCalledWith({ participant_1: { kind: 'session',
+                session: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), sessionId: session.id } } }, []);
+            expect(harness.artifacts(serverId).list()).toEqual([]);
+            expect(rpc.read).not.toHaveBeenCalled();
+        } finally { await screen.unmount(); restorePopoverGlobals(); await connection.dispose(); }
+    });
     it.each([null, 'controller-a'])('resolves an unsaved capture participant without a saved consumer on Machine %s', async machineId => {
         const serverId = await harness.addHome({ name: 'Draft capture', serverUrl: 'https://draft-capture.example',
             serverIdentityId: 'srv_draft_capture', accountId: 'viewer', currentAccount: true });

@@ -134,7 +134,7 @@ afterEach(async () => {
 });
 afterAll(() => { vi.unstubAllGlobals(); });
 
-async function harness(options: Readonly<{ emptyResult?: boolean; concurrentHolds?: boolean; runScreen?: boolean; paused?: boolean; runReadError?: 'history_not_readable' | 'encryption_setup_required'; compact?: boolean; access?: 'owner' | 'edit' | 'view'; wait?: boolean; fieldlessWait?: boolean; exactRead?: 'pending' | 'failed'; confirmed?: boolean; plan?: boolean; admittedPlan?: boolean; planProposal?: boolean; planValidationUnavailable?: boolean; uncertainPriorEffects?: boolean; acknowledged?: boolean; ownedOrigin?: boolean }> = {}) {
+async function harness(options: Readonly<{ emptyResult?: boolean; concurrentHolds?: boolean; runScreen?: boolean; reviewConversation?: boolean; paused?: boolean; runReadError?: 'history_not_readable' | 'encryption_setup_required'; compact?: boolean; access?: 'owner' | 'edit' | 'view'; wait?: boolean; fieldlessWait?: boolean; exactRead?: 'pending' | 'failed'; confirmed?: boolean; plan?: boolean; admittedPlan?: boolean; planProposal?: boolean; planValidationUnavailable?: boolean; uncertainPriorEffects?: boolean; acknowledged?: boolean; ownedOrigin?: boolean }> = {}) {
     installShippedNativeFrameScheduler();
     // The real modal/composer schedules SDK frame work. Preserve the canonical
     // timer-backed scheduler rather than running a frame recursively in place.
@@ -300,6 +300,12 @@ async function harness(options: Readonly<{ emptyResult?: boolean; concurrentHold
     if (options.ownedOrigin) {
         storage.getState().applySessions([createSessionFixture({ id: originSessionId, access: createSessionAccessFixture('owner') })]);
     }
+    if (options.reviewConversation) {
+        const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+        await prepareSessionDraftPersistenceStorage();
+        storage.getState().applySessions([createSessionFixture({ id: 'conversation', serverId: account.serverId,
+            active: true, access: createSessionAccessFixture('owner') })]);
+    }
     const detail = await workflowRunDetailActions.getRun(runId);
     if (options.planValidationUnavailable) {
         // Withdraw the external Home capability after the initial successful read,
@@ -352,6 +358,7 @@ async function harness(options: Readonly<{ emptyResult?: boolean; concurrentHold
             ownerDocument: new EventTarget(),
             getBoundingClientRect: () => ({ x: 40, y: 400, left: 40, top: 400, right: 360, bottom: 560, width: 320, height: 160 }),
             contains: () => false,
+            closest: () => null,
             focus: () => {},
             measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(40, 400, 320, 160),
         }),
@@ -392,6 +399,7 @@ async function harness(options: Readonly<{ emptyResult?: boolean; concurrentHold
             await screen.update(<ModalProvider><ObserveModals /><Host /></ModalProvider>);
         },
         refresh: () => screen.update(<ModalProvider><ObserveModals /><Host /></ModalProvider>),
+        leaveRoute: () => screen.update(<ModalProvider><ObserveModals /></ModalProvider>),
         reopen: () => screen.update(<ModalProvider><ObserveModals /><Host key={++mount} /></ModalProvider>) };
 }
 async function change(screen: Awaited<ReturnType<typeof renderScreen>>, id: string, value: string) {
@@ -604,14 +612,37 @@ describe('Review through the real Account Action owner and HTTP storage boundary
         }
         expect(h.operations.filter(op => op.operation === 'invocations.complete_review')).toHaveLength(0);
     });
-    it('retains the review draft and its reading after the Run route unmounts for Discussion', async () => {
+    it('retains the Host-owned draft and reading through Discuss, Back and reopening the Run', async () => {
         routerMock.module.router.setParams({ invocationId: heldId });
-        const h = await harness({ runScreen: true, wait: true });
+        const h = await harness({ runScreen: true, reviewConversation: true });
+        await vi.waitFor(() => expect(h.screen.findByTestId('workflow-review-edit')).not.toBeNull());
+        await h.screen.pressByTestIdAsync('workflow-review-edit');
         await vi.waitFor(() => expect(h.screen.findByTestId('workflow-review-field-summary')).not.toBeNull());
         await change(h.screen, 'workflow-review-field-summary', 'Unsaved before Discuss');
+        await h.screen.pressByTestIdAsync('workflow-review-discuss');
+        await vi.waitFor(() => expect(h.screen.findByTestId('workflow-review-field-summary')).toBeNull());
+        // Render the actual Back supplied to native navigation's Stack.Screen.
+        // The OS owns the header presentation and retires the replaced route.
+        const options = h.screen.findByType('StackScreen' as never).props.options as Readonly<{
+            headerLeft: (props: Readonly<{ tintColor?: string }>) => React.ReactElement;
+        }>;
+        const header = await renderScreen(options.headerLeft({}));
+        try { await header.pressByTestIdAsync('workflow-run-back'); }
+        finally { await header.unmount(); }
+        expect(routerMock.spies.replace).toHaveBeenCalledWith(expect.stringContaining(`/workflows/runs/${runId}`));
+        await h.leaveRoute();
+        await h.arriveResult(heldId, { ...originalValue, summary: 'Published while away' }, '8');
         await h.reopen();
         await vi.waitFor(() => expect(h.screen.findByTestId('workflow-review-field-summary')?.props.value).toBe('Unsaved before Discuss'));
+        // A fresh reading at revision 8 would silently treat these edits as read.
+        // Retaining revision 7 requires the explicit newer-result choice.
+        expect(h.screen.findByTestId('workflow-review-newer')).not.toBeNull();
         expect(h.operations.filter(op => op.operation === 'invocations.complete_review' || op.operation === 'invocations.publish_draft')).toHaveLength(0);
+        await h.screen.pressByTestIdAsync('workflow-review-keep-edits');
+        await h.screen.pressByTestIdAsync('workflow-review-use');
+        await vi.waitFor(() => expect(h.rows.get(heldId)?.index.lifecycle).toBe('completed'));
+        expect(h.readProgress()).toMatchObject({ result: { ...originalValue, summary: 'Unsaved before Discuss' },
+            review: { resultSource: { kind: 'human', accountId }, decision: { kind: 'use_result', requestedFromContentRevision: '8' } } });
     });
     it('continues a newly added Wait without requiring a result value', async () => {
         const h = await harness({ wait: true, fieldlessWait: true });
