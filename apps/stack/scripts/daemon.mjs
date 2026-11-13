@@ -14,6 +14,7 @@ import {
   resolveStackCredentialPaths,
 } from './utils/auth/credentials_paths.mjs';
 import { ensureActiveAccessKeyValid } from './utils/auth/ensure_active_access_key_valid.mjs';
+import { fetchHappierHealth } from './utils/server/server.mjs';
 import { decodeJwtPayloadUnsafe } from './utils/auth/decode_jwt_payload_unsafe.mjs';
 import { formatDaemonAuthScopeDiagnostic, formatDaemonCredentialsTokenSubChangedWarning } from './utils/auth/format_daemon_auth_scope_diagnostic.mjs';
 import { applyStackActiveServerScopeEnv, applyStackDaemonLifecycleScopeEnv } from './utils/auth/stable_scope_id.mjs';
@@ -2399,6 +2400,7 @@ export async function startLocalDaemonWithAuth({
   // Source replacement readiness belongs to the existing startup wait. Catalog
   // introspection reports bound runtime contributions, not installed manifests.
   const sourceReloadReadiness = sourceRuntimeLaunchUpdate !== null;
+  let authenticatedReloadReadiness;
   const readLoadedAgentCount = async () => {
     const control = await readDaemonControlState({ cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv });
     if (!control.ok) throw new Error('loaded Agent catalog unavailable');
@@ -2782,8 +2784,21 @@ export async function startLocalDaemonWithAuth({
         if (!log.includes('Machine registered')) return 'Machine registered has not appeared in the replacement daemon log';
         try {
           const count = await readLoadedAgentCount();
-          return count < incumbentAgentCount ? `loaded Agent count dropped from ${incumbentAgentCount} to ${count}` : null;
+          if (count < incumbentAgentCount) return `loaded Agent count dropped from ${incumbentAgentCount} to ${count}`;
         } catch { return 'loaded Agent catalog unavailable'; }
+        // One read per replacement, using the same server-scoped identity as
+        // this daemon. Preserve its failure through the existing readiness wait.
+        authenticatedReloadReadiness ??= (async () => {
+          const token = readAuthTokenFromCredentialFile(credentialPaths.serverScopedPath);
+          const route = '/v2/sessions';
+          if (!token) return `authenticated read ${route} failed: missing stack credentials`;
+          const observation = await fetchHappierHealth(internalServerUrl, {
+            path: route, headers: { Authorization: `Bearer ${token}` },
+          });
+          return observation.status >= 200 && observation.status < 300 ? null
+            : `authenticated read ${route} failed: status=${observation.status ?? 'unavailable'}`;
+        })();
+        return await authenticatedReloadReadiness;
       } : null,
       shouldStop: () => isShuttingDown?.() === true || excerptIndicatesInstalledServiceConflict(startOutput),
       shouldFail: (state) => startWrapperFailed() && state.status === 'stopped',

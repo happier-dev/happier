@@ -417,12 +417,23 @@ server.listen(0, '127.0.0.1', () => {
   }]);
 });
 
-for (const readinessCase of ['ready', 'missing-registration', 'registration-unavailable', 'agent-drop']) {
+for (const readinessCase of ['ready', 'missing-registration', 'registration-unavailable', 'agent-drop', 'authenticated-read-failure']) {
 test(`source launch readiness ${readinessCase} retires unpublished generations and verifies its successor`, async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-source-daemon-supersede-'));
   const cliHomeDir = join(tmp, 'cli');
   const stackName = 'source-supersede';
   const internalServerUrl = 'http://127.0.0.1:4301';
+  let replacement = false;
+  let authenticatedReads = 0;
+  const originalFetch = globalThis.fetch;
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (String(url) === `${internalServerUrl}/v2/sessions`) {
+      authenticatedReads += 1;
+      assert.ok(Boolean(options?.headers?.Authorization), 'read uses existing stack credentials');
+      return new Response('{}', { status: replacement && readinessCase === 'authenticated-read-failure' ? 500 : 200 });
+    }
+    return originalFetch(url, options);
+  });
   const pids = [];
   const pidPath = join(tmp, 'spawned-pid');
   t.after(async () => {
@@ -494,6 +505,8 @@ process.exit(0);
   assert.equal((await startLocalDaemonWithAuth(options)).started, true);
   assert.equal(JSON.parse(await readFile(reloadPath, 'utf8')).status, 'ready');
   const first = Number(await readFile(pidPath, 'utf8'));
+  assert.equal(authenticatedReads, 1, 'one authenticated read per source readiness wait');
+  replacement = true;
   pids.push(first);
   assert.deepEqual((await readStackRuntimeStateFile(runtimeStatePath)).sourceRuntimeIdentities.daemon,
     { selected: 'source-a', loaded: 'source-a' });
@@ -504,7 +517,9 @@ process.exit(0);
   if (readinessCase !== 'ready') {
     await assert.rejects(startLocalDaemonWithAuth({ ...options,
       sourceRuntimeLaunchUpdate: { launch: { entrypoint: successorEntrypoint, cliDir: tmp }, identity: 'source-b' },
-    }), /NOT_READY.*(?:Machine|Agent)/);
+    }), readinessCase === 'authenticated-read-failure' ? /NOT_READY.*\/v2\/sessions.*500/ : /NOT_READY.*(?:Machine|Agent)/);
+    if (readinessCase === 'authenticated-read-failure') assert.equal(authenticatedReads, 2,
+      'failed authentication is observed once, rather than polled until the readiness deadline');
     pids.push(Number(await readFile(pidPath, 'utf8')));
     assert.equal((await readStackRuntimeStateFile(runtimeStatePath)).sourceRuntimeIdentities.daemon.loaded, null);
     return;
@@ -512,6 +527,7 @@ process.exit(0);
   assert.equal((await startLocalDaemonWithAuth({ ...options,
     sourceRuntimeLaunchUpdate: { launch: { entrypoint: successorEntrypoint, cliDir: tmp }, identity: 'source-b' },
   })).started, true);
+  assert.equal(authenticatedReads, 2, 'the successor has its own single authenticated readiness read');
   const second = Number(await readFile(pidPath, 'utf8'));
   pids.push(second);
   assert.notEqual(second, first);

@@ -1621,7 +1621,10 @@ cutover and preserves the incumbent with the reason.
 
 The replacement daemon's existing readiness wait also requires its new log to
 show `Machine registered` without `registration unavailable`, and its loaded
-Agent catalog count to be at least the incumbent's. A failed check reports
+Agent catalog count to be at least the incumbent's. It also performs one
+authenticated `/v2/sessions` read using that daemon's existing server-scoped
+credentials. A failed read retains the route and HTTP status in the readiness
+reason. A failed check reports
 `NOT_READY` with the reason after cutover. The lead re-adopts the previous green
 capture; this does not provide automatic rollback or overlapping handover.
 
