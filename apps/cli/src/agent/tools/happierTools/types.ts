@@ -1,4 +1,5 @@
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 export type HappierBuiltInToolDefinition = Readonly<{
   name: string;
@@ -21,4 +22,4 @@ export type HappierBuiltInToolDefinition = Readonly<{
 
 export type HappierBuiltInToolDispatchResult =
   | Readonly<{ ok: true; result: unknown }>
-  | Readonly<{ ok: false; errorCode: string; error: string; candidates?: string[]; details?: unknown }>;
+  | (ActionExecuteFailure & Readonly<{ candidates?: string[] }>);

@@ -26,7 +26,19 @@ type ActionExecutor = Readonly<{
   execute(actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult>;
 }>;
 
-const unavailable = (): ActionExecuteResult => ({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
+type SessionActionTargetUnavailableReason =
+  | 'authority_path_absent' | 'turn_witness_absent' | 'execution_run_turn_mismatch'
+  | 'execution_run_not_current' | 'scm_workspace_invalid' | 'turn_witness_projection_invalid'
+  | 'runner_authority_refused' | 'native_realtime_caller_invalid';
+
+/** The refusing owner names its missing fact without exposing runner or input data. */
+export function sessionActionTargetUnavailable(reason: SessionActionTargetUnavailableReason):
+  Extract<ActionExecuteResult, { ok: false }> & Readonly<{
+    details: Readonly<{ code: 'target_unavailable'; diagnostic: Readonly<{ reason: SessionActionTargetUnavailableReason }> }>;
+  }> {
+  return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+    details: { code: 'target_unavailable', diagnostic: { reason } } } as const satisfies ActionExecuteResult;
+}
 const uncertain = (): ActionExecuteResult => ({ ok: false, errorCode: 'outcome_uncertain', error: 'outcome_uncertain' });
 
 // These readers use the bound host's live Session RPC/catalog, including in a
@@ -174,23 +186,26 @@ export function createSessionAccountActionExecutor(params: Readonly<{
         .filter((signal): signal is AbortSignal => signal != null);
       const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
       if (signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-      if (!path) return unavailable();
-      if (!hostWitness) return unavailable();
+      if (!path) return sessionActionTargetUnavailable('authority_path_absent');
+      if (!hostWitness) return sessionActionTargetUnavailable('turn_witness_absent');
       const binding = params.client.getSessionActionConfirmationBinding?.();
       const executionRun = binding?.run;
-      if (binding && executionRun && (binding.turnId !== hostWitness.turnId || !binding.isCurrent())) return unavailable();
+      if (binding && executionRun) {
+        if (binding.turnId !== hostWitness.turnId) return sessionActionTargetUnavailable('execution_run_turn_mismatch');
+        if (!binding.isCurrent()) return sessionActionTargetUnavailable('execution_run_not_current');
+      }
       const location = actionId.startsWith('scm.') ? params.client.getCurrentSessionLocation?.() : null;
       const scmWorkspace = actionId.startsWith('scm.')
         ? WorkflowProjectTargetV1Schema.safeParse({ machineId: location?.machineId, directory: location?.path }) : null;
-      if (scmWorkspace && !scmWorkspace.success) return unavailable();
+      if (scmWorkspace && !scmWorkspace.success) return sessionActionTargetUnavailable('scm_workspace_invalid');
       let witness;
       try { witness = projectAgentRuntimeDaemonServiceTurnWitnessV1(hostWitness); }
-      catch { return unavailable(); }
+      catch { return sessionActionTargetUnavailable('turn_witness_projection_invalid'); }
       const authority = await readCurrentRunnerAgentRuntimeDaemonServiceAuthority({
         happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
         path, expectedSessionId: params.client.sessionId,
       });
-      if (!authority) return unavailable();
+      if (!authority) return sessionActionTargetUnavailable('runner_authority_refused');
       // A spawn retry belongs to the admitted parent and public creation key,
       // independently of the MCP connection, tool call, turn or runner lifetime.
       // Hash the tuple because creation keys have no private-envelope id bound.

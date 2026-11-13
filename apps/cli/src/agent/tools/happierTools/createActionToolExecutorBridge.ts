@@ -1,5 +1,6 @@
 import {
   type ActionId,
+  type ActionExecuteResult,
   type ActionsSettingsV1,
   type ApprovalRequestOriginV1,
   type ResolvedActionOption,
@@ -14,11 +15,9 @@ import type { ResolvedContributionRegistry } from '@/plugins/projection/registry
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 import { bindContextualActionToolInput } from './actionToolContext';
 import { materializeActionRequestAttributionV1, type ActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
-type ActionExecutorResult = Readonly<
-  | { ok: true; result: unknown }
-  | { ok: false; errorCode: string; error: string; details?: unknown }
->;
+type ActionExecutorResult = ActionExecuteResult;
 
 type ActionExecutorLike = Readonly<{
   execute: (
@@ -50,7 +49,7 @@ type ActionExecutorLike = Readonly<{
 
 type ActionToolBridgeResult =
   | Readonly<{ ok: true; result: unknown }>
-  | Readonly<{ ok: false; errorCode: string; error: string; details?: unknown }>;
+  | ActionExecuteFailure;
 
 type DynamicActionOptionsResult = Readonly<{
   actionId: ActionId | null;
@@ -61,7 +60,7 @@ type DynamicActionOptionsResult = Readonly<{
 
 type DynamicActionOptionsBridgeResult =
   | Readonly<{ ok: true; result: DynamicActionOptionsResult }>
-  | Readonly<{ ok: false; errorCode: string; error: string; details?: unknown }>;
+  | ActionExecuteFailure;
 
 export type ResolveActionOptionsInput = Readonly<{
   actionId: ActionId | null;
@@ -88,6 +87,7 @@ function normalizeActionExecutorResult(result: ActionExecutorResult): ActionTool
         errorCode: result.errorCode,
         error: result.error,
         ...(result.details !== undefined ? { details: result.details } : {}),
+        ...(result.failureCause !== undefined ? { failureCause: result.failureCause } : {}),
       };
 }
 
@@ -109,6 +109,7 @@ function normalizeActionToolResult(
       errorCode: result.errorCode,
       error: result.error,
       ...(result.details !== undefined ? { details: result.details } : {}),
+      ...(result.failureCause !== undefined ? { failureCause: result.failureCause } : {}),
     };
   }
 
@@ -507,6 +508,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
           errorCode: result.errorCode,
           error: result.error,
           ...(result.details === undefined ? {} : { details: result.details }),
+          ...(result.failureCause === undefined ? {} : { failureCause: result.failureCause }),
         };
       }
 

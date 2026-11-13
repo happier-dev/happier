@@ -15,6 +15,7 @@ import { encrypt, decrypt, encodeBase64 } from '@/api/encryption';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { publishServerHttpRuntimeOrigin, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { enableExternalActionHttpBody } from '../../../server/sources/app/api/utils/externalActionHttpBody';
 import { createSessionRecordFixture, createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createHappierMcpServer } from '@/mcp/createHappierMcpServer';
@@ -238,6 +239,7 @@ async function withTitleHost(
   }>) => Promise<void>,
   clientOverrides: Partial<HappyMcpSessionClient> = {},
   authority: 'session' | 'account' = 'session',
+  clientActionExecute?: import('@happier-dev/protocol').ActionExecutorDeps['clientActionExecute'],
 ) {
   const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`, encryption: null };
   const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain', storedContentMode: 'plain',
@@ -249,6 +251,8 @@ async function withTitleHost(
   let writes = 0;
   let localWrites = 0;
   const app = fastify();
+  // Home's real ingress restores signed reads carried as POST before routing.
+  enableExternalActionHttpBody(app.withTypeProvider());
   const restore = installAxiosFastifyAdapter({ app, origin: getTestServerBinding().serverUrl });
   app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ mode: 'plain' }));
   app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: getAccountSettings() }, version: 1 }));
@@ -280,7 +284,7 @@ async function withTitleHost(
     serverIdentityId: 'srv_test-home', externalActionMachineInstallationId: 'fixture-installation',
     externalActionMachineRequestPrivateKey: nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(29)).secretKey,
     actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1(getAccountSettings().actionsSettingsV1) },
-  });
+  }, clientActionExecute ? { clientActionExecute } : undefined);
   const control = installActionCatalogDaemonControlTransport(executor);
   const execute = createProductionSessionDaemonExecutor(credentials, () => executor);
   const daemonOperations: Parameters<Parameters<typeof createSessionDaemonAuthorityFixture>[0]['execute']>[0][] = [];
@@ -330,6 +334,78 @@ describe('createHappierMcpServer real host admission', () => {
   beforeEach(resetEnvironment);
   afterEach(unmockCaseModules);
   afterEach(() => vi.restoreAllMocks());
+
+  it.each(['session', 'account'] as const)('reads current UI through the admitted Session caller without a separate permission-depth projection (%s)', async authority => {
+    const sessionId = 'actual-happier-session';
+    await withCodexNativeAttachFixture(async ({ openConfiguredSession }) => {
+      const provider = await openConfiguredSession(undefined, { happier: { command: 'happier-mcp', args: ['serve'] } });
+      const lifetime = new AbortController();
+      const native = createNativeAgentSessionOperations(provider, sessionId, undefined, undefined, undefined, undefined, undefined, {
+        context: { signal: lifetime.signal } as AgentSessionRuntimeContext,
+        cwd: '/tmp', connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+        cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
+      });
+      const unsubscribe = native.subscribeRuntimeEvents(() => {});
+      try {
+        await native.sendTurnPrompt('Read the current UI context.', { localId: 'context-input', turnId: 'context-turn',
+          userMessageSeq: 1, userMessageSeqs: [1], agentStartCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
+          causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'yolo' } });
+        let witness = native.readActiveTurnAdmissionWitness?.() ?? null;
+        expect(witness?.agentStartCaller).toMatchObject({ sessionId, starterDepth: 0, turnDepth: 0 });
+        const { createClientActionReverseDispatcher } = await import('@/session/actions/clientActionReverseDispatch');
+        const { currentUiContextReadClientRpcMethod, UiActionDispatchRequestV1Schema } = await import('@happier-dev/protocol/actions/clientDispatchV1');
+        const { CurrentUiContextSnapshotV1Schema } = await import('@happier-dev/protocol/plugins/ui/currentUiContext');
+        const snapshot = CurrentUiContextSnapshotV1Schema.parse({ navigation: { area: 'sessions', screen: 'home' },
+          commands: [{ id: 'fold-drafts', title: 'Collapse Drafts' }] });
+        let deliveries = 0;
+        // The App socket is the external boundary; MCP, caller admission, daemon
+        // transport, Session metadata lookup and Action dispatch all stay real.
+        const reverse = createClientActionReverseDispatcher(() => ({
+          hasConnectedClientRpcHandler: method => method === currentUiContextReadClientRpcMethod(),
+          callConnectedClientRpc: async (method, raw, options) => {
+            expect(method).toBe(currentUiContextReadClientRpcMethod());
+            const request = UiActionDispatchRequestV1Schema.parse(raw);
+            expect(request.context.actionCaller).toMatchObject({ kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 });
+            deliveries++;
+            options.onIssued();
+            return { ok: true, result: { v: 1, execution: { ok: true, result: snapshot } } };
+          },
+        }));
+        await withTitleHost(sessionId, () => accountSettingsParse({}), async fixture => withMcpClient(fixture.runtime, async client => {
+          const reply = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {
+            actionId: 'ui.current_context.read', input: {},
+          } }));
+          expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+          expect(JSON.stringify(reply)).toContain('Collapse Drafts');
+          expect(deliveries).toBe(1);
+          const spec = CallToolResultSchema.parse(await client.callTool({ name: 'action_spec_get', arguments: { id: 'ui.current_context.read' } }));
+          expect(spec.isError, JSON.stringify(spec)).not.toBe(true);
+          if (authority === 'account') {
+            for (const unavailable of [
+              { witness: { ...witness!, agentStartCaller: { kind: 'session' as const, sessionId: 'another-session', starterDepth: 0, turnDepth: 0 } },
+                reason: 'turn_witness_projection_invalid' },
+              { witness: { ...witness!, agentStartCaller: { kind: 'session' as const, sessionId, starterDepth: 0, turnDepth: -1 } },
+                reason: 'turn_witness_projection_invalid' },
+              { witness: null, reason: 'turn_witness_absent' },
+            ]) {
+              witness = unavailable.witness;
+              const refused = CallToolResultSchema.parse(await client.callTool({ name: 'action_spec_get', arguments: { id: 'ui.current_context.read' } }));
+              expect(refused.isError).toBe(true);
+              const content = refused.content.find(item => item.type === 'text');
+              if (content?.type !== 'text') throw new Error('Expected an Action failure');
+              expect(JSON.parse(content.text)).toMatchObject({ errorCode: 'target_unavailable',
+                details: { diagnostic: { reason: unavailable.reason } }, failureCause: { phase: 'mcp.caller_admission' } });
+            }
+            expect(deliveries).toBe(1);
+          }
+        }), {
+          getActiveTurnAdmissionWitness: () => witness,
+          getActiveTurnPermissionWitness: () => null,
+          getHostTurnWorkDepth: () => undefined,
+        }, authority, reverse);
+      } finally { unsubscribe(); lifetime.abort(); await native.resetOrDisposeRuntime(); }
+    });
+  });
 
   it('executes a Happier Action during an ordinary native Codex turn without Realtime admission', async () => {
     const sessionId = 'actual-happier-session';

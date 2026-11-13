@@ -56,7 +56,7 @@ import { isSessionBoundMemoryTarget } from '@/mcp/sessionBoundMemoryTarget';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { createSessionFollowActionDeps } from '@/api/sessionFollowActionDeps';
 import { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime/session/follow/createSessionFollowSourceKeyPreparationAfterSet';
-import { createSessionAccountActionExecutor } from '@/mcp/runtime/createSessionAccountActionExecutor';
+import { createSessionAccountActionExecutor, sessionActionTargetUnavailable } from '@/mcp/runtime/createSessionAccountActionExecutor';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { readCurrentRunnerAgentStartPolicyV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient';
 import { createNativeAgentSessionEffectBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
@@ -585,28 +585,47 @@ export function createHappierMcpServer(
   const harness = createHarness();
   const scopedPluginRuntimeRegistryLease = opts?.pluginRuntimeRegistryLease;
   const boundCallerSessionId = client.sessionId.trim();
-  const getInitiatingActionCaller = (witness = client.getActiveTurnAdmissionWitness?.()) => {
-    if (client.getActiveTurnAdmissionWitness && !witness) return null;
-    if (actionInvocation?.surface === 'voice' && actionInvocation.caller.kind === 'host') return actionInvocation.caller;
+  const unavailableInitiatingCaller = (reason: Parameters<typeof sessionActionTargetUnavailable>[0]) => ({
+    ok: false as const,
+    result: { ...sessionActionTargetUnavailable(reason), failureCause: {
+      phase: 'mcp.caller_admission', errorClass: 'Error' as const, errorCode: 'target_unavailable', httpStatus: null,
+    } },
+  });
+  const resolveInitiatingActionCaller = (witness = client.getActiveTurnAdmissionWitness?.()) => {
+    if (client.getActiveTurnAdmissionWitness && !witness) return unavailableInitiatingCaller('turn_witness_absent');
+    if (actionInvocation?.surface === 'voice' && actionInvocation.caller.kind === 'host') {
+      return { ok: true as const, caller: actionInvocation.caller };
+    }
     if (witness?.nativeRealtimeAdmission) {
       const admission = NativeRealtimeInputAdmissionV1Schema.safeParse(witness.nativeRealtimeAdmission);
       const caller = AgentStartSessionCallerV1Schema.safeParse(witness.agentStartCaller);
       return admission.success && caller.success && caller.data.sessionId === boundCallerSessionId
         && caller.data.turnDepth === 0 && witness.inputId === admission.data.admissionId
         && witness.turnId.trim().length > 0 && witness.userMessageSeq === null && witness.userMessageSeqs.length === 0
-        && witness.signal && !witness.signal.aborted ? caller.data : null;
+        && witness.signal && !witness.signal.aborted
+        ? { ok: true as const, caller: caller.data }
+        : unavailableInitiatingCaller('native_realtime_caller_invalid');
     }
-    const caller = AgentStartSessionCallerV1Schema.safeParse({ kind: 'session', sessionId: boundCallerSessionId,
+    // The admitted input already carries the host's caller, including its depth.
+    // Older hosts without that projection retain their existing depth adapter.
+    const caller = AgentStartSessionCallerV1Schema.safeParse(witness?.agentStartCaller !== undefined
+      ? witness.agentStartCaller : { kind: 'session', sessionId: boundCallerSessionId,
       starterDepth: client.getWorkDepth?.(), turnDepth: resolveLiveClientTurnWorkDepth(client) });
-    return caller.success ? caller.data : null;
+    return caller.success && caller.data.sessionId === boundCallerSessionId
+      ? { ok: true as const, caller: caller.data }
+      : unavailableInitiatingCaller('turn_witness_projection_invalid');
+  };
+  const getInitiatingActionCaller = () => {
+    const admission = resolveInitiatingActionCaller();
+    return admission.ok ? admission.caller : null;
   };
   // Built-in Session effects and contributed Actions consume the same live
   // host caller. The plugin adapter alone stamps only its remote requests.
   const sessionActionExecutor = {
     execute: async (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => {
-      const actionCaller = getInitiatingActionCaller();
-      if (!actionCaller) return { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' };
-      return await harness.executor.execute(actionId, input, { ...context, actionCaller });
+      const admission = resolveInitiatingActionCaller();
+      if (!admission.ok) return admission.result;
+      return await harness.executor.execute(actionId, input, { ...context, actionCaller: admission.caller });
     },
   };
   const executeInCurrentProcess: NonNullable<Parameters<typeof createDaemonPluginActionExecutor>[0]['executeInCurrentProcess']> =
@@ -626,10 +645,8 @@ export function createHappierMcpServer(
         getInitiatingActionCaller,
         ...(boundCallerSessionId ? { startedBy: 'agent' as const } : {}),
         requestPluginActionExecution: async (request, options) => {
-          const initiatingActionCaller = getInitiatingActionCaller();
-          if (!initiatingActionCaller) return { matched: true, result: {
-            ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
-          } };
+          const admission = resolveInitiatingActionCaller();
+          if (!admission.ok) return { matched: true, result: admission.result };
           return await executeContributedAction({
             runtimeRegistry: scopedPluginRuntimeRegistryLease.registry,
             actionId: request.actionId,
@@ -641,7 +658,7 @@ export function createHappierMcpServer(
             context: {
               surface: request.surface,
               // The client is bound by the Session host; request targets and surfaces do not establish provenance.
-              initiatingActionCaller,
+              initiatingActionCaller: admission.caller,
               ...(request.startedBy ? { startedBy: request.startedBy } : {}),
               ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
               ...(options?.signal ? { signal: options.signal } : {}),
@@ -657,9 +674,9 @@ export function createHappierMcpServer(
   const accountExecutor = createSessionAccountActionExecutor({ base: localExecutor, client, hasAccountAuthority: credentials !== null,
     ...(authenticationHost ? { executeInCurrentProcess: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) =>
       authenticationHost.executeAction(actionId, input, context, async (id, operands, admittedContext, host) => {
-        const actionCaller = getInitiatingActionCaller();
-        if (!actionCaller) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-        return await createHarness(host).executor.execute(id, operands, { ...admittedContext, actionCaller });
+        const admission = resolveInitiatingActionCaller();
+        if (!admission.ok) return admission.result;
+        return await createHarness(host).executor.execute(id, operands, { ...admittedContext, actionCaller: admission.caller });
       }) } : {}),
   });
   const executor = {
@@ -667,8 +684,9 @@ export function createHappierMcpServer(
       const witness = client.getActiveTurnAdmissionWitness?.();
       // Manual tools share this entry point with the common Action bridge.
       // The host witness supplies their restriction and exact admission lifetime.
-      if (witness?.nativeRealtimeAdmission && !getInitiatingActionCaller(witness)) {
-        return Promise.resolve({ ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' });
+      if (witness?.nativeRealtimeAdmission) {
+        const admission = resolveInitiatingActionCaller(witness);
+        if (!admission.ok) return Promise.resolve(admission.result);
       }
       const signals = [toolExecutionSignal, context?.signal, witness?.signal]
         .filter((signal): signal is AbortSignal => signal != null);

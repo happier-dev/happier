@@ -147,6 +147,7 @@ export function formatHappierMcpToolFailure(result: Extract<HappierBuiltInToolDi
             errorCode: result.errorCode,
             error: result.error,
             ...(result.details === undefined ? {} : { details: result.details }),
+            ...(result.failureCause === undefined ? {} : { failureCause: result.failureCause }),
         }) }],
         isError: true,
     };
