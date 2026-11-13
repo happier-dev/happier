@@ -18,8 +18,8 @@ export type ConnectedAccountConfiguredEndpoint = Readonly<{
 /**
  * Normalizes a configured service base. A base may live beneath a path segment
  * — an Azure DevOps organization or collection, a path-prefixed self-hosted
- * deployment — but is otherwise held to the same exactness as an origin: HTTPS
- * only, no credentials, no query, no fragment, and no reinterpretation of what
+ * deployment — and supports HTTP as well as HTTPS for self-hosted services,
+ * with no credentials, no query, no fragment, and no reinterpretation of what
  * the user configured. Only a trailing slash is normalized away; path case is
  * preserved because a collection segment is case-bearing.
  */
@@ -29,7 +29,7 @@ export function normalizeConnectedAccountConfiguredBase(
     // One rejection for every malformed base, so an unparseable value cannot be
     // told apart from a rejected one by the message it produced.
     const rejected = () => new TypeError(
-        'Connected-account configured base must be an exact credential-free HTTPS service base',
+        'Connected-account configured base must be an exact credential-free HTTP(S) service base',
     );
     let url: URL;
     try {
@@ -40,7 +40,7 @@ export function normalizeConnectedAccountConfiguredBase(
     const path = url.pathname.replace(/\/+$/, '');
     const base = `${url.origin}${path}`;
     if (
-        url.protocol !== 'https:'
+        (url.protocol !== 'https:' && url.protocol !== 'http:')
         || url.username !== ''
         || url.password !== ''
         || url.search !== ''

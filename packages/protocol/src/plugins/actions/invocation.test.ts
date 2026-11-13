@@ -1,8 +1,10 @@
+import { withActionFailureCauseDiagnostic, withActionFailureDiagnostic } from '../../actions/executor/actionFailureDiagnostic.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createHostReviewedChildPortV1 } from '../../actions/executor/deploymentRoleChild.js';
 import type { PluginActionContributionV2 } from './v2.js';
 
 import {
+  readPluginActionError,
   createPluginActionInvocation,
   createPluginActionPresentUserGate,
   fingerprintPluginActionCurrentIntent,
@@ -14,6 +16,18 @@ import {
   defineProtocolObject,
   defineProtocolString,
 } from './protocolComposableSchema.js';
+
+it('publishes the sanitized materialization exception from the existing diagnostic carrier', () => {
+  const error = new TypeError('Configured deployment unavailable Authorization: Bearer fixture-private-token');
+  withActionFailureCauseDiagnostic(error, error, 'connected_accounts.materialize');
+  withActionFailureDiagnostic(error, { phase: 'connected_accounts.materialize', causeKind: 'native_failure', error });
+  const result = readPluginActionError(error);
+  expect(result).toMatchObject({ code: 'plugin_action_execution_failed',
+    message: expect.stringContaining('Configured deployment unavailable'),
+    data: { failureCause: { phase: 'connected_accounts.materialize', errorClass: 'TypeError' } } });
+  expect(JSON.stringify(result)).not.toContain('fixture-private-token');
+  expect(readPluginActionError(new TypeError('raw private exception'))).toBeNull();
+});
 
 it('preserves an unavailable current-intent presentation cause', async () => {
   const data = { details: { currentIntentPresentation: { status: 'unavailable', requestId: 'interaction-request' } } };

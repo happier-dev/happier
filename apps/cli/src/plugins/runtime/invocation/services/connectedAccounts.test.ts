@@ -1,3 +1,4 @@
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { createUnavailablePluginServices } from './unavailable';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { logger } from '@/ui/logger';
@@ -1578,12 +1579,12 @@ describe('stable plugin Connected Accounts host', () => {
         });
     });
 
-    it('projects a path-prefixed configured base alongside the origin HostAccess governs', async () => {
+    it.each(['https://dev.azure.test', 'http://127.0.0.1:7080'])('projects a path-prefixed configured base for %s', async origin => {
         const owner = createOwner({
             listAccounts: vi.fn(async () => metadataList({
                 accounts: Object.freeze([listedAccount({
-                    connectedAccountOrigins: Object.freeze(['https://dev.azure.test']),
-                    connectedAccountBases: Object.freeze(['https://dev.azure.test/acme']),
+                    connectedAccountOrigins: Object.freeze([origin]),
+                    connectedAccountBases: Object.freeze([`${origin}/acme`]),
                 })]),
             })),
         });
@@ -1593,8 +1594,8 @@ describe('stable plugin Connected Accounts host', () => {
         await expect(service.listAccounts({ purpose: scope.purpose }))
             .resolves.toMatchObject({
                 accounts: [{
-                    connectedAccountOrigins: ['https://dev.azure.test'],
-                    connectedAccountBases: ['https://dev.azure.test/acme'],
+                    connectedAccountOrigins: [origin],
+                    connectedAccountBases: [`${origin}/acme`],
                 }],
             });
     });
@@ -1766,7 +1767,8 @@ describe('stable plugin Connected Accounts host', () => {
 });
 
 describe('Coder options with established token material', () => {
-    it.each(['ok', 'missing', 'io'] as const)('settles Coder options with %s material through the real owner', async failure => {
+    it.each(['ok', 'http', 'missing', 'io'] as const)('settles Coder options with %s material through the real owner', async failure => {
+        const endpoint = failure === 'http' ? 'http://127.0.0.1:7080' : 'https://coder.example.test';
         const { PLUGIN } = await import('../../../../../../../packages/plugins/machine-coder/src/manifest');
         const { CODER_CONNECTED_ACCOUNT_RUNTIME: runtime } = await import('../../../../../../../packages/plugins/machine-coder/src/machine/connection');
         const manifest = normalizePluginManifestV2(PLUGIN.manifest);
@@ -1797,14 +1799,14 @@ describe('Coder options with established token material', () => {
             content: content('credential', { v: 1, values: { token } }), metadata: { scopes: [] } });
         const configuration = QualifiedConnectedAccountConfigurationSnapshotV4Schema.parse({ ...revisions,
             target: { kind: 'account', ref: account }, configurationContent: content('configuration', {
-                values: { endpoint: "https://coder.example.test" }, secretRefs: {}, secretValues: {},
+                values: { endpoint }, secretRefs: {}, secretValues: {},
             }) });
         const established = createQualifiedConnectedAccountEstablishedRuntimeOwner({
             // Runtime loading and persisted snapshots are the only substituted system boundaries.
             reloadController: { acquireRuntimeRegistry: async () => ({ registry, source: 'active', release: async () => {} }),
                 isRuntimeRegistryCurrent: () => true } as unknown as Pick<PluginReloadController, 'acquireRuntimeRegistry' | 'isRuntimeRegistryCurrent'>,
             credentials: { token: 'home-token', encryption: null }, getAccountEncryptionMode: async () => 'plain',
-            readCredential: async () => { if (failure === 'io') throw Object.assign(new TypeError('private-credential-error'), { code: 'EIO' }); return failure === 'missing' ? null : credential; }, readConfiguration: async () => configuration,
+            readCredential: async () => { if (failure === 'io') throw Object.assign(new TypeError('private-credential-error Authorization: Bearer synthetic-coder-token'), { code: 'EIO' }); return failure === 'missing' ? null : credential; }, readConfiguration: async () => configuration,
             configuration: { read: async () => null, secrets: { admit: async () => {}, has: async () => false, read: async () => null } },
         });
         const fixture = createForegroundPurposeOwnerFixture({ consumer: { pluginId: seed.plugin.id, localId: seed.contribution.id },
@@ -1818,12 +1820,23 @@ describe('Coder options with established token material', () => {
         } }, connectedAccounts: { register() { return { dispose() {} }; } } } as unknown as PluginApi);
         const http = vi.fn(async () => ({ status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify([
             { id: 'template', name: 'Development', organization_id: 'org', active_version_id: 'version' },
-        ])), finalUrl: 'https://coder.example.test/api/v2/organizations/org/templates' }));
+        ])), finalUrl: `${endpoint}/api/v2/organizations/org/templates` }));
         const context = { signal: seed.signal, invokedAtMs: 1, services: { connectedAccounts: host.bind(seed, [scope]), http: { request: http } } } as unknown as PluginInvocationContext;
         try {
-            if (failure !== 'ok') {
+            if (failure !== 'ok' && failure !== 'http') {
                 const failureResult = await Promise.resolve(handlers.get('options')!({ organizationId: 'org' }, context))
-                    .catch((error: unknown) => readPluginActionError(error));
+                    .catch((error: unknown) => {
+                        expect(readActionOutputDiagnostic(error)?.exception).toMatchObject({
+                            errorClass: failure === 'io' ? 'TypeError' : 'Error',
+                            message: expect.any(String),
+                        });
+                        if (failure === 'io') {
+                            const message = readActionOutputDiagnostic(error)?.exception?.message;
+                            expect(message).toContain('private-credential-error');
+                            expect(message).not.toContain(token);
+                        }
+                        return readPluginActionError(error);
+                    });
                 expect(failureResult).toMatchObject({
                     code: 'plugin_action_execution_failed', data: { failureCause: { phase: 'connected_accounts.materialize',
                         errorCode: failure === 'io' ? 'EIO' : 'credential_snapshot_unavailable' } },

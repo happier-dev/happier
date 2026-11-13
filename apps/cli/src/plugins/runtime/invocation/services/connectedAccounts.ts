@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { QualifiedConnectedAccountMaterialError, ConnectedAccountProducerResultError, ConnectedAccountAuthenticationModeUnavailableError, ConnectedAccountRuntimeInvocationNotStartedError, readConnectedAccountListLimit } from '@happier-dev/cli-common/connectedAccounts';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
-import { withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { withActionFailureCauseDiagnostic, withActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import type { ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { ConnectedAccountMaterializationRequestSchema } from '@happier-dev/protocol/connect/connected-account-purposes';
@@ -206,7 +206,11 @@ function materializationFailure(error: unknown, seed: PluginInvocationServicesSe
     // Preserve the exception identity for non-Action consumers (including HTTP custody).
     // The Action exception projector consumes this existing private diagnostic carrier.
     if (error instanceof Error) {
-        try { withActionFailureCauseDiagnostic(error, { name: failureCause.errorClass, code: failureCause.errorCode, status: failureCause.httpStatus }, failureCause.phase); }
+        try {
+            withActionFailureCauseDiagnostic(error, { name: failureCause.errorClass, code: failureCause.errorCode, status: failureCause.httpStatus }, failureCause.phase);
+            // Prose remains private until the existing host diagnostic redactor projects it.
+            withActionFailureDiagnostic(error, { phase: failureCause.phase, causeKind: 'native_failure', error });
+        }
         catch { /* A frozen exception still reaches the file diagnostic below. */ }
     }
     try {
@@ -524,28 +528,14 @@ function snapshotListRequest(
     return Object.freeze({ purpose, ...(limit === undefined ? {} : { limit }) });
 }
 
-/**
- * Host-normalized credential-free HTTPS origin. The canonical configured-origin
- * owner already enforces this shape on write; re-checking it here keeps an owner
- * regression from disclosing a credential-bearing or non-canonical URL.
- */
+/** A listed origin uses the same declared-endpoint normalization as its base. */
 function assertListedOrigin(origin: unknown): string {
-    if (typeof origin !== 'string' || origin.length === 0) throw listingOutOfScope();
-    let url: URL;
+    if (typeof origin !== 'string') throw listingOutOfScope();
     try {
-        url = new URL(origin);
-    } catch {
-        throw listingOutOfScope();
-    }
-    if (
-        url.protocol !== 'https:'
-        || url.username !== ''
-        || url.password !== ''
-        || url.origin !== origin
-    ) {
-        throw listingOutOfScope();
-    }
-    return origin;
+        const normalized = normalizeConnectedAccountConfiguredBase(origin);
+        if (normalized.origin === origin && normalized.base === origin) return origin;
+    } catch { /* Preserve the listing boundary's typed refusal. */ }
+    throw listingOutOfScope();
 }
 
 /**

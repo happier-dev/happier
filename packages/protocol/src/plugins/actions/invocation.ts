@@ -417,11 +417,12 @@ export function readPluginActionError(error: unknown): Readonly<{
 }> | null {
   if (!isPluginError(error)) {
     const publicFailure = parseActionExecuteFailure(error);
-    const failureCause = publicFailure?.failureCause ?? readActionOutputDiagnostic(error)?.failureCause;
+    const diagnostic = readActionOutputDiagnostic(error);
+    const failureCause = publicFailure?.failureCause ?? diagnostic?.failureCause;
     if (!failureCause) return null;
-    return Object.freeze({ code: publicFailure?.errorCode ?? PLUGIN_ACTION_FAILURE_FALLBACK_CODE,
-      message: publicFailure?.error ?? PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE,
-      retryable: false, data: { failureCause: { ...failureCause } } });
+    return Object.freeze(carryActionFailureDiagnostic({ code: publicFailure?.errorCode ?? PLUGIN_ACTION_FAILURE_FALLBACK_CODE,
+      message: projectPluginActionFailureMessage(diagnostic?.exception?.message ?? publicFailure?.error),
+      retryable: false, data: { failureCause: { ...failureCause } } }, error));
   }
   const data = AgentRuntimeJsonValueV1Schema.safeParse(error.data);
   const failure = Object.freeze({

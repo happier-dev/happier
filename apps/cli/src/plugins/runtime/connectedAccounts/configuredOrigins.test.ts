@@ -24,13 +24,13 @@ describe('connected-account endpoint routing projection', () => {
             .toEqual([{ origin: 'https://de.example.test', base: 'https://de.example.test' }]);
         expect(() => projectConnectedAccountConfiguredEndpoints({ configuration: fixed, values: { region: 'unknown' } })).toThrow();
     });
-    it.each(['https://dev.azure.test/acme', 'https://server.example.test/tfs/DefaultCollection', 'https://192.168.4.7/collection'])
+    it.each(['https://dev.azure.test/acme', 'https://server.example.test/tfs/DefaultCollection', 'https://192.168.4.7/collection', 'http://127.0.0.1:7080', 'http://dev.azure.test/acme'])
     ('preserves the configured service path, including private endpoints (%s)', base => {
         expect(projectConnectedAccountConfiguredEndpoints({ configuration: configuration('connectedAccountBase'), values: { endpoint: base + '/' } }))
             .toEqual([{ origin: new URL(base).origin, base }]);
     });
     it.each([
-        'https://user:secret@dev.azure.test/acme', 'http://dev.azure.test/acme',
+        'https://user:secret@dev.azure.test/acme', 'ftp://dev.azure.test/acme',
         'https://dev.azure.test/acme?project=secret', 'https://dev.azure.test/acme#fragment',
         'https://dev.azure.test/acme/../elsewhere', 'https://DEV.azure.test/acme', 'dev.azure.test/acme',
     ])('rejects malformed configured routing data (%s)', endpoint => {
