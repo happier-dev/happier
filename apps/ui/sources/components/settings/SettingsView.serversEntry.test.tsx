@@ -287,24 +287,37 @@ describe('SettingsView', () => {
     }
 
     it('displays and copies app, server, and connected machine versions', async () => {
+        const { CONNECTED_DEVICE_CLIENT_ID_KEY } = await import('@/sync/domains/settings/connectedDevices');
+        const { getPersistenceStorage } = await import('@/sync/domains/state/persistence');
+        getPersistenceStorage().set(CONNECTED_DEVICE_CLIENT_ID_KEY, 'desktop');
         const screen = await renderSettingsViewUnderTest();
         const row = screen.findRowByTitle('common.version');
-        expect(row?.props.subtitle).toContain('0.0.0-test');
-        expect(row?.props.subtitle).toContain('1.2.3');
-        expect(row?.props.subtitle).toContain('42');
-        expect(row?.props.subtitle).toContain('3.4.5');
-        expect(row?.props.subtitle).toContain('abcdef0123456789');
-        expect(row?.props.subtitle).toContain('workstation');
-        expect(row?.props.subtitle).toContain('2.3.4');
-        expect(row?.props.subtitle).toContain('legacy-host): 0.2.17');
-        expect(row?.props.subtitle).not.toContain('legacy-host): 0.2.17 (0.0.0-test)');
-        expect(row?.props.subtitle).toContain('Test laptop');
-        expect(row?.props.subtitle).toContain('1.2.3');
-        expect(row?.props.subtitle).toContain('Phone | android | 1.2.2');
-        expect(row?.props.subtitle).toContain('web | 1.2.4');
-        expect(row?.props.subtitle).not.toContain('Expired device');
+        const lines = (row?.props.subtitle as React.ReactElement<{ lines: ReadonlyArray<{ text: string; isLocalDevice?: boolean }> }>).props.lines;
+        const subtitleText = lines.map((line) => line.text).join('\n');
+        expect(subtitleText).toContain('0.0.0-test');
+        expect(subtitleText).toContain('1.2.3');
+        expect(subtitleText).toContain('42');
+        expect(subtitleText).toContain('3.4.5');
+        expect(subtitleText).toContain('abcdef0123456789');
+        expect(subtitleText).toContain('workstation');
+        expect(subtitleText).toContain('2.3.4');
+        expect(subtitleText).toContain('legacy-host): 0.2.17');
+        expect(subtitleText).not.toContain('legacy-host): 0.2.17 (0.0.0-test)');
+        expect(subtitleText).toContain('Test laptop');
+        expect(subtitleText).toContain('1.2.3');
+        expect(subtitleText).toContain('Phone | android | 1.2.2');
+        expect(subtitleText).toContain('web | 1.2.4');
+        expect(subtitleText).not.toContain('Expired device');
+        // This instance's own lines (app, native, build, runtime) and this device's row are highlighted; nothing else is.
+        expect(lines.filter((line) => line.isLocalDevice).map((line) => line.text)).toEqual([
+            expect.stringContaining('0.0.0-test'),
+            expect.stringContaining('1.2.3'),
+            expect.stringContaining('42'),
+            expect.stringContaining('runtime-1'),
+            expect.stringContaining('Test laptop | desktop'),
+        ]);
         await act(async () => { await screen.pressRowByTitle('common.version'); });
-        expect(shared.copySpy).toHaveBeenCalledWith(row?.props.subtitle);
+        expect(shared.copySpy).toHaveBeenCalledWith(subtitleText);
         expect(screen.findByTestId('settings-version-copied-toast')?.props.accessibilityLabel).toBe('common.copied!');
     });
 

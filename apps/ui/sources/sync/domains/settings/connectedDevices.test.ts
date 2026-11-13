@@ -23,8 +23,8 @@ describe('connected devices', () => {
             machines: [{ host: 'old-host', happyCliVersion: '0.2.17' }],
         };
         expect(listConnectedDevices(settings, { desktop: now - 1000 }, now)).toEqual([
-            { ...desktop, lastSeen: now - 1000 },
-            { ...phone, lastSeen: now - CONNECTED_DEVICE_WINDOW_MS },
+            { ...desktop, lastSeen: now - 1000, id: 'desktop' },
+            { ...phone, lastSeen: now - CONNECTED_DEVICE_WINDOW_MS, id: 'phone' },
         ]);
     });
 
@@ -34,8 +34,8 @@ describe('connected devices', () => {
         const settings = settingsParse({ [`${CONNECTED_DEVICE_KEY_PREFIX}phone`]: existing });
         const merged = settingsParse(applySettings(settings, { [`${CONNECTED_DEVICE_KEY_PREFIX}laptop`]: updated }));
         expect(listConnectedDevices(merged, { phone: 100, laptop: 200 }, 200)).toEqual([
-            { ...updated, lastSeen: 200 },
-            { ...existing, lastSeen: 100 },
+            { ...updated, lastSeen: 200, id: 'laptop' },
+            { ...existing, lastSeen: 100, id: 'phone' },
         ]);
     });
 

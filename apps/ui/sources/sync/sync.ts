@@ -108,7 +108,7 @@ import { buildOutgoingUserTextRecord } from './domains/messages/outgoingUserMess
 import { resolveSentFrom } from './domains/messages/sentFrom';
 import { NormalizedMessage, normalizeRawMessage, RawRecord, RawRecordSchema } from './typesRaw';
 import { applySettings, Settings, settingsDefaults, settingsParse, SUPPORTED_SCHEMA_VERSION } from './domains/settings/settings';
-import { planConnectedDeviceIdentityUpdate } from './domains/settings/connectedDevices';
+import { CONNECTED_DEVICE_CLIENT_ID_KEY, planConnectedDeviceIdentityUpdate } from './domains/settings/connectedDevices';
 import { apiReportConnectedClientSeen } from './api/account/apiConnectedClients';
 import { readCurrentAppRuntimeInfo } from './runtime/readCurrentAppRuntimeInfo';
 import {
@@ -2063,7 +2063,7 @@ class Sync {
         const platform = this.usesPersistentDesktopSync ? 'desktop' : Platform.OS;
         if (platform !== 'desktop' && platform !== 'web' && platform !== 'android' && platform !== 'ios') return;
         const persistent = getPersistenceStorage();
-        const idKey = 'connected-device-client-id-v1';
+        const idKey = CONNECTED_DEVICE_CLIENT_ID_KEY;
         let id = persistent.getString(idKey);
         if (!id) {
             id = randomUUID();

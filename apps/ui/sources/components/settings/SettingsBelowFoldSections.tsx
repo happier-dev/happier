@@ -9,7 +9,11 @@ import { trackWhatsNewClicked } from '@/track';
 import { requestReview } from '@/utils/system/requestReview';
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { useAllMachines, useSettings } from '@/sync/domains/state/storage';
-import { listConnectedDevices } from '@/sync/domains/settings/connectedDevices';
+import { CONNECTED_DEVICE_CLIENT_ID_KEY, listConnectedDevices } from '@/sync/domains/settings/connectedDevices';
+import { getPersistenceStorage } from '@/sync/domains/state/persistence';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
+import { ITEM_SUBTITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { apiListConnectedClientsLastSeen } from '@/sync/api/account/apiConnectedClients';
 
 const NO_CONNECTED_CLIENT_PRESENCE: Readonly<Record<string, number>> = Object.freeze({});
@@ -20,6 +24,27 @@ import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { Modal } from '@/modal';
 import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
+
+// This instance's own lines stand out: text.primary is the high-contrast text role, so it is lighter than the
+// secondary lines on dark themes and darker on light themes.
+const VersionDetailsText = React.memo(function VersionDetailsText({ lines }: Readonly<{
+    lines: ReadonlyArray<Readonly<{ text: string; isLocalDevice?: boolean }>>;
+}>) {
+    const { theme } = useUnistyles();
+    return (
+        <Text style={{ ...Typography.default('regular'), color: theme.colors.text.secondary, ...ITEM_SUBTITLE_TEXT_METRICS.comfortable }}>
+            {lines.map((line, index) => (
+                <Text
+                    key={index}
+                    testID={line.isLocalDevice ? 'settings-version-local-device' : undefined}
+                    style={line.isLocalDevice ? { ...Typography.default('semiBold'), color: theme.colors.text.primary } : undefined}
+                >
+                    {index > 0 ? '\n' : ''}{line.text}
+                </Text>
+            ))}
+        </Text>
+    );
+});
 
 type SettingsBelowFoldSectionsRouter = ReturnType<typeof useRouter>;
 type SettingsBelowFoldSectionsTheme = ReturnType<typeof useUnistyles>['theme'];
@@ -468,19 +493,29 @@ const SettingsAboutSection = React.memo(function SettingsAboutSection({
         return () => { cancelled = true; unsubscribe(); };
     }, []);
 
-    const versionDetails = [
+    const localDeviceId = getPersistenceStorage().getString(CONNECTED_DEVICE_CLIENT_ID_KEY) ?? null;
+    const versionLines: Array<Readonly<{ text: string; isLocalDevice?: boolean }>> = [
+        // The app, native, build and runtime lines always describe this running instance, so they are highlighted
+        // even when this device has not (yet) appeared in the connected-devices list below.
+        ...[
         `${t('systemStatus.application.appVersion')}: ${runtime.appVersion ?? appVersion}`,
         ...(desktopVersion ? [`${t('systemStatus.application.nativeVersion')}: ${desktopVersion}`] : []),
         ...(runtime.nativeApplicationVersion ? [`${t('systemStatus.application.nativeVersion')}: ${runtime.nativeApplicationVersion}`] : []),
         ...(runtime.nativeBuildVersion ? [`${t('systemStatus.application.buildNumber')}: ${runtime.nativeBuildVersion}`] : []),
         ...(runtime.runtimeVersion ? [`${t('systemStatus.application.runtimeVersion')}: ${runtime.runtimeVersion}`] : []),
+        ].map((text) => ({ text, isLocalDevice: true })),
+        ...[
         `${t('settings.servers')}: ${serverVersion ?? t('status.unknown')}`,
         ...machines.filter((machine) => machine.metadata?.happyCliVersion).map((machine) =>
             `${t('settings.machines')} (${machine.metadata?.displayName || machine.metadata?.host || machine.id}): ${machine.metadata?.happyCliVersion}`),
         `${t('settings.connectedDevicesLast14Days')}:`,
-        ...listConnectedDevices(settings, connectedClientsLastSeen, Date.now()).map((device) =>
-            `${device.name ?? t('status.unknown')} | ${device.platform} | ${device.appVersion ?? t('status.unknown')} | ${new Date(device.lastSeen).toISOString()}`),
-    ].join('\n');
+        ].map((text) => ({ text })),
+        ...listConnectedDevices(settings, connectedClientsLastSeen, Date.now()).map((device) => ({
+            text: `${device.name ?? t('status.unknown')} | ${device.platform} | ${device.appVersion ?? t('status.unknown')} | ${new Date(device.lastSeen).toISOString()}`,
+            isLocalDevice: device.id === localDeviceId,
+        })),
+    ];
+    const versionDetails = versionLines.map((line) => line.text).join('\n');
 
     return (
         <ItemGroup title={t('settings.about')} footer={t('settings.aboutFooter')}>
@@ -553,7 +588,8 @@ const SettingsAboutSection = React.memo(function SettingsAboutSection({
             )}
             <Item
                 title={t('common.version')}
-                subtitle={versionDetails}
+                subtitle={<VersionDetailsText lines={versionLines} />}
+                subtitleLines={0}
                 subtitleAccessory={showVersionCopiedToast ? (
                     <Animated.View style={{ opacity: versionCopiedToastOpacity }}>
                         <CopiedPill

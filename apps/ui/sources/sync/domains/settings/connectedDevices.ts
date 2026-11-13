@@ -7,6 +7,7 @@ import { z } from 'zod';
  * into settings, so staying connected does not produce settings versions on every client.
  */
 export const CONNECTED_DEVICE_KEY_PREFIX = 'connectedDeviceV1_';
+export const CONNECTED_DEVICE_CLIENT_ID_KEY = 'connected-device-client-id-v1';
 export const CONNECTED_DEVICE_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 export const ConnectedDeviceSchema = z.object({
     name: z.string().nullable(),
@@ -17,7 +18,7 @@ export const ConnectedDeviceSchema = z.object({
 });
 export type ConnectedDevice = z.infer<typeof ConnectedDeviceSchema>;
 export type ConnectedDeviceIdentity = Readonly<Pick<ConnectedDevice, 'name' | 'platform' | 'appVersion'>>;
-export type ListedConnectedDevice = ConnectedDeviceIdentity & Readonly<{ lastSeen: number }>;
+export type ListedConnectedDevice = ConnectedDeviceIdentity & Readonly<{ id: string; lastSeen: number }>;
 
 /**
  * Devices seen in the last fourteen days. `lastSeenByClientId` is the relay's presence (client id →
@@ -37,7 +38,7 @@ export function listConnectedDevices(
         const lastSeen = lastSeenByClientId[key.slice(CONNECTED_DEVICE_KEY_PREFIX.length)] ?? parsed.data.lastSeen;
         if (lastSeen === undefined || lastSeen < now - CONNECTED_DEVICE_WINDOW_MS) continue;
         const { name, platform, appVersion } = parsed.data;
-        devices.push({ name, platform, appVersion, lastSeen });
+        devices.push({ name, platform, appVersion, lastSeen, id: key.slice(CONNECTED_DEVICE_KEY_PREFIX.length) });
     }
     return devices.sort((a, b) => b.lastSeen - a.lastSeen);
 }
