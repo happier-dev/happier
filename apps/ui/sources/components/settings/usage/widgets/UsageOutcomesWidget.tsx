@@ -87,8 +87,11 @@ function UsageOutcomesEmpty(props: UsageBodyProps & Readonly<{
     );
   return (
     <View style={styles.body} testID={`${props.testID}.outcomes`}>
+      {/* A measured zero, already counted in the caption ("0 pull requests"): one quiet line, never the card's
+          empty state at full width (USAGE-ACCEPT #5), the same line the funnel shows beside admitted facts. */}
       <UsageBodyInsufficient
         testID={`${props.testID}.noPrs`}
+        replacesContent={false}
         title={t('usage.board.work.noPrsTitle')}
         reason={t('usage.board.work.noPrsReason')}
       />

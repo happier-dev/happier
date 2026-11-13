@@ -52,6 +52,7 @@ import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/
 import { createProjectAccountRowsSync } from '@/sync/engine/projects/projectAccountRowsSync';
 import { WidgetFrameBodyCaptionContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 
 let actionHome: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
 let CommandWrapper: React.ComponentType<React.PropsWithChildren>;
@@ -461,10 +462,12 @@ describe('Work and Coach widget bodies', () => {
       id="usage_coach" testID="first-coach" />);
     expect(screen.findHostByTestId('first-coach.empty')).toBeNull();
     expect(screen.findHostByTestId('first-coach.loading')).not.toBeNull();
-    // While it reads, the facts band keeps its three columns and claims no count: an unread check is not one
-    // that needs more evidence, and no finding is not yet zero findings.
+    // While it reads, the band claims no count and shows no unknown figure: an unread check is not one that needs
+    // more evidence, no finding is not yet zero findings, and an unknown is never the lead row (owner ruling 11-13).
     const metric = (key: string) => screen.findAllByType(HappierDataMetric).find(node => node.props.testID === `first-coach.summary.${key}`)?.props.value;
-    expect(['findings', 'sessions', 'insufficient'].map(metric)).toEqual(['—', '—', '—']);
+    expect(['findings', 'insufficient'].map(metric)).toEqual([undefined, undefined]);
+    expect(screen.findAllByType(HappierDataMetric).filter(node => String(node.props.testID).startsWith('first-coach.summary.'))
+      .map(node => node.props.value)).not.toContain('—');
     // A subsequent progress revision retains the incomplete evaluation as stale.
     // That qualification is not proof that the private evidence has answered.
     const retainedPending = resolveUsagePageAggregation({ queries: [allQuery],
@@ -483,6 +486,16 @@ describe('Work and Coach widget bodies', () => {
       id="usage_coach" testID="first-coach" />);
     expect(screen.findHostByTestId('first-coach.empty')).not.toBeNull();
     expect(metric('findings')).toBe(0);
+  });
+  it('leads the facts band with the listed findings while another source still reads, never a row of dashes (USAGE-ACCEPT #8)', async () => {
+    const pendingSlice = resolveUsagePageAggregation({ queries: [query],
+      accounting: [{ query, status: 'available', value: slice.accounting!, asOfMs: 1000 }],
+      sources: [{ source: 'how_you_work', status: 'pending' }], nowMs: 1000 }).results[0]!;
+    const screen = await renderScreen(<UsageCoachWidget {...props} slice={{ ...pendingSlice, coach }} id="usage_coach" testID="reading-coach" />);
+    expect(coach.findings.length).toBeGreaterThan(0);
+    const band = screen.findAllByType(HappierDataMetric).filter(node => String(node.props.testID).startsWith('reading-coach.summary.'));
+    expect(band.find(node => node.props.testID === 'reading-coach.summary.findings')?.props.value).toBe(coach.findings.length);
+    expect(band.map(node => node.props.value)).not.toContain('—');
   });
   it('never reassures a first-use Coach whose every check still needs evidence, and leads to a session (C3)', async () => {
     const settled = resolveUsagePageAggregation({ queries: [query],
@@ -522,10 +535,10 @@ describe('Work and Coach widget bodies', () => {
     expect(metric('sessions')).toBe(2);
     expect(screen.findHostByTestId('coverage-coach.summary.sessions')?.props.accessibilityLabel)
       .toContain(`${t('usage.board.coach.summarySessions')}: 2`);
+    // An unknown session count leaves the band rather than standing in it as a dash.
     await screen.update(<UsageCoachWidget {...props} slice={{ ...slice, accounting: undefined }} id="usage_coach" testID="coverage-coach" />);
-    expect(metric('sessions')).toBe('—');
-    expect(screen.findHostByTestId('coverage-coach.summary.sessions')?.props.accessibilityLabel)
-      .toContain(`${t('usage.board.coach.summarySessions')}: ${'—'}`);
+    expect(metric('sessions')).toBeUndefined();
+    expect(screen.findHostByTestId('coverage-coach.summary.sessions')).toBeNull();
   });
   it('does not reserve a second cold-read room inside the Coach widget', async () => {
     const pendingSlice = resolveUsagePageAggregation({ queries: [query],
@@ -1107,6 +1120,8 @@ describe('Work and Coach widget bodies', () => {
     </WidgetFrameBodyCaptionContext.Provider>);
     expect(screen.findByTestId('outcomes.funnel')).toBeFalsy();
     expect(screen.findByTestId('outcomes.noPrs')).toBeTruthy();
+    // A measured zero beside its "0 pull requests" caption is one quiet line, never a page-size empty state (USAGE-ACCEPT #5).
+    expect(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'outcomes.noPrs')?.props.size).toBe('line');
     expect(caption).toHaveBeenLastCalledWith(t('usage.board.work.outcomesCaption', { count: 0 }));
     await act(async () => { await screen.findByType(SurfaceFreshnessLine).props.action.onPress(); });
     expect(refresh).toHaveBeenCalledOnce();

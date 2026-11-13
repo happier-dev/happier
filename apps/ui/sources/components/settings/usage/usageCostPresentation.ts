@@ -3,6 +3,7 @@ import { type UsagePageCostProjection, type UsagePageCostSelection} from '@happi
 import { type UsageObservationCost } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { usageCostKindPhrase } from '@/sync/domains/usage/resolveUsageCostModeLabel';
 import { t } from '@/text';
+import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageAnalytics';
 
 /**
  * A row names its actual reported/priced/estimated basis, including a labelled mixed aggregate. A row whose total
@@ -22,9 +23,19 @@ export function usagePageCostRow(cost: UsageObservationCost, selection: UsagePag
 /** Chart coordinates of the same selected page facts; unavailable money stays unavailable. */
 export function usagePageCostTrend(projection: UsagePageCostProjection) {
   return (projection.accounting.series ?? []).map(bucket => ({ timestamp: bucket.bucketStartMs / 1000,
-    tokens: bucket.tokens.total, reportCount: bucket.eventCount,
+    tokens: resolveUsageMeasuredTokens(bucket.tokens).total, reportCount: bucket.eventCount,
     cost: resolveUsageCostForSelection(bucket.cost, projection.selection),
   }));
+}
+
+/**
+ * The page cost's caption, said the same way wherever the one page total shows (Period summary, Cost facts).
+ * `amountUsd` is authoritative: a candidate basis with an unavailable amount means some usage has neither a
+ * reported cost nor a model price. An amount with no basis is an empty population's measured zero: it names no kind.
+ */
+export function usagePageCostCaption(projection: Pick<UsagePageCostProjection, 'amountUsd' | 'selection'>): string | undefined {
+  if (projection.amountUsd !== null) return projection.selection ? usageCostKindPhrase(projection.selection.kind) : undefined;
+  return projection.selection ? t('usage.board.page.costUnpricedCaption') : t('common.unavailable');
 }
 
 export { usageCostKindPhrase } from '@/sync/domains/usage/resolveUsageCostModeLabel';

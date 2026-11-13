@@ -172,6 +172,37 @@ describe('one selected money basis across Usage bodies', () => {
     expect(screen.findHostByTestId('unknown-summary.hero')?.props.accessibilityLabel).toContain(`${t('usage.tokens')}: 0`);
   });
 
+  it('leads the period summary with the measured token parts when no agent reported a total (USAGE-ACCEPT #13)', async () => {
+    const base = mountedCosts();
+    const partTokens = { input: 6900, output: 16, reasoning: null, cacheRead: 0, cacheWrite: 0, total: null };
+    const query = normalizeUsageQuery({ ...base.query, metric: 'tokens' });
+    const slice = { ...base.slice, accounting: { ...base.slice.accounting!,
+      totals: { ...base.slice.accounting!.totals, tokens: partTokens } } };
+    const screen = await renderScreen(<UsagePeriodSummaryWidget {...base} query={query} slice={slice} model={{ ...base.model, slice }}
+      id="usage_period_summary" testID="parts-summary" />);
+    const hero = screen.findAllByType(HappierDataMetric).find(node => node.props.testID === 'parts-summary.hero')!;
+    expect(hero.props.value).toBe(6916);
+    expect(hero.props.caption).toBe(t('usage.board.page.tokensFromParts'));
+    expect(screen.getTextContent()).not.toContain(t('common.unavailable'));
+  });
+
+  it('leads Cost facts with the one page cost the summary shows, the separate facts beneath it (USAGE-ACCEPT #3)', async () => {
+    const props = mountedCosts();
+    const screen = await renderScreen(<>
+      <UsagePeriodSummaryWidget {...props} id="usage_period_summary" testID="summary" />
+      <UsageCostFactsWidget {...props} id="usage_cost_facts" testID="facts" />
+    </>);
+    const metrics = screen.findAllByType(HappierDataMetric);
+    const summary = metrics.find(metric => metric.props.testID === 'summary.hero')!;
+    const total = metrics.find(metric => metric.props.testID === 'facts.total')!;
+    expect(total.props.size).toBe('hero');
+    expect(total.props.value).toBe(summary.props.value);
+    expect(total.props.caption).toBe(summary.props.caption);
+    // The separate facts stay beneath as supporting detail, each with its own token basis.
+    expect(metrics.find(metric => metric.props.testID === 'facts.fact.reported')?.props.size).toBe('stat');
+    expect(metrics.find(metric => metric.props.testID === 'facts.fact.invoice')?.props.value).toBe(0.2);
+  });
+
   it('draws no empty river plot when weeks were read but no agent recorded a share (C7)', async () => {
     const props = mountedCosts();
     const query = normalizeUsageQuery({ ...props.query, metric: 'tokens', includeActivity: true });

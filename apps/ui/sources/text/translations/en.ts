@@ -19942,6 +19942,7 @@ const enUsage = {
       factApiTokens: ({ tokens }: { tokens: string | number }) => `${tokens} tokens with a current price`,
       factUnpricedOverlap: "Recorded estimates or reports may still cover these tokens",
       factsOverlap: "These figures overlap; don't add them.",
+      tokensFromParts: "added up from the reported parts",
       noCostFactsTitle: "No money facts yet",
       noCostFactsReason: "Agents haven't reported a price for this period, and none could be estimated.",
       unpricedCaption: "never counted as $0",

@@ -16604,6 +16604,7 @@ settingsSession: {
             factApiTokens: ({ tokens }: { tokens: string | number }) => `${tokens} Tokens mit aktuellem Preis`,
             factUnpricedOverlap: "Erfasste Schätzungen oder Berichte können diese Tokens dennoch abdecken",
             factsOverlap: "Diese Zahlen überschneiden sich; bitte nicht addieren.",
+            tokensFromParts: "aus den gemeldeten Teilen addiert",
             noCostFactsTitle: "Noch keine Kostendaten",
             noCostFactsReason: "Für diesen Zeitraum wurde kein Preis gemeldet oder geschätzt.",
             unpricedCaption: "nie als 0 $ gezählt",

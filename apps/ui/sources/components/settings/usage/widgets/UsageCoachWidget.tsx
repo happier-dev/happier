@@ -340,16 +340,17 @@ export function UsageCoachWidget(props: UsageBodyProps) {
   // What the checks found, as one row of facts (lab d2coach "This week"). Savings are never summed:
   // overlapping estimates would double count, so the band counts findings and checks only.
   const checked = coach.evaluations.length - disabled.length;
-  // While the page still reads, the band keeps its three columns and claims no count: an unread check is not one
-  // that needs more evidence, and no finding yet is not zero findings.
+  // The band holds only what is known (owner ruling 11-13: unknown is never the lead row). Listed findings are
+  // counted from the list itself, even while another source still reads; an unread check is not one that needs
+  // more evidence, and an unknown session count leaves the band rather than standing in it as a dash.
+  const sessionsChecked = reading ? null : countUsageCheckedSessions(coach.sessionCoverage) ?? periodSessions;
   const summary = [
-    { key: 'findings', label: t('usage.board.coach.summaryFindings'), value: reading ? '—' : visible.length,
-      caption: t('usage.board.coach.summaryOfChecks', { count: checked }) },
-    { key: 'sessions', label: t('usage.board.coach.summarySessions'),
-      value: reading ? '—' : countUsageCheckedSessions(coach.sessionCoverage) ?? periodSessions ?? '—',
-      caption: usagePeriodPhrase(props.query) },
-    { key: 'insufficient', label: t('usage.board.coach.summaryNeedEvidence'), value: reading ? '—' : insufficient.length,
-      caption: !reading && clear.length ? t('usage.board.coach.summaryClearCaption', { count: clear.length }) : undefined },
+    ...(!reading || visible.length > 0 ? [{ key: 'findings', label: t('usage.board.coach.summaryFindings'), value: visible.length,
+      caption: t('usage.board.coach.summaryOfChecks', { count: checked }) }] : []),
+    ...(sessionsChecked !== null ? [{ key: 'sessions', label: t('usage.board.coach.summarySessions'), value: sessionsChecked,
+      caption: usagePeriodPhrase(props.query) }] : []),
+    ...(!reading ? [{ key: 'insufficient', label: t('usage.board.coach.summaryNeedEvidence'), value: insufficient.length,
+      caption: clear.length ? t('usage.board.coach.summaryClearCaption', { count: clear.length }) : undefined }] : []),
     ...(disabled.length ? [{ key: 'disabled', label: t('usage.board.coach.summaryOff'), value: disabled.length }] : []),
   ];
   // On Overview the Coach is a strip of up to three findings (lab wgusage-CD); its own view lists all.
@@ -359,6 +360,7 @@ export function UsageCoachWidget(props: UsageBodyProps) {
       key={finding.evidenceKey}
       finding={finding}
       layout={strip ? 'card' : 'row'}
+      evaluationAsOfMs={coach.asOfMs}
       applied={
         snapshot.applied.find(
           (entry) => entry.evidenceKey === finding.evidenceKey,
@@ -373,7 +375,7 @@ export function UsageCoachWidget(props: UsageBodyProps) {
   return (
     <View style={styles.body} testID={`${props.testID}.coach`}>
         {/* The facts band belongs to the Coach view; the Overview strip is the findings alone (lab wgusage-CD). */}
-        {glance ? null : <UsageCoachSummaryBand facts={summary} testID={`${props.testID}.summary`} />}
+        {glance || summary.length === 0 ? null : <UsageCoachSummaryBand facts={summary} testID={`${props.testID}.summary`} />}
         {visible.length === 0 && appliedOnly.length === 0 ? (
           reading ? <UsageBodyReading testID={`${props.testID}.loading`} {...(strip ? { shape: { kind: 'strip' as const } } : {})} /> :
           firstUse ? <UsageBodyInsufficient
@@ -574,6 +576,8 @@ const UsageCoachFindingRow = React.memo(function UsageCoachFindingRow(
     finding: UsageCoachFinding;
     /** `row` lists findings (the Coach view); `card` is one of the Overview strip's columns. */
     layout: 'row' | 'card';
+    /** The evaluation's own read time, which the page header already says ("As of …"). */
+    evaluationAsOfMs: number | null;
     applied: UsageCoachAppliedEntry | null;
     controller: UsageCoachController | null;
     snapshot: UsageCoachSnapshot;
@@ -613,10 +617,13 @@ const UsageCoachFindingRow = React.memo(function UsageCoachFindingRow(
   }), t('usage.board.coach.modelN1Cache')].join(' ') : null;
   // The finding's line is what was measured (lab d2coach-A: kind, headline, one line, value, action). How it
   // was established (observation count, coverage, an older reading's time) is method, said under Why.
+  // An older reading's time is said on the line only when it differs from the page's own "As of" (USAGE-ACCEPT #9).
+  const ownAsOf = finding.asOfMs === null ? null : formatAsOfTime(finding.asOfMs);
+  const pageAsOf = props.evaluationAsOfMs === null ? null : formatAsOfTime(props.evaluationAsOfMs);
   const evidence = [
     ...finding.measurements.slice(0, COACH_LINE_MEASUREMENTS).map(measurement => formatMeasurement(measurement)),
-    ...(finding.currentness === 'stale' && finding.asOfMs !== null
-      ? [t('surfaceState.asOf', { time: formatAsOfTime(finding.asOfMs) })]
+    ...(finding.currentness === 'stale' && ownAsOf !== null && ownAsOf !== pageAsOf
+      ? [t('surfaceState.asOf', { time: ownAsOf })]
       : []),
   ].join(' · ');
   const method = [

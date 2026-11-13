@@ -3,7 +3,7 @@ import { resolveUsageBucketBounds, resolveUsageCalendarInstant } from '@happier-
 import { resolveUsageDayStreaks } from '@happier-dev/protocol/usage/usageActivitySummary';
 import { resolveUsageTokenCategories } from '@happier-dev/protocol/usage/usageTokenCategories';
 import { normalizeLegacyUsageTokens } from '@happier-dev/protocol/usage/legacyUsageTokens';
-import { addUsageMeasurements, compareUsageMeasurementsDescending, createEmptyUsageCost, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
+import { addUsageMeasurements, compareUsageMeasurementsDescending, createEmptyUsageCost, createEmptyUsageTokens, sumKnownUsageTokenParts } from '@happier-dev/protocol/usage/usageAggregation';
 import type { UsageAccountingMetric } from '@happier-dev/protocol/inputs/usageQuery';
 import { agentIdFromEngineKey } from '@happier-dev/protocol/usage/usageFilterOptions';
 import type {
@@ -148,7 +148,10 @@ export interface UsageAnalyticsLeaderSections {
  * Hero section reads these instead of re-deriving from raw totals.
  */
 export interface UsageHeroViewModel {
+    /** The measured token figure (`resolveUsageMeasuredTokens`): the reported total, or else the sum of reported parts. */
     totalTokens: number | null;
+    /** True when no agent reported a total and the figure is the sum of the parts they did report (a floor). */
+    totalTokensFromParts: boolean;
     /** Effective (auto) cost for the period, independent of the metric toggle. */
     effectiveUsd: number | null;
     currency: string;
@@ -814,7 +817,7 @@ function mapTimelineLeaderEntry(
             ? formatUsageDimensionLabel(dimension, entry.key, entry.label ?? entry.key)
             : entry.label ?? entry.key,
         eventCount: entry.eventCount,
-        totalTokens: tokens.total,
+        totalTokens: resolveUsageMeasuredTokens(tokens).total,
         totalCost: resolveAnalyticsCost(cost, costPresentation),
     };
 }
@@ -895,7 +898,7 @@ function buildTrendFromResponse(
         .sort((left, right) => left.bucketStartMs - right.bucketStartMs)
         .map((bucket) => ({
             timestamp: Math.floor(bucket.bucketStartMs / 1000),
-            tokens: bucket.tokens.total,
+            tokens: resolveUsageMeasuredTokens(bucket.tokens).total,
             cost: resolveAnalyticsCost(bucket.cost, costMode),
             reportCount: bucket.eventCount,
         }));
@@ -1066,6 +1069,19 @@ export function buildUsageAnalyticsSummaryViewModel(
     return buildSummaryFromLegacyUsage(source, timeZoneOffsetMinutes);
 }
 
+/**
+ * The one token-total rule for a period, bucket or agent: the reported aggregate total, or else, when no agent
+ * reported one, the sum of the parts they did report (input, output, reasoning, cache) as a measured floor. Only
+ * a population with no measured part is unknown. Consumers never compare a floor with an earlier period's total.
+ */
+export function resolveUsageMeasuredTokens(tokens: Readonly<{ input: number | null; output: number | null;
+    reasoning: number | null; cacheRead: number | null; cacheWrite: number | null; total: number | null }>,
+): Readonly<{ total: number | null; fromParts: boolean }> {
+    if (tokens.total !== null) return { total: tokens.total, fromParts: false };
+    const parts = sumKnownUsageTokenParts(tokens);
+    return { total: parts, fromParts: parts !== null };
+}
+
 export function buildUsageHeroViewModel(
     overview: UsageTotals,
     insights: UsageAnalyticsInsightsViewModel,
@@ -1073,6 +1089,7 @@ export function buildUsageHeroViewModel(
 ): UsageHeroViewModel {
     return {
         totalTokens: overview.totalTokens,
+        totalTokensFromParts: false,
         effectiveUsd: costPresentation.effectiveUsd,
         currency: costPresentation.currency,
         sessions: insights.sessionsUsed,
@@ -1638,7 +1655,11 @@ export function buildUsageAnalyticsViewModel(
         const modelTimeline = memoizeViewSection(() => buildTimelineFromResponse(source.modelTimeline, costPresentation()));
         const engineTimeline = memoizeViewSection(() => buildTimelineFromResponse(source.engineTimeline, costPresentation(), 'backendMode'));
         const pageCost = memoizeViewSection(() => projectUsagePageCost(source, filters.costMode));
-        const hero = memoizeViewSection(() => buildUsageHeroViewModel(overview(), insights(), costPresentation()));
+        const hero = memoizeViewSection((): UsageHeroViewModel => {
+            const tokens = resolveUsageMeasuredTokens(source.totals.tokens);
+            return { ...buildUsageHeroViewModel(overview(), insights(), costPresentation()),
+                totalTokens: tokens.total, totalTokensFromParts: tokens.fromParts };
+        });
         const heroTrend = memoizeViewSection(() => buildUsageHeroTrend(trend()));
         const hourRhythm = memoizeViewSection(() => buildUsageHourRhythm(activity()));
         const punchCard = memoizeViewSection(() => buildUsagePunchCard(activity()));

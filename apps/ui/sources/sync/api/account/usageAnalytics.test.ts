@@ -42,7 +42,7 @@ describe('exact model-mix amounts', () => {
             ],
         })));
         expect(mix.buckets[0]!.tokens).toEqual([15, 7]);
-        expect(mix.buckets[0]!.shares[0]! * mix.buckets[0]!.total).not.toBe(15);
+        expect(mix.buckets[0]!.shares[0]! * mix.buckets[0]!.total!).not.toBe(15);
     });
 });
 
@@ -62,6 +62,23 @@ describe('buildUsageAnalyticsViewModel', () => {
         expect(view.costPresentation.effectiveUsd).toBeNull();
     });
 
+    it('measures tokens from the reported parts when no agent reported a total, in the hero, the series and the agent mix (USAGE-ACCEPT #13)', () => {
+        const parts = { input: 6900, output: 16, reasoning: null, cacheRead: 0, cacheWrite: 0, total: null };
+        const cost = { reportedUsd: null, estimatedUsd: null, currency: 'USD' };
+        const response: UsageAnalyticsQueryResponse = UsageAnalyticsQueryResponseSchema.parse({ v: 1,
+            totals: { eventCount: 2, tokens: parts, cost },
+            series: [{ bucketStartMs: 0, bucketEndMs: 86_400_000, eventCount: 2, tokens: parts, cost }],
+            engineTimeline: [{ bucketStartMs: 0, bucketEndMs: 86_400_000, leaders: [{ key: 'opencode', eventCount: 2, tokens: parts, cost }] }],
+        });
+        const view = buildUsageAnalyticsViewModel(response, baseState);
+        expect(view.hero).toMatchObject({ totalTokens: 6916, totalTokensFromParts: true });
+        expect(view.trend.map(point => point.tokens)).toEqual([6916]);
+        expect(view.agentMix.keys.map(key => key.totalTokens)).toEqual([6916]);
+        expect(view.agentMix.buckets.map(bucket => bucket.tokens)).toEqual([[6916]]);
+        // A reported total stays the figure, and nothing unknown becomes measured.
+        const reported = buildUsageAnalyticsViewModel({ ...response, totals: { ...response.totals, tokens: { ...parts, total: 9000 } } }, baseState);
+        expect(reported.hero).toMatchObject({ totalTokens: 9000, totalTokensFromParts: false });
+    });
     it('retains known weekly amounts beside unknown observations and keeps unknown-only weeks unknown', () => {
         const start = Date.parse('2026-11-02T00:00:00Z') / 1000;
         const rows = buildUsageWeeksBreakdown([
@@ -1031,6 +1048,7 @@ describe('usage view-model L6 extensions (T2)', () => {
 
         expect(viewModel.hero).toEqual({
             totalTokens: 159,
+            totalTokensFromParts: false,
             effectiveUsd: 11.5,
             currency: 'USD',
             sessions: 7,
@@ -1227,7 +1245,7 @@ describe('usage dashboard derivations', () => {
             expect(mix.buckets[0]!.shares).toEqual([0.6, 0.4]);
             expect(mix.buckets[1]!.shares).toEqual([0.5, 0.5]);
             // Shares in a non-empty bucket sum to 1.
-            expect(mix.buckets[0]!.shares.reduce((s, v) => s + v, 0)).toBeCloseTo(1);
+            expect(mix.buckets[0]!.shares.reduce<number>((s, v) => s + v!, 0)).toBeCloseTo(1);
         });
 
         it('folds the tail beyond maxSeries into a single "other" series', () => {

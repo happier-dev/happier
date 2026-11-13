@@ -15,7 +15,7 @@ import {
   UsageBodyNoUsage,
   readUsageSourceNeedsNewerServer,
 } from './usageBodyKit';
-import { usageCostKindPhrase } from '../usageCostPresentation';
+import { usageCostKindPhrase, usagePageCostCaption } from '../usageCostPresentation';
 import { formatUsageDurationCompact } from './usageHowYouWorkPresentation';
 import { usageComparison } from '../usageComparisonPresentation';
 
@@ -36,21 +36,18 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
   const cost = props.query.metric === 'cost';
   const selectedCost = view.pageCost;
   const currency = selectedCost.selection?.currency ?? view.costPresentation.currency;
-  // `amountUsd` is authoritative: a candidate basis with an unavailable amount means some usage has
-  // neither a reported cost nor a model price, never "estimated where not reported" under a dash. An amount
-  // with no basis is an empty population's measured zero: it names no kind, and is never "Unavailable".
-  const costCaption =
-    selectedCost.amountUsd !== null
-      ? selectedCost.selection ? usageCostKindPhrase(selectedCost.selection.kind) : undefined
-      : selectedCost.selection
-        ? t('usage.board.page.costUnpricedCaption')
-        : t('common.unavailable');
-  const current = cost ? selectedCost.amountUsd : view.hero.totalTokens;
+  const costCaption = usagePageCostCaption(selectedCost);
+  // The measured token figure is the analytics owner's (`resolveUsageMeasuredTokens`): the reported total, or else
+  // the sum of the parts agents reported, said as such (USAGE-ACCEPT #13).
+  const tokens = view.hero.totalTokens;
+  const tokensCaption = view.hero.totalTokensFromParts ? t('usage.board.page.tokensFromParts') : undefined;
+  const current = cost ? selectedCost.amountUsd : tokens;
   const previousAccounting = props.slice.comparison?.accounting;
+  // A sum of parts is a floor, not a total: it is never compared with an earlier period's total.
   const previous = previousAccounting
     ? cost
       ? previousCost
-      : previousAccounting.totals.tokens.total
+      : view.hero.totalTokensFromParts ? null : previousAccounting.totals.tokens.total
     : null;
   const comparison = usageComparison(current, previous);
   const apiEquivalent = props.slice.costFactTotals?.find(fact => fact.kind === 'api_equivalent' && fact.currency === currency);
@@ -81,7 +78,8 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
   // unavailable, so the column shows the tokens and the one cost message is said once (R135 N2).
   if (cost)
     stats.push(
-      { id: 'tokens', label: t('usage.tokens'), value: view.hero.totalTokens ?? UNKNOWN_VALUE, valueFormatter: formatTokenCount },
+      { id: 'tokens', label: t('usage.tokens'), value: tokens ?? UNKNOWN_VALUE, valueFormatter: formatTokenCount,
+        ...(tokensCaption ? { caption: tokensCaption } : {}) },
     );
   else if (invoice?.amountUsd != null)
     stats.push(
@@ -128,7 +126,7 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
           id: 'total',
           label: cost ? t('usage.cost') : t('usage.tokens'),
           value: current ?? UNKNOWN_VALUE,
-          caption: cost ? costCaption : current === null ? t('common.unavailable') : undefined,
+          caption: cost ? costCaption : current === null ? t('common.unavailable') : tokensCaption,
           // An unknown total is the quiet dash alone: "— tokens" would read as a measured figure.
           unit: cost || current === null ? undefined : t('usage.board.page.tokensUnit'),
           valueFormatter:

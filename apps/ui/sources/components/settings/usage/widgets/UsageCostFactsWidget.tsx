@@ -16,8 +16,10 @@ import {
   type UsageBodyProps,
   UsageBodyNoUsage,
   usagePartialHistoryLabel,
+  useUsageAnalyticsView,
 } from './usageBodyKit';
 import { UsageModelPricesLine } from './UsageModelPrices';
+import { usagePageCostCaption } from '../usageCostPresentation';
 
 /** Each kind of money is its own fact; they are never summed into one figure. */
 const KIND_ORDER: readonly UsageAnalyticsCostFactKind[] = [
@@ -51,6 +53,10 @@ const KIND_TITLE: Readonly<
  */
 export function UsageCostFactsWidget(props: UsageBodyProps) {
   const chartTheme = useUsagePluginTheme();
+  // The one answer leads: the page cost Overview, Agents and the Period summary show, from the same owner decision.
+  const pageCost = useUsageAnalyticsView(props.slice, props.query)?.pageCost ?? null;
+  // Unknown never leads: without a known amount the facts stand on their own.
+  const total = pageCost?.amountUsd != null && pageCost.selection ? { amountUsd: pageCost.amountUsd, selection: pageCost.selection } : null;
   useWidgetFrameBodyCaption(usagePeriodPhrase(props.query));
   const facts = KIND_ORDER.flatMap((kind) => (props.slice.costFactTotals ?? []).filter((fact) => fact.kind === kind &&
       (fact.kind === 'unpriced'
@@ -64,6 +70,17 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
   // The prices behind API-equivalent money live with the money they make (U10); unpriced models
   // are exactly the case where there are no money facts yet.
   const prices = <UsageModelPricesLine slice={props.slice} serverId={props.serverId} testID={`${props.testID}.prices`} />;
+  const lead = total ? <HappierDataMetric testID={`${props.testID}.total`} theme={chartTheme} size="hero"
+    label={t('usage.cost')} value={total.amountUsd} caption={usagePageCostCaption(total)}
+    valueFormatter={(value) => formatUsageCost(value, total.selection.currency)} /> : null;
+  if (facts.length === 0 && lead)
+    return (
+      <View style={styles.body} testID={`${props.testID}.costFacts`}>
+        {lead}
+        {prices}
+        <UsageCoverageLine slice={props.slice} sources={['accounting']} onRetry={props.model.refresh} testID={`${props.testID}.coverage`} />
+      </View>
+    );
   if (facts.length === 0)
     return (
       <View style={styles.body}>
@@ -78,6 +95,7 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
     );
   return (
     <View style={styles.body} testID={`${props.testID}.costFacts`}>
+      {lead}
       <View style={styles.grid}>
         {facts.map((fact) => {
           const exactTokens = formatHappierDataValue(fact.tokens.total, getPreferredLanguage());

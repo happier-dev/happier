@@ -257,8 +257,9 @@ export function UsageDailyWidget(props: UsageBodyProps) {
         barMinHeight: 0,
         axisTicks,
         ...(leads ? { leads } : {}),
-        // A near-zero money scale reads in whole cents ($0.05 · $0.10), never "$0.005".
-        minimumMaximum: metric === 'cost' ? 0.1 : 1,
+        // Money scales to the data: a small-data week's $0.002 days stand as bars, never flattened under a cent floor
+        // (USAGE-ACCEPT #13). An all-zero week still rests at the chart's own empty baseline.
+        ...(metric === 'cost' ? {} : { minimumMaximum: 1 }),
         showGrid: true,
         showScaleValues: !measuredZeroWeek,
         scaleGutter: 44,

@@ -16069,6 +16069,7 @@ settingsSession: {
             factApiTokens: ({ tokens }: { tokens: string | number }) => `${tokens} 个有当前价格的 token`,
             factUnpricedOverlap: "已记录的估算或报告仍可能涵盖这些 token",
             factsOverlap: "这些数字相互重叠，请勿相加。",
+            tokensFromParts: "由已上报的分项相加",
             noCostFactsTitle: "暂无费用数据",
             noCostFactsReason: "此期间没有报告或可估算的价格。",
             unpricedCaption: "从不计为 $0",

@@ -16705,6 +16705,7 @@ settingsSession: {
             factApiTokens: ({ tokens }: { tokens: string | number }) => `現在の価格がある ${tokens} トークン`,
             factUnpricedOverlap: "記録された見積もりやレポートがこれらのトークンを含む場合があります",
             factsOverlap: "これらの数値は重複しています。合算しないでください。",
+            tokensFromParts: "報告された内訳の合計",
             noCostFactsTitle: "まだ費用データがありません",
             noCostFactsReason: "この期間の価格は報告も推定もされていません。",
             unpricedCaption: "$0 として数えません",

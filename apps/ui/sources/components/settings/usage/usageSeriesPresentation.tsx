@@ -9,7 +9,7 @@ import { type UsagePageCostSelection, type UsageCostMode } from '@happier-dev/pr
 import { type UsageAnalyticsCoverage, type UsageAnalyticsQueryResponse} from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 import { ChartTooltip, HorizontalChartFrame } from '@/components/ui/charts';
-import type { UsageHourRhythm, UsageModelMix, UsageTrendPoint } from '@/sync/api/account/usageAnalytics';
+import { resolveUsageMeasuredTokens, type UsageHourRhythm, type UsageModelMix, type UsageTrendPoint } from '@/sync/api/account/usageAnalytics';
 import { formatUsageHourLabel } from '@/sync/api/account/formatUsageRhythmLabel';
 import { t } from '@/text';
 import { formatTokenCount, formatTokenCountLong, formatUsageCost } from '@/utils/format/usageNumbers';
@@ -184,7 +184,7 @@ export function usageSourceTimelineSeries(input: Readonly<{
             if (part.execution !== 'outside') entry.allOutside = false;
             const execution = part.execution === 'happier' ? t('usage.board.page.executionHappier')
                 : part.execution === 'outside' ? t('usage.board.page.executionOutside') : t('usage.board.page.executionUnknown');
-            const value = input.metric === 'tokens' ? part.tokens.total : input.costSelection !== undefined
+            const value = input.metric === 'tokens' ? resolveUsageMeasuredTokens(part.tokens).total : input.costSelection !== undefined
                 ? resolveUsageCostForSelection(part.cost, input.costSelection) : resolveUsageCostBasis(part.cost, input.costMode)?.amountUsd ?? null;
             if (input.metric === 'tokens') {
                 const previous = entry.values.get(bucket.bucketStartMs);

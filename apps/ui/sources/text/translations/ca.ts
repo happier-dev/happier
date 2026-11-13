@@ -15589,6 +15589,7 @@ settingsSession: {
           factApiTokens: ({ tokens }: { tokens: string | number }) => `${tokens} tokens amb preu actual`,
           factUnpricedOverlap: "Les estimacions o informes registrats encara poden cobrir aquests tokens",
           factsOverlap: "Aquestes xifres se solapen; no les sumis.",
+          tokensFromParts: "sumat a partir de les parts informades",
           noCostFactsTitle: "Encara no hi ha dades monetàries",
           noCostFactsReason: "Els agents no han informat de cap preu per a aquest període i no se n’ha pogut estimar cap.",
           unpricedCaption: "mai no es compta com a 0 $",
