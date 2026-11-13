@@ -775,7 +775,6 @@ function createTeamActionSpecs() {
     id: 'teams.groups.members.remove', approval: {result: 'required',flow: 'deferred'},
     approvalPolicy: { uiConfirmation: 'policy' },
     confirmVerb: { key: 'common.remove', fallback: 'Remove' },
-    confirmVerb: { key: 'common.remove', fallback: 'Remove' },
     title: 'Remove Team Group member',
     description: 'Clear the native Group contribution. A surviving directory contribution is reported truthfully.',
     safety: 'danger',
