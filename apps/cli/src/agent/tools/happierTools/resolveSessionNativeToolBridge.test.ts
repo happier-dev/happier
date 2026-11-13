@@ -13,6 +13,9 @@ import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/
 import { projectMcpToolInputJsonSchema } from '@/mcp/server/projectMcpToolInputJsonSchema';
 import { projectSessionBoundActionToolInputSchema } from './actionToolContext';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { accountSettingsParse } from '@happier-dev/protocol';
 
 const originalActionsSettingsEnv = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
 
@@ -26,6 +29,25 @@ afterEach(() => {
 });
 
 describe('isSessionAgentToolAvailable', () => {
+  it('isolates native tool environment overrides while preserving credential-scoped Account policy', async () => {
+    const read = (enabled: boolean) => runAddedHostedSession({
+      environment: { HAPPIER_ACTIONS_SETTINGS_V1: JSON.stringify({ v: 1, actions: { 'session.title.set': { enabled } } }) },
+      workingDirectory: '/session', end: () => {},
+    }, async () => {
+      await Promise.resolve();
+      const accountSettings = accountSettingsParse({ actionsSettingsV1: { v: 1,
+        actions: { 'session.title.set': { enabled: false } } } });
+      return {
+        native: isSessionAgentToolAvailable({ toolName: 'change_title', accountSettings }),
+        account: createActionSettingsProvider({ scopeKey: 'owning-account', accountSettings })
+          .getActionsSettings().actions['session.title.set']?.enabled,
+      };
+    });
+    expect(await Promise.all([read(false), read(true)])).toEqual([
+      { native: false, account: false }, { native: true, account: false },
+    ]);
+  });
+
   it('evaluates only the named tool, matching membership in the whole admitted catalog', async () => {
     const accountSettings = { actionsSettingsV1: { v: 1, actions: { 'session.title.set': { enabled: false } } } };
     const whole = (settings: Readonly<Record<string, unknown>>) => {

@@ -185,13 +185,11 @@ export function createSessionBoardActionDeps(options: Readonly<{
       }
       decision = resolveCliFeatureDecision({
         featureId: 'sessions.board',
-        env: process.env,
         ...(serverSnapshot ? { serverSnapshot } : {}),
       });
     } else {
       const resolved = await resolveCliFeatureDecisionForServer({
         featureId: 'sessions.board',
-        env: process.env,
         serverUrl,
         ...(context.externalActionCredential ? { resolveAuthorizationHeaders } : {}),
       });

@@ -10,6 +10,7 @@ import { createMcpActionEnablementWithServerFeatureAvailability } from './create
 import { prepareHappierMcpToolInventory } from './registerHappierMcpBuiltInTools';
 import { readCliFeatureBuildPolicyInputs } from '@/features/featureBuildPolicy';
 import { readCliLocalFeaturePolicySnapshot } from '@/features/featureLocalPolicy';
+import { resolveCliFeatureDecisionEnvironment } from '@/features/featureDecisionInputs';
 import { readDaemonPluginCatalog } from '@/daemon/controlClient';
 import { DaemonPluginToolCatalogUnavailableError } from '../pluginToolCatalogError';
 import { DaemonPluginCatalogProjectionSchema, type DaemonPluginCatalogProjection } from '@/plugins/daemon/catalogProjection';
@@ -28,6 +29,7 @@ export function createSessionMcpToolInventory(params: Readonly<{
     /** Containing bridge lifetime, independent of replaceable native incarnations. */
     lifetimeSignal?: AbortSignal;
 }>) {
+    const env = resolveCliFeatureDecisionEnvironment();
     const surface = params.client.getRunActionInvocation?.()?.surface === 'voice' ? 'voice' : 'agent';
     let latestProjection: DaemonPluginCatalogProjection | undefined;
     let catalog: Readonly<{ tools: readonly ProjectedPluginToolCatalogEntry[];
@@ -122,8 +124,8 @@ export function createSessionMcpToolInventory(params: Readonly<{
             happierToolsEnabled: params.happierToolsEnabled ?? isSessionHappierToolsEnabled(params.client.getMetadataSnapshot?.()),
             sessionMachineId: location?.machineId ?? null,
             sessionRootPath: location?.path ?? null,
-            buildPolicy: readCliFeatureBuildPolicyInputs(process.env),
-            localPolicy: readCliLocalFeaturePolicySnapshot(process.env),
+            buildPolicy: readCliFeatureBuildPolicyInputs(env),
+            localPolicy: readCliLocalFeaturePolicySnapshot(env),
             pluginToolCatalog,
         };
     };
@@ -143,6 +145,7 @@ export function createSessionMcpToolInventory(params: Readonly<{
                 authorityScope: params.authorityScope,
                 readSessionMemoryEnabled: () => inputs.sessionMemoryEnabled,
                 readServerFeaturesSnapshot: () => inputs.serverFeatures,
+                env,
             });
             inventory = prepareHappierMcpToolInventory({
                 sessionId: params.client.sessionId,

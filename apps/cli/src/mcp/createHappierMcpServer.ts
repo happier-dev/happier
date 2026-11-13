@@ -144,7 +144,6 @@ async function writeMcpSessionStateFieldMetadata(params: Readonly<{
 export function createHappierMcpServer(
   client: HappyMcpSessionClient,
   opts?: Readonly<{
-    environment?: NodeJS.ProcessEnv;
     mcpToolCallIdMetaKey?: string;
     happierToolsEnabled?: boolean;
     /** Session transport authentication; does not grant Account-wide Action authority. */
@@ -179,7 +178,7 @@ export function createHappierMcpServer(
     toolCallId?: string;
   }>): Promise<HappierBuiltInToolDispatchResult>;
 } {
-  const environment = opts?.environment ?? sessionProcessEnvironment();
+  const environment = sessionProcessEnvironment();
   const actionInvocation = client.getRunActionInvocation?.();
   const toolSurface = actionInvocation?.surface === 'voice' ? 'voice' as const : 'agent' as const;
   const credentials = opts?.authorityScope === 'session' ? null : opts?.credentials ?? null;

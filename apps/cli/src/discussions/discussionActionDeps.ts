@@ -349,11 +349,11 @@ export function createDiscussionActionDeps(options: Readonly<{
       let serverSnapshot: CliServerFeaturesSnapshot | undefined;
       if (options.resolveServerFeaturesSnapshot) {
         try { serverSnapshot = await options.resolveServerFeaturesSnapshot(); } catch { serverSnapshot = undefined; }
-        decision = resolveCliFeatureDecision({ featureId: 'sessions.conversations', env: process.env,
+        decision = resolveCliFeatureDecision({ featureId: 'sessions.conversations',
           ...(serverSnapshot ? { serverSnapshot } : {}) });
       } else {
         const resolved = await resolveCliFeatureDecisionForServer({
-          featureId: 'sessions.conversations', env: process.env, serverUrl,
+          featureId: 'sessions.conversations', serverUrl,
           ...(context.externalActionCredential ? { resolveAuthorizationHeaders: (request: Readonly<{ method: 'GET'; path: string }>) => {
             const authorization = authorizationFor(request.method, request.path);
             return requireExternalActionHeaders(authorization);

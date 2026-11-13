@@ -172,7 +172,7 @@ export function createSessionPromptPlanResolver(params: Readonly<{
     const operationContext = params.readOperationContext?.();
     const activeAccountSnapshot = getActiveAccountSettingsSnapshot();
     const executionRunsFeatureEnabled = resolveCliFeatureDecision({
-      featureId: 'execution.runs', env: process.env,
+      featureId: 'execution.runs',
     }).state === 'enabled';
     const featureIds = executionRunsFeatureEnabled ? ['execution.runs'] : [];
     const scope = {

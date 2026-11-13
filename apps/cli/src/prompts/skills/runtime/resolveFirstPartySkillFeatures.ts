@@ -6,7 +6,7 @@ import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 /** Preview and delivery share the Home observation and canonical Account feature decisions. */
 export async function resolveFirstPartySkillFeatures(input: Readonly<{
   serverUrl: string;
-  env: Parameters<typeof resolveCliFeatureDecision>[0]['env'];
+  env?: Parameters<typeof resolveCliFeatureDecision>[0]['env'];
   settings: Parameters<typeof resolveCliFeatureDecision>[0]['settings'];
   signal?: AbortSignal;
 }>): Promise<Readonly<Partial<Record<FeatureId, boolean>>>> {

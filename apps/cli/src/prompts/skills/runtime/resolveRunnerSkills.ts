@@ -147,7 +147,7 @@ async function resolveRunnerSkillsForHome(input: ResolveRunnerSkillsInput, trans
       ...(selection.skills?.forceIncludeSkillIds ?? []), ...(selection.skills?.forceExcludeSkillIds ?? []),
       ...FIRST_PARTY_SKILLS_V1.map(skill => skill.skillId)])];
     const featureEnabled = await resolveFirstPartySkillFeatures({ serverUrl: resolveServerHttpBaseUrl(),
-      env: process.env, settings: snapshot.settings });
+      settings: snapshot.settings });
     await current();
     const selected = resolveSessionCapabilitiesV1({ context, mcp: null,
       isFeatureEnabled: featureId => featureEnabled[featureId] === true,

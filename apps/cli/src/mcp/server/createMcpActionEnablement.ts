@@ -5,6 +5,7 @@ import { isActionEnabledWithSessionMemory } from '@happier-dev/protocol/actions/
 import type { AccountSettings, ActionExecutorDeps, ActionId, ActionSurfaces } from '@happier-dev/protocol';
 
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
+import { resolveCliFeatureDecisionEnvironment } from '@/features/featureDecisionInputs';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { StoredCredentials } from '@/persistence';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -70,6 +71,7 @@ export function createMcpActionEnablementWithServerFeatureAvailability(params: R
   readServerFeaturesSnapshot: () => CliServerFeaturesSnapshot | undefined;
   env?: NodeJS.ProcessEnv;
 }>): (id: ActionId) => boolean {
+  const env = resolveCliFeatureDecisionEnvironment(params.env);
   const isEnabledByPolicy = createMcpActionEnablement({
     actionSettingsProvider: params.actionSettingsProvider,
     surface: params.surface,
@@ -83,7 +85,7 @@ export function createMcpActionEnablementWithServerFeatureAvailability(params: R
     try {
       return resolveCliFeatureDecision({
         featureId,
-        env: params.env ?? process.env,
+        env,
         serverSnapshot: params.readServerFeaturesSnapshot(),
       }).state === 'enabled';
     } catch {

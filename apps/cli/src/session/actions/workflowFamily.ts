@@ -26,6 +26,7 @@ import { createWorkflowHostActionContractReader, type ReadLocalWorkflowActionSpe
 import type { requestDaemonSignedRootActionExecution } from '@/daemon/controlClient';
 import type { doesWorkflowImmediateEligibleStepTargetSession } from '@/daemon/workflows/coordinator';
 import { configuration } from '@/configuration';
+import { resolveCliFeatureDecisionEnvironment } from '@/features/featureDecisionInputs';
 import type { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import type { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { createWorkflowDefinitionActions } from './workflowDefinitions';
@@ -357,7 +358,7 @@ export function createCliWorkflowFamily(
         isWorkflowFeatureEnabled: async () => {
           const snapshot = await readServerFeaturesSnapshot();
           const [{ getWorkflowRuntimeFeatureDecision }, { isServerFeaturesProbeRetryable }] = await Promise.all([import("@/daemon/automation/workflowFeatureGate"), import("@/features/serverFeaturesClient")]);
-          const decision = getWorkflowRuntimeFeatureDecision(process.env, snapshot);
+          const decision = getWorkflowRuntimeFeatureDecision(resolveCliFeatureDecisionEnvironment(), snapshot);
           if (decision.state === 'unknown' && (!snapshot || isServerFeaturesProbeRetryable(snapshot))) {
             throw Object.assign(new Error('storage_unavailable'), { code: 'storage_unavailable' });
           }

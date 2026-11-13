@@ -59,6 +59,15 @@ export function readHostedSessionScope(): HostedSessionScope | undefined {
   return hostedSessionScope.getStore();
 }
 
+/** Retain the registering Session when a transport invokes its callback from another async context. */
+export function bindToHostedSessionScope<TArgs extends unknown[], TResult>(
+  callback: (...args: TArgs) => TResult,
+): (...args: TArgs) => TResult {
+  const scope = hostedSessionScope.getStore();
+  if (!scope) return callback;
+  return (...args) => hostedSessionScope.run(scope, callback, ...args);
+}
+
 /** The current Session's process environment; `process.env` outside a Session. */
 export function sessionProcessEnvironment(): NodeJS.ProcessEnv {
   return hostedSessionScope.getStore()?.environment ?? process.env;

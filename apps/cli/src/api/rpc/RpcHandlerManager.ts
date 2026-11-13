@@ -8,6 +8,7 @@ import { isSessionStopChildRootV1 } from '@happier-dev/protocol/actions/sessionS
  */
 
 import { logger as defaultLogger } from '@/ui/logger';
+import { bindToHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { SessionGoalControlFailureV1Schema, type SessionGoalControlFailureV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { createHash, randomUUID } from 'node:crypto';
 import { decodeBase64, encodeBase64, encrypt, decrypt } from '@/api/encryption';
@@ -318,7 +319,7 @@ export class RpcHandlerManager {
 
         // The relay registers the method name, while invocation reads this handler.
         // Replacing its implementation leaves the current registration intact.
-        this.handlers.set(prefixedMethod, handler);
+        this.handlers.set(prefixedMethod, bindToHostedSessionScope(handler));
 
         if (!alreadyRegistered && this.socket) {
             this.publishHandlerRegistration(prefixedMethod);

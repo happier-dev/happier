@@ -293,7 +293,7 @@ export function resolveSessionDetailAccessProjectionVersion(params: Readonly<{
   if (!params.serverFeaturesSnapshot) return undefined;
   return resolveCliFeatureDecision({
     featureId: 'sharing.session',
-    env: params.env ?? process.env,
+    env: params.env,
     serverSnapshot: params.serverFeaturesSnapshot,
   }).state === 'enabled'
     ? 1

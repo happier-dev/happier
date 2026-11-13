@@ -669,7 +669,7 @@ For features intended to be user-opt-in via UI Experimental Features toggles:
 
 ## CLI rules
 
-- Resolve feature decisions through `apps/cli/src/features/featureDecisionService.ts` and owned helpers.
+- Resolve feature decisions through `apps/cli/src/features/featureDecisionService.ts` and owned helpers; in 0.3 development, an explicit environment takes priority, otherwise policy uses the current hosted Session environment and falls back to the physical process environment outside a Session.
 - CLI local policy belongs in `apps/cli/src/features/featureLocalPolicy.ts`.
 - For server-represented features, no server snapshot is fail-closed/unknown.
 

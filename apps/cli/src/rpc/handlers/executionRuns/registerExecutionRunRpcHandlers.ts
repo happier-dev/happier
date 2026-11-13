@@ -299,7 +299,6 @@ export function registerExecutionRunRpcHandlers(
       const serverSnapshot = ctx.getServerFeaturesSnapshot?.();
       return resolveCliFeatureDecision({
         featureId: 'providers',
-        env: process.env,
         ...(serverSnapshot ? { serverSnapshot } : {}),
       }).state === 'enabled';
     },
@@ -319,7 +318,7 @@ export function registerExecutionRunRpcHandlers(
   const manager: ExecutionRunRequestBridgeContract<ExecutionRunHostBridge> = host;
 
   function isExecutionRunsEnabled(): boolean {
-    return resolveCliFeatureDecision({ featureId: 'execution.runs', env: process.env }).state === 'enabled';
+    return resolveCliFeatureDecision({ featureId: 'execution.runs' }).state === 'enabled';
   }
 
   const actionExecutor = ctx.actionExecutor ?? createExecutionRunRpcActionExecutor({

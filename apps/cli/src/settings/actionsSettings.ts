@@ -2,6 +2,7 @@ import { normalizeActionsSettingsV1, tryNormalizeActionsSettingsV1, isActionEnab
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionId, ActionSettingsActionId, ActionSurfaces, ActionUiPlacement, ActionsSettingsV1 } from '@happier-dev/protocol';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 const ENV_KEY = 'HAPPIER_ACTIONS_SETTINGS_V1';
 const EMPTY_ACTIONS_SETTINGS = Object.freeze({
@@ -10,7 +11,8 @@ const EMPTY_ACTIONS_SETTINGS = Object.freeze({
 }) as ActionsSettingsV1;
 
 export function readActionsSettingsOverrideFromEnv(): ActionsSettingsV1 | null {
-  const raw = typeof process.env[ENV_KEY] === 'string' ? String(process.env[ENV_KEY]).trim() : '';
+  const env = sessionProcessEnvironment();
+  const raw = typeof env[ENV_KEY] === 'string' ? String(env[ENV_KEY]).trim() : '';
   if (!raw) return null;
 
   let parsedJson: unknown = null;

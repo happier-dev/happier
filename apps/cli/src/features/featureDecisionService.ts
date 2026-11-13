@@ -138,7 +138,7 @@ function resolveCliFeatureDecisionFromInputs(
 
 export function resolveCliFeatureDecision(params: {
   featureId: FeatureId;
-  env: ProcessEnvInput;
+  env?: ProcessEnvInput;
   serverSnapshot?: CliServerFeaturesSnapshot;
   settings?: Parameters<typeof resolveUiFeatureToggleEnabled>[0];
 }): FeatureDecision {
@@ -152,7 +152,7 @@ export function resolveCliFeatureDecision(params: {
 
 export async function resolveCliFeatureDecisionForServer(params: {
   featureId: FeatureId;
-  env: ProcessEnvInput;
+  env?: ProcessEnvInput;
   serverUrl: string;
   timeoutMs?: number;
   resolveAuthorizationHeaders?: (request: Readonly<{

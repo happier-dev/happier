@@ -1,6 +1,7 @@
 import { featureRequiresServerSnapshot, getCanonicalFeatureId } from '@happier-dev/protocol/features/catalog';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import type { FeatureId } from '@happier-dev/protocol';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 import { getCliFeatureBuildPolicyDecision } from './featureBuildPolicy';
 import { resolveCliLocalFeaturePolicyEnabled } from './featureLocalPolicy';
@@ -18,24 +19,30 @@ export type CliFeatureDecisionInputs = Readonly<{
   serverSnapshot?: CliServerFeaturesSnapshot;
 }>;
 
+/** Explicit callers retain their environment; ambient policy belongs to the current Session. */
+export function resolveCliFeatureDecisionEnvironment(env?: ProcessEnvInput): ProcessEnvInput {
+  return env ?? sessionProcessEnvironment();
+}
+
 export function createCliFeatureDecisionInputs(params: {
   featureId: FeatureId;
-  env: ProcessEnvInput;
+  env?: ProcessEnvInput;
   serverSnapshot?: CliServerFeaturesSnapshot;
 }): CliFeatureDecisionInputs {
   const featureId = getCanonicalFeatureId(params.featureId);
+  const env = resolveCliFeatureDecisionEnvironment(params.env);
   return {
     featureId,
-    env: params.env,
-    buildPolicy: getCliFeatureBuildPolicyDecision(featureId, params.env),
-    localPolicyEnabled: resolveCliLocalFeaturePolicyEnabled(featureId, params.env),
+    env,
+    buildPolicy: getCliFeatureBuildPolicyDecision(featureId, env),
+    localPolicyEnabled: resolveCliLocalFeaturePolicyEnabled(featureId, env),
     serverSnapshot: params.serverSnapshot,
   };
 }
 
 export async function loadCliFeatureDecisionInputsForServer(params: {
   featureId: FeatureId;
-  env: ProcessEnvInput;
+  env?: ProcessEnvInput;
   serverUrl: string;
   timeoutMs?: number;
   resolveAuthorizationHeaders?: (request: Readonly<{
@@ -43,11 +50,12 @@ export async function loadCliFeatureDecisionInputsForServer(params: {
     path: string;
   }>) => Readonly<Record<string, string>> | null;
 }): Promise<CliFeatureDecisionInputs> {
-  const globalDecision = resolveCliGlobalOnlyFeatureDecision({ featureId: params.featureId, env: params.env });
+  const env = resolveCliFeatureDecisionEnvironment(params.env);
+  const globalDecision = resolveCliGlobalOnlyFeatureDecision({ featureId: params.featureId, env });
   if (globalDecision.state !== 'enabled') {
     return createCliFeatureDecisionInputs({
       featureId: params.featureId,
-      env: params.env,
+      env,
       serverSnapshot: undefined,
     });
   }
@@ -55,7 +63,7 @@ export async function loadCliFeatureDecisionInputsForServer(params: {
   if (!featureRequiresServerSnapshot(params.featureId)) {
     return createCliFeatureDecisionInputs({
       featureId: params.featureId,
-      env: params.env,
+      env,
       serverSnapshot: undefined,
     });
   }
@@ -70,7 +78,7 @@ export async function loadCliFeatureDecisionInputsForServer(params: {
 
   return createCliFeatureDecisionInputs({
     featureId: params.featureId,
-    env: params.env,
+    env,
     serverSnapshot,
   });
 }

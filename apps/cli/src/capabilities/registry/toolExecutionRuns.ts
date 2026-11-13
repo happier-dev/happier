@@ -49,10 +49,10 @@ export const executionRunsCapability: Capability = {
   get descriptor() {
     return { id: 'tool.executionRuns' as const, kind: 'tool' as const, title: 'Execution runs',
       protocol: { ...executionRunProtocol,
-        available: resolveCliFeatureDecision({ featureId: 'execution.runs', env: process.env }).state === 'enabled' } };
+        available: resolveCliFeatureDecision({ featureId: 'execution.runs' }).state === 'enabled' } };
   },
   detect: async ({ context, request }) => {
-    const gate = resolveCliFeatureDecision({ featureId: 'execution.runs', env: process.env });
+    const gate = resolveCliFeatureDecision({ featureId: 'execution.runs' });
     if (gate.state !== 'enabled') {
       return {
         available: false,
@@ -62,7 +62,7 @@ export const executionRunsCapability: Capability = {
         disabledReason: gate.blockerCode,
       };
     }
-    const voiceAgentDecision = resolveCliFeatureDecision({ featureId: 'voice.agent', env: process.env });
+    const voiceAgentDecision = resolveCliFeatureDecision({ featureId: 'voice.agent' });
     const voiceAgentEnabled = voiceAgentDecision.state === 'enabled';
 
     const cliEngineRegistry = await resolveCliEngineRegistry();

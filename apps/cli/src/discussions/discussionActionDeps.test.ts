@@ -67,6 +67,8 @@ import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals
 import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { fetchAccountProfile } from '@/api/accountProfile';
 import { AccountProfileSchema } from '@happier-dev/protocol';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 
 const credentials = { token: 'token-1', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) } };
 const keyless = { token: 'token-1', encryption: null };
@@ -633,6 +635,24 @@ describe('Home Discussion resource transport', () => {
       }
       throw new Error('Unexpected request: ' + request.method + ' ' + path);
     });
+  });
+
+  it.each(['snapshot', 'http'] as const)('keeps hosted Session discussion policy isolated with %s feature input', async source => {
+    vi.stubEnv('HAPPIER_BUILD_FEATURES_DENY', '');
+    const featureHttp = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(features.features));
+    resetServerFeaturesClientForTests();
+    onTestFinished(() => { featureHttp.mockRestore(); vi.unstubAllEnvs(); resetServerFeaturesClientForTests(); });
+    const read = (deny: string) => runAddedHostedSession({
+      environment: { HAPPIER_BUILD_FEATURES_DENY: deny }, workingDirectory: '/session', end: () => {},
+    }, async () => {
+      await Promise.resolve();
+      return action(source === 'http' ? { resolveServerFeaturesSnapshot: undefined } : {})({
+        actionId: 'discussion.list', input: {}, context,
+      });
+    });
+    expect(await Promise.all([read('sessions.conversations'), read('')])).toMatchObject([
+      { ok: false, errorCode: 'unsupported_action' }, { discussions: [] },
+    ]);
   });
 
   it.each(['allowed', 'denied'] as const)('posts a channel message through the plugin Action and Discussion access owner (%s)', async access => {

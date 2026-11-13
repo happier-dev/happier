@@ -261,7 +261,7 @@ export async function resolveReplaySeedDraft(params: Readonly<{
     if (hydratedSynopsis) return hydratedSynopsis;
 
     // Only a chosen runner (explicit Auto or one runner) starts an LLM summary; unset stays recent-only, as in 0.2.
-    if (params.summaryRunner && resolveCliFeatureDecision({ featureId: 'execution.runs', env: process.env }).state === 'enabled') {
+    if (params.summaryRunner && resolveCliFeatureDecision({ featureId: 'execution.runs' }).state === 'enabled') {
       try {
         // Auto: the runner owner picks on this machine, preferring the source Session's own Agent on a tie.
         const generated = await (params.deps?.runReplaySummaryForDialog ?? runReplaySummaryForDialog)({

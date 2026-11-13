@@ -8,6 +8,7 @@ import { ExecutionRunCancelTurnRequestSchema } from '@happier-dev/protocol/execu
 import { ExecutionRunGetRequestSchema, ExecutionRunListRequestSchema, readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails, ExecutionRunTransportErrorCodeSchema, type ExecutionRunStartFailureDetailsV1 } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
 import { projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { ExecutionRunTurnStreamCancelRequestSchema, ExecutionRunTurnStreamStartRequestSchema } from '@happier-dev/protocol/execution/runs/streaming';
 import { ExecutionRunTurnStreamReadRequestSchema } from '@happier-dev/protocol/execution/runs/runPrimitives';
 import { normalizeExecutionRunWaitTimeoutMs, waitForExecutionRunTerminal } from '@happier-dev/protocol/execution/runs/waitForTerminal';
@@ -261,7 +262,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
   // One daemon composition owner serves execution-run actions and plugin API actions. This adapter
   // contributes the execution-run's routes, current UI owner and cached server-feature accessor.
   const runtimeActionExecute = createDaemonRuntimeActionExecutor({
-    env: process.env,
+    env: sessionProcessEnvironment(),
     resolveRouteOwners: () => ({
       ...params.context,
       browserUiAutomation: params.context.getBrowserUiAutomation?.() ?? null,
@@ -397,7 +398,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
     if (intentPolicy.requiredFeatureId) {
       const featureId = intentPolicy.requiredFeatureId;
       const serverSnapshot = params.context.getServerFeaturesSnapshot?.();
-      const featureDecision = resolveCliFeatureDecision({ featureId, env: process.env, serverSnapshot });
+      const featureDecision = resolveCliFeatureDecision({ featureId, serverSnapshot });
 
       if (featureDecision.state !== 'enabled') {
         return beforeStart({
@@ -429,7 +430,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         backendId,
         intentInput: parsed.data.intentInput,
         cwd: params.context.cwd,
-        env: process.env,
+        env: sessionProcessEnvironment(),
       });
       if (!preflight.ok) {
         return beforeStart(preflight);

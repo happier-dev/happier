@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createSkillStore } from '../store/skillStore';
 import { resolveRunnerSkills, type ResolveRunnerSkillsInput } from './resolveRunnerSkills';
 import { prepareGeminiNativeMcpShaping } from '../../../../../../packages/plugins/gemini/src/agent/mcp/shaping';
@@ -92,6 +93,36 @@ async function fixture(platform?: NodeJS.Platform) {
   return { home, directory, input, artifacts, store, readIds };
 }
 describe('runner skill resolution', () => {
+  it('delivers first-party skills according to each concurrent hosted Session policy', async () => {
+    vi.stubEnv('HAPPIER_BUILD_FEATURES_DENY', '');
+    const actualFetch = globalThis.fetch;
+    const featureHttp = vi.spyOn(globalThis, 'fetch').mockImplementation((url, init) => {
+      const href = url instanceof Request ? url.url : String(url);
+      return new URL(href).pathname === '/v1/features'
+        ? Promise.resolve(Response.json({ features: { workflows: { enabled: true }, deployments: { enabled: true } }, capabilities: {} }))
+        : actualFetch(url, init);
+    });
+    resetServerFeaturesClientForTests();
+    onTestFinished(() => { featureHttp.mockRestore(); vi.unstubAllEnvs(); resetServerFeaturesClientForTests(); });
+    const read = async (deny: string) => {
+      const f = await fixture();
+      return runAddedHostedSession({
+        environment: { HAPPIER_BUILD_FEATURES_DENY: deny }, workingDirectory: f.directory, end: () => {},
+      }, async () => {
+        await Promise.resolve();
+        const result = await resolveRunnerSkills({ ...f.input,
+          accountSnapshot: { ...f.input.accountSnapshot!, settings: accountSettingsParse({ featureToggles: { automations: true, deployments: true } }) },
+        }, {
+          artifacts: f.artifacts, ensureSessionDir: request => f.store.ensureSkillSessionDir(request),
+        });
+        return result.delivery?.items.map(item => item.skillId);
+      });
+    };
+    expect(await Promise.all([read('workflows,deployments'), read('')])).toEqual([
+      ['library'], ['library', 'happier:deploy', 'happier:workflows'],
+    ]);
+  });
+
   it('delivers feature-admitted built-ins for an existing Account and retains its explicit opt-out', async () => {
     const f = await fixture();
     const actualFetch = globalThis.fetch;

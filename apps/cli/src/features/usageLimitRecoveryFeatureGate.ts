@@ -24,7 +24,7 @@ export async function resolveUsageLimitRecoveryEnabled(params: Readonly<{
 }> = {}): Promise<boolean> {
   const resolved = await resolveCliFeatureDecisionForServer({
     featureId: USAGE_LIMIT_RECOVERY_FEATURE_ID,
-    env: params.env ?? process.env,
+    env: params.env,
     serverUrl: params.serverUrl ?? resolveServerHttpBaseUrl(),
     timeoutMs: params.timeoutMs ?? USAGE_LIMIT_RECOVERY_FEATURE_GATE_TIMEOUT_MS,
   });

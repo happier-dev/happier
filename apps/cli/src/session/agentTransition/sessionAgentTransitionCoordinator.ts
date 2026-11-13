@@ -765,7 +765,6 @@ export async function runSessionAgentTransition(
   // it can touch the source runtime.
   const featureDecision = await deps.resolveCliFeatureDecisionForServer({
     featureId: 'sessions.agentSwitching',
-    env: process.env,
     serverUrl: deps.resolveServerHttpBaseUrl(),
   }).catch(() => null);
   if (featureDecision?.decision.state !== 'enabled') {
