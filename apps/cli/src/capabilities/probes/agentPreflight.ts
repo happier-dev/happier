@@ -504,12 +504,11 @@ export async function invokeCliPreflightMethod(
             const cause = isRecord(error) && isRecord(error.details)
                 ? SessionRuntimeFailureCauseV1Schema.safeParse(error.details.failureCause) : null;
             if (method !== 'probeModels' || !cause?.success || cause.data.failureReason !== 'model_selection_required') throw error;
-            // Preparation can require a model to configure a custom upstream.
-            // That is absent catalog evidence, not a failed Session launch.
-            return { ok: true, result: { agentId, availableModels: [], source: 'unavailable',
-                supportsFreeform: modelConfig?.supportsSelection === true && modelConfig.supportsFreeform === true,
-                refreshError: true, cacheable: false,
-                refreshErrorMessage: 'model_selection_required: Choose an explicit model; this Connected Account has no verified Agent catalog or default.',
+            // A known selection prerequisite is a typed refusal at the probe
+            // boundary too; callers must not infer it from display text.
+            return { ok: false, error: { code: cause.data.failureReason,
+                message: 'Choose an explicit model; this Connected Account has no verified Agent catalog or default.',
+                retryable: cause.data.retryable, details: { phase: cause.data.phase },
             } };
         }
         materializedEnv = { ...preparedLaunchEnvironment.environment };

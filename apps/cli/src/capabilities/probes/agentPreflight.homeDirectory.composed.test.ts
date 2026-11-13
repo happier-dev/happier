@@ -1,3 +1,7 @@
+import { createCliActionInventoryDeps } from '@/session/actions/cliActionDeps/createCliActionInventoryDeps';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -203,10 +207,25 @@ describe('native Agent preflight home directory intent', () => {
                         createAgentInvocationServices: runtime.registry.createAgentInvocationServices,
                         agentRuntimeCacheKey: runtime.registry.readPluginOccurrenceId?.('acme.foreground') ?? undefined,
                     }, {}));
-                    expect(models).toMatchObject({ ok: true, result: { availableModels: [], source: 'unavailable',
-                        refreshError: true, cacheable: false,
-                        refreshErrorMessage: expect.stringContaining(modelId === undefined ? 'model_selection_required' : 'account_unverified'),
-                    } });
+                    if (modelId === undefined) {
+                        // The Machine transport carries the real preparation result;
+                        // no internal catalog or Action logic is replaced.
+                        const inventory = createCliActionInventoryDeps({ token: 'fake-account-token', sessionId: '', mode: 'plain', ctx: null,
+                            callMachineAction: async input => input.method === RPC_METHODS.CAPABILITIES_INVOKE ? models
+                                : { status: 'error', error: { code: 'provider_catalog_unavailable', retryable: false } },
+                        });
+                        const actions = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...inventory });
+                        expect(await actions.execute('agents.models.list', { machineId: 'fixture-machine', agentId,
+                            probe: { connectedServices: { v: 2, bindingsByServiceId: {
+                                'acme.preflight-account/credential': { source: 'connected', profileId: 'selected-account' },
+                            } } } }, { surface: 'cli', authority: 'present_user' })).toMatchObject({
+                            ok: false, errorCode: 'model_selection_required', details: { retryable: false },
+                        });
+                    } else {
+                        expect(models).toMatchObject({ ok: true, result: { availableModels: [], source: 'unavailable',
+                            refreshError: true, cacheable: false, refreshErrorMessage: expect.stringContaining('account_unverified'),
+                        } });
+                    }
                     expect(JSON.stringify(models)).not.toContain('credential-bearing');
                 }
             }
