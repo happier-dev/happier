@@ -16,7 +16,7 @@ import type { SessionMessageRole } from '@happier-dev/protocol/sessions/messages
 import { readPublicSessionVisualMessages } from './publicSessionVisuals';
 import type { UiSurfaceNetworkRequestV1 } from '@happier-dev/protocol/plugins/contributions/ui/hostedHtmlCapabilitiesV1';
 import { projectInlineReferenceLabelsV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
-import type { Message } from '@happier-dev/session-core/messages';
+import { readMessageDisplayText, type Message } from '@happier-dev/session-core/messages';
 import { readPublishedSessionTranscript } from '@happier-dev/session-core/transcript';
 import { normalizeToolCallForRendering, resolveToolRowPresentation, type ToolStatusIndicatorKind } from '@happier-dev/session-core/tools';
 
@@ -47,7 +47,7 @@ function record(value: unknown): Record<string, unknown> | null {
 
 export function readPublicSessionTranscriptText(messages: readonly PublicSessionOpenedMessage[]): string {
     return readPublishedSessionTranscript(messages).messages.flatMap(message => {
-        if (message.kind === 'user-text' || message.kind === 'agent-text') return [message.displayText ?? message.text];
+        if (message.kind === 'user-text' || message.kind === 'agent-text') return [readMessageDisplayText(message)];
         if (message.kind === 'tool-call') return [resolveToolRowPresentation(normalizeToolCallForRendering(message.tool)).title];
         return [];
     }).join('\n\n');
@@ -237,7 +237,7 @@ function renderTranscriptMessage(document: Document, message: Message): HTMLElem
     element.setAttribute('data-message-kind', message.kind);
     if (message.kind === 'user-text' || message.kind === 'agent-text') {
         const text = document.createElement('pre');
-        text.textContent = projectInlineReferenceLabelsV1(message.displayText ?? message.text);
+        text.textContent = projectInlineReferenceLabelsV1(readMessageDisplayText(message));
         element.append(text);
         return element;
     }

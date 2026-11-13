@@ -114,7 +114,7 @@ describe('captured usage query projection', () => {
         const compact = result.value;
         expect(compact.breakdowns?.project).toHaveLength(1);
         expect(compact.contributions).toBeUndefined();
-        expect(Object.fromEntries(compact.scopeKeys?.map(({ dimension, keys }) => [dimension, keys.toSorted()]) ?? [])).toEqual({
+        expect(Object.fromEntries(compact.scopeKeys?.map(({ dimension, keys }) => [dimension, [...keys].sort()]) ?? [])).toEqual({
             project: ['named', 'unknown', 'unnamed-a', 'unnamed-b'],
             agent: ['claude', 'codex'], machine: ['machine', 'other-machine'], source: ['native', 'runtime'],
         });

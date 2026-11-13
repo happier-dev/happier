@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db } from '@/storage/db';
 import { createDatabaseIntegrationHarness } from '@/testkit/databaseIntegrationHarness';
@@ -18,7 +19,7 @@ describe('Automation schedule occurrence projection', () => {
             id: `${id}-${randomUUID()}`, automationId: automation.id, kind: 'schedule', scheduleKind: 'interval',
             everyMs: 60_000, revision: 2, nextRunAt: new Date(100),
         } })));
-        const run = (index: number, overrides: Partial<Parameters<typeof db.automationRun.create>[0]['data']> = {}) =>
+        const run = (index: number, overrides: Partial<Prisma.AutomationRunUncheckedCreateInput> = {}) =>
             db.automationRun.create({ data: { accountId: account.id, automationId: automation.id,
                 triggerId: triggers[index]!.id, causeKind: 'trigger', causeTriggerKind: 'schedule', causeTriggerRevision: 2,
                 occurrenceKey: randomUUID(), causeOccurredAt: new Date(100),

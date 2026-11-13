@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Socket } from 'socket.io';
-import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { decodeBase64, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { SESSION_MESSAGE_REPLY_MUTATE_EVENT_V1, SESSION_MESSAGE_REPLY_RELEASE_SOURCE_TURN_EVENT_V1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
@@ -33,7 +33,7 @@ describe('Machine withdrawal at the admitted reply boundary', () => {
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: custodian.id,
             metadata: encodePlainMachineStoredContent({ host: 'revoke-boundary', platform: 'linux', happyCliVersion: 'test',
                 homeDir: '/home/requester', happyHomeDir: '/home/requester/.happier' }),
-            daemonState: encodePlainMachineStoredContent({ status: 'running' }), dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+            daemonState: encodePlainMachineStoredContent({ status: 'running' }), dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
             installationId: randomUUID(), operationProtocolCapabilities: {
                 requesterExecutionIsolation: { protocolVersions: [1] },
                 sessionInputAdmission: { protocolVersions: [1, 2, 3] },

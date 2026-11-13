@@ -14,7 +14,8 @@ import { readSessionTurnsBatch } from '@/app/api/routes/session/readSessionTurns
 import { readSessionMessagePages } from '@/app/api/routes/session/readSessionMessagePages';
 import { SESSION_BATCH_MESSAGE_ROLES } from '@/app/api/routes/session/sessionMessagePageProjection';
 import { readSessionDetails } from '@/app/api/routes/session/registerSessionListingRoutes';
-import { readAccountStoredContentCompatibilityForHttpRequest } from '@/app/clientCompatibility/accountStoredContentCompatibility';
+import { evaluateAccountStoredContentCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
+import { parseAccountStoredContentCompatibilityHttpHeadersV1 } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { currentAccountStoredContentCompatibilityHeaders } from '@/app/api/testkit/accountStoredContentCompatibility';
 import { TransactionDeadlineExceededError } from '@/storage/transactionErrors';
 
@@ -116,7 +117,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('s
                 expect.soft(Math.max(...[...transactionSubjects.values()].map(ids => ids.size)), 'transcript snapshots cover one existing Session batch').toBeLessThanOrEqual(SESSION_ACCESS_SESSION_BATCH_SIZE);
                 transactionSubjects.clear();
                 const detailInput = { ...input, usageProjection: true, includePrivateRuleProjection: false,
-                    storedContentCompatibility: readAccountStoredContentCompatibilityForHttpRequest({ headers: currentAccountStoredContentCompatibilityHeaders }) };
+                    storedContentCompatibility: evaluateAccountStoredContentCompatibility(
+                        parseAccountStoredContentCompatibilityHttpHeadersV1(currentAccountStoredContentCompatibilityHeaders)) };
                 const details = await readSessionDetails(detailInput);
                 expect([...details.values()].every(result => result.status === 'fulfilled' && result.value.status === 200)).toBe(true);
                 expect.soft(transactionSubjects.size, 'detail snapshots use the existing Session batches').toBe(Math.ceil(requested.length / SESSION_ACCESS_SESSION_BATCH_SIZE));

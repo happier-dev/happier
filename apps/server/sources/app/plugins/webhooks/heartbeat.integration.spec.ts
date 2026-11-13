@@ -57,7 +57,7 @@ describe('record-only heartbeat ingress', () => {
             packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] },
         });
         await db.machine.create({ data: { id: target.materialization.machineId, accountId, metadata: '{}',
-            installationId: target.machineInstallationId, installationPublicKey: publisherKey.publicKey, pluginMaterializationRevision: 1n,
+            installationId: target.machineInstallationId, installationPublicKey: new Uint8Array(publisherKey.publicKey), pluginMaterializationRevision: 1n,
             operationProtocolCapabilities: { pluginWebhookClaim: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1 } });
         await db.accountPluginIntent.create({ data: { accountId, pluginId, desiredVersion: '1.0.0', enabled: true, writableCollections: [] } });
         await db.accountPluginRelease.create({ data: { accountId, pluginId, version: '1.0.0',

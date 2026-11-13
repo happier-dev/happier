@@ -54,8 +54,8 @@ describe('public-profile canonical context', () => {
         const fallback = { kind: 'planet', reason: 'account_image_unavailable' };
         expect(await readIdentity()).toEqual({ sinceMs: account.createdAt.getTime(), name: 'avatar_owner', avatar: fallback });
         for (const avatar of [
-            'javascript:private-provider-secret',
-            'https://provider.example.test/private-photo?token=private-provider-secret',
+            { path: 'javascript:private-provider-secret', width: 1, height: 1, thumbhash: 'private-thumbhash' },
+            { path: 'https://provider.example.test/private-photo?token=private-provider-secret', width: 1, height: 1, thumbhash: 'private-thumbhash' },
             { path: 'private/account-avatar.png', width: 1, height: 1, thumbhash: 'private-thumbhash' },
         ]) {
             await db.account.update({ where: { id: account.id }, data: { avatar } });

@@ -1578,7 +1578,9 @@ async function readFirstQualifiedSourceForRef(
     const qualifiedIdentityDigest =
         createQualifiedConnectedAccountIdentityDigest(ref);
     try {
-        const readInStorage = async (tx: QualifiedUsageStorage) => {
+        const readInStorage = async (tx: QualifiedUsageStorage): Promise<
+            ExactQualifiedConnectedServiceUsageSource | Readonly<{ status: 'no_usage_observed' }>
+        > => {
             const binding = await resolveQualifiedCredential(tx, {
                 accountId: params.accountId,
                 ref,

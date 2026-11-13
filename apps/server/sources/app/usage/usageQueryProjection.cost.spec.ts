@@ -20,7 +20,7 @@ it('prices each Work contribution once and folds series money per bucket without
             contextUsedTokens: null, contextWindowTokens: null, contributingEventIds: [`row-${index}`],
             tokens: { input: 100, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 100 },
             cost: { reportedUsd: 0.1, estimatedUsd: 0.2, invoiceUsd: null,
-                billingContext: 'api', costSource: 'provider_reported', currency: 'USD' },
+                billingContext: 'api_usage', costSource: 'provider_reported', currency: 'USD' },
         }));
         const inspector = new Session();
         inspector.connect();

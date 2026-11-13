@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import {
     CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
     createPlainSessionOwnerMetadataEnvelopeV1,
@@ -79,7 +79,7 @@ function ownerPatch(overrides: Partial<Extract<SessionMetadataTuplePatchV1, { mo
 
 describe("sessionRoutes v2 patch with the real metadata owner", () => {
     let harness: LightSqliteHarness;
-    let emitUpdate: ReturnType<typeof vi.spyOn<typeof eventRouter, "emitUpdate">>;
+    let emitUpdate: MockInstance<typeof eventRouter.emitUpdate>;
 
     beforeAll(async () => {
         harness = await createLightSqliteHarness({

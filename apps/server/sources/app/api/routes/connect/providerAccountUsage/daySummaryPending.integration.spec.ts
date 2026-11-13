@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, it } from 'vitest';
+import { isRecord } from '@happier-dev/protocol/common/records';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
@@ -126,7 +127,7 @@ it('accepted material owns pending days, exact publication clears them and empty
     });
     expect(await metadata()).toMatchObject({ daySummaryPendingDays: [dayStartAtMs + 86_400_000], pageProjection: { recordId: snapshot.recordId } });
     const raw = await metadata();
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Expected record metadata');
+    if (!isRecord(raw)) throw new Error('Expected record metadata');
     const { daySummaryPendingDays: _legacy, ...legacyMetadata } = raw;
     await db.providerAccountUsageRecord.update({ where: { accountId_recordId: { accountId: account.id, recordId: snapshot.recordId } },
         data: { metadata: legacyMetadata } });

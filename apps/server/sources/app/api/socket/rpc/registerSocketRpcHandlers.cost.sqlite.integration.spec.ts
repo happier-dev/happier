@@ -30,10 +30,11 @@ describe('Socket RPC request admission cost', () => {
             io: createSocketRoomDiscoveryHarness(async () => []) });
         const machineDelegate = db.machine;
         let reads = 0;
-        db.machine = new Proxy(machineDelegate, { get(target, key, receiver) {
+        // Prisma types client delegates readonly; the db proxy's set trap swaps the live boundary delegate.
+        Reflect.set(db, 'machine', new Proxy(machineDelegate, { get(target, key, receiver) {
             const value = Reflect.get(target, key, receiver);
             return key === 'findFirst' ? (...args: unknown[]) => { reads++; return Reflect.apply(value, target, args); } : value;
-        } });
+        } }));
         try {
             for (const method of [RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS, 'daemon.vitals.get', 'git.status']) {
                 await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.REGISTER, { method: `${machine.id}:${method}` });
@@ -44,7 +45,7 @@ describe('Socket RPC request admission cost', () => {
             socket.emit.mockClear();
             await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.REGISTER, { method: `${machine.id}:other` });
             expect(socket.emit).not.toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REGISTERED, expect.anything());
-        } finally { db.machine = machineDelegate; }
+        } finally { Reflect.set(db, 'machine', machineDelegate); }
     });
 
     it('admits each owner request with one read and no repeated database decisions during forwarding', async () => {
@@ -68,11 +69,12 @@ describe('Socket RPC request admission cost', () => {
         registerSocketRpcHandlers({ userId: owner.id, socket: caller as unknown as Socket, io });
         const machineDelegate = db.machine;
         let reads = 0;
-        db.machine = new Proxy(machineDelegate, { get(target, key, receiver) {
+        // Prisma types client delegates readonly; the db proxy's set trap swaps the live boundary delegate.
+        Reflect.set(db, 'machine', new Proxy(machineDelegate, { get(target, key, receiver) {
             const value = Reflect.get(target, key, receiver);
             return key === 'findUnique' || key === 'findFirst' || key === 'findMany'
                 ? (...args: unknown[]) => { reads++; return Reflect.apply(value, target, args); } : value;
-        } });
+        } }));
         const transaction = db.$transaction;
         let transactions = 0;
         db.$transaction = new Proxy(transaction, { apply(target, receiver, args) {
@@ -103,6 +105,6 @@ describe('Socket RPC request admission cost', () => {
             await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, params: {} }, callback);
             expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
             expect(effect).toHaveBeenCalledTimes(16);
-        } finally { db.machine = machineDelegate; db.$transaction = transaction; }
+        } finally { Reflect.set(db, 'machine', machineDelegate); db.$transaction = transaction; }
     });
 });

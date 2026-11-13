@@ -441,7 +441,8 @@ export async function readProviderAccountUsageRecordWithCurrentGuard(params: Rea
     if (!row) return null;
     return {
         record: parseStoredProviderAccountUsageRecord(row),
-        rawMetadata: row.metadata,
+        // The Prisma JSON-types generator types this untagged column `unknown`; the driver only returns parsed JSON.
+        rawMetadata: row.metadata as Prisma.JsonValue,
         guard: {
             fetchedAt: row.fetchedAt?.getTime() ?? null,
             ...(row.refreshRequestedAt ? { refreshRequestedAt: row.refreshRequestedAt.getTime() } : {}),

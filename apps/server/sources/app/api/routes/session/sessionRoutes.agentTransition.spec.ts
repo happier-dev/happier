@@ -5,7 +5,7 @@ import {
     projectSessionSharedMetadataV1,
     SESSION_AGENT_TRANSITION_DIVIDER_MESSAGE,
 } from "@happier-dev/protocol";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
 import { eventRouter } from "@/app/events/eventRouter";
 import { createSessionMessage } from "@/app/session/sessionWriteService";
@@ -68,7 +68,7 @@ async function fixture(layout: 0 | 1 = 0, active = false, env: NodeJS.ProcessEnv
 /** Real cutover, tuple owner, message owner and projection; only socket delivery is replaced. */
 describe("sessionRoutes Agent-transition cutover publication", () => {
     let harness: LightSqliteHarness;
-    let emitUpdate: ReturnType<typeof vi.spyOn<typeof eventRouter, "emitUpdate">>;
+    let emitUpdate: MockInstance<typeof eventRouter.emitUpdate>;
 
     beforeAll(async () => {
         harness = await createLightSqliteHarness({ tempDirPrefix: "happier-transition-route-", initAuth: false,

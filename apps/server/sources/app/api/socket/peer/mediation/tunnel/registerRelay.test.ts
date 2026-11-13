@@ -29,6 +29,7 @@ import type {
     PeerTcpTunnelRelayAdmissionResult,
     PeerTcpTunnelRelayCoordinator,
 } from './relayCoordinator';
+import type { PeerMediationObservabilityEvent } from '../observability/events';
 
 type RegisterRelayModule = typeof import('./registerRelay');
 
@@ -2372,7 +2373,7 @@ describe('registerPeerTcpTunnelRelaySocketHandler', () => {
 
         const socket = createSocket();
         const io = createIo();
-        const emitted: unknown[] = [];
+        const emitted: PeerMediationObservabilityEvent[] = [];
         let checkedPostCloseState = false;
         let postCloseCheck = Promise.resolve<unknown>(undefined);
         mod.registerPeerTcpTunnelRelaySocketHandler('user_1', socket, {

@@ -422,7 +422,9 @@ describe("Automation Event source status", () => {
             admittedCount: 0,
             lastDispositionAt: null,
         } });
-        if (explanation === undefined) expect(listed.triggers[0]?.sourceStatus).not.toHaveProperty("explanation");
+        const listedTrigger = listed.triggers[0];
+        if (listedTrigger?.kind !== "pluginEvent") throw new Error("Expected the seeded plugin Event Trigger");
+        if (explanation === undefined) expect(listedTrigger.sourceStatus).not.toHaveProperty("explanation");
         const detail = await getAutomation({ accountId: ACCOUNT_ID, automationId: AUTOMATION_ID });
         if (!detail) throw new Error("Expected seeded Automation");
         const detailStatuses = await loadAutomationEventStatusProjections({ automations: [detail] });

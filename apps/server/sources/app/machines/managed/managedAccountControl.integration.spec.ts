@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Socket } from 'socket.io';
-import fastify, { type FastifyRequest } from 'fastify';
+import type { IncomingHttpHeaders } from 'node:http';
+import fastify, { type FastifyRequest, type InjectOptions } from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { MachineProvisionerContributionV1Schema, defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV1Schema,
     MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -54,7 +55,7 @@ describe('Account-owned managed control without a controller', () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const other = await db.account.create({ data: { encryptionMode: 'plain' } });
         const createMachine = () => db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
-            installationId: randomUUID(), installationPublicKey: tweetnacl.sign.keyPair().publicKey,
+            installationId: randomUUID(), installationPublicKey: new Uint8Array(tweetnacl.sign.keyPair().publicKey),
             metadata: encodePlainMachineStoredContent({ host: 'guest', platform: 'linux', happyCliVersion: 'test',
                 homeDir: '/home/guest', happyHomeDir: '/home/guest/.happier' }),
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
@@ -224,7 +225,7 @@ describe('Account-owned managed control without a controller', () => {
         registerManagedMachineRoutes(app);
         await app.ready();
         const headers = { 'x-test-user-id': owner.id };
-        const post = (path: string, payload: unknown, extra: Record<string, string> = {}) => app.inject({ method: 'POST',
+        const post = (path: string, payload: InjectOptions['payload'], extra: IncomingHttpHeaders = {}) => app.inject({ method: 'POST',
             url: `/v1/machines/managed/controller/${path}`, payload, headers: { ...headers, ...extra } });
         try {
             const admitted = await post('admit', input);
@@ -271,7 +272,7 @@ describe('Account-owned managed control without a controller', () => {
             expect(bootstrap.json().machine).toMatchObject({ bootstrapCredentialRef: { kind: 'shared_resource', resourceId: credential.resourceId } });
             const keys = tweetnacl.sign.keyPair();
             const guest = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, installationId: randomUUID(),
-                installationPublicKey: keys.publicKey, metadata: encodePlainMachineStoredContent({ host: 'guest', platform: 'linux', happyCliVersion: 'test',
+                installationPublicKey: new Uint8Array(keys.publicKey), metadata: encodePlainMachineStoredContent({ host: 'guest', platform: 'linux', happyCliVersion: 'test',
                     homeDir: '/home/guest', happyHomeDir: '/home/guest/.happier' }),
                 dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
             await db.managedMachine.update({ where: { id: machine.id }, data: { enrolledMachineId: guest.id,
@@ -353,7 +354,7 @@ describe('Account-owned managed control without a controller', () => {
     const securityMachine = async (accountId: string) => {
         const host = await db.machine.create({ data: { id: randomUUID(), accountId, installationId: randomUUID(),
         pluginMaterializationRevision: BigInt(1),
-        installationPublicKey: tweetnacl.sign.keyPair().publicKey,
+        installationPublicKey: new Uint8Array(tweetnacl.sign.keyPair().publicKey),
         metadata: encodePlainMachineStoredContent({ host: 'host', platform: 'linux', happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
         dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
         await db.accountPluginIntent.upsert({ where: { accountId_pluginId: { accountId, pluginId: securityLaunch.provider.pluginId } },
@@ -393,7 +394,7 @@ describe('Account-owned managed control without a controller', () => {
         await app.ready();
         return app;
     };
-    const signedHeaders = (accountId: string, machineId: string, action: string, requestId = randomUUID()) => ({
+    const signedHeaders = (accountId: string, machineId: string, action: string, requestId: string = randomUUID()) => ({
         'x-user': accountId, 'x-custodian': accountId, 'x-machine': machineId, 'x-effect': action, 'x-request': requestId,
     });
 

@@ -329,6 +329,8 @@ export type AutomationRunItem = Readonly<{
     triggerEvidenceEnvelope: string | null;
     executionInputEnvelope: string | null;
     workflowCustodyState?: 'pending' | 'settled' | null;
+    /** Null until a Workflow Run is initialized; selected by `automationRunItemSelect`. */
+    workflowAcceptedSnapshotEnvelope?: string | null;
     executionDispatchState: AutomationExecutionDispatchState | null;
     executionAttempt: number;
     executionDispatchCommittedAt: Date | null;

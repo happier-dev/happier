@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Server, type Socket } from 'socket.io';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, MACHINE_PLAIN_DATA_KEY_MARKER,
+import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, MACHINE_PLAIN_DATA_KEY_MARKER, decodeBase64,
     buildAccountStoredContentCompatibilitySocketAuthV1, encodePlainMachineStoredContent } from '@happier-dev/protocol';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
@@ -41,7 +41,7 @@ describe('Session work admission after Machine grant withdrawal', () => {
             installationId: randomUUID(), active: true,
             metadata: encodePlainMachineStoredContent({ host: 'work-admission', platform: 'linux', happyCliVersion: 'test',
                 homeDir: '/home/guest', happyHomeDir: '/home/guest/.happier' }),
-            dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
             operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] },
                 sessionInputAdmission: { protocolVersions: [1, 2, 3] } }, operationProtocolCapabilitiesRevision: 1 } });
         expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,

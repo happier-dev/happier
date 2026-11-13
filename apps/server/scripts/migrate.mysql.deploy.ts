@@ -154,7 +154,7 @@ async function readMigrationStates(
             latestRows.set(migrationName, row);
         }
     }
-    return new Map(MYSQL_TRIGGER_MIGRATIONS.map(({ migrationName }) => {
+    return new Map(MYSQL_TRIGGER_MIGRATIONS.map(({ migrationName }): [string, MigrationState] => {
         const row = latestRows.get(migrationName);
         if (!row || readRowValue(row, "rolled_back_at") != null) {
             return [migrationName, { status: "pending" } as const];

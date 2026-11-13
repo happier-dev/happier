@@ -216,8 +216,10 @@ async function assertCurrentDurablePushCatalogScope(params: Readonly<{
         machineInstallationId: params.caller.machineInstallationId,
     });
     const supported = manifest.contributes.events.some((event) => {
-        if (event.kind !== "event" || event.automation?.eligible !== true) return false;
-        const contribution = readCurrentAutomationEventDurablePushWebhookContributionV1(event);
+        if (event.kind !== "event") return false;
+        const { automation } = event;
+        if (automation?.eligible !== true) return false;
+        const contribution = readCurrentAutomationEventDurablePushWebhookContributionV1({ ...event, automation });
         return contribution !== null
             && sameAutomationEventDurablePushWebhookContributionV1(
                 contribution,
