@@ -117,6 +117,10 @@ export type BackendRunRuntimeActivityPreparation = Readonly<{
   configureAgentRuntime?(
     contributionHandle: SessionRuntimeActivityContributionHandle,
   ): void | Promise<void>
+  /** Providers whose session runtime owns turn truth declare the turn contributor here. */
+  configureTurnActivity?(
+    contributionHandle: SessionRuntimeActivityContributionHandle,
+  ): void | Promise<void>
   resolvePublisher(session: ApiSessionClient): SessionRuntimeActivitySnapshotPublisher | null
 }>
 
@@ -155,6 +159,7 @@ export async function createBackendRunRuntimeActivityLifecycle(
           `${runtimeActivityApplicability} Runtime Activity cannot configure an agent-runtime producer`,
         )
       }
+      await preparation?.configureTurnActivity?.(activity.turnActivityContributionHandle)
       return activity
     } catch (error) {
       await activity.dispose().catch(() => {})

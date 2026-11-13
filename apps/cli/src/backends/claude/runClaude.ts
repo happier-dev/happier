@@ -206,12 +206,14 @@ type ClaudeBackendRunRuntimeActivityLifecycle = Readonly<{
         providerTasks: SessionRuntimeActivityContributionHandle;
         isCurrentRuntime: () => boolean;
     }>>) | null;
+    turnActivityContributionHandle: SessionRuntimeActivityContributionHandle | null;
 }>;
 
 async function createClaudeBackendRunRuntimeActivityLifecycle(
     runtimeActivityApplicability: RuntimeActivityApplicability,
 ): Promise<ClaudeBackendRunRuntimeActivityLifecycle> {
     let providerTasks: SessionRuntimeActivityContributionHandle | null = null;
+    let turnActivity: SessionRuntimeActivityContributionHandle | null = null;
     const baseLifecycle = await createBackendRunRuntimeActivityLifecycle({
         runtimeActivityApplicability,
         ...(runtimeActivityApplicability === 'supported'
@@ -221,6 +223,9 @@ async function createClaudeBackendRunRuntimeActivityLifecycle(
                 },
             }
             : {}),
+        configureTurnActivity: (contributionHandle: SessionRuntimeActivityContributionHandle) => {
+            turnActivity = contributionHandle;
+        },
         resolvePublisher: (sessionClient) => sessionClient.getRuntimeActivitySnapshotPublisher?.() ?? null,
     });
     if (runtimeActivityApplicability === 'supported' && !providerTasks) {
@@ -241,6 +246,7 @@ async function createClaudeBackendRunRuntimeActivityLifecycle(
     return {
         lifecycle,
         activateProviderRuntime: bindingOwner ? bindingOwner.activate : null,
+        turnActivityContributionHandle: turnActivity,
     };
 }
 
@@ -1294,6 +1300,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             accountSettings,
             runtimeActivityContributions: {
                 activateProviderTasks: activateProviderTaskRuntimeActivity,
+                turnActivityContributionHandle: runtimeActivity.turnActivityContributionHandle,
             },
             precomputedMcpBridge: { mcpServers: resolvedMcp.mcpServers, stop: resolvedMcp.happierMcpServer.stop },
             reportSessionMetadataToDaemon: async ({ sessionId, metadata }) => {
@@ -2235,6 +2242,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         },
                         runtimeActivityContributions: {
                             activateProviderTasks: activateProviderTaskRuntimeActivity,
+                            turnActivityContributionHandle: runtimeActivity.turnActivityContributionHandle,
                         },
                         onTerminalHostReady: async ({
                             handle,
