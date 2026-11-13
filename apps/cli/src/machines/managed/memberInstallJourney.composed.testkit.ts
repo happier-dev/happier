@@ -1,3 +1,4 @@
+import '../../../../ui/sources/dev/vitestSetup';
 import { computeContentPublicKeyFingerprint, sealEncryptedDataKeyEnvelopeV1, encodeBase64 } from '@happier-dev/protocol';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -27,6 +28,12 @@ import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRu
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { readMachineRolesV1, machineRolesMetadataFieldV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 
+import { installApprovalCommonModuleMocks } from '../../../../ui/sources/components/approvals/approvalsTestHelpers';
+import { TokenStorage } from '../../../../ui/sources/auth/storage/tokenStorage';
+import { upsertServerProfile, setServerProfileIdentityForUrl } from '../../../../ui/sources/sync/domains/server/serverProfiles';
+import { createDefaultActionExecutor } from '../../../../ui/sources/sync/ops/actions/defaultActionExecutor';
+
+installApprovalCommonModuleMocks();
 const readiness = createEnrollmentJourneyIsolationReadinessSystem(999);
 
 export async function runMemberInstallJourney(installRolesReceiver: boolean): Promise<void> {
@@ -110,10 +117,23 @@ export async function runMemberInstallJourney(installRolesReceiver: boolean): Pr
     const credentials = decodeStoredCredentials(encodeStoredCredentials({ token,
         encryption: { type: 'dataKey', machineKey: keys.secretKey, publicKey: keys.publicKey } }));
     if (!credentials) throw new Error('Missing member credential');
+    const profile = await upsertServerProfile({ serverUrl: home.baseUrl });
+    await setServerProfileIdentityForUrl(home.baseUrl, home.serverId);
+    // Device credential storage is the boundary; UI capture, codec, HTTP, Home
+    // admission, daemon dispatch and job ownership all stay real.
+    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token,
+        encryption: { machineKey: encodeBase64(keys.secretKey), publicKey: encodeBase64(keys.publicKey) } });
+    const executor = createDefaultActionExecutor();
     await memberJourney!.run(async (rawActionId, input) => {
         const actionId = ActionIdSchema.parse(rawActionId);
         const requestId = randomUUID();
         const target = { kind: 'machine' as const, machineId: guest.machineId };
+        if (actionId === 'machines.agents.install.cancel' || actionId === 'machines.agents.install.status') {
+            // Match the mounted browser entry: no manufactured confirmation,
+            // invocation stamp, receipt or admission. The UI owner must emit it.
+            return executor.execute(actionId, input, { serverId: profile.id,
+                expectedAccountId: member.id, surface: 'ui', authority: 'present_user', actionRequestId: requestId });
+        }
         return dispatchOriginalAccountAction({ actionId, input, requestId, target, credentials,
             serverHttpBaseUrl: home.baseUrl, serverIdentityId: home.serverId,
             onRequesterSessionCredentialDisclosure: async () => true,

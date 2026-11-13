@@ -1178,8 +1178,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     // owns the retained candidate, Action policy and sole approval Artifact.
     // Mounted plugins have their own sealed pluginInvocation provenance. Do
     // not reinterpret that surface as a host Agent/CLI requester invocation.
+    // Credential-free codecs still need caller provenance: an unstamped
+    // managed request is automation at the receiver, even after a UI press.
     const needsInvocation = machineOwnedAction && context.surface !== 'plugin'
       && (relationshipWrite || context.surface !== 'ui' || confirmation || reviewedParent
+        || originalSpec.success && getActionSpec(originalSpec.data).originalExecution?.requesterCredentials === 'none'
         || context.presentUserApproval?.actionId === args.actionId
         || doesExternalActionConsumeRequesterAccountContentV1({ actionId: args.actionId, input: args.input,
           target: context.externalActionTarget }));

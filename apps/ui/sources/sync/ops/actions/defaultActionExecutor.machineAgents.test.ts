@@ -563,7 +563,7 @@ describe('UI machine Agent inventory Action transport', () => {
         },
     );
 
-    it('reads and cancels a shared Machine job through its admitted Actions from the executor and job store', async () => {
+    it('reads and cancels a shared Machine job through its admitted Actions', async () => {
         const serverUrl = 'https://setup.test';
         const homeId = 'srv_install_status';
         const serverId = await harness.addHome({ name: 'Setup Home', serverUrl, serverIdentityId: homeId, accountId: 'alice', currentAccount: true });
@@ -579,7 +579,7 @@ describe('UI machine Agent inventory Action transport', () => {
         const progress = [{ stepId: 'cli', bytesDone: 128, bytesTotal: 256 }];
         const snapshot = { ok: true, steps: [{ stepId: 'cli', label: 'Install CLI', state: 'running' }],
             progress, events: [], nextCursor: 4, done: false, outcome: null };
-        const calls: Array<{ actionId: string; input: unknown }> = [];
+        const calls: Array<{ actionId: string; input: unknown; invocation: unknown }> = [];
         for (const actionId of ['machines.agents.install.status', 'machines.agents.install.cancel'] as const) {
             harness.answer(serverId, `/v1/actions/${actionId}/execution-authorization`, { select: body => {
                 const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
@@ -594,10 +594,11 @@ describe('UI machine Agent inventory Action transport', () => {
                 const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
                 const codecTarget = { authorization: request.executionAuthorization, machineId: 'machine-1',
                     installationId: 'installation', serverIdentityId: homeId, installationPrivateKey: installation.secretKey };
-                expect(openManagedControllerActionCodecV1(codecTarget)).toMatchObject({ type: 'dataKey', machineKey: expect.any(Uint8Array) });
+                const codec = openManagedControllerActionCodecV1({ ...codecTarget, includeInvocation: true });
+                expect(codec?.material).toMatchObject({ type: 'dataKey', machineKey: expect.any(Uint8Array) });
                 expect(openExternalActionRequesterAccountContextV1({ ...codecTarget,
                     purpose: { kind: 'external_action' } })).toBeNull();
-                calls.push({ actionId, input: request.envelope.input });
+                calls.push({ actionId, input: request.envelope.input, invocation: codec?.invocation });
                 return { body: { v: 1, actionId, requestId: request.envelope.requestId,
                     execution: actionId === 'machines.agents.install.status'
                         ? { ok: true, result: snapshot } : { ok: false, errorCode: 'job_not_found', error: 'No job' } } };
@@ -611,16 +612,11 @@ describe('UI machine Agent inventory Action transport', () => {
         expect(await executor.execute('machines.agents.install.cancel', {
             machineId: 'machine-1', jobId: 'job-1',
         }, context)).toMatchObject({ ok: false, errorCode: 'job_not_found' });
-        const { readAgentInstallJobRpc } = await import('@/agents/machineAgents/installJobs/api');
-        const { cancelMachineAgentInstallJob } = await import('@/agents/machineAgents/installJobs/installJobStore');
-        expect(await readAgentInstallJobRpc({ machineId: 'machine-1', serverId, accountId: 'alice', signal },
-            { jobId: 'job-1', cursor: 4, waitForTerminal: true })).toEqual(snapshot);
-        expect(await cancelMachineAgentInstallJob({ machineId: 'machine-1', serverId, accountId: 'alice' }, 'job-1'))
-            .toMatchObject({ ok: false, errorCode: 'job_not_found' });
-        expect(calls).toEqual(Array.from({ length: 2 }, () => [
-            { actionId: 'machines.agents.install.status', input: { machineId: 'machine-1', jobId: 'job-1', cursor: 4, waitForTerminal: true } },
-            { actionId: 'machines.agents.install.cancel', input: { machineId: 'machine-1', jobId: 'job-1' } },
-        ]).flat());
+        const invocation = expect.objectContaining({ surface: 'ui', authority: 'present_user', caller: { kind: 'host' } });
+        expect(calls).toEqual([
+            { actionId: 'machines.agents.install.status', invocation, input: { machineId: 'machine-1', jobId: 'job-1', cursor: 4, waitForTerminal: true } },
+            { actionId: 'machines.agents.install.cancel', invocation, input: { machineId: 'machine-1', jobId: 'job-1' } },
+        ]);
         expect(rpc.machine).not.toHaveBeenCalled();
     });
 

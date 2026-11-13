@@ -177,8 +177,11 @@ export async function createMemberInstallJourney(input: Readonly<{ home: Guest; 
             await vi.waitFor(() => access(join(backing, 'installer-started')), { timeout: 300_000 });
             const installerPid = Number(await readFile(join(backing, 'installer-started'), 'utf8'));
             expect(owner.read({ jobId, cursor: 0 }, memberAccountId)).toMatchObject({ done: false });
+            // Even the Machine custodian cannot cancel another Account's job.
+            expect(await owner.cancel({ jobId }, home.accountId)).toMatchObject({ ok: false, errorCode: 'job_not_found' });
+            expect(owner.read({ jobId, cursor: 0 }, memberAccountId)).toMatchObject({ done: false });
             const cancelled = await invoke('machines.agents.install.cancel', { machineId: home.machineId, jobId });
-            expect(cancelled).toMatchObject({ ok: true });
+            expect(cancelled, JSON.stringify(cancelled)).toMatchObject({ ok: true });
             expect(owner.read({ jobId, cursor: 0 }, memberAccountId)).toMatchObject({ done: true, outcome: { kind: 'failed', code: 'cancelled' } });
             expect(() => process.kill(installerPid, 0)).toThrow();
             const settled = await invoke('machines.agents.install.status', { machineId: home.machineId, jobId, cursor: 0 });
