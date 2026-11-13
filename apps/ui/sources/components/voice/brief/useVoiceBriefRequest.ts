@@ -15,7 +15,7 @@ import { useVoiceSessionSnapshot } from '@/voice/session/voiceSession';
 import { getVoiceSessionAttemptId, getVoiceSessionPresentedAttemptId, getVoiceSessionSnapshot, subscribeToVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 import type { VoiceSessionStatus } from '@/voice/session/types';
 
-import { registerVoiceBriefHomeRequest, registerVoiceBriefOperations, resumeVoiceBriefHomeRequest, voiceBriefOperationResult, type VoiceBriefOperation, type VoiceBriefOperationOutcome } from './voiceBriefActionRuntime';
+import { registerVoiceBriefHomeRequest, registerVoiceBriefOperations, resumeVoiceBriefHomeRequest, voiceBriefOperationResult, voiceBriefUnavailable, type VoiceBriefOperation, type VoiceBriefOperationOutcome } from './voiceBriefActionRuntime';
 
 const SURFACE_PROPS = Object.freeze({ variant: 'sidebar' as const });
 type Delivery = 'waiting' | 'sent' | 'refused' | 'stopped';
@@ -46,7 +46,7 @@ export function useVoiceBriefHomeRequest(input: Readonly<{ available: boolean; o
         return registerVoiceBriefHomeRequest(() => {
             const owner = current.current;
             if (!owner.available || owner.enabled !== true || !owner.accountLifetime.isCurrent()) {
-                return { ok: false, errorCode: 'voice_brief_unavailable' };
+                return voiceBriefUnavailable('ui.voice_global.brief.account_scope');
             }
             owner.onOpen();
             return voiceBriefOperationResult('waiting');
@@ -115,12 +115,12 @@ export function useVoiceBriefRequest(onClose?: () => void): {
     const execute = React.useCallback((operation: VoiceBriefOperation): VoiceBriefOperationOutcome => {
         const owner = current.current;
         if (!owner.accountLifetime.isCurrent()) {
-            return { ok: false, errorCode: 'voice_brief_unavailable' };
+            return voiceBriefUnavailable('ui.voice_global.brief.account_scope');
         }
         if (owner.attemptId !== getVoiceSessionAttemptId()) return { ok: false, errorCode: 'stale_voice_attempt' };
         if (operation === 'request') initialized.current = true;
         if (operation === 'close') {
-            if (!owner.onClose) return { ok: false, errorCode: 'voice_brief_unavailable' };
+            if (!owner.onClose) return voiceBriefUnavailable('ui.voice_global.brief.close');
             pending.current = null;
             owner.onClose();
             return voiceBriefOperationResult('closed');

@@ -2343,12 +2343,20 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         return result.ok ? result.result : result;
       }
       if (actionId.startsWith('ui.voice_global.brief.')) {
-        const { executeVoiceBriefOperation } = await import('@/components/voice/brief/voiceBriefActionRuntime');
+        const { executeVoiceBriefOperationFromUi } = await import('@/components/voice/brief/voiceBriefActionRuntime');
         accountContext.assertCurrent();
         throwIfAborted(context.signal);
         const operation = actionId === 'ui.voice_global.brief.request' ? 'request' : actionId === 'ui.voice_global.brief.retry' ? 'retry'
           : actionId === 'ui.voice_global.brief.close' ? 'close' : 'stop';
-        const result = executeVoiceBriefOperation(operation, input as Readonly<{ expectedAttemptId?: string }>);
+        const result = await executeVoiceBriefOperationFromUi(operation, input as Readonly<{ expectedAttemptId?: string }>, async () => {
+          const [{ router }, { openWorkspaceHrefOrElse }] = await Promise.all([
+            import('expo-router'), import('@/components/appShell/workspace/workspaceActionRuntime'),
+          ]);
+          accountContext.assertCurrent();
+          throwIfAborted(context.signal);
+          if (opts?.openRoute) { await opts.openRoute('/'); return; }
+          await openWorkspaceHrefOrElse('/', () => router.push('/'));
+        });
         return result.ok ? result.result : { ...result, error: result.errorCode };
       }
       const [{ executeVoiceConversationAction }, { router }, { resolveHref }, { openWorkspaceHrefOrElse }] = await Promise.all([

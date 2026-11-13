@@ -7061,7 +7061,11 @@ on the ready Home/Inbox surface; missing owners return typed unavailability.
 For a spoken briefing, Voice guidance selects `requestVoiceBrief` rather than
 the broader Account `inbox_get` read. The native Voice tool exposes the existing
 `ui.voice_global.brief.request` Action with its catalog-owned input schema. It
-uses that same approval, mounted Home/Inbox and delivery path; `invokeAction`
+uses that same approval, mounted Home/Inbox and delivery path. In 0.3 development,
+a request from another surface opens Home and resumes the admitted request when
+its existing Brief producer mounts; it does not build a carrier-local Brief.
+A genuinely unavailable owner retains its public failure phase and a non-retryable
+result so the model can explain the missing owner rather than repeat the call. `invokeAction`
 remains for contributed plugin Actions. A malformed native or legacy text Action
 is refused before execution with a plain spoken explanation, without validator
 field names or diagnostics.

@@ -973,12 +973,53 @@ describe('mounted Voice Brief request', () => {
         await screen.unmount(); screen = null;
         expect(setVoiceGlanceOpen(true)).toBe(false);
     });
+    it('keeps a real unavailable Brief reason in the public Action failure', async () => {
+        const { ActionExecuteFailureSchema } = await import('@happier-dev/protocol/actions/actionExecutionResult');
+        const outcome = executeVoiceBriefOperation('request');
+        expect(outcome.ok).toBe(false);
+        if (outcome.ok) throw new Error('Expected missing Brief host');
+        const failure = ActionExecuteFailureSchema.parse({ ...outcome, error: outcome.errorCode });
+        const { redactVoiceActionExecutionResultForProvider } = await import('@/voice/context/redactVoiceToolResult');
+        expect(redactVoiceActionExecutionResultForProvider('requestVoiceBrief', failure, {
+            shareFilePaths: false, shareSessionSummary: false, sharePermissionRequests: false,
+        })).toMatchObject({ details: { retryable: false }, failureCause: { phase: 'ui.voice_global.brief.host' } });
+        expect(failure).toMatchObject({ errorCode: 'voice_brief_unavailable', details: { retryable: false },
+            failureCause: { phase: 'ui.voice_global.brief.host' } });
+    });
+
+    it('routes the admitted Voice Brief Action from outside Home to the existing Brief data producer', async () => {
+        const speech = await installTransport();
+        await selectService();
+        const { router } = await import('expo-router');
+        setActionPolicy({ v: 1, approvalWaivedSurfaces: { 'ui.voice_global.brief.request': ['voice'] } });
+        const handlers = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: account!.home.id });
+        let showHome: (() => void) | undefined;
+        function Route() {
+            const [home, setHome] = React.useState(false);
+            showHome = () => setHome(true);
+            return home ? <BriefHome available /> : null;
+        }
+        vi.mocked(router.push).mockImplementation(() => showHome?.());
+        screen = await renderScreen(<AuthProvider initialCredentials={account!.credentials}><Route /></AuthProvider>);
+        await act(async () => {
+            const result = JSON.parse(await handlers.requestVoiceBrief!({}, { turnOrigin: 'person' }));
+            expect(result).toMatchObject({ ok: true });
+        });
+        expect(router.push).toHaveBeenCalledWith('/');
+        await speech.waitForStart();
+        await act(async () => speech.connect());
+        await speech.waitForSpoken();
+        expect(speech.context.at(-1)).toContain('INBOX BRIEF');
+        expect(speech.spoken).toEqual([t('voiceMoments.briefMe')]);
+        vi.mocked(router.push).mockReset();
+    });
+
     it('opens the demand-mounted Inbox from the Home Action and reports unavailable without a current Home', async () => {
         const speech = await installTransport();
         await selectService();
-        expect(executeVoiceBriefOperation('request')).toEqual({ ok: false, errorCode: 'voice_brief_unavailable' });
+        expect(executeVoiceBriefOperation('request')).toMatchObject({ ok: false, errorCode: 'voice_brief_unavailable' });
         screen = await renderScreen(renderHome(false));
-        expect(executeVoiceBriefOperation('request')).toEqual({ ok: false, errorCode: 'voice_brief_unavailable' });
+        expect(executeVoiceBriefOperation('request')).toMatchObject({ ok: false, errorCode: 'voice_brief_unavailable' });
         await screen.update(renderHome());
         expect(speech.starts).toHaveLength(0);
         expect(screen.findAllByTestId('voice-brief')).toHaveLength(0);
@@ -995,7 +1036,7 @@ describe('mounted Voice Brief request', () => {
         expect(outcome).toEqual({ ok: true, result: { status: 'closed', attemptId: getVoiceSessionPresentedAttemptId() } });
         expect(screen.findByTestId('voice-brief')).toBeNull();
         expect(lifecycle?.getSnapshot().status).toBe('connected');
-        expect(executeVoiceBriefOperation('close')).toEqual({ ok: false, errorCode: 'voice_brief_unavailable' });
+        expect(executeVoiceBriefOperation('close')).toMatchObject({ ok: false, errorCode: 'voice_brief_unavailable' });
         await act(async () => lifecycle?.stop(VOICE_AGENT_GLOBAL_SESSION_ID));
         await act(async () => { outcome = executeVoiceBriefOperation('request'); });
         await speech.waitForStarts(2);
@@ -1004,7 +1045,7 @@ describe('mounted Voice Brief request', () => {
         await act(async () => speech.connect());
         expect(speech.spoken).toHaveLength(1);
         expect(lifecycle?.getSnapshot().status).toBe('connected');
-        expect(executeVoiceBriefOperation('retry')).toEqual({ ok: false, errorCode: 'voice_brief_unavailable' });
+        expect(executeVoiceBriefOperation('retry')).toMatchObject({ ok: false, errorCode: 'voice_brief_unavailable' });
     });
     it('lets the structured native Brief Action request the same connected Brief and stop its turn without ending the conversation', async () => {
         const speech = await installTransport();
@@ -1033,7 +1074,8 @@ describe('mounted Voice Brief request', () => {
         expect(lifecycle?.getSnapshot().status).toBe('connected');
         expect(executeVoiceBriefOperation('retry')).toEqual({ ok: false, errorCode: 'voice_brief_not_retryable' });
         await screen.unmount(); screen = null;
-        expect(JSON.parse(await handlers[action.t]!(action.args, { turnOrigin: 'person' })))
+        // Request now navigates to Home; non-request controls still require their mounted owner.
+        expect(executeVoiceBriefOperation('stop', { expectedAttemptId: attemptId! }))
             .toMatchObject({ ok: false, errorCode: 'voice_brief_unavailable' });
         expect(speech.spoken).toHaveLength(2);
     });
@@ -1073,7 +1115,7 @@ describe('mounted Voice Brief request', () => {
         retireActiveServerAccountScopeLifetime();
         expect(captureActiveServerAccountScopeCurrentness().isCurrent()).toBe(true);
         expect(getActiveServerAccountScope()).toEqual(scope);
-        expect(executeVoiceBriefOperation('request')).toEqual({ ok: false, errorCode: 'voice_brief_unavailable' });
+        expect(executeVoiceBriefOperation('request')).toMatchObject({ ok: false, errorCode: 'voice_brief_unavailable' });
         await act(async () => speech.lateConnect());
         expect(speech.spoken).toHaveLength(0);
     });
