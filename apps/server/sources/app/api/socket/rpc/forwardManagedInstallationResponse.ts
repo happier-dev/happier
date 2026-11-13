@@ -18,7 +18,8 @@ export async function forwardManagedInstallationResponse(input: Readonly<{
     if (!candidate) return null;
     const refused = { ok: false as const, error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN };
     const parsed = ManagedInstallationCapabilityRequestV1Schema.safeParse(params);
-    if (!parsed.success || input.inboundAuthorization !== undefined
+    // The controller addresses the capability call; a controller-less response has no Machine to reach.
+    if (!parsed.success || !parsed.data.params.controller || input.inboundAuthorization !== undefined
         || input.method !== `${parsed.data.params.controller.machineId}:${RPC_METHODS.CAPABILITIES_INVOKE}`) return refused;
     const credential = input.socket.data;
     if (credential?.userId !== input.actorAccountId || credential.authTokenKind !== 'account'
@@ -26,10 +27,12 @@ export async function forwardManagedInstallationResponse(input: Readonly<{
     try {
         const authorization = await admitManagedInstallationPurpose({ actorAccountId: input.actorAccountId,
             purpose: readManagedInstallationPurposeV1(parsed.data.params) });
+        const controller = authorization.purpose.controller;
+        if (!controller) return refused;
         const matches = (target: Readonly<{ data?: Record<string, unknown> }>) => target.data?.clientType === 'machine-scoped'
-            && target.data.machineId === authorization.purpose.controller.machineId
+            && target.data.machineId === controller.machineId
             && target.data.userId === authorization.custodianAccountId
-            && readVerifiedMachineSocketInstallationIdFromSocketData(target.data) === authorization.purpose.controller.installationId;
+            && readVerifiedMachineSocketInstallationIdFromSocketData(target.data) === controller.installationId;
         return await forwardRpcCall({ io: input.io, targetUserId: authorization.custodianAccountId, method: input.method,
             callParams: { ...parsed.data, params: { ...parsed.data.params, requestId: authorization.purpose.requestId } },
             authorization, timeoutMs: input.timeoutMs, callerSocketId: input.socket.id,
