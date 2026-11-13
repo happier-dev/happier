@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
-import { FeaturesResponseSchema, MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1 } from '@happier-dev/protocol';
+import { FeaturesResponseSchema, MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, SESSION_SERVER_START_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec } from '@happier-dev/sync-client';
+import { decodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
+import { StoredMachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 
 import { bindApiSessionSocketSequenceMock, createApiSessionSocketStub, type ApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { logger } from '@/ui/logger';
@@ -94,6 +96,37 @@ async function reconnect(pair: Awaited<ReturnType<typeof connectPair>>) {
 }
 
 describe('ApiMachineClient reconnect race handling', () => {
+    it('publishes the current CLI version when registration retained no version, including reconnect', async () => {
+        const pair = await connectPair();
+        const manager = Reflect.get(pair.client, 'rpcHandlerManager') as RpcHandlerManager;
+        for (const method of [RPC_METHODS.SPAWN_HAPPY_SESSION, RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+            RPC_METHODS.SESSION_SPAWN_NEW, RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
+            RPC_METHODS.STOP_SESSION, SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
+            RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET]) {
+            manager.registerHandler(method, async () => ({ ok: true }));
+        }
+        const acknowledge = async (socket: ApiSessionSocketStub) => {
+            await vi.waitFor(() => expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REGISTER, expect.anything()));
+            for (const [event, registration] of socket.emit.mock.calls) {
+                if (event === SOCKET_RPC_EVENTS.REGISTER && registration && typeof registration === 'object'
+                    && 'method' in registration) socket.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: registration.method });
+            }
+            await vi.waitFor(() => expect(pair.client.isMachineControlRegistrationReady()).toBe(true));
+        };
+        const publishedVersion = (socket: ApiSessionSocketStub) => {
+            const publications = socket.emitWithAck.mock.calls.filter(([event]) => event === 'machine-update-state');
+            const raw = publications.at(-1)?.[1] as { daemonState: string };
+            return StoredMachinePublishedDaemonStateV1Schema.parse(decodePlainMachineStoredContent(raw.daemonState)).cliVersion;
+        };
+        await acknowledge(pair.first);
+        expect(publishedVersion(pair.first)).toBe('0.2.4-dev');
+        await reconnect(pair);
+        await acknowledge(pair.second);
+        // An unchanged reconnect retains the version without a redundant state write.
+        expect(pair.second.emitWithAck.mock.calls.filter(([event]) => event === 'machine-update-state')).toHaveLength(0);
+        expect(publishedVersion(pair.first)).toBe('0.2.4-dev');
+    });
+
     beforeEach(() => {
         vi.stubEnv('HAPPY_ENABLE_V2_CHANGES', 'false');
         vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(FeaturesResponseSchema.parse({})), {

@@ -1354,6 +1354,7 @@ export class ApiMachineClient {
             }
             await timeWebLatencyPhase('machine.startup.publishRunning', () => this.updateDaemonState((state) => ({
                 ...projectMachineDaemonRunningState(state, this.ownershipMetadata.runtimeId, this.getAgentIsolationSnapshot().enabled),
+                ...(this.ownershipMetadata.cliVersion !== undefined ? { cliVersion: this.ownershipMetadata.cliVersion } : {}),
                 contributionRegistryProjectionRevision: state?.contributionRegistryProjectionRevision ?? 0,
                 ...(this.lifecycleDependencies.controlPort !== undefined ? { httpPort: this.lifecycleDependencies.controlPort } : {}),
                 ...(this.lifecycleDependencies.managedActivity ? {
