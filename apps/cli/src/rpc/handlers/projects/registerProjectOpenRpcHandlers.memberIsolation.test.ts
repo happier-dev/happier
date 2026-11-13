@@ -101,7 +101,8 @@ describe('MI-R3 registered Project Open authority/effect boundary', () => {
       expect(rows.filter(row => row.key.kind === 'workspace-ref')).toHaveLength(1);
       expect(admissionChecks).toBe(1);
     } else {
-      expect(result).toEqual({ kind: 'refused', code: 'workspace_private_checkout_required', effectAttempted: false });
+      expect(result).toEqual({ kind: 'refused', code: 'workspace_private_checkout_required', effectAttempted: false,
+      remediation: { kind: 'confirmation_required', action: 'projects.open', label: expect.any(String) } });
       expect(post.mock.calls.some(([url]) => url.endsWith('/mutate'))).toBe(false);
       expect(rows).toEqual([]);
       expect(diagnostic.mock.calls).toEqual(expect.arrayContaining([[ '[Project Open] Refused',

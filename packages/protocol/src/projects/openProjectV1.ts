@@ -85,8 +85,10 @@ export const OpenProjectResultV1Schema = lazyZodSchema(() => z.discriminatedUnio
 export type OpenProjectResultV1 = z.infer<typeof OpenProjectResultV1Schema>;
 
 /** Settlement and operation history consume the same finite Open refusal. */
-export function projectOpenProjectRefusalV1(result: z.infer<typeof OpenProjectRefusalV1Schema>): ActionExecuteFailure {
-  return { ok: false, errorCode: result.code, error: result.code, details: result,
+/** The refusal stays the typed details so Action operation failures can retain it without re-validation. */
+export function projectOpenProjectRefusalV1(result: z.infer<typeof OpenProjectRefusalV1Schema>):
+  ActionExecuteFailure & Readonly<{ details: z.infer<typeof OpenProjectRefusalV1Schema> }> {
+  return { ok: false, errorCode: result.code, error: result.remediation?.label ?? result.code, details: result,
     ...(result.effectAttempted !== undefined ? { effectAttempted: result.effectAttempted } : {}),
     ...(result.failureCause ? { failureCause: result.failureCause } : {}) };
 }

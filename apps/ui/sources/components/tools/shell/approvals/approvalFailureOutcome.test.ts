@@ -74,7 +74,8 @@ describe('approval failure outcome', () => {
                 decision: { kind: 'approve', decidedAtMs: 20 },
                 execution: { executedAtMs: 30, ok: false, effectAttempted: true,
                     errorCode: 'approval_execution_outcome_unknown', error: 'Publication acknowledgement was lost' } }) });
-        const parsed = approvalArtifactBodyMatchesHeaderV1(artifact.header!, artifact.body!);
+        if (typeof artifact.body !== 'string') throw new Error('Expected an inline approval body');
+        const parsed = approvalArtifactBodyMatchesHeaderV1(artifact.header!, artifact.body);
         if (parsed?.family !== 'built_in') throw new Error('Expected built-in approval');
         const failure = readApprovalExecutionFailure(parsed.request);
         if (!failure) throw new Error('Expected recorded failure');
@@ -407,3 +408,11 @@ describe('deploy refused for missing required secrets', () => {
             .not.toContain('DATABASE_URL');
     });
 });
+
+ it('shows the private checkout recovery retained by Project Open', () => {
+    const failure = { errorCode: 'workspace_private_checkout_required', error: 'workspace_private_checkout_required',
+      details: { kind: 'refused', code: 'workspace_private_checkout_required', effectAttempted: false,
+        remediation: { kind: 'confirmation_required', action: 'projects.open',
+          label: 'Open your own private checkout using projects.open with clone.' } } };
+    expect(presentActionFailureOutcome(failure).reason).toBe(failure.details.remediation.label);
+ });

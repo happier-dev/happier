@@ -457,7 +457,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     if (!authorization || !requester.readRequesterAccountActionContext(authorization)?.retainCustody) {
       throw new Error('Real requester retained Account custody was not projected');
     }
-    const context: RpcHandlerContext = { signal: invocation.signal, callerAuthority: 'present_user', callerInputAuthorization: authorization,
+    let context: RpcHandlerContext = { signal: invocation.signal, callerAuthority: 'present_user', callerInputAuthorization: authorization,
       originalActionEnvelope: envelope,
       machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: fixture.sourceRef.machineId,
         installationId: fixture.controller.installationId, role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
@@ -479,8 +479,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       transport = await composeInstalledBindTargetTransport(fixture, { operationId: envelope.requestId,
         bootstrapOperationId: deriveWorkspaceSyncRelationshipId(envelope.requestId), releaseReason: 'relationship_committed',
         originalRoot: root, sourceRouting: routing, sourceExecution, installedIdentities });
-      context.workspaceSyncSourceRouting = routing;
-      context.workspaceSyncSourceExecution = sourceExecution;
+      context = { ...context, workspaceSyncSourceRouting: routing, workspaceSyncSourceExecution: sourceExecution };
     }
     const handlers = new Map<string, (request: unknown, context?: RpcHandlerContext) => unknown>();
     registerProjectOpenRpcHandlers({ registerHandler(method, handler) {
@@ -730,7 +729,8 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     // reaches child admission, where generic Parent access cannot replace the
     // missing purpose producer/Session bootstrap.
     expect(result).toMatchObject({ kind: 'refused' });
-    if (role === 'use') expect(result).toEqual({ kind: 'refused', code: 'workspace_private_checkout_required', effectAttempted: false });
+    if (role === 'use') expect(result).toEqual({ kind: 'refused', code: 'workspace_private_checkout_required', effectAttempted: false,
+      remediation: { kind: 'confirmation_required', action: 'projects.open', label: expect.any(String) } });
     expect(admittedChildRead).toBe(reachesChildAdmission);
     expect(parentReads).toEqual([]);
     expect(await readFile(join(fixture.sourcePath, 'payload.txt'), 'utf8')).toBe('before quiesce');
@@ -818,6 +818,8 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, {
         machineId: fixture.targetRef.machineId, resolveHomeServerIdentityId: async () => fixture.serverId,
         resolveCustodianAccountId: async () => 'owner', resolveInstallationId: () => 'target-parent-installation',
+        // Home verification is the network boundary; ownership and dispatch stay real.
+        verifyMachineAdmission: async () => true,
       }, source) });
     registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: rpc, service: fixture.targetParent.workspaceSync });
     const invokeRecovery = (actorAccountId: string) => rpc.handleRequest({
@@ -1415,7 +1417,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
           sourceMachineId: fixture.sourceRef.machineId, sourceRootPath: fixture.sourceRef.rootPath,
           targetMachineId: fixture.targetRef.machineId, targetRootPath: fixture.targetRef.rootPath,
           sourceWorkspaceRefId: fixture.sourceRef.id, targetWorkspaceRefId: target.id,
-          action: { kind: 'create_relationship', mode: 'keep_both_in_sync', contentPolicy },
+          action: { kind: 'create_relationship', mode: 'keep_both_in_sync', contentPolicy, flushBeforeCommit: true },
         })).rejects.toMatchObject({ name: 'WorkspaceSyncPreparationRefusal', code: 'peer_unavailable' });
       }
       if (carrierTrace) {
@@ -1500,7 +1502,6 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: fixture.sourceRef.machineId,
         installationId: 'parent-installation', role: 'manage', encryptionMode: 'plain' },
       callerAuthority: 'account_automation',
-      localActionContext: { actionCaller: { kind: 'session', sessionId: 'worker-link-requester', starterDepth: 0, turnDepth: 0 } },
     }));
     expect(created).toMatchObject({ created: intent !== 'staged', status: { state: 'watching', conflictCount: 0 } });
     if (intent === 'staged') expect(created).toMatchObject({ relationshipId: deriveWorkspaceSyncRelationshipId(request.operationId), targetWorkspaceRefId: fixture.targetRef.id });
@@ -1700,7 +1701,8 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       readCredentials: async () => { throw new Error('A requester Project cannot borrow the daemon Account'); },
     }, context);
     expect(writes, JSON.stringify(projectResult)).toEqual([]);
-    expect(projectResult).toEqual({ kind: 'refused', code: 'workspace_private_checkout_required', effectAttempted: false });
+    expect(projectResult).toEqual({ kind: 'refused', code: 'workspace_private_checkout_required', effectAttempted: false,
+      remediation: { kind: 'confirmation_required', action: 'projects.open', label: expect.any(String) } });
     expect(ownerRows).toEqual(ownerBefore);
     expect(requesterRows).toHaveLength(2);
 
@@ -1811,7 +1813,8 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     expect(requesterRows.find(row => row.key.kind === 'relationship-graph')).toEqual(graphRow);
     expect(await readFile(join(fixture.sourcePath, 'payload.txt'), 'utf8')).toBe('before quiesce');
     expect(await readFile(join(fixture.targetPath, 'payload.txt'), 'utf8')).toBe('target unchanged');
-    expect(result).toEqual({ kind: 'refused', code: 'workspace_private_checkout_required', effectAttempted: false });
+    expect(result).toEqual({ kind: 'refused', code: 'workspace_private_checkout_required', effectAttempted: false,
+      remediation: { kind: 'confirmation_required', action: 'projects.open', label: expect.any(String) } });
     expect(writes).toEqual([]);
   });
 

@@ -16,6 +16,7 @@ import { isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploy
 import { DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/deployment-protocol/v1';
 import { FiniteCommandFailureDetailsV1Schema, MachineSetupFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 
+import { OpenProjectRefusalV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { t } from '@/text';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { resolveLocalServiceOutput, type LocalServiceOutputRecovery } from '@/sync/domains/local/services/serviceFailure';
@@ -40,6 +41,7 @@ export function presentActionFailureTechnicalDetails(failure: ApprovalFailureDia
     const finiteCommand = FiniteCommandFailureDetailsV1Schema.safeParse(failure.details);
     const machineSetup = MachineSetupFailureDetailsV1Schema.safeParse(failure.details);
     const setupFailure = machineSetup.success ? machineSetup.data.failure : undefined;
+    const projectOpen = OpenProjectRefusalV1Schema.safeParse(failure.details);
     const execution = DeploymentExecutionFailureDetailsV1Schema.safeParse(failure.details);
     const conflict = DeploymentReviewConflictFailureDetailsV1Schema.safeParse(failure.details);
     const domain = DeploymentDomainFailureDetailsV1Schema.safeParse(failure.details);
@@ -87,7 +89,7 @@ export function presentActionFailureTechnicalDetails(failure: ApprovalFailureDia
     add('failure-domain', t('projects.deployments.domainFieldHost'),
         domain.success && domain.data.step === 'removeDomain' ? domain.data.domainHostname ?? domain.data.domainId : undefined);
     add('failure-current-revision', t('approvals.failureTechnicalLabels.currentEnvironmentRevision'), conflict.success ? conflict.data.currentEnvironmentRevision : undefined);
-    add('failure-remedy', t('approvals.failureTechnicalLabels.remedy'), setupFailure && 'remedy' in setupFailure ? setupFailure.remedy : recovery?.remedy);
+    add('failure-remedy', t('approvals.failureTechnicalLabels.remedy'), setupFailure && 'remedy' in setupFailure ? setupFailure.remedy : projectOpen.success ? projectOpen.data.remediation?.label : recovery?.remedy);
     return lines;
 }
 
@@ -180,7 +182,7 @@ export function presentApprovalFailureOutcome(approval: ApprovalRequest, failure
 }> {
     // Executor prose stays in Details; only canonical copy or typed recovery leads the summary.
     const presented = presentActionFailureOutcome({ ...failure,
-        requestId: failure.requestId ?? ('executionOriginV1' in approval ? approval.executionOriginV1.requestId : undefined),
+        requestId: failure.requestId ?? (approval.v === 2 ? approval.executionOriginV1.requestId : undefined),
     }, isDeploymentActionIdV1(approval.actionId) ? 'deployment' : undefined);
     const serviceStartFailure = readServiceStartFailure(approval, failure);
     // A refused or unconfirmed confidential entry is named by what became of it, not as a failed Action.

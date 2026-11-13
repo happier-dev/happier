@@ -151,7 +151,11 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
   operationAcceptance?: NonNullable<RpcHandlerContext['localActionContext']>['operationAcceptance']): Promise<OpenProjectResultV1> {
   let effectsIssued = false;
   const refused = (code: string, error?: unknown): Extract<OpenProjectResultV1, { kind: 'refused' }> =>
-    ({ ...projectRefusal(code, error), effectAttempted: effectsIssued });
+    ({ ...projectRefusal(code, error), effectAttempted: effectsIssued,
+      ...(code === 'workspace_private_checkout_required' ? { remediation: {
+        kind: 'confirmation_required' as const, action: 'projects.open',
+        label: 'This Machine requires your own private checkout. Open the repository with projects.open using clone, review your private destination, then open that checkout. A folder or another person’s checkout cannot be attached.',
+      } } : {}) });
   const acceptance = operationAcceptance ?? context?.localActionContext?.operationAcceptance;
   // Observation metadata is not requester custody: keep authenticated ingress
   // intact rather than synthesizing a local Action invocation to carry the id.

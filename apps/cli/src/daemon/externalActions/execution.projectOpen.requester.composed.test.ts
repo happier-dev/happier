@@ -279,7 +279,9 @@ it.each([
   expect(ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId: artifact.id })),
     JSON.stringify({ decided, receiverResults, roots, mintFailures, transportFailures, phases })).toMatchObject(actor === 'owner'
       ? { execution: { ok: true, result: { kind: 'opened', directory: h.cwd } } }
-      : { status: 'failed', execution: { ok: false, errorCode: 'workspace_private_checkout_required', effectAttempted: false } });
+      : { status: 'failed', execution: { ok: false, errorCode: 'workspace_private_checkout_required', effectAttempted: false,
+          details: { remediation: { kind: 'confirmation_required', action: 'projects.open', label: expect.any(String) } },
+          error: expect.stringContaining('private checkout') } });
   expect(decided, JSON.stringify({ decided, receiverResults, roots, mintFailures, transportFailures, phases })).toMatchObject({ ok: true });
   expect(roots).toBe(1);
   expect(rows.filter(row => row.key.kind === 'workspace-ref')).toHaveLength(actor === 'owner' ? 1 : 0);
