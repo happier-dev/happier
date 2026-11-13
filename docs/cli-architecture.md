@@ -2251,12 +2251,19 @@ privileged sudoers-file comparison.
 
 In 0.3 development, Agent exec requests declare transient launch dependencies in
 `requiredFiles`. The Pi argv owner pairs every extension and tools config with
-that declaration. Before a Unix native identity switch, the selected-material
-owner requires each declared file in that launch’s materialization; otherwise
-it refuses before RunAs or Agent spawn with
-`agent_launch_required_file_unavailable` (`materialization` / `not_materialized`).
-Host-private temporary files are not native material. Ordinary host launches keep
-their existing file lifecycle; this refusal does not copy files or drop tools.
+that declaration. Before a Unix native identity switch, the exec finalizer
+selects declared generated files for publication by the existing native shim.
+Direct file arguments are rebased into transient `files/` material; dependencies
+under a materializer-projected native config root retain that root and relative
+layout. Arguments and JSON environment config consume the same path projection.
+Already selected native bytes are reused without reading the member home back
+through the daemon. An unreadable source fails with
+`agent_launch_required_file_unavailable` (`materialization` / `unreadable` and
+the filesystem cause code). The native adapter still requires every declared
+file in the selected material, refusing `not_materialized` before RunAs or Agent
+spawn when its producer or native root is missing. The shim owns publication
+and native cleanup; the plugin retains its host-file lifecycle. Ordinary host
+launches keep their existing file lifecycle.
 
 Requester identity and placement are admitted once per operation and carried
 through preparation. Member preparation checks local custody once without
@@ -2511,6 +2518,10 @@ daemon user: the most recent folder, or that user's Machine home, is the default
 An unavailable isolation observation does not leave this non-isolated folder
 loading. Member-separated placement instead consumes the requester's projected
 workspace and home; it never substitutes the custodian's history or home.
+The separated filesystem worker also projects its home and native working
+directory as browser starting roots. The picker waits for those roots before
+expanding preview paths, so traverse-only parents need not be listed. These
+navigation roots do not change the existing filesystem access policy.
 Before Send, the composer checks an explicit separated-user folder through the
 existing directory preflight RPC under that Agent identity. An inaccessible path
 returns `invalid_directory` and a visible blocked reason; missing accessible
@@ -7184,10 +7195,18 @@ channels and exits when the holder closes that connection.
   answer as a provider-started turn. The Session's turn invariant
   (`agentSessionTurnInvariant.ts`, `takeAdoptedTurnId`) maps the first such turn
   onto the Session turn the crashed runner admitted. The adopt token carries
-  that turn id, and the daemon does not end the turn while the Agent is spared. ACP resumes a
-  held `session/prompt` as its current turn. Held Agent output waits until the
-  backend knows its Session again (`release`). The adopt launch skips the stdin
-  launch preamble, which the running Agent already consumed.
+  that turn id, and the daemon does not end the turn while the Agent is spared:
+  the exit clears it from the dead runner's retained marker, and orphan settlement
+  leaves a Session alone while its respawn (or the respawn's terminal settlement)
+  is pending (`hasPendingRespawn`). ACP resumes a held `session/prompt` as its
+  current turn; the Agent output held while no runner was attached is released
+  only after the Session runtime opened that turn (`releaseResumedHeldOutput`),
+  and the held prompt's answer stays in order behind that output (it settles when
+  the ACP SDK has read every frame before it). Delivery of the replay waits for
+  the adopter's consumer: the process supervisor does not start piped stdout
+  flowing before the caller reads it, so nothing replayed is dropped or
+  acknowledged unread. The adopt launch skips the stdin launch preamble, which
+  the running Agent already consumed.
 - Not held for adopt: the shared Codex app-server. It listens on a unix
   WebSocket, not holder stdio, and it is shared by Sessions, so no one Session can
   spare or adopt it. Its clients reconnect to the socket (`connectJsonRpcClient`).

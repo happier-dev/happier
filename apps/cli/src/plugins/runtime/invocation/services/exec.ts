@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { PluginAgentCliReadinessServiceForHost } from '../../context/agents';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { realpath } from 'node:fs/promises';
@@ -54,6 +55,7 @@ import type { OwnerRemainderPort } from '@/daemon/processes/endOwnerRemainder';
 import { logger } from '@/ui/logger';
 import { admitAgentIsolationLaunchForHost, assertHostRequesterExecutionAdmissionForHost, resolveHostRequesterExecutionIdentityForLaunch, type HostAgentIsolationLaunchContext, type HostAgentIsolationLaunchKind, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { createUnixAgentIdentityLaunch } from '@/daemon/agentIsolation/unixAgentIdentityAdapter';
+import { selectRequiredAgentLaunchFiles } from '@/daemon/agentIsolation/requiredLaunchFiles';
 import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { consumeDeploymentExecEnvForHost, type HostDeploymentRuntimeProjectionV1,
     type HostRuntimeDockerTuple, type HostRuntimeProjectedDockerInput } from '@/deployments/secrets/deploymentExecEnvPort';
@@ -520,7 +522,7 @@ export function spawnAuthorizedHostExecLaunchForHost(
         // The holder decision refuses before any process starts; keep its typed code.
         if (!spawnAttempted && isPluginError(error)) throw error;
         const spawnFailure = classifySpawnFailure(error, { syscall: 'spawn', limits: options.readSpawnFailureLimits?.() });
-        throw new PluginError({ code: 'plugin_exec_spawn_failed', message: spawnFailureMessage(spawnFailure, 'Process could not be started'), details: { spawnFailure } }, { cause: error });
+        throw new PluginError({ code: 'plugin_exec_spawn_failed', message: spawnFailureMessage(spawnFailure, 'Process could not be started'), details: { spawnFailure }, failureCause: projectActionFailureCauseV1(error, 'exec.spawn') }, { cause: error });
     }
     const recoverFailedNativeLaunch = launch.onNativeLaunchFailure;
     if (recoverFailedNativeLaunch) {
@@ -1016,11 +1018,14 @@ async function finalizeHostExecLaunch(input: Readonly<{
         if (isolated) {
             const material = isolated.snapshot.launch!;
             if (input.agentNativeLaunch && !material.sessionMcpContext) fail('agent_isolation_unavailable', 'Current Session MCP context is unavailable');
-            const launch = createUnixAgentIdentityLaunch({ ...material, executable: command, args, cwd: isolated.cwd,
-                requiredFiles: input.launch.requiredFiles,
+            const selectedFiles = input.launch.requiredFiles?.length ? await selectRequiredAgentLaunchFiles({
+                runtimeHome: material.runtimeHome, args, environment, nativeEnvironment: material.environment,
+                selectedMaterials: material.selectedMaterials, requiredFiles: input.launch.requiredFiles, signal: input.signal,
+            }) : { args, environment: { ...environment, ...material.environment }, selectedMaterials: material.selectedMaterials };
+            assertCurrent();
+            const launch = createUnixAgentIdentityLaunch({ ...material, ...selectedFiles, executable: command, cwd: isolated.cwd,
                 nativeSocketDirectory: input.mcpLaunchMaterial?.nativeSocketDirectory,
                 ...(isolated.snapshot.memberIdentity ? { memberIdentity: isolated.snapshot.memberIdentity } : {}),
-                environment: { ...environment, ...material.environment },
                 sessionMcpContext: material.sessionMcpContext });
             command = launch.command;
             args = [...launch.args];
@@ -1271,7 +1276,7 @@ export function createProjectNativeToolchainIoForHost(input: Readonly<{
 }
 
 function fail(code: string, message: string, cause?: unknown): never {
-    throw new PluginError({ code, message }, cause === undefined ? undefined : { cause });
+    throw new PluginError({ code, message, ...(cause === undefined ? {} : { failureCause: projectActionFailureCauseV1(cause, 'exec.prepare') }) }, cause === undefined ? undefined : { cause });
 }
 
 /** The plugin-facing JSON-RPC client over a host JSON-RPC process client (shared by Exec and workspace-source processes). */

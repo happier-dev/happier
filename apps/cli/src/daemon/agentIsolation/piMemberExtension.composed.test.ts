@@ -6,7 +6,7 @@ import { expect, it } from 'vitest';
 import { preparePiHappierToolsExtension } from '../../../../../packages/plugins/pi/src/agent/tools/assets';
 import { buildPiRpcLaunch } from '../../../../../packages/plugins/pi/src/agent/runtime/rpc/args';
 import { PI_REQUEST_AUTH_CAPABILITY_PATH_ENV, resolvePiRequestAuthExtensionPath } from '../../../../../packages/plugins/pi/src/agent/auth/services/requestAuth';
-import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
+import { authorizeResolvedProjectExecLaunchForHost, createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import { deriveAgentIsolationMemberIdentity } from './provisioning';
 import { createUnixAgentIdentityLaunch } from './unixAgentIdentityAdapter';
 import { readAgentLaunchFrame } from './agentLaunchFrame';
@@ -107,4 +107,47 @@ it('keeps the own-host Pi launch able to read its prepared files without native 
     expect(result.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
     expect(Buffer.from(result.stdout).toString()).toBe(root);
   } finally { controller.abort(); await tools.dispose(); await rm(root, { recursive: true, force: true }); }
+});
+
+
+it.skipIf(process.platform !== 'linux')('selects generated Pi tools for the member at the real exec finalizer and retires the native copies', async () => {
+  const memberHome = await mkdtemp(join(tmpdir(), 'pi-member-selected-'));
+  const tools = await preparePiHappierToolsExtension({ directory: memberHome, permissionMode: 'read-only' });
+  const runtimeHome = join(memberHome, 'runtime');
+  const controller = new AbortController();
+  try {
+    const pi = buildPiRpcLaunch({ happierToolsExtension: tools });
+    const launch = await authorizeResolvedProjectExecLaunchForHost({
+      launch: { command: process.execPath, args: ['-e',
+        'const fs=require("node:fs"); const args=process.argv.slice(1); fs.readFileSync(args[args.indexOf("--extension")+1]); process.stdout.write(fs.readFileSync(args[args.indexOf("--happier-tools-config")+1],"utf8"))',
+        '--', ...pi.args], requiredFiles: pi.requiredFiles, cwd: memberHome, env: {} },
+      agentIsolation: { read: () => ({ enabled: true,
+        status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [memberHome],
+        localTransport: { agentUid: 2402, agentGid: 2402 },
+        launch: { managedHappierBinaryPath: '/fixture/happier', runtimeHome, selectedEnvironmentKeys: [], selectedMaterials: [] } }) },
+      requesterIdentity: { kind: 'isolated', separationRequired: false,
+        requester: { serverId: 'home', accountId: 'member', machineId: 'machine', installationId: 'installation' } },
+      agentLaunchKind: 'workspaceExec', signal: controller.signal, assertCurrent() {},
+    });
+    try {
+      const payload = await readAgentLaunchFrame(Readable.from([launch.stdinPreamble!], { objectMode: false }));
+      const extensionPath = payload.args[payload.args.indexOf('--extension') + 1]!;
+      const configPath = payload.args[payload.args.indexOf('--happier-tools-config') + 1]!;
+      expect(extensionPath.startsWith(runtimeHome + '/files/')).toBe(true);
+      expect(configPath.startsWith(runtimeHome + '/files/')).toBe(true);
+      expect(payload.args).not.toContain(tools.extensionPath);
+      expect(payload.args).not.toContain(tools.configPath);
+      // The same UID executes the real shim; the separate-UID loaded replay belongs to MACH.
+      const stdout = new PassThrough();
+      const chunks: Buffer[] = [];
+      stdout.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      expect(await executeAgentLaunchPayload(payload, { agentHome: memberHome,
+        input: Readable.from([]), stdout, stderr: new PassThrough() })).toEqual({ code: 0, signal: null });
+      expect(JSON.parse(Buffer.concat(chunks).toString())).toEqual(JSON.parse(await readFile(tools.configPath, 'utf8')));
+      await expect(readFile(extensionPath)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(readFile(configPath)).rejects.toMatchObject({ code: 'ENOENT' });
+      // The plugin retains ownership of its host-side lifetime.
+      await expect(readFile(tools.extensionPath)).resolves.toBeInstanceOf(Buffer);
+    } finally { await launch.release(); }
+  } finally { controller.abort(); await tools.dispose(); await rm(memberHome, { recursive: true, force: true }); }
 });
