@@ -19,6 +19,7 @@ import {
   createDaemonServiceStatusHandler,
   createDaemonServiceStopHandler,
 } from './kinds/daemonService.js';
+import { createDaemonSshTunnelRegistryEntries } from './kinds/daemonSshTunnel.js';
 import { createCliUpdateHandler } from './kinds/cliUpdate.js';
 import {
   createCliPathExposureEnsureHandler,
@@ -200,6 +201,7 @@ export function createHsetupSystemTaskRegistry(deps: HsetupRegistryDeps = {}): S
   const daemonServiceRelayDisconnectHandler = createDaemonServiceRelayDisconnectHandler();
 
   return systemTasks.createSystemTaskRegistry([
+    ...createDaemonSshTunnelRegistryEntries(),
     { kind: 'daemon.service.autostart.set.v1', handler: createDaemonServiceAutostartSetHandler() },
     {
       kind: 'daemon.service.status.v1',

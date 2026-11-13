@@ -5,6 +5,12 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
   const args = context.args;
   const daemonSubcommand = args[1];
 
+  if (daemonSubcommand === 'system-task') {
+    const { handleDaemonSystemTaskCommand } = await import('./daemonSystemTask');
+    await handleDaemonSystemTaskCommand(context);
+    return;
+  }
+
   if (daemonSubcommand === 'voice-inference-worker') {
     // Hidden subcommand: this process IS the forked voice-inference worker child. The daemon
     // spawns it via spawnHappyCLI (binary-safe) and drives it over stdio. It must not print

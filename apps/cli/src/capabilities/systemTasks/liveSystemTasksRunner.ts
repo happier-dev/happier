@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import { SSH_TUNNEL_SYSTEM_TASK_KINDS } from '@happier-dev/protocol/ssh/tunnels';
 import type { SystemTaskJsonValue } from '@happier-dev/protocol';
 import { SystemTaskSpecSchema } from '@happier-dev/protocol/system/tasks/spec';
 import {
@@ -51,10 +50,7 @@ import {
   DISCOVER_CONFIGURED_SSH_HOSTS_SYSTEM_TASK_KIND,
 } from './ssh/discoverConfiguredSshHosts/task';
 import {
-  createDaemonSshTunnelEnsureTaskKind,
-  createDaemonSshTunnelListTaskKind,
-  createDaemonSshTunnelReleaseTaskKind,
-  createDaemonSshTunnelStopTaskKind,
+  createDaemonSshTunnelTaskKinds,
 } from './ssh/daemonSshTunnelSystemTasks';
 import { createLiveRemoteSshBootstrapTaskKind, createLiveRemoteSshManageHostTaskKind } from './ssh/liveRemoteSshBootstrap';
 import { createSystemTasksRunner } from './systemTasksRunner';
@@ -352,10 +348,7 @@ function createLiveSystemTasksRunnerAdapter(params: Readonly<{
         stopService: async (params) => await runLiveDaemonServiceLifecycleAction(params, 'stop'),
         restartService: async (params) => await runLiveDaemonServiceLifecycleAction(params, 'restart'),
       }),
-      [SSH_TUNNEL_SYSTEM_TASK_KINDS.ensure]: createDaemonSshTunnelEnsureTaskKind(),
-      [SSH_TUNNEL_SYSTEM_TASK_KINDS.list]: createDaemonSshTunnelListTaskKind(),
-      [SSH_TUNNEL_SYSTEM_TASK_KINDS.release]: createDaemonSshTunnelReleaseTaskKind(),
-      [SSH_TUNNEL_SYSTEM_TASK_KINDS.stop]: createDaemonSshTunnelStopTaskKind(),
+      ...createDaemonSshTunnelTaskKinds(),
       'relay.runtime.installOrUpdate.v1': createRelayRuntimeInstallOrUpdateTaskKind({
         reconcilePersonalHomeRestore,
         installOrUpdate: async (params) => {

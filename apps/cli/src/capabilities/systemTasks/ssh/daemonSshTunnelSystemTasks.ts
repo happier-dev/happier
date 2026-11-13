@@ -1,4 +1,4 @@
-import { SshTunnelEnsureRequestSchema, SshTunnelReleaseRequestSchema, SshTunnelStopRequestSchema } from '@happier-dev/protocol/ssh/tunnels';
+import { SSH_TUNNEL_SYSTEM_TASK_KINDS, SshTunnelEnsureRequestSchema, SshTunnelReleaseRequestSchema, SshTunnelStopRequestSchema } from '@happier-dev/protocol/ssh/tunnels';
 import { SystemTaskJsonValueSchema } from '@happier-dev/protocol/system/tasks/spec';
 import type { SystemTaskJsonValue } from '@happier-dev/protocol';
 import {
@@ -103,5 +103,15 @@ export function createDaemonSshTunnelStopTaskKind(deps: Readonly<{
       throwIfControlError(response);
       return toSystemTaskJsonValue(response);
     },
+  };
+}
+
+/** One task map for Machine system tasks and the desktop process adapter. */
+export function createDaemonSshTunnelTaskKinds() {
+  return {
+    [SSH_TUNNEL_SYSTEM_TASK_KINDS.ensure]: createDaemonSshTunnelEnsureTaskKind(),
+    [SSH_TUNNEL_SYSTEM_TASK_KINDS.list]: createDaemonSshTunnelListTaskKind(),
+    [SSH_TUNNEL_SYSTEM_TASK_KINDS.release]: createDaemonSshTunnelReleaseTaskKind(),
+    [SSH_TUNNEL_SYSTEM_TASK_KINDS.stop]: createDaemonSshTunnelStopTaskKind(),
   };
 }

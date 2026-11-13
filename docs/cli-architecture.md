@@ -2339,6 +2339,15 @@ in-flight acquisition or bootstrap retry, including work started in another
 Session. The operation's existing signal ends its isolation-approval wait.
 An uncertain Delete does not establish absence or trigger this cancellation.
 
+### Desktop SSH tunnel task dispatch (0.3 development)
+
+Desktop `hsetup` forwards the protocol-owned SSH tunnel task kinds to the installed
+CLI's `daemon system-task --json` process adapter, passing the specification on
+stdin. The adapter and the live Machine system-task runner consume one tunnel task map,
+whose handlers call the local daemon control client and supervisor. hsetup preserves
+the task's data and typed failures; it does not implement tunnel lifecycle or
+maintain another list of kind strings. Electron and Tauri share this hsetup path.
+
 ### Standalone SSH identity (0.3 development)
 
 `machine enroll --ssh` accepts an explicit personal, adopted, sandbox, server or
