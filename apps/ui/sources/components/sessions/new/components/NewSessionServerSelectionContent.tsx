@@ -225,6 +225,7 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
                     accessibilityLabel={t('server.switchToServer')}
                     selectableItemCountOverride={filteredServers.length}
                     surface="none"
+                    header="none"
                 >
                     {filteredServers.map(({ profile, serverId }) => {
                         const isSelected = serverId === selectedServerId;

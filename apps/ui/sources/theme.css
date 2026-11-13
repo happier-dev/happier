@@ -237,6 +237,47 @@ html:not([data-happier-input-modality="keyboard"]) :focus {
     }
 }
 
+/* A desktop route modal is a dialog, not a sheet: it appears centred with a short fade and scale
+   (motionTokens.modal: 200 ms in from 0.98, 160 ms out) instead of Vaul's slide up from below the
+   viewport. Phones keep the sheet. Vaul still owns open/close timing; only the motion changes. */
+@media (min-width: 700px) {
+    [data-vaul-drawer][data-vaul-drawer-direction="bottom"]:has([data-presentation="modal"]) {
+        transform: none !important;
+        transition: none !important;
+        animation-name: none !important;
+    }
+    [data-vaul-drawer][data-state="open"] [data-presentation="modal"] {
+        animation: happierRouteModalIn 200ms cubic-bezier(0.2, 0, 0, 1) both;
+    }
+    [data-vaul-drawer][data-state="closed"] [data-presentation="modal"] {
+        animation: happierRouteModalOut 160ms ease-in both;
+    }
+}
+
+@media (min-width: 700px) and (prefers-reduced-motion: reduce) {
+    [data-vaul-drawer][data-state="open"] [data-presentation="modal"] {
+        animation-name: happierRouteModalFade;
+    }
+    [data-vaul-drawer][data-state="closed"] [data-presentation="modal"] {
+        animation: none;
+    }
+}
+
+@keyframes happierRouteModalIn {
+    from { opacity: 0; scale: 0.98; }
+    to { opacity: 1; scale: 1; }
+}
+
+@keyframes happierRouteModalOut {
+    from { opacity: 1; scale: 1; }
+    to { opacity: 0; scale: 0.98; }
+}
+
+@keyframes happierRouteModalFade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
 /* New session should behave like a full-height bottom sheet on mobile web. */
 @media (max-width: 767px) {
     html[data-happy-route="new"] [data-vaul-drawer][data-vaul-drawer-direction="bottom"] [data-presentation="modal"] {
