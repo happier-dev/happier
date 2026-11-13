@@ -1,4 +1,5 @@
 import { basename, join } from 'node:path';
+import { readLoadSentinelPasses } from '../../perf/load-sentinel.mjs';
 import { EventEmitter, on } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -63,7 +64,7 @@ const TARGET_SYNC_READY = Symbol('TARGET_SYNC_READY');
  * still serving. The existing executor/control pipe owns each preparation
  * worker; only the existing restart owner may subsequently retire services.
  */
-export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDir, repoDir, placement, args, env, signal, serverRequested, onPhase, onLog, sourceStartRequestId },
+export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDir, repoDir, placement, args, env, signal, serverRequested, onPhase, onLog, sourceStartRequestId, loadSentinelPasses },
   { runProcess = runDevTargetControlProcess, executorDependencies = {} } = {}) {
   env = { ...env, HAPPIER_STACK_SYNC_SOURCE_DIR: repoDir, HAPPIER_STACK_PROCESS_KIND: 'infra',
     HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: placement.authority.producerStackName
@@ -110,7 +111,7 @@ export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDi
         stackBaseDir: placement.authority.producerStackBaseDir, sourceDir: repoDir,
         commandArgs: ['node', '--conditions=happier-source', '--import=./apps/stack/bin/localSourceRuntimeBootstrap.mjs',
           './apps/stack/scripts/runtime/launch/prepareSourceRuntimeReload.mjs', '--worker',
-          JSON.stringify({ stackName, stackBaseDir: paths.stackBaseDir, repoDir: plan.target.repoDir, args: hostArgs, sourceStartRequestId })],
+          JSON.stringify({ stackName, stackBaseDir: paths.stackBaseDir, repoDir: plan.target.repoDir, args: hostArgs, sourceStartRequestId, loadSentinelPasses })],
         environment: { ...serverConfig.environment, HAPPIER_DB_PROVIDER: serverConfig.dbProvider,
           ...(plan.services.server ? sourceWebExportDiagnosticEnv(env) : {}),
           ...(plan.services.daemon ? projectRemoteGuestCliPayloadEnvironment(env) : {}),
@@ -489,6 +490,7 @@ export async function startStackDevTargets(
   if (sourceSnapshot && servicePlans.some(plan => plan.services.expo)) {
     throw new Error('[dev-targets] source snapshot services cannot own a watching Expo process');
   }
+  const loadSentinelPasses = sourceSnapshot ? await readLoadSentinelPasses(sourceDir) : undefined;
   const retainedRuntime = controlled || sourceSnapshot;
   const runtimeMode = sourceSnapshot ? 'source-snapshot' : controlled ? 'controlled' : 'source';
   const canonicalLoopbackForward = resolveCanonicalLoopbackForward(canonicalServerUrl, localServerPort);
@@ -1093,7 +1095,9 @@ export async function startStackDevTargets(
         beginPhase('stop');
         // Retirement owns teardown; never mistake our still-running incumbent
         // for a foreign listener while deciding whether a choice can be reused.
-        if ((!plan.preserveDaemon || services.server || services.expo) && !retainedSourceRuntime && !refreshSourceRuntime) {
+        // Source workers own replacement admission and retirement. Keep the
+        // incumbent serving while their capture is being prepared or refused.
+        if (!sourceSnapshot && (!plan.preserveDaemon || services.server || services.expo) && !retainedSourceRuntime && !refreshSourceRuntime) {
           await retireRemoteTarget(target, { stackName, runtimeMode, preserveDaemon: plan.preserveDaemon === true,
             attended: env.HAPPIER_STACK_TUI === '1' });
         }
@@ -1179,6 +1183,7 @@ export async function startStackDevTargets(
               env: { ...env, HAPPIER_STACK_REPO_DIR: sourceDir }, createRepoIdentityIfMissing: false }).producerStackName } : env,
           runtimeMode,
           sourceStartRequestId,
+          loadSentinelPasses,
           refreshSourceRuntime,
           excludedOwnerStartedAt: refreshSourceRuntime ? retainedSourceRuntime?.startedAt : undefined,
           reuseSourceRuntime: !refreshSourceRuntime && (transportRecovery || Boolean(retainedSourceRuntime) || env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD === '1'),
@@ -1518,6 +1523,9 @@ export async function startStackDevTargets(
             const environmentRefusal = workerFailure?.refusal
               ?? (workerFailure?.sourceRefusal?.retryable === false ? workerFailure.sourceRefusal : null);
             if (environmentRefusal) {
+              // A refused source worker never acquired the incumbent lifecycle;
+              // controller cleanup must release transport without stopping it.
+              if (sourceSnapshot && workerFailure.sourceRefusal) startedRemoteTargets.delete(target.name);
               if (workersByTarget.get(target.name) === worker) workersByTarget.delete(target.name);
               if (tunnelsByTarget.get(target.name) === tunnel) tunnelsByTarget.delete(target.name);
               await stopProcess(worker);

@@ -1764,6 +1764,9 @@ test('remote source preparation refusal leaves the observed incumbent process an
   });
   const controller = new AbortController();
   const workerScript = fileURLToPath(new URL('../../runtime/launch/prepareSourceRuntimeReload.mjs', import.meta.url));
+  // This fixture exercises a fresh producer failure, not last-green admission.
+  const reloadArgs = ['--no-server', '--server-url=http://fixture.invalid', '--no-ui',
+    `--source-after=${new Date().toISOString()}`];
   await assert.rejects(prepareStackDevTargetSourceReload({
     stackName,
     stackBaseDir: join(root, 'consumer'),
@@ -1773,7 +1776,7 @@ test('remote source preparation refusal leaves the observed incumbent process an
       config: { targets: [target] },
       targetPlans: [{ target, services: { server: false, daemon: true, expo: false } }],
     },
-    args: ['--no-server', '--server-url=http://fixture.invalid', '--no-ui'],
+    args: reloadArgs,
     env,
     signal: controller.signal,
     serverRequested: false,
@@ -1786,17 +1789,17 @@ test('remote source preparation refusal leaves the observed incumbent process an
         stackName,
         stackBaseDir: paths.stackBaseDir,
         repoDir: brokenRepoDir,
-        args: ['--no-server', '--server-url=http://fixture.invalid', '--no-ui'],
+        args: reloadArgs,
         sourceStartRequestId: 'remote-refusal',
       })], input.env, { onLine: input.onLine, stdio: ['pipe', 'pipe', 'pipe'], ownedProcessGroup: true, silent: true }),
     },
   }), error => {
     assert.match(error.message, /preparation exited before readiness/);
-    assert.equal(error.entryGraph, 'daemon');
-    assert.ok(error.firstFailingModule);
-    assert.match(error.message, /Cannot find module 'esbuild'/);
-    assert.ok(error.message.includes(join(brokenRepoDir, 'apps/cli/package.json')),
-      'the controller refusal must name the failing worker input, not just its exit code');
+    // Producer admission now classifies an absent checkout before compiler loading.
+    assert.equal(error.code, 'source_runtime_producer_unavailable');
+    assert.equal(error.reason, 'ENOENT');
+    assert.equal(error.sourceStack, 'producer');
+    assert.ok(error.nextAction);
     return true;
   });
   assert.doesNotThrow(() => process.kill(incumbent.pid, 0));
@@ -1822,16 +1825,19 @@ test(`remote source preparation carries ${reportsTimes ? 'separate source times'
   const syncReady = { code: 0, out: JSON.stringify(targets.flatMap(target => JSON.parse(readySyncResult(target).out))) };
   const diagnostics = [];
   const requestStartedAt = Date.parse('2026-10-29T12:00:00.000Z');
-  const request = resolveSourceRuntimeReloadArguments({ args: ['--ui=export'], requestStartedAt });
+  const request = resolveSourceRuntimeReloadArguments({ args: ['--ui=export', `--source-after=${new Date(requestStartedAt).toISOString()}`], requestStartedAt });
+  const loadSentinelPasses = [{ startedAt: '2026-10-29T12:04:00.000Z', endedAt: '2026-10-29T12:05:00.000Z' }];
   const prepared = await prepareStackDevTargetSourceReload({ stackName: 'agent-qa', stackBaseDir: join(root, 'consumer'), repoDir,
     placement: { authority: { producerStackBaseDir }, config: { targets }, targetPlans: targets.map(target =>
       ({ target, services: { server: target.name === 'server', daemon: target.name === 'daemon', expo: false } })) },
-    args: request.args, env, signal: new AbortController().signal, serverRequested: true, sourceStartRequestId: 'source-times',
+    args: request.args, env, signal: new AbortController().signal, serverRequested: true, sourceStartRequestId: 'source-times', loadSentinelPasses,
     onLog: line => diagnostics.push(line),
   }, { runProcess: async () => syncReady, executorDependencies: {
     runCaptureResult: async () => ({ ok: true, out: syncReady.out, err: '', exitCode: 0 }),
     spawnProcess: input => {
       const component = input.args.includes('server-ssh') ? 'server' : 'daemon';
+      assert.ok(input.args.at(-1).includes('loadSentinelPasses'), 'remote worker receives the controller sentinel facts');
+      assert.ok(input.args.at(-1).includes(loadSentinelPasses[0].endedAt), 'remote worker receives the completed pass unchanged');
       assert.ok(input.args.at(-1).includes(`--source-after=${new Date(requestStartedAt).toISOString()}`),
         `${component} host must receive the same controller capture boundary`);
       const sourceTimes = component === 'server' ? { server: times.server, ui: times.ui } : { daemon: times.daemon };
@@ -1927,7 +1933,8 @@ test('remote source reload preparation forwards source maps to the actual UI bui
   } finally { await prepared.close(); }
 });
 
-test('source snapshot supervisor builds on each mirror without native transfer or dependency preparation and projects observed identities', { timeout: 10_000 }, async (t) => {
+for (const admission of ['ready', 'refused']) {
+test('source snapshot supervisor builds on each mirror without native transfer or dependency preparation and projects observed identities with admission ' + admission, { timeout: 10_000 }, async (t) => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-source-snapshot-supervisor-' });
   const targets = ['server', 'daemon'].map(name => ({ name, platform: 'posix', ssh: `${name}-ssh`, repoDir: join(root, name, 'repo'), cliHomeDir: join(root, name, 'home') }));
   const stackName = 'agent-qa';
@@ -1944,6 +1951,7 @@ test('source snapshot supervisor builds on each mirror without native transfer o
   const dataChecks = [];
   const authorities = [];
   const spawned = [];
+  const admissibleTargets = new Set();
   const observed = Object.fromEntries(targets.map(target => [target.name, { [target.name]: { selected: `${target.name}-source`, loaded: `${target.name}-source` } }]));
   const phaseLogs = [];
   const execFileAsync = promisify(execFile);
@@ -1966,12 +1974,16 @@ test('source snapshot supervisor builds on each mirror without native transfer o
         ...(state.sourceRuntimeIdentities ? { sourceRuntimeIdentities: state.sourceRuntimeIdentities } : {}),
       });
       states.push(state);
-      if (targets.every(target => states.some(state => state.name === target.name && state.status === 'running'))) resolveRunning();
+      if (targets.every(target => states.some(state => state.name === target.name
+        && state.status === (admission === 'ready' ? 'running' : 'failed')))) resolveRunning();
     }, env: { HAPPIER_STACK_AUTH_FLOW: '1', HAPPIER_WEB_LATENCY_TRACE: '1' },
   }, {
     runProcess: async input => {
       commands.push(input);
       const command = String(input.args.at(-1));
+      const target = targets.find(target => input.args.includes(target.ssh));
+      if (command.includes('stack stop')) assert.ok(admissibleTargets.has(target?.name),
+        'source replacement admission belongs to the native restart owner before incumbent retirement, including refusal cleanup');
       if (input.command === 'ssh' && command.includes('selectStackServicePort')) return { code: 0, out: JSON.stringify({ port: 3006 }) };
       if (input.command === 'ssh' && command.includes('sourceRuntimeIdentities')) {
         const result = await execFileAsync('/bin/bash', ['-c', command]);
@@ -1985,7 +1997,16 @@ test('source snapshot supervisor builds on each mirror without native transfer o
     spawnProcess: input => {
       const child = { ...input, pid: process.pid, exitCode: null }; spawned.push(child);
       if (input.command === 'ssh' && input.args.at(-1).includes('stack start')) {
+        assert.ok(input.args.at(-1).includes('--source-load-sentinel-passes='),
+          'ordinary source starts must carry controller sentinel facts to worker reload preparation');
         const target = targets.find(target => input.args.includes(target.ssh));
+        if (admission === 'refused') {
+          input.onLine?.({ stream: 'stderr', line: 'HSTACK_SOURCE_RELOAD_REFUSAL=' + JSON.stringify({
+            code: 'source_runtime_producer_capture_unavailable', phase: 'source-producer', retryable: false }) });
+          child.refused = true;
+          return child;
+        }
+        admissibleTargets.add(target.name);
         for (const phase of ['queued', 'building', 'prepared']) input.onLine?.({ stream: 'stdout',
           line: 'HSTACK_SOURCE_PREPARATION_PHASE=' + JSON.stringify({ phase, component: target.name }) });
         const paths = resolveRemoteStackStatePaths(target, { stackName, runtimeMode: 'controlled' });
@@ -1996,13 +2017,17 @@ test('source snapshot supervisor builds on each mirror without native transfer o
       return child;
     },
     stopProcess: async child => { child.exitCode = 0; },
-    waitForProcess: async () => await new Promise(() => {}),
+    waitForProcess: async child => child.refused ? { code: 1 } : await new Promise(() => {}),
     waitForServerReady: async () => {}, waitForDaemonReady: async () => {},
     waitForRetry: async () => await new Promise(() => {}), logger: { error() {}, info(message) { phaseLogs.push(message); } },
   });
   try {
-    assert.equal(controller.workers.length, 2);
     await running;
+    if (admission === 'refused') {
+      assert.equal(controller.targetFailures.length, 2);
+      return;
+    }
+    assert.equal(controller.workers.length, 2);
     await waitForBackgroundStackReadiness({
       stackName, scriptPath: 'run.mjs', runtimeStatePath,
       env: { HAPPIER_STACK_CLI_HOME_DIR: join(root, 'controller-cli') },
@@ -2042,6 +2067,8 @@ test('source snapshot supervisor builds on each mirror without native transfer o
     }
   } finally { await controller.close(); }
 });
+
+}
 
 test('controlled lifecycle fails closed before a worker starts when retained-data admission fails', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-controlled-admission-'));
