@@ -397,7 +397,7 @@ export function presentSessionAwarenessStateV1(
     options?: Parameters<typeof presentSessionAwarenessV1>[1],
 ): SessionAwarenessPresentationV1 {
     if (state === 'archived') {
-        return { state, statusText: t('status.online'), quiet: true };
+        return { state, statusText: t('session.inactiveArchived'), quiet: true };
     }
     // Settled content blockers keep their recovery copy; unreadable content must not be guessed
     // into an operational state such as working.

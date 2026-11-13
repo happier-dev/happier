@@ -92,6 +92,31 @@ function setWorkingTextAnimation(enabled: boolean) {
 }
 
 describe('nullable static session presentation', () => {
+    it('presents an archived Session beside Resume without announcing live presence', async () => {
+        const { useSessionStatus } = await import('./sessionUtils');
+        const session = createSessionFixture({ active: false, archivedAt: Date.now() - 1,
+            presence: 'online', activeAt: Date.now(), encryptionMode: 'plain' });
+        const hook = await renderHook(() => {
+            const status = useSessionStatus(session, { subscribeToSession: false, subscribeToTranscript: false });
+            return { status, line: resolveSessionViewConnectionStatus({
+                connectedServicesRestartState: null, restartingText: 'Restarting', switchFailedText: 'Switch failed',
+                inactiveStatusText: null, inactiveResumeAvailable: true, sessionStatusResuming: false,
+                sessionStatusState: status.state, sessionStatusText: status.statusText,
+                sessionStatusColor: status.statusColor, sessionStatusDotColor: status.statusDotColor,
+                sessionStatusPulsing: status.isPulsing === true,
+            }) };
+        });
+        try {
+            expect(hook.getCurrent().status).toMatchObject({ state: 'archived', shouldShowStatus: false });
+            expect(hook.getCurrent().line).toMatchObject({
+                text: 'session.inactiveArchived', inactiveAction: 'resume', isPulsing: false,
+            });
+            expect(hook.getCurrent().line?.text).not.toBe('status.online');
+        } finally {
+            await hook.unmount();
+        }
+    });
+
     it('shows the native startup wait before a turn is observed and clears it when the turn runs', async () => {
         const { getSessionStatus } = await import('./sessionUtils');
         const waiting = createSessionFixture({ encryptionMode: 'plain', active: true,
