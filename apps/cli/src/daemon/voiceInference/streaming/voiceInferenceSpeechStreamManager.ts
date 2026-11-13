@@ -279,6 +279,9 @@ export function createVoiceInferenceSpeechStreamManager(
     clearExpiry(session);
     session.state = 'closed';
     sessions.delete(session.streamId);
+    // Admission ends with the stream, not with asynchronous native/file cleanup.
+    // A successor may already be listening when that cleanup finally settles.
+    activeApplicationAttemptIds.delete(session.requestId);
     session.abortController.abort();
     for (const chunk of session.compatibilityChunks.values()) {
       chunk.resolve(streamError('invalid_stream_state', 'daemon_voice_inference_stream_not_open'));
@@ -298,7 +301,6 @@ export function createVoiceInferenceSpeechStreamManager(
     // Request-id cancellation here can pre-cancel the next utterance on the
     // same admitted call, either after runtime close or before batch recognition.
     await cleanupSessionFiles(session);
-    activeApplicationAttemptIds.delete(session.requestId);
   }
 
   function captureCompletedStream(session: StreamSession, filePath: string): void {

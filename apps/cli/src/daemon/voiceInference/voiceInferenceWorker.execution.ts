@@ -456,6 +456,9 @@ export function createVoiceInferenceWorkerExecution(params: VoiceInferenceExecut
       };
 
       const abortListener = () => {
+        // The stream has retired. Its native close may still be running while
+        // the next utterance reuses this admitted call's request identity.
+        releaseRequestOwnership();
         void closeRuntimeSession({ cancel: true });
       };
       abortController.signal.addEventListener('abort', abortListener, { once: true });

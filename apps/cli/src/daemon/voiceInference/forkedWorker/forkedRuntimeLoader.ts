@@ -16,6 +16,7 @@ import type { HappierProcessRootSource } from '@/daemon/processes/roots/listHapp
 import { ensureOptionalRuntime } from '@/packagedRuntime/installables/optionalRuntimes';
 
 import type { RuntimeLoader } from '../voiceInferenceWorker.shared';
+import type { VoiceInferenceRuntime } from '../voiceInferenceRuntimeTypes';
 import { readVoiceInferenceRuntimeModuleOverride } from '../voiceInferenceWorkerConfig';
 import {
   createForkedVoiceInferenceRuntimeClient,
@@ -81,7 +82,8 @@ export function createForkedVoiceInferenceRuntimeHandle(
     return channel;
   };
 
-  let client: ForkedVoiceInferenceRuntimeClient | null = null;
+  let recognitionClient: ForkedVoiceInferenceRuntimeClient | null = null;
+  let synthesisClient: ForkedVoiceInferenceRuntimeClient | null = null;
   let runtimePrepared = false;
   let preparation: Promise<void> | null = null;
 
@@ -98,31 +100,46 @@ export function createForkedVoiceInferenceRuntimeHandle(
     await preparation;
   }
 
-  function ensureClient(): ForkedVoiceInferenceRuntimeClient {
-    if (!client) {
-      client = createForkedVoiceInferenceRuntimeClient({
-        channelFactory,
-        onSnapshot: params?.onSnapshot,
-        loggerDebug: params?.loggerDebug,
-      });
-    }
+  function ensureClient(kind: 'recognition' | 'synthesis'): ForkedVoiceInferenceRuntimeClient {
+    const current = kind === 'recognition' ? recognitionClient : synthesisClient;
+    if (current) return current;
+    const client = createForkedVoiceInferenceRuntimeClient({
+      channelFactory,
+      onSnapshot: params?.onSnapshot,
+      loggerDebug: params?.loggerDebug,
+    });
+    if (kind === 'recognition') recognitionClient = client;
+    else synthesisClient = client;
     return client;
   }
 
+  // Synchronous synthesis is cancelled by terminating its worker. Recognition
+  // sessions must stay in a different child so that readout/barge-in cannot
+  // destroy their native state. Both children use the existing supervisor.
+  const modelClient = (input: Parameters<NonNullable<VoiceInferenceRuntime['warmModel']>>[0]) =>
+    ensureClient(input.manifest.kind === 'stt_sherpa' ? 'recognition' : 'synthesis');
+  const runtime: VoiceInferenceRuntime = {
+    warmModel: input => modelClient(input).warmModel!(input),
+    primeModel: input => modelClient(input).primeModel!(input),
+    releaseModel: input => modelClient(input).releaseModel!(input),
+    synthesizeTts: input => ensureClient('synthesis').synthesizeTts(input),
+    transcribeAudio: input => ensureClient('recognition').transcribeAudio(input),
+    createStreamingTranscriptionSession: input => ensureClient('recognition').createStreamingTranscriptionSession!(input),
+  };
+
   return {
-    readProcessRoots: (stopWorker) => client?.readProcessRoots(stopWorker) ?? [],
-    // The loader always returns the same supervised client; the manager treats it as the
-    // engine. Lazy spawn happens on first engine call inside the client.
+    readProcessRoots: (stopWorker) => [recognitionClient, synthesisClient]
+      .flatMap(client => client?.readProcessRoots(stopWorker) ?? []),
+    // One runtime facade; children spawn lazily on their first engine call.
     runtimeLoader: async () => {
       await ensureRuntimePrepared();
-      return ensureClient();
+      return runtime;
     },
     dispose: async () => {
-      const current = client;
-      client = null;
-      if (current) {
-        await current.stop();
-      }
+      const current = [recognitionClient, synthesisClient];
+      recognitionClient = null;
+      synthesisClient = null;
+      await Promise.all(current.map(client => client?.stop()));
     },
   };
 }

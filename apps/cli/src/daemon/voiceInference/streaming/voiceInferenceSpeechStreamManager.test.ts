@@ -137,6 +137,42 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
     await manager.dispose();
   });
 
+  it('admits the next utterance while a closed native stream is still retiring', async () => {
+    const retirement = deferred<void>();
+    const entered = deferred<void>();
+    let created = 0;
+    nativeRuntime = { ...nativeRuntime, createStreamingTranscriptionSession: async () => {
+      const first = ++created === 1;
+      return {
+        appendPcm16: async () => ({ events: [] }),
+        finish: async () => ({ text: 'YES', language: 'en', events: [] }),
+        cancel: async () => { if (first) { entered.resolve(); await retirement.promise; } },
+        close: async () => {},
+      };
+    } };
+    const manager = createVoiceInferenceSpeechStreamManager({
+      streamRoot: await createTempStreamRoot(), voiceInferenceWorker: worker,
+    });
+    managers.push(manager);
+    const request = { requestId: 'readout-call', packId, language: 'en',
+      streamingMode: 'runtime' as const, format: DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT };
+    const first = await manager.start(request);
+    if (!first.ok) throw new Error('expected initial stream');
+    const cancelling = manager.cancel(first);
+    await entered.promise;
+    try {
+      const next = await manager.start(request);
+      expect(next).toMatchObject({ ok: true });
+      retirement.resolve();
+      await cancelling;
+      // Late cleanup must not release the successor's active reservation.
+      await expect(manager.start(request)).resolves.toMatchObject({ ok: false, errorCode: 'invalid_stream_state' });
+      if (!next.ok) return;
+      await expect(manager.appendPcm16Bytes({ ...next, seq: 0, pcm16Bytes: new Uint8Array([1, 0]) })).resolves.toMatchObject({ ok: true });
+      await expect(manager.finish({ ...next, finalSeq: 0 })).resolves.toMatchObject({ ok: true, finalText: 'YES' });
+    } finally { retirement.resolve(); await cancelling; }
+  });
+
   it.each(['runtime', 'upload_bridge'] as const)('resumes %s listening for a spoken permission answer after readout cancels capture within the same admitted call', async (streamingMode) => {
     nativeRuntime = { ...nativeRuntime,
       transcribeAudio: async () => ({ text: 'YES', language: 'en' }),

@@ -8319,6 +8319,16 @@ one of its namespaces answers `machine_role_inactive` with the `roleId`; any
 other unknown method still answers method-not-found. Calls relayed by the server
 never reach an unregistered method, so placement uses the advertised role set.
 
+In the 0.3 development Voice role, the forked inference runtime loader keeps
+recognition and synthesis in separate, lazily spawned supervised children.
+Cancelling synchronous native synthesis terminates its child; it must not
+discard a live recognition session. Model warm, prime and release operations
+follow the manifest kind to the same child as inference. Both children remain
+owned by the existing Voice worker lifecycle and process-root enumeration.
+Streaming STT releases its active application-attempt reservation when the
+stream closes, before asynchronous native and file cleanup, so the next
+utterance on that admitted call can start while retirement finishes.
+
 Roles come in two kinds:
 
 - **Load-split roles** have their own entry, as described above. Split today:

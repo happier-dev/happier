@@ -86,6 +86,45 @@ function createInMemoryWorkerChannel(runtime: VoiceInferenceRuntime): VoiceInfer
 }
 
 describe('forked voice inference runtime loader', () => {
+  it('keeps live recognition usable when cancelling synchronous synthesis retires its worker', async () => {
+    let entered!: () => void;
+    const synthesizing = new Promise<void>(resolve => { entered = resolve; });
+    const runtime: VoiceInferenceRuntime = {
+      synthesizeTts: async () => { entered(); return await new Promise(() => {}); },
+      transcribeAudio: async () => ({ text: '', language: null }),
+      createStreamingTranscriptionSession: async () => ({
+        appendPcm16: async () => ({ events: [] }),
+        finish: async () => ({ text: 'brief me', language: 'en', events: [] }),
+        cancel: async () => {}, close: async () => {},
+      }),
+    };
+    const handle = createForkedVoiceInferenceRuntimeHandle({
+      prepareRuntime: async () => {},
+      channelFactory: async () => createInMemoryWorkerChannel(runtime),
+    });
+    handles.push(handle);
+    const engine = await handle.runtimeLoader();
+    if (!engine?.createStreamingTranscriptionSession) throw new Error('expected streaming engine');
+    const recognition = await engine.createStreamingTranscriptionSession({
+      requestId: 'listening', packId: 'stt', packDir: '/tmp/stt',
+      manifest: { ...manifest, packId: 'stt', kind: 'stt_sherpa' }, language: 'en',
+      format: { sampleRateHz: 16_000, channelCount: 1, bitsPerSample: 16, ffmpegCodec: 'pcm_s16le' },
+    });
+    const abort = new AbortController();
+    const speech = engine.synthesizeTts({ requestId: 'readout', text: 'question',
+      packId: manifest.packId, packDir: '/tmp/tts', manifest, voiceId: null, speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' }, signal: abort.signal });
+    const cancelled = expect(speech).rejects.toMatchObject({ code: 'cancelled' });
+    await synthesizing;
+    expect(handle.readProcessRoots()).toHaveLength(2);
+    abort.abort();
+    await cancelled;
+    await expect(recognition.appendPcm16({ seq: 0, pcm16Bytes: new Uint8Array([1, 0]) })).resolves.toEqual({ events: [] });
+    await expect(recognition.finish({ finalSeq: 0 })).resolves.toMatchObject({ text: 'brief me' });
+    await handle.dispose();
+    expect(handle.readProcessRoots()).toEqual([]);
+  });
+
   it('prepares the source native runtime once before exposing or spawning the forked engine', async () => {
     const observations: string[] = [];
     const sourceRuntimeEntrypoint = createRequire(import.meta.url).resolve('sherpa-onnx-node/sherpa-onnx.js');
