@@ -177,6 +177,7 @@ import type {
   CurrentApprovalRequest,
   ApprovalRequestV2,
   ApprovalRequestOriginV1,
+  StoredApprovalRequestV2,
 } from '../../approvals/approvalRequestV1.js';
 import type { PluginSourceCustodyV1 } from '../../plugins/runtime/sourceCustody.js';
 import type { DaemonPluginStructuredMessageActionMountedBinding } from '../../plugins/actions/daemonInvocationV1.js';
@@ -2057,7 +2058,7 @@ export type ActionExecutorDeps = Readonly<{
    * consent is recorded, so the Ask stays open for a reviewer who can. Null
    * leaves the decision to the incumbent path.
    */
-  approvalRequestApproveRefusal?: (args: Readonly<{ request: ApprovalRequestV2 }>) => ActionExecuteFailure | null;
+  approvalRequestApproveRefusal?: (args: Readonly<{ request: StoredApprovalRequestV2 }>) => ActionExecuteFailure | null;
   /**
    * Host-owned replay for a contributed Action's durable API approval. It
    * claims only artifacts whose strict target subject its adapter admits; null

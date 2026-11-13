@@ -157,7 +157,8 @@ import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { createCliPersonalSavedSecretActionExecute } from '@/settings/secrets/personalSavedSecretActionHost';
-import { readApprovalRequesterDecisionV1, readLiveCliApprovalOriginScope, resolveApprovalExecutor, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { readApprovalRequesterDecisionV1, readLiveCliApprovalOriginScope, resolveApprovalExecutor, type ApprovalRequestV2, type StoredApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { isApprovalDecisionReviewerBindingV1 } from '@happier-dev/protocol/actions/externalActionBindingAuthority';
 import { isMachineTerminalActionId } from '@happier-dev/protocol/actions/specs/machineTerminal';
 import { createHostApprovalOriginCurrentness } from './approvals/hostOriginCurrentness';
@@ -675,10 +676,14 @@ async function executePatPublicAction(params: Readonly<{
  * the same custody even on the requester's own controller. A retained plugin
  * review is delivered to its daemon instead, like the UI replay adapter.
  */
-function readApprovalReplayDecisionAdmission(request: ApprovalRequestV2): 'fresh' | 'foreign_target_only' | null {
+function readApprovalReplayDecisionAdmission(request: ApprovalRequestV2 | StoredApprovalRequestV2): 'fresh' | 'foreign_target_only' | null {
   if (request.actionId === 'plugins.install' && readPluginInstallApprovalPendingReview(request.preview) !== null) return null;
-  const binding = request.executionOriginV1.externalActionExecutionAuthorization?.binding;
-  if (!binding) return 'foreign_target_only';
+  // A stored Artifact carries the root as JSON; parse it once with its schema.
+  const authorization = request.executionOriginV1.externalActionExecutionAuthorization;
+  if (authorization === undefined) return 'foreign_target_only';
+  const parsed = ExternalActionExecutionAuthorizationV1Schema.safeParse(authorization);
+  if (!parsed.success) return null;
+  const binding = parsed.data.binding;
   return 'authentication' in binding && (binding.accountId !== binding.custodianAccountId
     || binding.workflowActionOrigin && !binding.workflowActionOrigin.sessionLeaf
       && !binding.workflowActionOrigin.sessionAuthority) ? 'fresh' : null;
