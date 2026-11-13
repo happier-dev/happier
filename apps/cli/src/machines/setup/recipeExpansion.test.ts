@@ -9,6 +9,9 @@ import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/ad
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { MachineSetupNativeCommand, MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
 import { getMachineAdminAccessV1, type MachineAdminAccessV1 } from '@happier-dev/protocol/machines/adminAccessV1';
+import { readMachineSetupInitialPresenceV1 } from '@happier-dev/cli-common/machineSetup';
+import { MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { googleChrome } from '../../../../../packages/plugins/machine-recipes/src/googleChrome';
 
 async function authoredPlan(recipe: unknown, runNative: (command: MachineSetupNativeCommand) => Promise<MachineSetupNativeCommandResult>,
   readPolicy?: () => Promise<MachineAdminAccessV1>) {
@@ -39,6 +42,33 @@ async function authoredPlan(recipe: unknown, runNative: (command: MachineSetupNa
 }
 
 describe('Machine recipe expansion through the receiving Plan Action', () => {
+  it.each([false, true])('records Chrome target presence independently of installed prerequisites (Chrome present: %s)', async present => {
+    const fixture = await authoredPlan({ id: 'configured', ...googleChrome }, async command => {
+      const ok = (stdout = '') => ({ code: 0, stdout, stderr: '' });
+      if (command.executable === 'dpkg') return ok('amd64\n');
+      if (command.executable === 'apt-get' && command.args[0] === '--version') return ok('apt 3.2\n');
+      if (command.executable === 'lslocks') return ok('{"locks":[]}');
+      if (command.executable === 'dpkg-query') {
+        const names = command.args.slice(command.args.indexOf('--') + 1);
+        const installed = names.filter(name => name !== 'google-chrome-stable' || present);
+        return { code: installed.length === names.length ? 0 : 1,
+          stdout: installed.map(name => `${name}\tinstall ok installed\t1\tamd64\n`).join(''), stderr: '' };
+      }
+      if (command.executable === 'apt-cache') return ok(command.args[0] === 'policy'
+        ? 'google-chrome-stable:\n  Candidate: 1\n' : 'Package: google-chrome-stable\nVersion: 1\nArchitecture: amd64\n');
+      throw new Error(`Plan cannot mutate: ${command.executable}`);
+    });
+    try {
+      const result = await fixture.execute({}, 'effects');
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('Expected a native software plan');
+      const plan = MachineSetupPlanResultV1Schema.parse(result.result).recipePlans![0]!.plan;
+      expect(plan.nativeFacts[0]).toMatchObject({ status: 'satisfied', facts: { packages: [
+        { name: 'ca-certificates', present: true }, { name: 'curl', present: true }, { name: 'gpg', present: true },
+      ] } });
+      expect(readMachineSetupInitialPresenceV1(plan)).toBe(present ? 'present' : 'absent');
+    } finally { await fixture.dispose(); }
+  });
   it('reports unavailable administrator access before Apply and clears it on a fresh Ask review', async () => {
     let mode: 'none' | 'ask' = 'none';
     let policyReads = 0;

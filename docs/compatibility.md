@@ -1597,6 +1597,12 @@ or unproven software stays retained. Existing source-fact persistence, Account
 content envelopes and removal admission are unchanged; no ownership is inferred
 for earlier installations whose initial presence was never recorded.
 
+For package-selected programs, first-presence matches the selected checks' exact
+native package identities against the executing interpreter's observations.
+Supporting packages and repository trust do not establish target presence.
+Existing recorded first-presence remains authoritative on repeat Apply; this
+correction does not infer or rewrite the history of earlier installations.
+
 The closed managed-CLI result adds optional `initialPresence` in admitted plan
 order. The daemon and executing Machine's managed CLI must load the matching
 implementation together; older strict internal readers reject the new field.

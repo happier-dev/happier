@@ -1,3 +1,5 @@
+import { readMachineSetupInitialPresenceV1 } from './initialPresence.js';
+export { readMachineSetupInitialPresenceV1 } from './initialPresence.js';
 import { MachineSetupEffectError } from './effectError.js';
 export { MachineSetupEffectError } from './effectError.js';
 import { MachineAdministratorUsernameV1Schema, MachineElevationFailureV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
@@ -124,38 +126,6 @@ export type MachineSetupApplyResultV1 = Readonly<{
     /** Public-only evidence from the same effective native receiver check. */
     sshHostKeys?: readonly MachineSetupNativeSshHostKeyV1[];
 }>;
-
-/** Unknown steps cannot establish that this operation first installed an item. */
-export function readMachineSetupInitialPresenceV1(plan: MachineSetupEffectPlanV1): 'present' | 'absent' | undefined {
-  const presence = plan.steps.flatMap((step, index): Array<boolean | undefined> => {
-    // Script execution has no independent persisted identity. A recipe's native
-    // footprint establishes first-presence; script-only recipes remain unknown.
-    if (step.kind === 'script') return [];
-    const observation = plan.nativeFacts[index];
-    if (!observation || observation.stepId !== step.id
-      || observation.status !== 'satisfied' && observation.status !== 'drifted') return [undefined];
-    const facts = observation.facts;
-    if (step.kind === 'package') {
-      const packages = facts.packages;
-      if (facts.manager !== step.manager || !Array.isArray(packages)) return [undefined];
-      return step.packages.map(pkg => {
-        const matches = packages.flatMap(value => {
-          if (value === null || typeof value !== 'object' || Array.isArray(value)) return [];
-          const native = value as Readonly<Record<string, unknown>>;
-          return native.manager === step.manager && native.name === pkg.name && native.kind === pkg.kind
-            && native.source === pkg.source && native.scope === pkg.scope ? [native] : [];
-        });
-        const match = matches.length === 1 ? matches[0] : undefined;
-        return match && typeof match.present === 'boolean' ? match.present : undefined;
-      });
-    }
-    return [(['file', 'directory', 'user', 'group'].includes(step.kind) && typeof facts.present === 'boolean')
-      ? facts.present : undefined];
-  });
-  return presence.includes(true) ? 'present'
-    : presence.length > 0 && presence.every(value => value === false) ? 'absent' : undefined;
-}
-
 
 /** CHECK and its isolation preview expose the same native prerequisite and repair. */
 export function readMachineSetupObservationFailureV1(observation: MachineSetupStepObservationV1): MachineElevationFailureV1 | undefined {
