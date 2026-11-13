@@ -20,7 +20,7 @@ export async function resolveInheritedHerdrRuntime(params: Readonly<{
     return params.terminalRuntime;
   }
 
-  const binary = await resolveHerdrRuntimeBinary({ actionTimeoutMs: HERDR_ACTION_TIMEOUT_MS });
+  const binary = await resolveHerdrRuntimeBinary({ actionTimeoutMs: HERDR_ACTION_TIMEOUT_MS, processEnv: params.env });
   if (!binary) throw new Error('A supported Herdr installation is required for this terminal session');
   const client = createHerdrClient({
     binary,

@@ -3,7 +3,9 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { withTempDirSync } from '@/testkit/fs/tempDir';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { mkdir } from 'node:fs/promises';
+import { withTempDir, withTempDirSync } from '@/testkit/fs/tempDir';
 import { withToolTraceFile } from '@/testkit/logger/toolTraceFile';
 
 import { __resetToolTraceForTests, initToolTraceIfEnabled, recordToolTraceEvent, ToolTraceWriter } from './toolTrace';
@@ -175,5 +177,36 @@ describe('initToolTraceIfEnabled', () => {
       expect(existsSync(filePath)).toBe(true);
       expect(readFileSync(filePath, 'utf8')).toBe('');
     });
+  });
+});
+
+it.each(['file', 'directory'] as const)('routes each hosted Session tool trace to its own relative %s', async destination => {
+  await withTempDir('tool-trace-sessions-', async root => {
+    const scope = createEnvKeyScope(['HAPPIER_STACK_TOOL_TRACE', 'HAPPIER_STACK_TOOL_TRACE_FILE']);
+    scope.patch({ HAPPIER_STACK_TOOL_TRACE: '1', HAPPIER_STACK_TOOL_TRACE_FILE: join(root, 'host.jsonl') });
+    try {
+      await Promise.all(['first', 'second', 'disabled'].map(async sessionId => {
+        const cwd = join(root, sessionId);
+        await mkdir(cwd);
+        await runAddedHostedSession({ environment: { ...process.env,
+          HAPPIER_STACK_TOOL_TRACE: sessionId === 'disabled' ? '0' : '1',
+          HAPPIER_STACK_TOOL_TRACE_FILE: destination === 'file' ? 'trace.jsonl' : undefined,
+          HAPPIER_STACK_TOOL_TRACE_DIR: destination === 'directory' ? 'traces' : undefined,
+        }, workingDirectory: cwd, end() {} }, async () => {
+          await Promise.resolve();
+          recordToolTraceEvent({ direction: 'outbound', sessionId,
+            source: { protocol: 'native', agent: { pluginId: 'fixture', localId: 'fixture' } },
+            kind: 'tool-call', payload: { sessionId } });
+        });
+        if (sessionId === 'disabled') {
+          expect(readdirSync(cwd)).toEqual([]);
+        } else {
+          const file = destination === 'file' ? join(cwd, 'trace.jsonl')
+            : join(cwd, 'traces', readdirSync(join(cwd, 'traces'))[0]!);
+          expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ sessionId, payload: { sessionId } });
+        }
+      }));
+      expect(existsSync(join(root, 'host.jsonl'))).toBe(false);
+    } finally { scope.restore(); }
   });
 });

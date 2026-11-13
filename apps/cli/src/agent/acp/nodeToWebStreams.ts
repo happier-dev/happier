@@ -1,6 +1,8 @@
 import type { Readable, Writable } from 'node:stream';
+import { parseBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
 import { createWriteStream, type WriteStream } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { dirname, join, resolve } from 'node:path';
 import { logger } from '@/ui/logger';
 
 /**
@@ -18,10 +20,6 @@ export function nodeToWebStreams(
         return code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED' || /stream was destroyed/i.test(message);
     };
 
-    const isTruthyEnv = (value: string | undefined): boolean => {
-        const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
-        return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
-    };
 
     const safeCloseCapture = (stream: WriteStream | undefined): void => {
         try {
@@ -32,9 +30,9 @@ export function nodeToWebStreams(
     };
 
     const capture = (() => {
-        if (!isTruthyEnv(process.env.HAPPIER_ACP_CAPTURE_IO)) return null;
-        const traceFile = (process.env.HAPPIER_STACK_TOOL_TRACE_FILE ?? '').toString().trim();
-        const baseDir = traceFile ? dirname(traceFile) : process.cwd();
+        if (!parseBooleanEnv(process.env.HAPPIER_ACP_CAPTURE_IO, false)) return null;
+        const traceFile = (sessionProcessEnvironment().HAPPIER_STACK_TOOL_TRACE_FILE ?? '').toString().trim();
+        const baseDir = traceFile ? dirname(resolve(sessionWorkingDirectory(), traceFile)) : sessionWorkingDirectory();
         const withCaptureErrorHandler = (stream: WriteStream, streamLabel: 'stdin' | 'stdout'): WriteStream => {
             stream.on('error', (error) => {
                 logger.debug(`[nodeToWebStreams] Ignoring ACP ${streamLabel} capture stream error`, error);

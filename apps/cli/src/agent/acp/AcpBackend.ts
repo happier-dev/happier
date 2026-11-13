@@ -46,7 +46,8 @@ import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports
 import { AGENT_STARTUP_FAILURE_PREVIEWS } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { randomUUID } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { dirname, join, resolve } from 'node:path';
 import type {
   AgentMessage,
   AgentMessageHandler,
@@ -1013,8 +1014,8 @@ export class AcpBackend implements CatalogAcpBackend {
 
     const droppedStdoutCapture = (() => {
       if (!parseBooleanEnv(process.env.HAPPIER_ACP_CAPTURE_IO, false)) return null;
-      const traceFile = (process.env.HAPPIER_STACK_TOOL_TRACE_FILE ?? '').toString().trim();
-      const baseDir = traceFile ? dirname(traceFile) : null;
+      const traceFile = (sessionProcessEnvironment().HAPPIER_STACK_TOOL_TRACE_FILE ?? '').toString().trim();
+      const baseDir = traceFile ? dirname(resolve(sessionWorkingDirectory(), traceFile)) : null;
       if (!baseDir) return null;
 
       const maxBytesRaw = (process.env.HAPPIER_ACP_CAPTURE_DROPPED_MAX_BYTES ?? '').toString().trim();
@@ -1759,7 +1760,10 @@ export class AcpBackend implements CatalogAcpBackend {
     if (!connection?.peer) {
       throw new Error('ACP session/load requires an initialized provider connection');
     }
-    if (!this.negotiatedSessionCapabilities.loadSession) {
+    // An adopted held Agent's open Session is answered from the stored handshake
+    // (`ACP_SESSION_HOLDER_HANDSHAKE`): the Agent itself is never asked to load it.
+    const reentersHeldSession = this.sessionHolderAdoption ? await this.sessionHolderAdoption.adopted : false;
+    if (!this.negotiatedSessionCapabilities.loadSession && !reentersHeldSession) {
       throw new Error(
         `${this.transport.agentName} did not negotiate ACP session/load support during initialize`,
       );

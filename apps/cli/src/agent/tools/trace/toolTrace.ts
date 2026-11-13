@@ -1,5 +1,7 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { parseBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { dirname, join, resolve } from 'node:path';
 import { configuration } from '@/configuration';
 import { safeJsonStringify } from '@/utils/safeJson';
 import { ensureProtectedLocalStateDirectorySync, ensureProtectedLocalStateFileSync } from '@/utils/fs/protectedLocalState';
@@ -75,21 +77,18 @@ function safeJsonStringifyToolTraceEvent(event: ToolTraceEventV2): string {
     }
 }
 
-function isTruthyEnv(value: string | undefined): boolean {
-    if (!value) return false;
-    return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
-}
 
 function resolveToolTraceFilePath(): string {
+    const processEnv = sessionProcessEnvironment();
     const fileFromEnv =
-        process.env.HAPPIER_STACK_TOOL_TRACE_FILE;
-    if (typeof fileFromEnv === 'string' && fileFromEnv.length > 0) return fileFromEnv;
+        processEnv.HAPPIER_STACK_TOOL_TRACE_FILE;
+    if (typeof fileFromEnv === 'string' && fileFromEnv.length > 0) return resolve(sessionWorkingDirectory(), fileFromEnv);
 
     const dirFromEnv =
-        process.env.HAPPIER_STACK_TOOL_TRACE_DIR;
+        processEnv.HAPPIER_STACK_TOOL_TRACE_DIR;
     const dir =
         typeof dirFromEnv === 'string' && dirFromEnv.length > 0
-            ? dirFromEnv
+            ? resolve(sessionWorkingDirectory(), dirFromEnv)
             : join(configuration.happyHomeDir, 'tool-traces');
 
     if (cachedDefaultTraceFilePath && cachedDefaultTraceDir === dir) return cachedDefaultTraceFilePath;
@@ -101,7 +100,7 @@ function resolveToolTraceFilePath(): string {
 }
 
 export function isToolTraceEnabled(): boolean {
-    return isTruthyEnv(process.env.HAPPIER_STACK_TOOL_TRACE);
+    return parseBooleanEnv(sessionProcessEnvironment().HAPPIER_STACK_TOOL_TRACE, false);
 }
 
 let cachedWriter: ToolTraceWriter | null = null;

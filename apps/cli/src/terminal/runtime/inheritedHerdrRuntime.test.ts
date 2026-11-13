@@ -53,7 +53,7 @@ describe('resolveInheritedHerdrRuntime', () => {
   it('uses the successfully probed pane socket even when session-list liveness has not converged yet', async () => {
     herdrClientMocks.sessions = [{ name: 'work', socketPath: '/tmp/work.sock', running: false }];
     const env: NodeJS.ProcessEnv = {
-      HERDR_ENV: '1', HERDR_SOCKET_PATH: '/tmp/work.sock', HERDR_PANE_ID: 'w1:p2',
+      HERDR_BIN_PATH: process.execPath, HERDR_ENV: '1', HERDR_SOCKET_PATH: '/tmp/work.sock', HERDR_PANE_ID: 'w1:p2',
     };
 
     await expect(resolveInheritedHerdrRuntime({ terminalRuntime: null, env })).resolves.toMatchObject({
@@ -61,10 +61,11 @@ describe('resolveInheritedHerdrRuntime', () => {
     });
   });
 
-  it('uses the daemon-carried Herdr session name without rediscovering its own launch target', async () => {
+  it('uses the daemon-carried Herdr session name and binary without rediscovering its own launch target', async () => {
+    vi.stubEnv('HERDR_BIN_PATH', '/nonexistent-host-herdr');
     herdrClientMocks.sessions = [];
     const env: NodeJS.ProcessEnv = {
-      HERDR_ENV: '1', HERDR_SOCKET_PATH: '/tmp/work.sock', HERDR_PANE_ID: 'w1:p2',
+      HERDR_BIN_PATH: process.execPath, HERDR_ENV: '1', HERDR_SOCKET_PATH: '/tmp/work.sock', HERDR_PANE_ID: 'w1:p2',
     };
 
     await expect(resolveInheritedHerdrRuntime({
@@ -79,7 +80,7 @@ describe('resolveInheritedHerdrRuntime', () => {
   it('binds an agent wrapper to the current Herdr terminal without allowing native hooks to claim it', async () => {
     herdrClientMocks.sessions = [{ name: 'work', socketPath: '/tmp/work.sock', running: true }];
     const env: NodeJS.ProcessEnv = {
-      HERDR_ENV: '1', HERDR_SOCKET_PATH: '/tmp/work.sock', HERDR_PANE_ID: 'w1:p2',
+      HERDR_BIN_PATH: process.execPath, HERDR_ENV: '1', HERDR_SOCKET_PATH: '/tmp/work.sock', HERDR_PANE_ID: 'w1:p2',
     };
     await expect(resolveInheritedHerdrRuntime({ terminalRuntime: null, env })).resolves.toEqual({
       mode: 'herdr', requested: 'herdr', herdrSessionName: 'work',
@@ -93,7 +94,7 @@ describe('resolveInheritedHerdrRuntime', () => {
     const runtime = await resolveInheritedHerdrRuntime({
       terminalRuntime: { mode: 'herdr', herdrSessionName: 'work', attachmentId: 'daemon-attachment' },
       env: {
-        HERDR_ENV: '1', HERDR_SOCKET_PATH: '/tmp/work.sock', HERDR_PANE_ID: 'w1:p2',
+        HERDR_BIN_PATH: process.execPath, HERDR_ENV: '1', HERDR_SOCKET_PATH: '/tmp/work.sock', HERDR_PANE_ID: 'w1:p2',
         HAPPIER_TERMINAL_ATTACHMENT_ID: 'ambient-attachment',
       },
     });
@@ -104,7 +105,7 @@ describe('resolveInheritedHerdrRuntime', () => {
     const runtime = await resolveInheritedHerdrRuntime({
       terminalRuntime: { mode: 'herdr', herdrSessionName: 'work' },
       env: {
-        HERDR_ENV: '1', HERDR_SOCKET_PATH: '/tmp/work.sock', HERDR_PANE_ID: 'w1:p2',
+        HERDR_BIN_PATH: process.execPath, HERDR_ENV: '1', HERDR_SOCKET_PATH: '/tmp/work.sock', HERDR_PANE_ID: 'w1:p2',
         HAPPIER_TERMINAL_ATTACHMENT_ID: 'ambient-attachment',
       },
     });
@@ -114,7 +115,7 @@ describe('resolveInheritedHerdrRuntime', () => {
   it('does not override a daemon-supplied terminal decision', async () => {
     await expect(resolveInheritedHerdrRuntime({
       terminalRuntime: { mode: 'plain', requested: 'herdr' },
-      env: { HERDR_ENV: '1', HERDR_SOCKET_PATH: '/tmp/work.sock', HERDR_PANE_ID: 'w1:p2' },
+      env: { HERDR_BIN_PATH: process.execPath, HERDR_ENV: '1', HERDR_SOCKET_PATH: '/tmp/work.sock', HERDR_PANE_ID: 'w1:p2' },
     })).resolves.toEqual({ mode: 'plain', requested: 'herdr' });
   });
 });
