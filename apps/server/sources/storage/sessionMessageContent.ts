@@ -1,5 +1,6 @@
 import { readCanonicalPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 import * as privacyKit from 'privacy-kit';
+import { prismaRuntime } from './prisma';
 
 export interface StoredSessionMessageContent {
     readonly content: PrismaJson.SessionMessageStoredContent;
@@ -15,6 +16,14 @@ export function encodeSessionMessageContentForStorage(content: PrismaJson.Sessio
     // Preserve historical opaque strings rather than repairing a noncanonical spelling.
     if (readCanonicalPaddedBase64DecodedLength(content.c) === null) return { content, contentBytes: null };
     return { content: null, contentBytes: privacyKit.decodeBase64(content.c) };
+}
+
+/**
+ * The required `content` column stores JSON null beside raw bytes. The generated
+ * Json type cannot name Prisma's JsonNull sentinel, so this is the one write boundary.
+ */
+export function toPrismaSessionMessageStoredContent(content: PrismaJson.SessionMessageStoredContent): PrismaJson.SessionMessageStoredContent {
+    return (content ?? prismaRuntime.JsonNull) as PrismaJson.SessionMessageStoredContent;
 }
 
 export function decodeSessionMessageContentFromStorage(row: StoredSessionMessageContent): PrismaJson.SessionMessageContent {

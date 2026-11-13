@@ -1,5 +1,5 @@
 import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
-import { encodeSessionMessageContentForStorage } from "@/storage/sessionMessageContent";
+import { encodeSessionMessageContentForStorage, toPrismaSessionMessageStoredContent } from "@/storage/sessionMessageContent";
 import type { Prisma } from '@prisma/client';
 
 import type { Tx } from '@/storage/inTx';
@@ -35,7 +35,7 @@ export async function updateSessionMessageAtCurrentRevisionInTx(params: Readonly
             data: {
                 ...params.data,
                 // Prisma requires its JSON-null sentinel; the generated custom JSON input omits that sentinel type.
-                ...(storedContent ? { ...storedContent, content: (storedContent.content ?? prismaRuntime.JsonNull) as PrismaJson.SessionMessageStoredContent } : {}),
+                ...(storedContent ? { ...storedContent, content: toPrismaSessionMessageStoredContent(storedContent.content) } : {}),
                 // Changed opaque content/delivery cannot retain the previous body's timing proof.
                 ...((params.data.content !== undefined || params.data.deliveryResolution !== undefined)
                     && params.data.usageTimingV1 === undefined ? { usageTimingV1: prismaRuntime.DbNull } : {}),

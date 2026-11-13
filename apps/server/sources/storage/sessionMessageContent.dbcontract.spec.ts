@@ -10,7 +10,7 @@ import { readSessionMessageEvidenceRowsInTx } from '@/app/usage/query/readSessio
 import { readCanonicalSessionMessagesPage } from '@/app/search/homeSearchCanonicalSessionMessages';
 import { db, prismaRuntime } from './db';
 import { inTx } from './inTx';
-import { decodeSessionMessageContentFromStorage } from './sessionMessageContent';
+import { decodeSessionMessageContentFromStorage, toPrismaSessionMessageStoredContent } from './sessionMessageContent';
 
 // This suite never falls back to a retained database or a caller-supplied URL.
 const disposablePostgres = process.env.HAPPIER_DB_PROVIDER === 'postgres'
@@ -29,7 +29,7 @@ describe.skipIf(!disposablePostgres)('SessionMessage raw-byte PostgreSQL storage
             accountId: owner.id, tag: randomUUID(), encryptionMode: 'e2ee', metadata: '{}',
         } });
         const message = await db.sessionMessage.create({ data: {
-            sessionId: session.id, seq: 1, content: prismaRuntime.JsonNull,
+            sessionId: session.id, seq: 1, content: toPrismaSessionMessageStoredContent(null),
             contentBytes: new Uint8Array([0, 1, 2, 3]),
         } });
         expect(message.content).toBeNull();

@@ -1,5 +1,5 @@
 import { decodeStoredSessionMessage, decodeStoredSessionMessages } from "@/storage/sessionMessageContent";
-import { encodeSessionMessageContentForStorage } from "@/storage/sessionMessageContent";
+import { encodeSessionMessageContentForStorage, toPrismaSessionMessageStoredContent } from "@/storage/sessionMessageContent";
 import { UsageTimingBoundsV1Schema, type UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { isPrismaErrorCode, prismaRuntime } from '@/storage/prisma';
 import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
@@ -361,7 +361,7 @@ export async function writeSessionTranscriptMessageInTx(
             seq: next.seq,
             ...storedContent,
             // Prisma requires its JSON-null sentinel; the generated custom JSON input omits that sentinel type.
-            content: (storedContent.content ?? prismaRuntime.JsonNull) as PrismaJson.SessionMessageStoredContent,
+            content: toPrismaSessionMessageStoredContent(storedContent.content),
             usageTimingV1: params.usageTimingV1 ?? prismaRuntime.DbNull,
             localId: params.localId,
             sidechainId: params.sidechainId,
