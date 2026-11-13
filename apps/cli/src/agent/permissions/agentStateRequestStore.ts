@@ -1460,6 +1460,14 @@ export class AgentStateRequestStore {
             return !params.pluginId || isPermissionRequestOwnedByPlugin(normalizePermissionRequestOwner(entry.owner, 'stored'), params.pluginId);
         };
         const selectedPublications = [...this.pendingPublications].filter(([id, publication]) => isSelected(id, publication.request));
+        // This runner is the only writer of its Session's requests: every request it
+        // publishes is either still a pending publication or already in its applied
+        // snapshot. With neither selecting anything, a whole-Session cancellation has
+        // nothing to retire, so Stop and "Send now" do not wait on a no-op Agent-state write.
+        const localRequests = this.target.readState()?.requests ?? {};
+        if (params.requestIds.length === 0 && selectedPublications.length === 0
+            && !Object.entries(localRequests).some(([id, request]) =>
+                isSelected(id, clonePlainObjectToNullProto(request) ?? Object.create(null)))) return [];
         // An already observed local retirement withdraws publication before IO.
         // Pre-effect cancellation keeps its ACK-before-retirement contract.
         if (params.observedRetirement) for (const [, publication] of selectedPublications) publication.cancel();

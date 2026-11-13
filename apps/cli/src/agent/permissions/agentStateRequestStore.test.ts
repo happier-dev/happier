@@ -582,6 +582,26 @@ describe('AgentStateRequestStore', () => {
             currentHandler: manager })).resolves.toBe(false);
         store.dispose();
     });
+    it('withdraws nothing and writes nothing when a Stop finds no request to cancel', async () => {
+        // Every person Stop and "Send now" interrupt awaits this withdrawal before the
+        // abort answers; with nothing pending it must not queue an Agent-state write.
+        let writes = 0;
+        let state: AgentState = { requests: {}, completedRequests: { answered: {
+            tool: 'Bash', arguments: {}, createdAt: 1, completedAt: 2, status: 'approved' } } };
+        const store = new AgentStateRequestStore({ logPrefix: '[Stop]', target: {
+            scopeId: 'stop-session', readState: () => state,
+            updateState: updater => { writes += 1; state = updater(state); },
+        } });
+        const results = [];
+        for (const scope of ['foreground', undefined] as const) {
+            results.push(await store.cancelAllRequests({
+                ...(scope ? { scope } : {}), reason: 'Foreground turn stopped', decision: 'abort', requestIds: [],
+            }));
+        }
+        expect({ writes, results }).toEqual({ writes: 0, results: [[], []] });
+        store.dispose();
+    });
+
     it('returns only cancellation subjects from the committed CAS attempt', async () => {
         class RetriedSession extends FakeSession {
             override updateAgentState(updater: (state: AgentState) => AgentState) {
@@ -591,6 +611,8 @@ describe('AgentStateRequestStore', () => {
             }
         }
         const session = new RetriedSession();
+        // The local view still holds the request the conflicting attempt discards.
+        session.agentState = { requests: { discarded: { tool: 'Bash', arguments: {}, createdAt: 1 } }, completedRequests: {} };
         const store = new AgentStateRequestStore({ session, logPrefix: '[Test]' });
 
         const canceled = await store.cancelAllRequests({ reason: 'Session ended', requestIds: [] });
