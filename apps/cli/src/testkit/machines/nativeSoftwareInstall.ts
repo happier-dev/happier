@@ -27,6 +27,7 @@ import { openWorkflowProgressStoredEnvelopeV1,
   parseWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/rpc';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1,
   MachineUpdateOperationProtocolCapabilitiesRequestV1Schema, MachineUpdateOperationProtocolCapabilitiesResponseV1Schema,
   type MachineOperationProtocolCapabilitiesV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
@@ -102,6 +103,7 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
   installFails?: boolean;
   unprivilegedPackageFactUnavailable?: 'presence' | 'locks';
   accountEncryptionMode?: 'plain' | 'e2ee';
+  accountRecoverySecret?: Uint8Array;
   adminAccessMode?: 'none' | 'preauthorized';
   agentIsolation?: import('@/api/apiMachine').ApiMachineClientLifecycleDependencies['agentIsolation'];
   machineId?: string;
@@ -180,11 +182,14 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
   const token = options.installedToken ?? (nativeConfirmed ? `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 0,
     provenance: AuthTokenProvenanceSchema.parse({ v: 1, kind: 'terminal', authority: 'account_automation' }),
   })).toString('base64url')}.installed-signature` : issuerToken);
-  const accountMachineKey = new Uint8Array(32).fill(23);
+  const accountMachineKey = options.accountRecoverySecret
+    ? deriveAccountMachineKeyFromRecoverySecret(options.accountRecoverySecret) : new Uint8Array(32).fill(23);
   const credentials: StoredCredentials = encryptionMode === 'plain'
     ? { token, encryption: null, credentialProvenance: 'stored_session' }
-    : { token, encryption: { type: 'dataKey', machineKey: accountMachineKey,
-      publicKey: tweetnacl.box.keyPair.fromSecretKey(accountMachineKey).publicKey }, credentialProvenance: 'stored_session' };
+    : { token, encryption: options.accountRecoverySecret
+      ? { type: 'legacy', secret: options.accountRecoverySecret }
+      : { type: 'dataKey', machineKey: accountMachineKey,
+        publicKey: tweetnacl.box.keyPair.fromSecretKey(accountMachineKey).publicKey }, credentialProvenance: 'stored_session' };
   osStore.credentials = credentials;
   const accountEncryptionCurrentness = { mode: encryptionMode, version: 1,
     signingKeyFingerprint: null, contentKeyFingerprint: encryptionMode === 'plain' ? null
@@ -599,11 +604,13 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
         boundary: { serverId, serverHttpBaseUrl: options.serverHttpBaseUrl ?? configuration.apiServerUrl,
           happyHomeDir: configuration.happyHomeDir, getObservedServerIdentityId: () => homeId },
         transport: { machineId, invoke: (method, input, options) => client.invokeLocalMachineAction(method, input, options) },
+        runActionOperation: operations.runActionOperation,
       }) : undefined;
       const run = runtime.createCoordinatorForMachine({ machineId,
         ...(nativeConfirmed ? { requesterWorkAttributionV1: attribution } : {}),
         machineAdmissionTransport: (request, options) => client.enqueueSessionPendingByMachine(request, options),
         machineActionDirectTargetTransport: requesterTransport?.transport ?? directTransport,
+        ...(requesterTransport?.runActionOperation ? { runActionOperation: requesterTransport.runActionOperation } : {}),
         installationIdentity: installation, serverIdentityId: homeId });
       try {
         coordinatePhase = 'run_coordinator';

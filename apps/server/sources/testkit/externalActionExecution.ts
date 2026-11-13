@@ -66,12 +66,17 @@ export async function createExternalActionHomeForTests(options: ExternalActionHo
         finally { try { await app.close(); } finally { await sqlite.close(); } }
     };
     try {
-        await db.account.create({ data: { id: options.accountId, encryptionMode: 'plain' } });
-        await db.machine.create({ data: { id: options.machineId, accountId: options.accountId,
-            installationId: options.installationId, installationPublicKey: options.installationPublicKey,
+        const accountEncryptionMode = options.accountEncryptionMode ?? 'plain';
+        const machineStoredContent = options.machineStoredContent ?? {
             metadata: encodePlainMachineStoredContent({ host: 'external Action receiver', platform: process.platform,
                 happyCliVersion: 'test', homeDir: sqlite.baseDir, happyHomeDir: sqlite.baseDir }),
-            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), active: true, lastActiveAt: new Date(),
+            dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+        };
+        await db.account.create({ data: { id: options.accountId, encryptionMode: accountEncryptionMode } });
+        await db.machine.create({ data: { id: options.machineId, accountId: options.accountId,
+            installationId: options.installationId, installationPublicKey: options.installationPublicKey,
+            metadata: machineStoredContent.metadata, dataEncryptionKey: decodeBase64(machineStoredContent.dataEncryptionKey),
+            active: true, lastActiveAt: new Date(),
             operationProtocolCapabilitiesRevision: 1,
             operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] },
                 ...(options.manageGranteeAccountId && options.workspaceSyncTarget

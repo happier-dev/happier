@@ -64,7 +64,7 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
     accountChannel: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>>) => Promise<void>,
   runtimeOptions?: Parameters<typeof createNativeSoftwareInstallFixture>[0]['runtimeOptions'],
   sessionStartup?: Parameters<typeof createNativeSoftwareInstallFixture>[0]['sessionStartup'],
-  accountEncryptionMode?: 'plain' | 'e2ee') {
+  accountEncryptionMode?: 'plain' | 'e2ee', accountRecoverySecret?: Uint8Array) {
   const askAndDecide = askAndDecideValue === true;
   const nativeConfirmed = scenario === 'native-confirm';
   let phase = 'create_native_fixture';
@@ -103,6 +103,7 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
   const excludedToSelected = scenario === 'excluded-to-selected';
   const fixture = await createNativeSoftwareInstallFixture({ scenario,
     ...(accountEncryptionMode ? { accountEncryptionMode } : {}),
+    ...(accountRecoverySecret ? { accountRecoverySecret } : {}),
     ...(runtimeOptions ? { runtimeOptions } : {}),
     ...(sessionStartup ? { sessionStartup } : {}),
     ...(nativeConfirmed ? { serverId: 'native-software-fixture', serverHttpBaseUrl: 'https://native-software.invalid' } : {}) });

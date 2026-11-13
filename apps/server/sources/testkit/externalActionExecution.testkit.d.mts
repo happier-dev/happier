@@ -11,6 +11,10 @@ export interface ExternalActionHomeForTestsOptions {
     readonly installationId: string;
     readonly installationPublicKey: Uint8Array;
     readonly authentication?: 'present_user';
+    /** The canonical mode persisted on the primary Account row. */
+    readonly accountEncryptionMode?: 'plain' | 'e2ee';
+    /** Opaque primary-Machine bytes supplied by the canonical CLI fixture. */
+    readonly machineStoredContent?: Readonly<{ metadata: string; dataEncryptionKey: string }>;
     /** A real second installed peer for signed cross-Account Sync socket calls. */
     readonly workspaceSyncTarget?: Readonly<{ accountId: string; machineId: string;
         installationId: string; installationPublicKey: Uint8Array }>;
