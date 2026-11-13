@@ -177,6 +177,7 @@ export function composeConnectedServiceTeamCredentialBindingIntents(params: Read
         purpose: { consumer: params.consumer, purpose: declaration.purpose },
       },
       resourceId: resource.id,
+      teamId: resource.teamId,
       expectedResourceRevision: resource.resourceRevision,
       deliveryMode: selection.deliveryMode,
     });

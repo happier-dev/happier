@@ -1,3 +1,4 @@
+import { PLUGIN_MANIFEST as KILO_MANIFEST } from '../../../../../packages/plugins/kilo/src/manifest';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DEFAULT_PROVIDER_SETTINGS_V1, ProviderContributionV1Schema } from '@happier-dev/protocol';
 import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
@@ -76,10 +77,11 @@ it('replaces static membership with one exact current account observation across
   expect(nativeReads).toBe(2);
   sourceCurrent = true;
   const direct = await projectConnectedAccountCatalog({ ...input, request: { ...request, includeDirectMaterialization: true } });
-  expect(direct.groups.every(group => group.rows[0]?.descriptor.id === 'gpt-5.5'
-    && group.rows[0].confidence === 'account_unverified')).toBe(true);
-  expect(nativeReads).toBe(2);
-  expect(direct.groups.every(group => group.catalogObserved === false)).toBe(true);
+  // Team direct catalog metadata retains the owner's observed Account membership.
+  // The delivery route does not change which models that Account can use.
+  expect(direct.groups.map(group => group.rows)).toEqual(observed.groups.map(group => group.rows));
+  expect(nativeReads).toBe(3);
+  expect(direct.groups.every(group => group.catalogObserved === true)).toBe(true);
   models = [{ id: 'gpt-6.1-terra', name: 'Terra' }];
   const changed = await projectConnectedAccountCatalog(input);
   expect(changed.groups[0]?.rows.map(row => row.descriptor.id)).toEqual(['gpt-6.1-terra']);
@@ -92,7 +94,7 @@ it('replaces static membership with one exact current account observation across
   const empty = await projectConnectedAccountCatalog(input);
   expect(empty.groups).toHaveLength(3);
   expect(empty.groups.every(group => group.rows.length === 0 && group.catalogObserved === true)).toBe(true);
-  expect(nativeReads).toBe(5);
+  expect(nativeReads).toBe(6);
   models = [{ id: 'source-model', name: 'Managed model' }];
   const managedInput = { ...input,
     request: { ...request, sourceCatalog: undefined },
@@ -106,13 +108,13 @@ it('replaces static membership with one exact current account observation across
   expect(managed.groups.flatMap(group => group.rows).map(row => row.ref)).toEqual([
     { agentTargetKey: request.agentTargetKey, providerConnectionId: null, modelId: 'managed/source-model' },
   ]);
-  expect(nativeReads).toBe(6);
+  expect(nativeReads).toBe(7);
   models = [];
   const managedEmpty = await projectConnectedAccountCatalog(managedInput);
   expect(managedEmpty.groups).toHaveLength(1);
   expect(managedEmpty.groups[0]?.rows).toEqual([]);
   expect(await managedEmpty.isCurrent()).toBe(true);
-  expect(nativeReads).toBe(7);
+  expect(nativeReads).toBe(8);
   models = [{ id: 'source-model', name: 'Native namespaced model' }];
   const namespaced = await projectConnectedAccountCatalog({ ...input,
     request: { ...request, sourceCatalog: undefined },
@@ -120,6 +122,15 @@ it('replaces static membership with one exact current account observation across
   });
   expect(namespaced.groups.flatMap(group => group.rows).map(row => ({ ref: row.ref, id: row.descriptor.id }))).toEqual([
     { ref: { agentTargetKey: request.agentTargetKey, providerConnectionId: null, modelId: 'vendor/source-model' }, id: 'source-model' },
+  ]);
+  const kiloPurpose = KILO_MANIFEST.contributes.agents[0]?.connectedAccounts?.find(purpose => purpose.purpose === 'openai-codex-model-request');
+  if (!kiloPurpose) throw new Error('Missing declared Kilo subscription purpose');
+  const kiloTarget = 'agent:happier.agent.kilo/kilo';
+  const kilo = await projectConnectedAccountCatalog({ ...input,
+    request: { ...request, agentTargetKey: kiloTarget, sourceCatalog: undefined }, agentPurpose: kiloPurpose,
+  });
+  expect(kilo.groups.flatMap(group => group.rows).map(row => ({ ref: row.ref, id: row.descriptor.id }))).toEqual([
+    { ref: { agentTargetKey: kiloTarget, providerConnectionId: null, modelId: 'openai/source-model' }, id: 'source-model' },
   ]);
   } finally { await fixture.cleanup(); }
 });

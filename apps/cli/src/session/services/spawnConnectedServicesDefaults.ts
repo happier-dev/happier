@@ -384,7 +384,13 @@ export function mergeSessionTeamCredentialBindingIntents(params: Readonly<{
     (params.explicit ?? []).map((intent) => sessionTeamCredentialSlotKeyV1(intent.slot)),
   );
   return SessionTeamCredentialBindingIntentsV1Schema.parse([
-    ...(params.explicit ?? []),
+    ...(params.explicit ?? []).map(intent => {
+      if (intent.resourceId === null || intent.teamId !== undefined) return intent;
+      const admitted = params.admitted?.find(candidate => candidate.resourceId === intent.resourceId
+        && candidate.resourceId !== null && candidate.deliveryMode === intent.deliveryMode
+        && sessionTeamCredentialSlotKeyV1(candidate.slot) === sessionTeamCredentialSlotKeyV1(intent.slot));
+      return admitted?.resourceId && admitted.teamId ? { ...intent, teamId: admitted.teamId } : intent;
+    }),
     ...params.admitted.filter((intent) => !explicitSlotKeys.has(sessionTeamCredentialSlotKeyV1(intent.slot))),
   ]);
 }

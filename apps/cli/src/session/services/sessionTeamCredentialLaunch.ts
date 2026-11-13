@@ -103,9 +103,10 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
     acceptedProtocols: [...new Set([...registry.providersByContributionKey.values()]
       .flatMap(provider => provider.definition.endpointTemplates.map(endpoint => endpoint.protocol)))],
   }) : [];
-  // Native-only Agents consume admitted Direct purpose material without a Provider model route.
+  // Direct purpose material follows the Agent's native credential preflight.
+  // Broker application support does not turn a Direct selection into a model source.
   const modelSourceResources = new Set(selectedPurposes.flatMap(({ scope, selection }) => (
-    (selection.deliveryMode === 'brokered' || input.applications.length > 0)
+    selection.deliveryMode === 'brokered'
     && relevanceApplications.some(application => (
       scope.serviceRefs.some(service => resolveManagedProviderBrokerPurpose({
         registry, application, service,

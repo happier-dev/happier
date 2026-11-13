@@ -1,3 +1,7 @@
+import { createTeamCredentialDirectMaterialStoredV1, computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams';
+import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn, resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
+import { createHttpTeamCredentialDirectMaterialClient } from '@/daemon/connectedServices/directMaterial/teamCredentialDirectMaterialClient';
 import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
@@ -508,5 +512,69 @@ describe('Session Team launch composition', () => {
     expect(result.options.teamCredentialBindings?.find(entry => entry.slot.kind === 'provider_model'))
       .toEqual(source === 'personal' ? undefined : explicit.teamCredentialBindings?.[0]);
     expect(result.options.modelSelection).toEqual(explicit.modelSelection);
+  });
+});
+
+// Reproduced request shape: explicit purpose intent has no Team id and no
+// provider_model slot. HTTP is the only mocked boundary in this journey.
+describe('Direct Team purpose selection through Agent preflight', () => {
+  it.each([
+    ['copilot', 'happier.scm.forge.github', 'github-account', 'gpt-6-luna'],
+    ['gemini', 'happier.agent.gemini', 'gemini-account', 'gemini-2.5-flash'],
+    ['opencode', 'happier.agent.gemini', 'gemini-account', 'google/gemini-2.5-flash'],
+    ['pi', 'happier.agent.gemini', 'gemini-account', 'google/gemini-2.5-flash'],
+    ['opencode', 'happier.voice.openai', 'openai', 'openai/gpt-4.1-mini'],
+    ['pi', 'happier.voice.openai', 'openai', 'openai/gpt-4.1-mini'],
+    ['qwen', 'happier.voice.openai', 'openai', undefined],
+  ] as const)('keeps %s %s/%s on direct purpose preflight (%s)', async (agentId, pluginId, localId, modelId) => {
+    const contributions = readCurrentContributionRegistry();
+    const declarations = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({ agentId, contributions });
+    const scope = declarations?.authorizedPurposes.find(scope => scope.serviceRefs.some(ref => ref.pluginId === pluginId && ref.localId === localId));
+    if (!scope) throw new Error('Fixture service must be declared by the real Agent: ' + agentId + '/' + pluginId + '/' + localId);
+    const service = { pluginId, localId };
+    const directSelection = { source: 'team_resource' as const, resourceId: 'direct-resource', deliveryMode: 'direct' as const,
+      disclosedMember: { service, accountId: 'source-account' } };
+    const directResource = TeamCredentialResourceCatalogEntryV1Schema.parse({ ...resource, id: 'direct-resource',
+      mayBroker: false, mayReceiveDirect: true, directMaterialState: 'current', providerModels: [],
+      connectedServiceSelections: [directSelection], sourcePresentation: { kind: 'connected_service', service } });
+    const agentTargetKey = buildBackendTargetKeyV2({ kind: 'agent', identity: scope.purpose.consumer });
+    const launch = await normalizeSessionTeamCredentialLaunch({ agentId, agentTargetKey, contributions,
+      applications: applications.map(application => ({ ...application, agentTargetKey })),
+      options: { directory: '/tmp/direct-team-preflight',
+        ...(modelId ? { modelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey, providerConnectionId: null, modelId } } } : {}),
+        connectedServices: { v: 2, bindingsByServiceId: { [pluginId + '/' + localId]: directSelection } },
+        teamCredentialBindings: [{ v: 1, slot: { kind: 'connected_service_purpose', purpose: scope.purpose },
+          resourceId: directResource.id, expectedResourceRevision: directResource.resourceRevision, deliveryMode: 'direct' }] },
+      readCatalog: async () => [directResource] });
+    expect(launch.teamModelRow).toBeNull();
+    expect(launch.options.teamCredentialBindings).toEqual([expect.objectContaining({ teamId: resource.teamId,
+      slot: { kind: 'connected_service_purpose', purpose: scope.purpose }, deliveryMode: 'direct' })]);
+    const snapshot = resolveQualifiedPurposeBindingSnapshotForAgentSpawn({ agentId, contributions,
+      bindings: ConnectedServiceBindingsV2IngressSchema.parse(launch.options.connectedServices), teamCredentialBindings: launch.options.teamCredentialBindings });
+    const origin = snapshot?.directMaterialOrigins?.find(origin => origin.purpose.purpose === scope.purpose.purpose);
+    expect(origin).toMatchObject({ teamId: resource.teamId, resourceId: directResource.id });
+    if (!origin) throw new Error('Direct origin required');
+    const payload = { v: 1 as const, domain: 'happier.team-credential-direct-material' as const,
+      homeServerIdentityId: 'home', teamId: resource.teamId, resourceId: directResource.id,
+      resourceRevision: resource.resourceRevision, recipientAccountId: 'recipient', sourceVersion: 'version',
+      sourceMember: { kind: 'connected_account' as const, service, connectedAccountId: 'source-account' },
+      material: { kind: 'qualified_connected_account' as const, credential: { v: 1 as const, values: { token: 'synthetic-key' } },
+        configuration: null, authenticationModeId: 'api-key' } };
+    const { material: _material, sourceMember: _member, v: _v, domain: _domain, ...expected } = payload;
+    const http = vi.spyOn(axios, 'post').mockResolvedValueOnce({ status: 200, data: { status: 'ready', recipientMode: 'plain',
+      stored: createTeamCredentialDirectMaterialStoredV1({ payload, recipientMode: 'plain' }),
+      expected: { ...expected, sourceMemberKey: computeTeamCredentialSourceMemberKeyV1(payload.sourceMember) } } })
+      .mockResolvedValueOnce({ status: 200, data: { status: 'unavailable', reason: 'access_removed' } });
+    try {
+      const client = createHttpTeamCredentialDirectMaterialClient({ token: 'synthetic-token', serverUrl: 'https://home.test',
+        readRecipientEncryptionMaterial: async () => ({ mode: 'plain' }) });
+      const request = { teamId: origin.teamId, resourceId: origin.resourceId,
+        consumer: { kind: 'session' as const, sessionId: 'admitted-session' },
+        slot: { kind: 'connected_service_purpose' as const, purpose: origin.purpose }, disclosedMember: origin.disclosedMember };
+      expect(await client.open(request)).toMatchObject({ ok: true, payload });
+      // Withdrawal is enforced on the next open; no cached admission survives it.
+      expect(await client.open(request)).toEqual({ ok: false, reason: 'access_removed' });
+      expect(http.mock.calls[0]?.[0]).toContain('/teams/' + resource.teamId + '/');
+    } finally { http.mockRestore(); }
   });
 });

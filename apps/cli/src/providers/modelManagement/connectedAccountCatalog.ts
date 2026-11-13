@@ -129,7 +129,7 @@ export async function readConnectedAccountModelCatalog(input: Omit<ConnectedAcco
       if (!input.request.application && !input.provider && !isCpxBrokerApplication(input.registry, application)) continue;
       selections.add(selection);
       if (!observations.has(selection)) {
-        const observation = input.observeModels && !input.request.includeDirectMaterialization
+        const observation = input.observeModels
           ? await input.observeModels({ account: selection.resolved.account, machineId: input.request.machineId, source,
               currentOnly: input.request.refreshPolicy === 'current_only',
               refresh: input.request.forceRefresh === true, signal }) : null;

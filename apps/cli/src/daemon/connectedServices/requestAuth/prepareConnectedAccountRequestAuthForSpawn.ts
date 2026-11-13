@@ -81,6 +81,7 @@ export function resolveQualifiedPurposeBindingSnapshotForAgentSpawn(input: Reado
     bindings: ConnectedServiceBindingsV2;
     contributions: AgentSpawnPurposeContributions;
     catalogEntry?: AgentSpawnPurposeCatalogEntry | null;
+    teamCredentialBindings?: import('@happier-dev/protocol/teams').SessionTeamCredentialBindingIntentListV1;
 }>): AgentSpawnQualifiedPurposeBindingSnapshot | null {
     const declarations = resolveAgentSpawnPurposeDeclarations(input);
     if (!declarations) return null;
@@ -91,6 +92,12 @@ export function resolveQualifiedPurposeBindingSnapshotForAgentSpawn(input: Reado
     });
     return {
         ...snapshot,
+        ...(snapshot.directMaterialOrigins ? { directMaterialOrigins: snapshot.directMaterialOrigins.map(origin => {
+            const binding = input.teamCredentialBindings?.find(binding => binding.slot.kind === 'connected_service_purpose'
+                && qualifiedPurposeKey(binding.slot.purpose) === qualifiedPurposeKey(origin.purpose)
+                && binding.resourceId === origin.resourceId);
+            return binding?.resourceId && binding.teamId ? { ...origin, teamId: binding.teamId } : origin;
+        }) } : {}),
         authorizedPurposes: declarations.snapshot.authorizedPurposes,
         fileMaterializationPurposes: declarations.snapshot.fileMaterializationPurposes,
         ...(declarations.snapshot.requestAuthUses

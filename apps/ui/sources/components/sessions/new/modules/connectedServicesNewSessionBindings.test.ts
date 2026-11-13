@@ -491,6 +491,7 @@ describe('composeConnectedServiceTeamCredentialBindingIntents', () => {
             v: 1,
             slot: { kind: 'connected_service_purpose', purpose: { consumer, purpose: 'primary' } },
             resourceId: 'resource-acme',
+            teamId: 'team-acme',
             expectedResourceRevision: 5,
             deliveryMode: 'direct',
         }]);

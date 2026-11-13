@@ -301,6 +301,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                     resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
                         agentId: input.catalogAgentId!,
                         bindings,
+                        teamCredentialBindings: options.teamCredentialBindings,
                         contributions: input.pluginRuntimeRegistry.contributes,
                         catalogEntry,
                     }),
@@ -493,6 +494,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
         ? resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
             agentId: input.catalogAgentId,
             bindings: effectiveBindingsV1,
+            teamCredentialBindings: options.teamCredentialBindings,
             contributions: input.pluginRuntimeRegistry.contributes,
             catalogEntry,
         })
