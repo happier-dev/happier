@@ -7460,6 +7460,7 @@ localTailscale: {
     botFaceStyle: "ボット",
     botFaceStyleDescription: "ボットの顔のデフォルトスタイルを選択",
     botMotion: "Botの動き",
+    botMotionDescription: "Botの動き方を選びます。システムの「視差効果を減らす」は常に適用されます。",
     botMotionDescriptions: {
       lively: "Botは待機中も動き、アクティビティに反応します。システムの「視差効果を減らす」が常に優先されます。",
       reactions: "Botは待機中は動かず、アクティビティにのみ反応します。システムの「視差効果を減らす」が常に優先されます。",

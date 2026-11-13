@@ -154,7 +154,7 @@ describe('TeamOverviewScreen shared-credentials destination', () => {
         await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('teams.overview.summary.credentialsNone')));
 
         const { refreshTeamCredentialResourceCatalog } = await import('@/sync/engine/teams/teamsDirectoryEngine');
-        harness.answer(serverId, TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, { throwError: new Error('offline') });
+        harness.answer(serverId, TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, { dispatchThenFail: true });
         await refreshTeamCredentialResourceCatalog({ serverId, accountId: 'account-ada' }, { serverId, teamId: 'team-1' });
         await vi.waitFor(() => expect(screen.getTextContent()).not.toContain(t('teams.overview.summary.credentialsNone')));
     });

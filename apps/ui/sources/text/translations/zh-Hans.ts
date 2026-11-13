@@ -6881,6 +6881,7 @@ export const zhHans: TranslationStructure = {
     botFaceStyle: "机器人",
     botFaceStyleDescription: "选择机器人的默认面孔风格",
     botMotion: "Bot 动效",
+    botMotionDescription: "选择 Bot 的动效。系统的“减弱动态效果”始终生效。",
     botMotionDescriptions: {
       lively: "Bot 在空闲时也会移动，并对活动作出反应。始终遵循系统的减弱动态效果设置。",
       reactions: "Bot 仅对活动作出反应，空闲时不移动。始终遵循系统的减弱动态效果设置。",

@@ -391,7 +391,7 @@ describe('Work and Coach widget bodies', () => {
     const refs = ['/work/customer/apps/happier', '/work/personal/apps/happier'].map((rootPath, index) =>
       WorkspaceRefV1Schema.parse({ id: `checkout-${index}`, projectKey: keys[index], serverId: scope.serverId,
         machineId: 'machine-a', rootPath, createdAtMs: 0 }));
-    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null });
+    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) });
     const rows = [...refs.map(ref => {
       const key = { kind: 'workspace-ref' as const, serverId: scope.serverId, id: ref.id };
       return { key, revision: 1, content: cipher.seal({ key, value: ref }) };
@@ -427,7 +427,7 @@ describe('Work and Coach widget bodies', () => {
     const namedKey = 'a'.repeat(64);
     const unnamedKeys = ['b'.repeat(64), 'c'.repeat(64)];
     const opaqueLabel = 'd'.repeat(64);
-    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null });
+    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) });
     const rows = [namedKey, ...unnamedKeys].map(projectKey => {
       const key = { kind: 'project-organization' as const, serverId: scope.serverId, projectKey };
       return { key, revision: 1, content: cipher.seal({ key, value: { label: projectKey === namedKey ? 'happier' : opaqueLabel } }) };

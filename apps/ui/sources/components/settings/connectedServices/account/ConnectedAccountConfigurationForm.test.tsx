@@ -144,7 +144,7 @@ describe('ConnectedAccountConfigurationForm', () => {
         expect(onSubmit).toHaveBeenCalledWith({ values: { accountId: 'acct', clientId: 'c_mine', port: 443 }, secretValues: {} });
         await invalid.update(<ConnectedAccountConfigurationForm embedded title="Sign in"
             fields={withAdvanced.map(field => {
-                const presentation = { ...field.presentation };
+                const presentation: NonNullable<typeof field.presentation> = { ...field.presentation };
                 delete presentation.advanced;
                 return { ...field, required: field.id === 'clientId', presentation };
             })} values={{}} configuredSecretFieldIds={[]} saving={false} onSubmit={onSubmit} />);

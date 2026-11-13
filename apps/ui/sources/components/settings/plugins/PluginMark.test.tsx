@@ -33,7 +33,7 @@ function render(element: React.ReactElement): ReactTestRenderer {
     return tree;
 }
 
-const images = (tree: ReactTestRenderer) => tree.root.findAll((node) => typeof node.type === 'string' && node.type === 'Image');
+const images = (tree: ReactTestRenderer) => tree.root.findAll((node) => { const type: unknown = node.type; return type === 'Image'; });
 const glyphs = (tree: ReactTestRenderer) => tree.root.findAll((node) => node.props?.name === 'puzzle-piece');
 const letters = (tree: ReactTestRenderer, letter: string) => tree.root.findAll((node) => (
     typeof node.type === 'string' && node.children.length === 1 && node.children[0] === letter

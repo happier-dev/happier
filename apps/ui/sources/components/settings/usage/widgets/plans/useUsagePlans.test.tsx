@@ -53,7 +53,8 @@ it('does no Plans render work for quota-cache publications when its displayed sl
   })) });
   home = await serveAccountHomes({ homes: [{ key: 'plans', serverUrl: 'https://plans-local-subscription.test', accountId: profile.id, profile }],
     route: request => {
-      if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ capabilities: { connectedServices: { qualifiedAccounts: { protocolVersion: 4 } } } }));
+      if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ capabilities: { connectedServices: {
+        credentialDelete: { revisionGuard: false }, qualifiedAccounts: { protocolVersion: 4 } } } }));
       if (request.path === '/v4/connect/qualified/quotas') return Response.json({ error: 'connect_quotas_not_found' }, { status: 404 });
       return undefined;
     } });

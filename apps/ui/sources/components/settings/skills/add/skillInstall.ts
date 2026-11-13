@@ -170,7 +170,8 @@ export type SkillCreationAcknowledgment = Extract<SkillInstallAcknowledgment, { 
 
 /** Write retains an acknowledged Artifact when its later reach write failed. */
 export async function createSkill(execute: MountedAuthoringActionExecute,
-  input: SkillLibraryActionInputByIdV1['skills.create'],
+  // Callers hold the canonical readonly Reach change; the Action admits it unchanged.
+  input: Omit<SkillLibraryActionInputByIdV1['skills.create'], 'where'> & Readonly<{ where?: ReachRulesChangeV1 }>,
 ): Promise<SkillCreationAcknowledgment> {
   const result = await execute('skills.create', input);
   return acknowledgeSkillActionResult('skills.create', result);

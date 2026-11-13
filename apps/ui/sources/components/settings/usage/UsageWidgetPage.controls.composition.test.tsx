@@ -583,7 +583,7 @@ it('binds unread Sessions to one Read now fact and page command, cancels the run
     await rerender();
     expect(historyFact).toMatchObject({ text: t('usage.board.page.historyReading', { done: formatExactCount(120), total: formatExactCount(1240) }), label: t('common.cancel') });
     expect(historyCommand().map(command => command.title)).toEqual([t('usage.board.page.historyCancelCommand')]);
-    await act(async () => { historyFact!.onPress(); });
+    await act(async () => { historyFact!.onPress!(); });
     await flushHookEffects({ cycles: 4 });
     expect(calls).toEqual(['read', 'cancel']);
 
@@ -609,7 +609,7 @@ it('binds unread Sessions to one Read now fact and page command, cancels the run
     historyModel = model('partial', { notRead: 0, completed: 33, failed: 10 });
     await rerender();
     expect(historyFact).toMatchObject({ label: t('common.retry'), failed: true, onPress: expect.any(Function) });
-    await act(async () => { historyFact!.onPress(); });
+    await act(async () => { historyFact!.onPress!(); });
     await flushHookEffects({ cycles: 4 });
     await invoke(historyCommand()[0]!.id);
     expect(calls).toEqual(['read', 'cancel', 'read', 'read', 'read']);
@@ -626,7 +626,7 @@ it('binds unread Sessions to one Read now fact and page command, cancels the run
     expect(historyFact).toMatchObject({ label: t('common.retry'), failed: true, onPress: expect.any(Function) });
     expect(historyCommand().map(command => command.title)).toEqual([t('usage.board.page.historyReadCommand')]);
     const beforeRetry = calls.length;
-    await act(async () => { historyFact!.onPress(); });
+    await act(async () => { historyFact!.onPress!(); });
     await flushHookEffects({ cycles: 4 });
     await invoke(historyCommand()[0]!.id);
     expect(calls.slice(beforeRetry)).toEqual(['read', 'read']);

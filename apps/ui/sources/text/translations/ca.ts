@@ -6655,6 +6655,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         botFaceStyle: "Bots",
         botFaceStyleDescription: "Tria l'estil de cara predeterminat dels bots",
         botMotion: "Moviment dels bots",
+        botMotionDescription: "Tria com es mouen els bots. La reducció de moviment del sistema sempre s'aplica.",
         botMotionDescriptions: {
           lively: "Els bots es mouen en repòs i reaccionen a l’activitat. Sempre es respecta la reducció de moviment del sistema.",
           reactions: "Els bots reaccionen a l’activitat sense moure’s en repòs. Sempre es respecta la reducció de moviment del sistema.",

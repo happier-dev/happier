@@ -172,7 +172,7 @@ async function renderEditor(backendId: string | null) {
         status: 'ready', revision, record: { v: 1, definitions: shared.settingsState.value.backends },
     }, true);
     const { AcpBackendEditorScreen } = await import('./AcpBackendEditorScreen');
-    return renderSettingsView(React.createElement(AcpBackendEditorScreen, { backendId }), { wrapper: ModalProvider });
+    return renderSettingsView(React.createElement(AcpBackendEditorScreen, { backendId }), { wrapper: ({ children }) => React.createElement(ModalProvider, null, children) });
 }
 
 const existingKiro = {

@@ -16,8 +16,8 @@ installDisconnectedServerSocketBoundary();
 it('shows selected pool limits with their oldest reading time through the real quota hook', async () => {
     const fetchedAt = Date.now() - 120_000;
     const snapshot = { ...quotaTestSnapshot, fetchedAt, meters: [
-        { meterId: 'session', label: 'Session', remainingPct: 0, status: 'ok' as const, unit: 'requests', used: 100, limit: 100, utilizationPct: 100, resetsAt: Date.now() + 600_000, details: {} },
-        { meterId: 'weekly', label: 'Weekly', remainingPct: 75, status: 'ok' as const, unit: 'requests', used: 25, limit: 100, utilizationPct: 25, resetsAt: Date.now() + 600_000, details: {} },
+        { meterId: 'session', label: 'Session', remainingPct: 0, status: 'ok' as const, unit: 'requests' as const, used: 100, limit: 100, utilizationPct: 100, resetsAt: Date.now() + 600_000, details: {} },
+        { meterId: 'weekly', label: 'Weekly', remainingPct: 75, status: 'ok' as const, unit: 'requests' as const, used: 25, limit: 100, utilizationPct: 25, resetsAt: Date.now() + 600_000, details: {} },
     ] };
     const boundary = await createQualifiedQuotaTestHarness({ snapshot });
     const previousSettings = storage.getState().settings;

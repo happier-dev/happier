@@ -7366,6 +7366,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     botFaceStyle: "Bot",
     botFaceStyleDescription: "Scegli lo stile predefinito del volto dei bot",
     botMotion: "Movimento dei bot",
+    botMotionDescription: "Scegli come si muovono i bot. Riduci movimento del sistema si applica sempre.",
     botMotionDescriptions: {
       lively: "I bot si muovono a riposo e reagiscono all’attività. La riduzione del movimento del sistema ha sempre la precedenza.",
       reactions: "I bot reagiscono all’attività senza muoversi a riposo. La riduzione del movimento del sistema ha sempre la precedenza.",

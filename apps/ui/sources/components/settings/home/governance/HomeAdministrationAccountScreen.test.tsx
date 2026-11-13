@@ -83,7 +83,7 @@ installSettingsViewCommonModuleMocks({
             },
             prompt: async (title: string, body?: string, options?: { defaultValue?: string }) => {
                 modalState.prompts.push({ title, body, defaultValue: options?.defaultValue });
-                return modalState.promptResults.length ? modalState.promptResults.shift() : modalState.promptResult;
+                return modalState.promptResults.length ? modalState.promptResults.shift() ?? null : modalState.promptResult;
             },
         },
     }).module,

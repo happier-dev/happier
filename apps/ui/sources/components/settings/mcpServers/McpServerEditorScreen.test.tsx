@@ -1734,7 +1734,7 @@ describe('McpServerEditorScreen', () => {
               return receipt;
             });
           },
-          { prepare: execute.prepare },
+          { prepare: execute.prepare, confirmed: execute.confirmed },
         );
       });
     try {

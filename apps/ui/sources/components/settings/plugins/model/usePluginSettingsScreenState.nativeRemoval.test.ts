@@ -293,7 +293,7 @@ async function renderRemovalOwner(
                 const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
                 actionRequests.push({ actionId, envelope });
                 await options.beforeActionResponse?.(init?.signal);
-                const installError = actionId === 'plugins.install' && envelope.target.kind === 'machine'
+                const installError = actionId === 'plugins.install' && envelope.target?.kind === 'machine'
                     ? options.installErrorsByMachine?.[envelope.target.machineId] : undefined;
                 if (installError) return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId,
                     requestId: envelope.requestId, execution: { ok: false, errorCode: installError, error: installError } }));
@@ -384,7 +384,7 @@ async function renderRemovalOwner(
         authority: 'present_user' | 'account_automation' = 'present_user') => {
         const result = await nativeExecutor.execute('approval.request.decide', { artifactId, decision }, {
             surface: authority === 'present_user' ? 'ui' : 'agent', authority,
-            actionCaller: authority === 'present_user' ? { kind: 'host' } : { kind: 'session', sessionId: 'requesting-agent' },
+            actionCaller: authority === 'present_user' ? { kind: 'host' } : { kind: 'session', sessionId: 'requesting-agent', starterDepth: 0, turnDepth: 0 },
             serverId: scope.serverId, serverIdentityId, runtimeAccountId: 'account-owner',
         });
         const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');

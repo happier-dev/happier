@@ -73,7 +73,7 @@ describe('TeamCredentialCatalogSettingsGroup', () => {
     it('shows one applicable least-privilege resource and opens it by canonical identity', async () => {
         const onOpen = vi.fn();
         const provider = {
-            id: 'resource-provider', teamId: 'team-1', displayName: 'Acme Provider', resourceRevision: 7,
+            id: 'resource-provider', teamId: 'team-1', displayName: 'Acme Provider', sourceOwnerDisplayName: null, resourceRevision: 7,
             readiness: { kind: 'available' as const }, recoveryAction: null, deliveryMode: 'brokered' as const,
             mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered' as const,
             sessionUsePolicy: 'personal_allowed' as const, providerModels: [], connectedServiceSelections: [],
@@ -117,7 +117,7 @@ describe('TeamCredentialCatalogSettingsGroup', () => {
         const onOpen = vi.fn();
         const onRetry = vi.fn();
         const resource = {
-            id: 'resource-provider', teamId: 'team-1', displayName: 'Acme Provider', resourceRevision: 7,
+            id: 'resource-provider', teamId: 'team-1', displayName: 'Acme Provider', sourceOwnerDisplayName: null, resourceRevision: 7,
             readiness: { kind: 'available' as const }, recoveryAction: 'retry' as const, deliveryMode: 'direct' as const,
             mayBroker: false, mayReceiveDirect: true, directMaterialState: 'stale' as const,
             sessionUsePolicy: 'personal_allowed' as const, providerModels: [], connectedServiceSelections: [],
@@ -189,7 +189,7 @@ describe('TeamCredentialCatalogSettingsGroup', () => {
     it('keeps an exact current repair row reachable while another catalog slice is stale', async () => {
         const onOpen = vi.fn();
         const resource = {
-            id: 'resource-provider', teamId: 'team-1', displayName: 'Acme Provider', resourceRevision: 7,
+            id: 'resource-provider', teamId: 'team-1', displayName: 'Acme Provider', sourceOwnerDisplayName: null, resourceRevision: 7,
             readiness: { kind: 'source_unavailable' as const }, recoveryAction: 'retry' as const,
             deliveryMode: 'direct' as const, mayBroker: false, mayReceiveDirect: true,
             directMaterialState: 'stale' as const, sessionUsePolicy: 'personal_allowed' as const, providerModels: [], connectedServiceSelections: [],

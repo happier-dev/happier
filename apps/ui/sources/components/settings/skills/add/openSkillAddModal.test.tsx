@@ -74,7 +74,7 @@ describe('Skills Add modal through the real Account and registry owners', () => 
             return Object.assign((...invocation: Parameters<typeof execute>) => {
                 if (invocation[0].startsWith('registries.items.')) calls.push({ action: invocation[0], input: invocation[1] });
                 return execute(...invocation);
-            }, { prepare: execute.prepare });
+            }, { prepare: execute.prepare, confirmed: execute.confirmed });
         });
         try {
             const screen = await renderScreen(<SkillAddModal onClose={() => {}} params={{

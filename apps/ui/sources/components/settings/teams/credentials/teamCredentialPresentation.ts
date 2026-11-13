@@ -26,7 +26,7 @@ import { deliveryModeLabel } from '@/sync/domains/teams/teamCredentialDeliveryPr
 import { resolveUsageQueryPeriod, type UsageRelativePeriod } from '@happier-dev/protocol/inputs/usageQuery';
 export { deliveryModeLabel } from '@/sync/domains/teams/teamCredentialDeliveryPresentation';
 import { teamCredentialReconnectPresentation } from './sourceHealthPresentation';
-import { teamCredentialRecoveryPresentation, teamCredentialStatusPresentation } from './credentialStatusPresentation';
+import { teamCredentialRecoveryPresentation, teamCredentialStatusPresentation, type TeamCredentialRecoveryPresentation } from './credentialStatusPresentation';
 import { teamCredentialBrokerMachineLabel } from './teamCredentialBrokerMachineSelection';
 export { resourceStateLabel, type TeamCredentialResourceState } from './readinessPresentation';
 

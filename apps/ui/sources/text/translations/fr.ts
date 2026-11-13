@@ -6971,6 +6971,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     botFaceStyle: "Bots",
     botFaceStyleDescription: "Choisis le style de visage par défaut des bots",
     botMotion: "Mouvement des bots",
+    botMotionDescription: "Choisissez comment les bots bougent. La réduction des animations du système s’applique toujours.",
     botMotionDescriptions: {
       lively: "Les bots bougent au repos et réagissent à l’activité. La réduction des animations du système reste prioritaire.",
       reactions: "Les bots réagissent à l’activité sans bouger au repos. La réduction des animations du système reste prioritaire.",

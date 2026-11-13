@@ -95,7 +95,7 @@ it('runs a finite update check only on presented intent, rejects retained hidden
     return Object.assign((...invocation: Parameters<typeof execute>) => {
       if (invocation[0] === 'registries.updates.check') checks++;
       return execute(...invocation);
-    }, { prepare: execute.prepare });
+    }, { prepare: execute.prepare, confirmed: execute.confirmed });
   });
   const { useSkillsLibrary } = await import('@/sync/domains/skills/useSkillsLibrary');
   const { useMountedActionExecution } = await import('@/components/approvals/useMountedActionExecution');

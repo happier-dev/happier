@@ -7162,6 +7162,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         botFaceStyle: "Bots",
         botFaceStyleDescription: "Wähl den Standardstil für Bot-Gesichter",
         botMotion: "Bot-Bewegung",
+        botMotionDescription: "Wähle, wie sich Bots bewegen. „Bewegung reduzieren“ des Systems gilt immer.",
         botMotionDescriptions: {
           lively: "Bots bewegen sich im Leerlauf und reagieren auf Aktivitäten. Die Systemeinstellung für reduzierte Bewegung gilt immer.",
           reactions: "Bots reagieren auf Aktivitäten, ohne Leerlaufbewegung. Die Systemeinstellung für reduzierte Bewegung gilt immer.",

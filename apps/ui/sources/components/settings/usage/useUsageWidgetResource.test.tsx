@@ -156,7 +156,8 @@ describe('Usage widget shared Resource selection', () => {
         const mounted: { reader: CurrentUiContextReader | null; model?: UsageWidgetBodyModel } = { reader: null };
         function Page() {
             const page = useUsageWidgetPageContext({ authority,
-                initialFilters: { queryOverrides: readUsageWidgetQueryOverrides(query) } });
+                initialFilters: { period: '7days', metric: 'tokens', costMode: 'auto', focus: null,
+                    queryOverrides: readUsageWidgetQueryOverrides(query) } });
             const selectedQuery = React.useMemo(() => normalizeUsageQuery({ ...query, agents: [...page.scope.agents] }), [page.scope.agents]);
             const selectedPlan = React.useMemo(() => plan(selectedQuery), [selectedQuery]);
             const resource = useUsageWidgetResource({ credentials, enabled: true, plan: selectedPlan,
@@ -348,12 +349,13 @@ describe('Usage widget shared Resource selection', () => {
         let model: UsageWidgetBodyModel | undefined;
         function Inventory() { inventory = useUsageWidgetBatchInventorySlice(); return null; }
         function Body(props: Readonly<{ agents: readonly string[] }>) {
-            model = useUsageWidgetModel({ agents: [...props.agents], period: query.period }, 'usage_breakdowns').model;
+            model = useUsageWidgetModel({ agents: [...props.agents], period: projectNativeJsonValueForTransport(query.period) }, 'usage_breakdowns').model;
             return null;
         }
         function Page(props: Readonly<{ showBody: boolean }>) {
             const page = useUsageWidgetPageContext({ authority,
-                initialFilters: { queryOverrides: readUsageWidgetQueryOverrides(query) } });
+                initialFilters: { period: '7days', metric: 'tokens', costMode: 'auto', focus: null,
+                    queryOverrides: readUsageWidgetQueryOverrides(query) } });
             const published = usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: [], filterCommands: [{
                 field: 'agents', id: 'codex', title: 'Same-key scope selection',
                 invoke: context => page.setScope({ agents: ['codex'] }, context),
@@ -446,7 +448,8 @@ describe('Usage widget shared Resource selection', () => {
         }
         function Page() {
             const page = useUsageWidgetPageContext({ authority,
-                initialFilters: { queryOverrides: readUsageWidgetQueryOverrides(query) } });
+                initialFilters: { period: '7days', metric: 'tokens', costMode: 'auto', focus: null,
+                    queryOverrides: readUsageWidgetQueryOverrides(query) } });
             const selected = page.scope.agents.length > 0;
             const published = usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: [], retryRead: context => model?.refresh(context), filterCommands: selected ? [] : [{
                 field: 'agents', id: 'codex', title: 'Agent origin selection', invoke: (callerContext?: ActionExecutorContext) => {
@@ -956,7 +959,7 @@ describe('Usage widget shared Resource selection', () => {
                 changedNewModels: views.size - builtViews });
             await screen.update(<Page visible style="crew" />);
             await expect.poll(() => screen.findAllByType(UsageBreakdownsWidget)
-                .map(body => body.props.presentation?.style), 'a real presentation change still reaches every fact body')
+                .map(body => body.props.presentation?.style), { message: 'a real presentation change still reaches every fact body' })
                 .toEqual(bodyIds.map(() => 'crew'));
             await screen.update(<Page visible style="crew" colourBy="agent" />);
             await expect.poll(() => screen.findAllByType(UsageBreakdownsWidget).map(body => body.props.presentation?.colourBy))

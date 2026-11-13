@@ -116,8 +116,8 @@ it('offers the same connection test from Sign-in and overflow, including unsuppo
     const row = screen.root.findAll(node => node.props.testID === 'qualified-account-detail:test-connection' && node.props.subtitle)[0];
     expect(row?.props.subtitle).toBe('This service does not offer a connection test.');
     const unsupportedMenu = screen.root.findByType(DropdownMenu).props.items.find((item: { id: string }) => item.id === 'test-connection');
-    expect(unsupportedMenu.disabled).toBe(true);
-    expect(unsupportedMenu.subtitle).toBe('This service does not offer a connection test.');
+    expect(unsupportedMenu?.disabled).toBe(true);
+    expect(unsupportedMenu?.subtitle).toBe('This service does not offer a connection test.');
 });
 
 it('leaves usage refresh to its Usage section on a wide page (lab s2svc:account)', async () => {

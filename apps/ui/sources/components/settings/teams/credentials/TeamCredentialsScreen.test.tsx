@@ -146,7 +146,7 @@ describe('TeamCredentialsScreen', () => {
         await waitForTestId(screen, 'team-credentials-empty');
 
         const { refreshTeamCredentialResourceCatalog } = await import('@/sync/engine/teams/teamsDirectoryEngine');
-        harness.answer(serverId, TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, { throwError: new Error('offline') });
+        harness.answer(serverId, TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, { dispatchThenFail: true });
         await refreshTeamCredentialResourceCatalog({ serverId, accountId: 'account-ada' }, { serverId, teamId: 'team-1' });
         await waitForTestId(screen, 'team-credentials-error');
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credentials-empty');

@@ -154,7 +154,7 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
     const items: SetupBlockItem[] = visibleOffers.map((entry) => ({
         id: entry.serviceKey,
         renderTile: ({ open }) => {
-            const start = (event?: GestureResponderEvent) => {
+            const start = (event?: unknown) => {
                 if (phone && !props.renderServiceFlow) {
                     openSheet({ kind: 'service', serviceKey: entry.serviceKey }, resolvePressTriggerAnchor(event));
                     return;

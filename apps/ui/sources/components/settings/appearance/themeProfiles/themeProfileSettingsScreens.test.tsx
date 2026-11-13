@@ -407,7 +407,7 @@ describe('Theme profile editor', () => {
         expect(getThemeProfiles().profiles.map(profile => profile.id)).toEqual(['ocean', 'arrived-during-transition']);
         expect(storage.getState().localSettings).toMatchObject({ themePreference: 'dark', uiFontScale: 1.2 });
         expect(shared.setTheme).toHaveBeenLastCalledWith('dark');
-        const darkUpdate = shared.updateTheme.mock.calls.findLast(([name]) => name === 'dark')?.[1];
+        const darkUpdate = [...shared.updateTheme.mock.calls].reverse().find(([name]) => name === 'dark')?.[1];
         expect(darkUpdate?.(darkTheme).colors.background.canvas).toBe('#654321');
         // Web roots subscribe to the resolved theme; only native uses this imperative adapter.
         expect(shared.setRootViewBackgroundColor).not.toHaveBeenCalled();

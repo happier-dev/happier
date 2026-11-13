@@ -72,7 +72,7 @@ export function usePluginInstallReviewSet(params: Readonly<{
                         actionCaller: { kind: 'host' }, serverId: target.serverIdentityId, signal: requestSignal,
                         executionRunTargetMachineId: target.machineId,
                         externalActionTarget: { kind: 'machine', machineId: target.machineId } });
-                } catch (error) { result = projectUnexpectedActionFailureV1(error); }
+                } catch { result = projectUnexpectedActionFailureV1(null); }
                 const pending = result.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(result.result) : null;
                 return pending?.success && pending.data.actionId === 'plugins.install'
                     // The review reads its Artifact on this device's profile for that Home (the portable

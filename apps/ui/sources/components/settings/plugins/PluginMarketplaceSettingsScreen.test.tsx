@@ -15,7 +15,7 @@ import {
     loadDaemonMergedProjectionCacheEntry,
 } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { readNewSessionDraftFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
-import { flattenTestStyle, renderHook, standardCleanup } from '@/dev/testkit';
+import { createDeferred, flattenTestStyle, renderHook, standardCleanup } from '@/dev/testkit';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import {
     createMachineAdministrationTargetSelectionMock,
@@ -217,6 +217,7 @@ const modalAlertAsyncMock = vi.hoisted(() => vi.fn(async (
     _title: string,
     _message?: string,
     buttons?: readonly { text: string; onPress?: () => void }[],
+    _options?: unknown,
 ) => {
     buttons?.[0]?.onPress?.();
 }));
@@ -478,17 +479,6 @@ function createMachineCapabilitiesLoadingState(installedPlugins: readonly Instal
 
 function flushAsync(): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, 0));
-}
-
-function createDeferred(): Readonly<{
-    promise: Promise<void>;
-    resolve: () => void;
-}> {
-    let resolve!: () => void;
-    const promise = new Promise<void>((settle) => {
-        resolve = settle;
-    });
-    return { promise, resolve };
 }
 
 /**
@@ -1827,7 +1817,7 @@ describe('PluginSettingsHomeScreen', () => {
     });
 
     it('keeps create pending until the daemon settles and preserves the draft after failure', async () => {
-        const deferred = createDeferred();
+        const deferred = createDeferred<void>();
         useMachineCapabilitiesCacheMock.mockReturnValue({
             state: createMachineCapabilitiesState([]),
             refresh: vi.fn(),
@@ -1871,7 +1861,7 @@ describe('PluginSettingsHomeScreen', () => {
     });
 
     it('does not settle create successfully after the selected daemon authority changes', async () => {
-        const deferred = createDeferred();
+        const deferred = createDeferred<void>();
         useMachineCapabilitiesCacheMock.mockReturnValue({
             state: createMachineCapabilitiesState([]),
             refresh: vi.fn(),
@@ -2677,7 +2667,7 @@ describe('PluginSettingsHomeScreen', () => {
         ['forgetTrust', 'plugins.trust.forget', 'approval_canceled'],
     ] as const)('keeps an admitted %s Action decline quiet', async (method, actionId, errorCode) => {
         const approvalId = 'daemon-uninstall-review';
-        const daemonReplyReady = createDeferred();
+        const daemonReplyReady = createDeferred<void>();
         let daemonReplyError: unknown;
         if (method === 'uninstall') {
             // A Machine-placed Action returns its daemon-owned approval, not a
@@ -3575,8 +3565,8 @@ describe('PluginSettingsHomeScreen', () => {
     });
 
     it('fences a late destructive lifecycle response from the previously selected machine authority', async () => {
-        const machineOneAction = createDeferred();
-        const machineTwoAction = createDeferred();
+        const machineOneAction = createDeferred<void>();
+        const machineTwoAction = createDeferred<void>();
         const installedPlugin = createInstalledPlugin({
             pluginId: 'installed-plugin',
             title: 'Installed Plugin',
@@ -3654,7 +3644,7 @@ describe('PluginSettingsHomeScreen', () => {
     });
 
     it('deduplicates repeated same-plugin mutations before the busy state rerenders', async () => {
-        const action = createDeferred();
+        const action = createDeferred<void>();
         const installedPlugin = createInstalledPlugin({
             pluginId: 'installed-plugin',
             title: 'Installed Plugin',
@@ -3964,7 +3954,7 @@ describe('PluginSettingsHomeScreen', () => {
 
 
     it('keeps unrelated plugin rows interactive while a plugin action is in flight', async () => {
-        const deferred = createDeferred();
+        const deferred = createDeferred<void>();
         const refresh = vi.fn();
         useMachineCapabilitiesCacheMock.mockReturnValue({
             state: createMachineCapabilitiesState([

@@ -6989,6 +6989,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     botFaceStyle: "Boty",
     botFaceStyleDescription: "Wybierz domyślny styl twarzy botów",
     botMotion: "Ruch botów",
+    botMotionDescription: "Wybierz, jak poruszają się boty. Systemowe ograniczenie ruchu zawsze obowiązuje.",
     botMotionDescriptions: {
       lively: "Boty poruszają się w spoczynku i reagują na aktywność. Systemowe ograniczenie ruchu jest zawsze respektowane.",
       reactions: "Boty reagują na aktywność bez ruchu w spoczynku. Systemowe ograniczenie ruchu jest zawsze respektowane.",

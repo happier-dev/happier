@@ -339,7 +339,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                 petsSelectedPetRef: { kind: 'builtIn', petId: 'blink' },
                 petsDesktopOverlayDefaultEnabled: true,
             }),
-            useLocalSetting: (name) => ({
+            useLocalSetting: (name: keyof typeof localSettingsDefaults) => ({
                 ...localSettingsDefaults,
                 petsEnabledOverride: 'inherit',
                 petsSelectedPetOverride: localSettingsState.petsSelectedPetOverride,

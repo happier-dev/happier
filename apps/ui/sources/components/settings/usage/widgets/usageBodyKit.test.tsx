@@ -158,7 +158,7 @@ describe('shared Usage identity and dependent coverage', () => {
         let held = 0;
         for (let node = screen.findHostByTestId('rhythm-read.loading')?.parent; node; node = node.parent) {
             for (const entry of ([] as unknown[]).concat(node.props.style ?? []).flat(2)) {
-                if (entry && typeof entry === 'object' && typeof entry.minHeight === 'number') held = Math.max(held, entry.minHeight);
+                if (entry && typeof entry === 'object' && 'minHeight' in entry && typeof entry.minHeight === 'number') held = Math.max(held, entry.minHeight);
             }
         }
         expect(held).toBe(0);

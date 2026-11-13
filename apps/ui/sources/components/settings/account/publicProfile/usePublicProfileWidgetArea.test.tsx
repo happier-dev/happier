@@ -81,7 +81,7 @@ function installedDaysProjection(label: string | null, unrelated = false) {
     installedPackagesById: { 'acme.public': widgetInstalledPackage('acme.public', 'Public facts'),
       // Gallery provenance changes, but this installed View's reviewed public copy does not.
       ...(unrelated ? { 'acme.other': widgetInstalledPackage('acme.other', 'Public facts') } : {}) },
-    agentsById: {}, actionsById: {}, resourcesById: {}, settingsById: {},
+    agentsById: {}, actionsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
     familiesById: { pluginUi: { family: 'pluginUi', entriesById: Object.fromEntries(entries.map(entry => [entry.id, entry])) } } });
 }
 

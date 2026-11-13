@@ -114,6 +114,11 @@ function shelfKeyFor(kind: PluginContributionKind): PluginKindShelfKey | null {
     case 'workItems':
     case 'dropTargets':
     case 'skills':
+    case 'accessProviders':
+    case 'botTemplates':
+    case 'deploymentTargets':
+    case 'healthCheckKinds':
+    case 'storeKinds':
       return null;
   }
   kind satisfies never;

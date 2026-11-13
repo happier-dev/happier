@@ -203,7 +203,7 @@ describe('Connected Services index purpose source admission', () => {
             { kind: 'error', reason: 'partial_machine_failure', descriptors: [], conflicts: [] });
         installConnectedAccountDescriptorProjection(state, lifetime);
         machineRpc.mockClear();
-        const hook = await renderHook(() => useConnectAccountSheetModel({}, filterActionNoop), { wrapper: Wrapper });
+        const hook = await renderHook(() => useConnectAccountSheetModel({ intent: 'add' }, filterActionNoop), { wrapper: Wrapper });
         try {
             await vi.waitFor(() => expect(machineRpc).toHaveBeenCalled());
             const targets = machineRpc.mock.calls.map(([request]) => request.machineId);
@@ -247,7 +247,7 @@ describe('Connected Services index purpose source admission', () => {
     it('keeps a single-service sheet idle on another service health change and updates its own saved accounts', async () => {
         rowStatus = 'present';
         content = { t: 'plain', v: { key: 'purposes', value: purposeValue } };
-        const request = { service };
+        const request = { service, intent: 'link' as const };
         let renders = 0;
         const hook = await renderHook(() => { renders += 1; return useConnectAccountSheetModel(request, filterActionNoop); }, {
             wrapper: createIndexWrapper(null),
@@ -725,7 +725,7 @@ describe('Connected Services index purpose source admission', () => {
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) throw new Error('Expected the Connect sheet Account lifetime');
         const hook = await renderHook(() => ({
-            model: useConnectAccountSheetModel({}, () => {}),
+            model: useConnectAccountSheetModel({ intent: 'add' }, () => {}),
             projection: useDaemonMergedProjectionInputs({ machineId: 'm1', serverId: runtime.serverId, load: false,
                 sections: ['agentsById', 'familiesById.connectedAccounts'] }),
         }), { wrapper: Wrapper });

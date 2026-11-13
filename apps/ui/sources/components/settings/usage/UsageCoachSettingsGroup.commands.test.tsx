@@ -25,7 +25,7 @@ let home: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
 afterEach(async () => { standardCleanup(); retireActiveServerAccountScopeLifetime(); await home?.dispose(); home = undefined; });
 
 it('opens Coach model choices through the mounted agent command and closes through the same dropdown control', async () => {
-    home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-coach-controls.test', accountId: 'account-a' }] });
+    home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-coach-controls.test', accountId: 'account-a' }], route: () => undefined });
     const server = home.homes.a!;
     publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
     const screen = await renderMountedCurrentUiContext(<UsageCoachSettingsGroup serverId={server.id} testID="coach.preferences" />);
@@ -44,7 +44,7 @@ it('opens Coach model choices through the mounted agent command and closes throu
 it('keeps an agent check change subject to the settings Action surface restriction', async () => {
     home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-coach-controls.test', accountId: 'account-a',
         settings: { actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['agent'] } },
-            approvalWaivedSurfaces: { 'settings.set': ['ui', 'agent'] } } } }] });
+            approvalWaivedSurfaces: { 'settings.set': ['ui', 'agent'] } } } }], route: () => undefined });
     const server = home.homes.a!;
     publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
     await renderMountedCurrentUiContext(<UsageCoachSettingsGroup serverId={server.id} testID="coach.preferences" />);
@@ -60,7 +60,7 @@ it('keeps an agent check change subject to the settings Action surface restricti
 
 it('commits the selected model preference before retiring its mounted menu command', async () => {
     home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-coach-controls.test', accountId: 'account-a',
-        settings: { actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui', 'agent'] } } } }] });
+        settings: { actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui', 'agent'] } } } }], route: () => undefined });
     const server = home.homes.a!;
     publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
     const screen = await renderMountedCurrentUiContext(<UsageCoachSettingsGroup serverId={server.id} testID="coach.preferences" />);

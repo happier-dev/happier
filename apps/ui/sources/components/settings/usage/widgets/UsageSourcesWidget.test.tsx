@@ -194,7 +194,7 @@ async function chooseOption(screen: Screen, card: string, option: string) {
 
 let home: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
 beforeEach(async () => {
-  home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-sources-controls.test', accountId: 'account' }] });
+  home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-sources-controls.test', accountId: 'account' }], route: () => undefined });
   const server = home.homes.a!;
   publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
 });

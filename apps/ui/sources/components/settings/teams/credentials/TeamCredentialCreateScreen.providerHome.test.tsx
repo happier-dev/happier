@@ -53,8 +53,8 @@ it('offers the administered Provider when the Team uses the portable Home identi
         features: createRootLayoutFeaturesResponse({
             capabilities: { serverIdentity: { serverIdentityId } },
             features: {
-                providers: { enabled: true, externalApi: { enabled: true } },
-                teams: { enabled: true, credentialResources: { enabled: true } },
+                providers: { enabled: true },
+                teams: { enabled: true, credentialResources: { enabled: true, externalApi: { enabled: false } } },
             },
         }),
     });

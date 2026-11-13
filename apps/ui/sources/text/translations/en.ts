@@ -8325,6 +8325,7 @@ const enSettingsAppearance = {
   botFaceStyle: "Bots",
   botFaceStyleDescription: "Choose the default Bot face style",
   botMotion: "Bot motion",
+  botMotionDescription: "Choose how Bots move. System Reduce motion always applies.",
   botMotionDescriptions: {
     lively: "Bots move while idle and react to activity. System Reduce motion always applies.",
     reactions: "Bots react to activity without idle movement. System Reduce motion always applies.",

@@ -7142,6 +7142,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     botFaceStyle: "Bots",
     botFaceStyleDescription: "Elige el estilo de cara predeterminado de los bots",
     botMotion: "Movimiento de bots",
+    botMotionDescription: "Elige cómo se mueven los bots. Reducir movimiento del sistema siempre se aplica.",
     botMotionDescriptions: {
       lively: "Los bots se mueven en reposo y reaccionan a la actividad. Siempre se respeta Reducir movimiento del sistema.",
       reactions: "Los bots reaccionan a la actividad sin moverse en reposo. Siempre se respeta Reducir movimiento del sistema.",

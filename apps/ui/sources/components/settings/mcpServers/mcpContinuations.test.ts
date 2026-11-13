@@ -5,6 +5,7 @@ import { createMcpServerActionExecuteV1, MCP_SERVER_ACTION_INPUT_SCHEMAS_V1, MCP
 import { commitMcpServerCatalogMutationV1, loadMcpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
 import { McpServerCatalogV1Schema, type McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { DetectedMcpServerV1Schema } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createRegistryHostV1, BUILT_IN_REGISTRY_SOURCES_V1, checkRegistryUpstreamV1,
     REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, type RegistryHttpV1 } from '@happier-dev/protocol/registries';
 import { MCP_REGISTRY_V01_READ_FIXTURE } from '../../../../../../packages/protocol/src/registries/formats/fixtures/mcpRegistryV01Fixture';
@@ -56,7 +57,7 @@ function harness(initial: McpServerCatalogV1 = { v: 1, servers: [], bindings: []
     });
     const family = createMcpServerActionExecuteV1({
         ruleWriteContext: () => ({ nowMs: 10, newId: () => `found-${++ids}` }),
-        readCatalog: () => loadMcpServerCatalogV1({ mode: 'plain', material: null, readRow: async () => ({ status: 'present', revision, content: { t: 'plain', v: catalog } }) }),
+        readCatalog: () => loadMcpServerCatalogV1({ mode: 'plain', material: null, readRow: async () => ({ status: 'present', revision, content: { t: 'plain', v: projectNativeJsonValueForTransport(catalog) } }) }),
         registryActionExecute: request => registry.execute(request.actionId, request.input),
         mutate: (change, expectedRevision) => commitMcpServerCatalogMutationV1({ catalog, revision, change, scope: null, writeCatalog: async candidate => {
             if (candidate.expectedRevision !== revision || expectedRevision !== revision) return { status: 'conflict', revision };

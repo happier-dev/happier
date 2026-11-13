@@ -6064,6 +6064,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         botFaceStyle: "機器人",
         botFaceStyleDescription: "選擇機器人的預設臉孔風格",
         botMotion: "Bot 動效",
+        botMotionDescription: "選擇 Bot 的動效。系統的「減少動態效果」一律生效。",
         botMotionDescriptions: {
           lively: "Bot 閒置時也會移動，並對活動作出反應。始終遵循系統的減少動態效果設定。",
           reactions: "Bot 僅對活動作出反應，閒置時不移動。始終遵循系統的減少動態效果設定。",

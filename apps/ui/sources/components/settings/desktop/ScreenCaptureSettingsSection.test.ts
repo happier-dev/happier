@@ -19,7 +19,7 @@ const snapshot = (overrides: Partial<Parameters<typeof projectCaptureShortcutRow
 
 describe('projectCaptureShortcutRows', () => {
     it('shows the keys that work now and keeps the old binding visible beside a refusal', () => {
-        const rows = projectCaptureShortcutRows(snapshot(), 'mac');
+        const rows = projectCaptureShortcutRows(snapshot(), 'macos');
         expect(rows.captureShortcut).toMatchObject({ label: expect.stringContaining('2'), note: null, editable: true });
         expect(rows.instantWindowShortcut).toMatchObject({ label: null, note: null, editable: true });
         expect(rows.recordingShortcut).toMatchObject({ label: expect.stringContaining('4'), note: 'screenCapture.settings.conflict' });
@@ -31,6 +31,6 @@ describe('projectCaptureShortcutRows', () => {
     });
 
     it('offers no recorder before the native record answers', () => {
-        expect(projectCaptureShortcutRows(null, 'mac').captureShortcut).toMatchObject({ label: null, editable: false });
+        expect(projectCaptureShortcutRows(null, 'macos').captureShortcut).toMatchObject({ label: null, editable: false });
     });
 });

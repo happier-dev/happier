@@ -703,11 +703,11 @@ it('says Limits beside other widgets as the account the next session uses: its f
   const { WidgetFrameBodyCaptionContext } = await import('@/components/widgets/frame/widgetFrameBodyCaption');
   const captions: (string | null)[] = [];
   const lend = (caption: string | null) => { if (caption !== null && captions.at(-1) !== caption) captions.push(caption); };
-  const medium = (shown: typeof slice) => <InjectedAuthProvider credentials={null}>
+  const medium = (shown: typeof base) => <InjectedAuthProvider credentials={null}>
     <WidgetFrameBodyCaptionContext.Provider value={lend}>
     <WidgetPresentationProvider value={{ size: 'medium', footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' },
       geometry: { width: 520, height: 232 } }}>
-      <UsageCapacityWidget id="usage_capacity" model={{ ...model, slice: shown }} slice={shown} query={query} serverId="home" testID="capacity" />
+      <UsageCapacityWidget id="usage_capacity" model={model} slice={shown} query={query} serverId="home" testID="capacity" />
     </WidgetPresentationProvider>
     </WidgetFrameBodyCaptionContext.Provider>
   </InjectedAuthProvider>;

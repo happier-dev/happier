@@ -10,7 +10,7 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const setClipboardStringSafeMock = vi.hoisted(() => vi.fn(async () => true));
+const setClipboardStringSafeMock = vi.hoisted(() => vi.fn(async (_value: string) => true));
 const shareTextSafeMock = vi.hoisted(() => vi.fn(async () => 'shared' as const));
 const sharingAvailableMock = vi.hoisted(() => ({ current: true }));
 
