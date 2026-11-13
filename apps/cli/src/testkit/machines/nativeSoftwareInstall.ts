@@ -270,7 +270,7 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
       return { stdout: result.stdout };
     }, fileSystem: { lstat: async () => { throw Object.assign(new Error('No managed sudoers fixture'), { code: 'ENOENT' }); },
       readFile: async () => { throw new Error('No managed sudoers fixture'); } },
-    readTailscaledOperator: async () => ({ authorization: 'unknown' }),
+    tailscale: { tailscaleBin: join(directory, 'bin', 'tailscale') },
   } }));
   const readHomeMachine = () => ({ id: machineId, accountId, active: true, activeAt: Date.now(), revokedAt: null,
     replacedByMachineId: null, kind: 'persistent', installationId: osStore.identity!.installationId,
@@ -589,6 +589,9 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
       const runtime = createProductionDaemonWorkflowRuntime({ credentials: selectedCredentials,
         accountId: attribution.accountId, serverId });
       const requesterTransport = nativeConfirmed ? createWorkflowRunMachineTransport({ runId: claim.runId,
+        machineAdmissionBoundary: { machineId, daemonToken: credentials.token,
+          isHomeCurrent: () => !workflowLifetime.signal.aborted && configuration.activeServerId === serverId,
+          readInstallation: () => osStore.identity, getObservedServerIdentityId: () => homeId },
         credentials: selectedCredentials, requesterWorkAttributionV1: attribution,
         isCurrent: async () => !workflowLifetime.signal.aborted && configuration.activeServerId === serverId
           && osStore.identity?.installationId === installation.installationId

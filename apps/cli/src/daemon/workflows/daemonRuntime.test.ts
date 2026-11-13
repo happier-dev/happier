@@ -6,6 +6,7 @@ import { API_TOKEN_FULL_GRANT_V1, freezeActionCompletionContractV1, getActionSpe
   parseWorkflowStoredContentEnvelopeV1, openWorkflowProgressStoredEnvelopeV1,
   type AccountApiTokensListActionOutputV1, type WorkflowDefinitionV1 } from '@happier-dev/protocol';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { AccountEncryptionCurrentnessResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
@@ -987,6 +988,11 @@ describe('production daemon detached Workflow admission', () => {
         content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'Session complete' } } } }] } };
       if (path.endsWith('/pending')) return { status: 200, data: { pending: [], version: 0 } };
       if (path === '/v1/account/profile') return { status: 200, data: { id: accountId } };
+      if (path === `/v1/machines/${machineId}`) return { status: 200, data: { machine: MachinePublishedRowV1Schema.parse({
+        id: machineId, managedMachineRef: null, metadata: null, metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
+        storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, installationId: 'detached-installation',
+        access: { custodian: { accountId, displayName: 'Machine custodian' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+      }) } };
       if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       if (path === '/v1/account/encryption/currentness') return { status: 200, data: AccountEncryptionCurrentnessResponseSchema.parse({
         mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
@@ -1045,11 +1051,14 @@ describe('production daemon detached Workflow admission', () => {
           machineId, installationId: 'detached-installation', role: 'manage', encryptionMode: 'plain' } }) };
     } }));
     const requesterWorkAttributionV1 = { serverId, accountId, machineId, installationId: 'detached-installation' };
+    const installationIdentity = { installationId: requesterWorkAttributionV1.installationId, privateKey: nacl.sign.keyPair().secretKey };
     transport = createWorkflowRunMachineTransport({ runId, credentials,
       requesterWorkAttributionV1: binding === 'misbound'
         ? { ...requesterWorkAttributionV1, installationId: 'different-installation' } : requesterWorkAttributionV1,
       boundary: { serverId, serverHttpBaseUrl: home, happyHomeDir: directory,
         getObservedServerIdentityId: async () => binding === 'missing-home' ? null : homeId },
+      machineAdmissionBoundary: { machineId, daemonToken: 'detached-daemon-token', isHomeCurrent: () => true,
+        readInstallation: () => installationIdentity, getObservedServerIdentityId: () => homeId },
       isCurrent: async () => true,
       transport: { machineId, invoke: async (method, input, options) => {
         nativeRequests.push(method);
@@ -1070,7 +1079,7 @@ describe('production daemon detached Workflow admission', () => {
       } } });
     const operations = createHostActionOperationRuntime({ machineId, resolveAccountId: async () => accountId });
     const managedMachineAction = createDaemonManagedMachineActionAdapter({ credentials, machineId, serverId, serverBaseUrl: home,
-      installationIdentity: { installationId: requesterWorkAttributionV1.installationId, privateKey: nacl.sign.keyPair().secretKey },
+      installationIdentity,
       resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({
         serverUrl: home, resolveCurrentMachineId: () => machineId }),
       acquireRuntimeRegistryLease: async () => ({ registry: admitted!.registry, source: 'active', durableRevision: 1, release: async () => {} }),
@@ -1280,8 +1289,11 @@ describe('production daemon scheduled service command operation', () => {
   let releaseHome = () => {};
   afterEach(() => { releaseHome(); vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 
-  it.each(['automatic', 'ask', 'foreign', 'approved-trigger', 'changed-trigger'] as const)('keeps unattended service execution under the installed operation owner (%s)', async policy => {
+  it.each(['automatic', 'ask', 'foreign-use', 'foreign-manage', 'approved-trigger', 'changed-trigger'] as const)('keeps unattended service execution under the installed operation owner (%s)', async policy => {
     const accountId = 'scheduled-service-owner', machineId = 'scheduled-worker';
+    const custodianAccountId = policy === 'foreign-use' || policy === 'foreign-manage' ? 'machine-custodian' : accountId;
+    const installationId = 'scheduled-service-installation';
+    const installationIdentity = { installationId, privateKey: nacl.sign.keyPair().secretKey };
     const runId = '7be4d65c-d3b7-4868-a416-b18d9ee29c1c';
     const home = 'http://127.0.0.1:43187', homeId = 'srv_scheduled_service';
     const serverId = configuration.activeServerId;
@@ -1291,7 +1303,15 @@ describe('production daemon scheduled service command operation', () => {
       provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`,
       encryption: null, credentialProvenance: 'stored_session' as const };
     const accountSettings = AccountSettingsSchema.parse({ actionsSettingsV1: { v: 1, actions: {},
-      ...(policy === 'automatic' || policy === 'foreign' ? { approvalWaivedSurfaces: { 'machines.services.exec': ['agent'] } } : {}) } });
+      ...(policy === 'automatic' || policy === 'foreign-use' || policy === 'foreign-manage'
+        ? { approvalWaivedSurfaces: { 'machines.services.exec': ['agent'] } } : {}) } });
+    // Home publishes the requester's admitted Machine access. The real requester
+    // admission reader must carry this role through the scheduled transport.
+    const publishedMachine = MachinePublishedRowV1Schema.parse({ id: machineId, managedMachineRef: null,
+      metadata: null, metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
+      storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, installationId,
+      access: { custodian: { accountId: custodianAccountId, displayName: 'Machine custodian' },
+        role: policy === 'foreign-use' ? 'use' : 'manage', resourceMode: 'plain', accessState: 'ready' } });
     await seedTestServerProfile({ id: serverId, serverUrl: home, homeId });
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify(FeaturesResponseSchema.parse({ features: {},
       capabilities: { serverIdentity: { serverIdentityId: homeId } } })), { status: 200 }));
@@ -1381,6 +1401,7 @@ describe('production daemon scheduled service command operation', () => {
     const storage = createWorkflowRunStorageTestkit({ accountId, runId, machineId, origin, acceptedEnvelope });
     WorkflowRunSummaryV1Schema.parse(storage.run());
     let savedTriggerReads = 0;
+    let machineAccessReads = 0;
     const unhandledHttp: string[] = [];
     const artifacts = new Map<string, Record<string, unknown>>();
     let publishApproval!: (artifactId: string) => void;
@@ -1396,6 +1417,10 @@ describe('production daemon scheduled service command operation', () => {
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       const path = new URL(String(url)).pathname;
       if (path === '/v1/account/profile') return { status: 200, data: { id: accountId } };
+      if (path === `/v1/machines/${machineId}`) {
+        machineAccessReads++;
+        return { status: 200, data: { machine: publishedMachine } };
+      }
       if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       if (path === '/v1/account/encryption/currentness') return { status: 200, data: AccountEncryptionCurrentnessResponseSchema.parse({
         mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }) };
@@ -1435,14 +1460,16 @@ describe('production daemon scheduled service command operation', () => {
     expect(commitActivePromptLibraryCatalog({ scopeKey: settings.scopeKey,
       lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(), catalog })).toBe(true);
     bindApiSessionSocketMock(mocks.io, createApiSessionSocketStub());
-    const installationId = 'scheduled-service-installation';
     const operations = createHostActionOperationRuntime({ machineId, serverId, custodyBinding: { serverId, installationId },
-      resolveAccountId: async () => policy === 'foreign' ? 'machine-custodian' : accountId,
+      resolveAccountId: async () => custodianAccountId,
       generateOperationId: () => 'scheduled-service-operation' });
     const unavailable = async (): Promise<never> => { throw new Error('Scheduled local service must not re-enter Machine RPC'); };
     const requesterWorkAttributionV1 = { serverId, accountId, machineId, installationId };
     const transportInput = { runId, credentials, requesterWorkAttributionV1, isCurrent: async () => true,
       boundary: { serverId, serverHttpBaseUrl: home, happyHomeDir: root, getObservedServerIdentityId: () => homeId },
+      machineAdmissionBoundary: { machineId, daemonToken: 'custodian-daemon-token', isHomeCurrent: () => true,
+        readInstallation: () => installationIdentity,
+        getObservedServerIdentityId: () => homeId },
       transport: { machineId, invoke: async (method: string, request: unknown,
         options?: Parameters<import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport['invoke']>[2]) => {
         if (method === 'actionOperation.get.v2') return operations.handlers.getV2(request, options?.rpcContext);
@@ -1464,14 +1491,23 @@ describe('production daemon scheduled service command operation', () => {
     const coordinating = coordinate({ runId, attempt: 0, expectedRevision: 0, acceptedEnvelope, signal: abort.signal,
       accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } });
     try {
-      if (policy !== 'ask' && policy !== 'changed-trigger') {
+      if (policy === 'foreign-use') {
+        await Promise.race([opened, coordinating]);
+        expect(launches).toBe(0);
+        expect(await coordinating).toMatchObject({ state: 'failed' });
+        expect(await workflowTransport.transport.invoke('actionOperation.get.v2', {
+          operationId: 'scheduled-service-operation', waitForTerminal: true,
+        })).toMatchObject({ kind: 'found', operation: { state: 'failed', error: { errorCode: 'access_denied' } } });
+        expect(artifacts.size).toBe(0);
+      } else if (policy !== 'ask' && policy !== 'changed-trigger') {
         await Promise.race([opened, coordinating.then(outcome => {
           throw new Error(`Scheduled service never reached native execution: ${JSON.stringify({ outcome, rows: storage.rows() })}`);
         })]);
+        expect(machineAccessReads).toBe(1);
         expect(storage.run().state).toBe('running');
         expect(await workflowTransport.transport.invoke('actionOperation.get.v2', { operationId: 'scheduled-service-operation' })).toMatchObject({
           kind: 'found', operation: { actionId: 'machines.services.exec', state: 'running' } });
-        if (policy === 'foreign') expect(await operations.handlers.getV2({ operationId: 'scheduled-service-operation' }))
+        if (policy === 'foreign-manage') expect(await operations.handlers.getV2({ operationId: 'scheduled-service-operation' }))
           .toMatchObject({ kind: 'not_found' });
         releaseNative();
         expect(await coordinating).toMatchObject({ state: 'succeeded' });
@@ -1491,6 +1527,9 @@ describe('production daemon scheduled service command operation', () => {
         expect((await operations.handlers.listV2({})).items).toEqual([]);
         if (policy === 'changed-trigger') expect(savedTriggerReads).toBeGreaterThan(0);
       }
+      // One admission per captured Run; operation execution and status reads
+      // consume it without requesting Machine permissions again.
+      expect(machineAccessReads).toBe(1);
       expect(unhandledHttp).toEqual([]);
     } finally {
       releaseNative();

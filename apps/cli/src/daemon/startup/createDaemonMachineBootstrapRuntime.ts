@@ -633,6 +633,13 @@ export function createDaemonMachineBootstrapRuntime(
       const { startAutomationWorker } = await import('../automation/automationWorker');
       if (params.isShuttingDown()) return null;
       const automationApiMachine = connectedApiMachine;
+      const workflowMachineAdmissionBoundary = {
+        machineId: runtimeMachineId, daemonToken: params.credentials.token,
+        isHomeCurrent: () => connectedApiMachine === automationApiMachine && !params.isShuttingDown()
+          && configuration.activeServerId === automationHomeId,
+        readInstallation: () => readInstallationIdentityIfExistsSync(),
+        getObservedServerIdentityId: async () => await params.resolveCurrentServerIdentityId?.() ?? null,
+      };
       const requesterWorkAttributionV1 = automationApiMachine && automationAccountId && automationInstallationId
         ? Object.freeze({ serverId: automationHomeId, accountId: automationAccountId,
           machineId: runtimeMachineId, installationId: automationInstallationId }) : undefined;
@@ -653,6 +660,7 @@ export function createDaemonMachineBootstrapRuntime(
             && sameStoredCredentials(params.credentials, await readStoredCredentialsForServerId(automationHomeId))
             && !claim.signal?.aborted);
           const requesterTransport = createWorkflowRunMachineTransport({ runId: claim.runId,
+            machineAdmissionBoundary: workflowMachineAdmissionBoundary,
             credentials: selectedCredentials, requesterWorkAttributionV1: selectedAttribution, isCurrent,
             boundary: { serverId: automationHomeId, serverHttpBaseUrl: readMachineSkillHomeUrl(),
               happyHomeDir: configuration.happyHomeDir,
@@ -701,6 +709,7 @@ export function createDaemonMachineBootstrapRuntime(
           if (!requester) { await workflowRecovery?.('control', signal, runId); return; }
           if (!automationApiMachine || !params.createWorkflowRecoveryForMachine || !runId) return;
           const transport = createWorkflowRunMachineTransport({ runId, credentials: requester.credentials,
+            machineAdmissionBoundary: workflowMachineAdmissionBoundary,
             requesterWorkAttributionV1: requester.attribution,
             isCurrent: async () => connectedApiMachine === automationApiMachine && !params.isShuttingDown()
               && configuration.activeServerId === automationHomeId

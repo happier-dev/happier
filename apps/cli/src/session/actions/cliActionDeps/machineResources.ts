@@ -3,10 +3,11 @@ import { readMachineDeploymentReferencesV1 } from '@happier-dev/protocol/machine
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { CliActionDepsParams } from './types';
 import type { CliMachineActionCall, CliMachineActionServerScopeCurrent } from './machineTransport';
-import { verifyManagedCreationAdminAccessInput, verifyManagedCreationAgentIsolationInput } from '@/api/externalActionExecutionAuthorization';
+import { verifyManagedCreationAdminAccessInput, verifyManagedCreationAgentIsolationInput, verifyManagedCreationRolesInput } from '@/api/externalActionExecutionAuthorization';
 import { executeCapturedMachineAction } from '@/api/machine/capturedMachineAction';
 import { MACHINE_VITALS_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineVitals';
 import { MACHINE_RESOURCES_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineResources';
+import { MACHINE_ROLES_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineRoles';
 import { MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1, MACHINE_REACHABILITY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol';
 import { MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol';
 import { MACHINE_STORAGE_ACTION_INPUT_SCHEMAS, MACHINE_STORAGE_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/storage';
@@ -22,7 +23,10 @@ import type { CliProjectAdmission, CliProjectAdmissionFailure } from './projectA
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
 import { createMachineServiceControlAction } from './machineServiceControl';
 import { createMachineServiceExecAction } from './machineServiceExec';
-import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { projectVerifiedExternalActionRequesterContext, selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
+import type { MachineAccessRoleV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { MACHINE_SERVICE_LOGS_READ_ACTION_ID } from '@happier-dev/protocol/local/services/actionIdsV1';
 import type { CliDeploymentEnvironmentAccessRead, CliDeploymentEnvironmentAccessObserve } from '@/deployments/createCliDeploymentActionDeps';
 export function createCliMachineResourceActionDeps(
@@ -39,7 +43,38 @@ export function createCliMachineResourceActionDeps(
     observeEnvironmentAccessChanges: CliDeploymentEnvironmentAccessObserve;
     executionRunActionFailure: (code: string, message?: string, details?: unknown) => CliProjectAdmissionFailure;
   }>,
-): Pick<ActionExecutorDeps, 'machineStorageAction' | 'machineProcessesAction' | 'machineVitalsAction' | 'machineAgentIsolationAction' | 'machineServiceAction' | 'machineServiceScope' | 'machineServiceControl' | 'machineServiceExec' | 'machineServiceLogsRead' | 'machineAdminAccessAction' | 'machineReboot' | 'machineReachabilityAction' | 'machineResourcesPolicyAction' | 'machineGuardAction' | 'usageSourceAction'> {
+): Pick<ActionExecutorDeps, 'machineStorageAction' | 'machineProcessesAction' | 'machineVitalsAction' | 'machineAgentIsolationAction' | 'machineServiceAction' | 'machineServiceScope' | 'machineServiceControl' | 'machineServiceExec' | 'machineServiceLogsRead' | 'machineAdminAccessAction' | 'machineReboot' | 'machineReachabilityAction' | 'machineResourcesPolicyAction' | 'machineRolesAction' | 'machineGuardAction' | 'usageSourceAction'> {
+  const admitMachineService = async (serverId: string, actionContext: ActionExecutorContext, machineId: string,
+    method: string): Promise<CliProjectAdmissionFailure | null> => {
+    const denied = await projectAccountAdmission(serverId, actionContext);
+    if (denied || params.machineActionDirectTargetTransport?.machineId !== machineId) return denied;
+    const required = resolveMachineRpcRoutePolicy(method).sharedMachineAccess;
+    if (required === 'use') return null;
+    const permits = (custodian: boolean, role?: MachineAccessRoleV1) => custodian
+      || required === 'manage' && role === 'manage';
+    const refused = (): CliProjectAdmissionFailure => ({ ok: false, errorCode: 'access_denied', error: 'access_denied' });
+    const context = projectVerifiedExternalActionRequesterContext(actionContext as
+      NonNullable<Parameters<typeof selectHostRequesterExecutionIdentity>[0]['actionContext']>);
+    // Consume the ingress/Run's retained admission once, before touching a native service.
+    // Remote requests retain their Machine RPC admission at the receiving host.
+    if (context.machineAdmission && context.machineAdmission.machineId !== machineId) return refused();
+    const admission = context.machineAdmission ?? params.savedSecretOperationContext?.machineAdmission;
+    if (admission) return permits(isCustodianMachineAdmission(admission), admission.role) ? null : refused();
+    const root = context.verifiedExternalActionRequester?.authorization.binding;
+    const local = context.authenticatedLocalRootCustody ?? context.localActionContext?.authenticatedLocalRootCustody
+      ?? context.inheritedLocalActionContext?.authenticatedLocalRootCustody;
+    const custodianAccountId = root?.custodianAccountId ?? local?.accountId;
+    const installationId = params.externalActionMachineInstallationId ?? root?.installationId ?? local?.installationId;
+    if (!custodianAccountId || !installationId) return refused();
+    // Private local ingress and verified original Action roots use the incumbent
+    // identity owner; credentials or an unverified binding cannot establish custody.
+    const identity = selectHostRequesterExecutionIdentity({ actionContext: context,
+      hostHomeServerIdentityId: params.serverIdentityId ?? projectHomeId, hostCustodianAccountId: custodianAccountId,
+      hostExecutionTarget: { machineId, installationId } });
+    if (identity.kind === 'unknown') return refused();
+    return permits(isCustodianMachineAdmission({ actorAccountId: identity.requester.accountId, custodianAccountId }),
+      root?.admittedMachineRole) ? null : refused();
+  };
   const canReadServiceEnvironments = async (serverId: string, environmentIds: readonly string[],
     context: ActionExecutorContext, actionId: string): Promise<ReadonlySet<string>> => {
     const result = await readEnvironmentAccess({ serverId, environmentIds }, context, actionId);
@@ -61,7 +96,7 @@ export function createCliMachineResourceActionDeps(
   return {
     machineServiceExec: createMachineServiceExecAction({
       ...(params.machineActionDirectTargetTransport ? { directMachineId: params.machineActionDirectTargetTransport.machineId } : {}),
-      serverId: projectHomeId, callMachineAction, admit: projectAccountAdmission,
+      serverId: projectHomeId, callMachineAction, admit: admitMachineService,
       assertCurrent: async context => {
         context.signal?.throwIfAborted();
         if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
@@ -103,7 +138,7 @@ export function createCliMachineResourceActionDeps(
     },
     machineServiceControl: createMachineServiceControlAction({
       ...(params.machineActionDirectTargetTransport ? { directMachineId: params.machineActionDirectTargetTransport.machineId } : {}),
-      serverId: projectHomeId, callMachineAction, admit: projectAccountAdmission,
+      serverId: projectHomeId, callMachineAction, admit: admitMachineService,
       assertCurrent: async context => {
         context.signal?.throwIfAborted();
         if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
@@ -268,7 +303,8 @@ export function createCliMachineResourceActionDeps(
       });
     },
     machineServiceAction: async ({ actionId, input, context, signal }) => {
-      const denied = await projectAccountAdmission(input.serverId, context);
+      const denied = await admitMachineService(input.serverId, context, input.machineId,
+        getActionSpec(actionId).bindings!.rpcMethod!);
       if (denied) return denied;
       return withProjectHome(() => executeCapturedMachineAction({ actionId, assertCurrent: async () => {
         signal?.throwIfAborted();
@@ -461,6 +497,46 @@ export function createCliMachineResourceActionDeps(
         } });
       };
       return withProjectHome(execute);
+    },
+    machineRolesAction: async ({ actionId, input, context, signal }) => {
+      const serverId = input.serverId ?? context.serverId ?? projectHomeId;
+      const denied = await projectAccountAdmission(serverId, context);
+      if (denied) return denied;
+      const current = async () => {
+        if (signal?.aborted || params.isCredentialCurrent && !await params.isCredentialCurrent()) return false;
+        await assertProjectRequesterCurrent(context);
+        return true;
+      };
+      return withProjectHome(async () => {
+        if (!await current()) return { status: 'unavailable' };
+        if (actionId === 'machines.roles.set') {
+          const request = MACHINE_ROLES_ACTION_INPUT_SCHEMAS[actionId].parse(input);
+          // A managed creation child may only seed its reviewed install-type default.
+          if (!await verifyManagedCreationRolesInput({ request, context,
+            serverHttpBaseUrl: resolveServerHttpBaseUrl(), daemonToken: params.token, serverIdentityId: params.serverIdentityId,
+            privateKey: params.externalActionMachineRequestPrivateKey, installationId: params.externalActionMachineInstallationId })) {
+            return { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+          }
+          return executeCapturedMachineAction({ actionId, assertCurrent: async () => {
+            signal?.throwIfAborted();
+            if (!await current()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+            signal?.throwIfAborted();
+          }, invoke: options => callMachineAction({ machineId: request.machineId, serverId, method: RPC_METHODS.MACHINES_ROLES_SET,
+            request: { ...request, serverId }, authority: context.authority, context, effectActionId: actionId, exactMachine: true,
+            ...(signal ? { signal } : {}), ...options }) });
+        }
+        // List and Get read the synced Machine metadata, so they work while the Machine is offline.
+        const request = MACHINE_ROLES_ACTION_INPUT_SCHEMAS[actionId].parse(input);
+        const { readMachineRolesSnapshot } = await import('@/api/machine/machineRoles');
+        const { ApiClient } = await import('@/api/api');
+        const authorization = context.externalActionExecutionAuthorization;
+        return readMachineRolesSnapshot({ actionId, machineId: request.machineId, isCurrent: current, readMachine: async () => {
+          if (authorization) return ApiClient.getRequesterMachine(request.machineId, { authorization, effectActionId: actionId, ...(signal ? { signal } : {}) });
+          if (!params.credentials) return null;
+          const api = await ApiClient.create(params.credentials);
+          return api.getMachine(request.machineId, { ...(signal ? { signal } : {}) });
+        } });
+      });
     },
     machineGuardAction: async args => {
       const { actionId, input, context, signal } = args;

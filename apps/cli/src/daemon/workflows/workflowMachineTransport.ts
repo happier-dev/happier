@@ -5,7 +5,7 @@ import type { RpcLocalActionContext } from '../../api/rpc/types';
 import type { StoredCredentials } from '../../persistence';
 import type { MachineActionDirectTargetTransport } from '../../session/actions/createCliActionDeps';
 import type { RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
-import type { prepareRequesterSessionBootstrap } from '../sessionEncryption/requesterSessionCredentials';
+import type { prepareRequesterSessionBootstrap, RequesterSessionMachineAdmissionBoundary } from '../sessionEncryption/requesterSessionCredentials';
 import { readRequesterHomeWithinActionLifetime } from '../sessionEncryption/requesterCurrentness';
 
 /** One claimed Workflow retains requester custody through its installed Machine transport. */
@@ -13,6 +13,7 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
   runId: string;
   credentials: StoredCredentials;
   requesterWorkAttributionV1?: RequesterWorkAttributionV1;
+  machineAdmissionBoundary: RequesterSessionMachineAdmissionBoundary;
   boundary: Readonly<{
     serverId: string;
     serverHttpBaseUrl: string;
@@ -38,9 +39,19 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
       || stamp.machineId !== input.transport.machineId || stamp.installationId !== expected.installationId
       || !await input.isCurrent()) return null;
     requester ??= readRequesterHomeWithinActionLifetime(async () => {
-      const { prepareRequesterSessionBootstrap } = await import('../sessionEncryption/requesterSessionCredentials');
+      const { prepareRequesterSessionBootstrap, readRequesterMachineAdmissionCurrent } = await import('../sessionEncryption/requesterSessionCredentials');
+      // Capture the existing Home admission once for this claimed Run. Later
+      // service Actions consume its role rather than borrowing custodian access.
+      const machineAdmission = await readRequesterMachineAdmissionCurrent({
+        credentials: input.credentials, attribution: expected,
+        serverHttpBaseUrl: input.boundary.serverHttpBaseUrl,
+        boundary: input.machineAdmissionBoundary,
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+      if (!machineAdmission) return null;
       return await prepareRequesterSessionBootstrap({
       credentials: input.credentials, attribution: expected, boundary: input.boundary,
+      machineAdmission,
       verifyMachineAdmissionCurrent: input.isCurrent,
       ...(input.signal ? { signal: input.signal } : {}),
       });

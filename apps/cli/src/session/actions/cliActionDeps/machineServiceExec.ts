@@ -11,12 +11,12 @@ export function createMachineServiceExecAction(input: Readonly<{
   directMachineId?: string;
   serverId: string;
   callMachineAction: CliMachineActionCall;
-  admit(serverId: string, context: ActionExecutorContext): Promise<ActionExecuteFailure | null>;
+  admit(serverId: string, context: ActionExecutorContext, machineId: string, method: string): Promise<ActionExecuteFailure | null>;
   assertCurrent(context: ActionExecutorContext): Promise<void>;
   canExecuteEnvironment(serverId: string, environmentId: string, context: ActionExecutorContext): Promise<true | ActionExecuteFailure>;
 }>): NonNullable<ActionExecutorDeps['machineServiceExec']> {
   return async ({ input: request, context, signal, approvalScope }) => {
-    const denied = await input.admit(request.serverId, context);
+    const denied = await input.admit(request.serverId, context, request.machineId, RPC_METHODS.MACHINES_SERVICE_EXEC);
     if (denied) return denied;
     const uncertain = () => {
       context.operationOwnerUpdate?.update({ cancellation: 'unsupported', outcome: {

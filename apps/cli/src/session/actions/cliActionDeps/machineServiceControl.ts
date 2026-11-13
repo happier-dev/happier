@@ -10,12 +10,12 @@ export function createMachineServiceControlAction(input: Readonly<{
   directMachineId?: string;
   serverId: string;
   callMachineAction: CliMachineActionCall;
-  admit(serverId: string, context: ActionExecutorContext): Promise<ActionExecuteFailure | null>;
+  admit(serverId: string, context: ActionExecutorContext, machineId: string, method: string): Promise<ActionExecuteFailure | null>;
   assertCurrent(context: ActionExecutorContext): Promise<void>;
   canControlEnvironment(serverId: string, environmentId: string, context: ActionExecutorContext): Promise<true | ActionExecuteFailure>;
 }>): NonNullable<ActionExecutorDeps['machineServiceControl']> {
   return async ({ input: request, context, signal, approvalScope }) => {
-    const denied = await input.admit(request.serverId, context);
+    const denied = await input.admit(request.serverId, context, request.machineId, RPC_METHODS.MACHINES_SERVICE_CONTROL);
     if (denied) return denied;
     if (input.directMachineId !== request.machineId) return input.callMachineAction({
       machineId: request.machineId, serverId: request.serverId, method: RPC_METHODS.MACHINES_SERVICE_CONTROL,

@@ -117,6 +117,7 @@ import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from
 import { logger } from '@/ui/logger';
 import { withWebLatencyTrace } from '../externalActions/webLatencyTrace';
 import { observeConnectedServiceMaterializationPhase } from '../connectedServices/materialize/materializationPhase';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 // Genuine socket boundary: these custody tests do not establish runner availability.
 vi.mock('socket.io-client', () => ({ io: () => { throw new Error('Runner socket unavailable'); } }));
@@ -133,7 +134,7 @@ let runtimeFixture: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture
 let sessionControlFixture: Awaited<ReturnType<typeof createRequesterSessionControlRuntimeFixture>> | undefined;
 
 it.each(['alice', 'bob'])('keeps Workflow startup operation reads and recovery cancellation in requester custody (custodian=%s)', async custodianAccountId => {
-  await home({ custodianAccountId });
+  const host = await home({ custodianAccountId });
   const prepared = await prepareRequesterSessionBootstrap({ credentials, attribution,
     boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory!,
       getObservedServerIdentityId: () => 'srv_workflow_home' },
@@ -149,6 +150,7 @@ it.each(['alice', 'bob'])('keeps Workflow startup operation reads and recovery c
   const runId = 'admitted-workflow-run';
   const bindTransport = (withRequester = true) => createWorkflowRunMachineTransport({ runId, credentials,
     ...(withRequester ? { requesterWorkAttributionV1: attribution } : {}),
+    machineAdmissionBoundary: host.boundary,
     boundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory!,
       getObservedServerIdentityId: () => 'srv_workflow_home' },
     isCurrent: async () => true,
@@ -474,9 +476,9 @@ describe('requester Session lifecycle custody', () => {
     const pid = child.pid;
     if (pid === undefined) throw new Error('Missing requester child fixture');
     await new Promise<void>((resolve, reject) => { child.once('exit', () => resolve()); child.once('error', reject); });
-    const exited = createOnChildExited({ pidToTrackedSession: new Map([[pid, { pid, happySessionId: binding.sessionId,
+    const exited = createOnChildExited({ trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(pid), { trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: binding.sessionId,
       startedBy: 'daemon', requesterWorkAttributionV1: attribution } satisfies TrackedSession]]),
-      spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
+      spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null });
     await exited(pid, { reason: 'process-exited', code: 0, signal: null });
     await expect(access(custody.path)).resolves.toBeUndefined();
     const recover = () => requesterCredentialOwner.resolveRequesterSessionBootstrap({ ...binding,
@@ -1252,7 +1254,7 @@ describe('requester Session lifecycle custody', () => {
         },
       }) });
     const registry = new ConnectedServiceRuntimeRegistry();
-    const trackedSessions = new Map<number, TrackedSession>();
+    const trackedSessions = new Map<SessionTrackingKey, TrackedSession>();
     let requester: Awaited<ReturnType<typeof createRequesterSessionRuntimeContext>> = null;
     const control = sessionControlFixture = await createRequesterSessionControlRuntimeFixture({ happyHomeDir: directory!, activeServerDir: directory!,
       serverId: attribution.serverId, serverHttpBaseUrl: origin, machineId: 'machine', custodianAccountId: 'alice',
@@ -1271,7 +1273,7 @@ describe('requester Session lifecycle custody', () => {
           machineId: 'machine', machineIdProvider: () => 'machine', runtimeId: 'runtime', happyHomeDir: directory!,
           logger: { debug: () => {}, info: () => {}, warn: () => {} },
           processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '0', HAPPIER_CONNECTED_SERVICES_QUOTAS_ENABLED: '0' },
-          pidToTrackedSession: trackedSessions, connectedServiceRuntimeRegistry: registry,
+          trackedSessionsByKey: trackedSessions, connectedServiceRuntimeRegistry: registry,
           connectedServiceAuthGroupPreTurnSwitchCoordinator: control.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator,
         } });
       return requester;

@@ -112,7 +112,7 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
   runtimeOptions?: Parameters<typeof createAuthoredAdmittedPluginRuntimeFixture>[0]['runtimeOptions'];
   additionalPlugins?: Parameters<typeof createAuthoredAdmittedPluginRuntimeFixture>[0]['plugins'];
   sessionStartup?: Pick<Parameters<typeof createRequesterSessionControlRuntimeFixture>[0],
-    'trackedSessions' | 'pidToAwaiter' | 'processEnv' | 'startup'
+    'trackedSessions' | 'spawnAwaiterByKey' | 'processEnv' | 'startup'
     | 'resolveRequesterSessionRuntimeContext' | 'releaseRequesterSessionRuntimeContext'> & Readonly<{
       useRealSessionSpawn?: boolean;
       onExternalActionIngressOwnerReady?: (owner: import('@/rpc/handlers/externalAction').ExternalActionIngressOwner)
@@ -267,7 +267,7 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
       return { stdout: result.stdout };
     }, fileSystem: { lstat: async () => { throw Object.assign(new Error('No managed sudoers fixture'), { code: 'ENOENT' }); },
       readFile: async () => { throw new Error('No managed sudoers fixture'); } },
-    readTailscaledOperator: async () => ({ authorization: 'unknown' }),
+    tailscale: { tailscaleBin: join(directory, 'bin', 'tailscale') },
   } }));
   const readHomeMachine = () => ({ id: machineId, accountId, active: true, activeAt: Date.now(), revokedAt: null,
     replacedByMachineId: null, kind: 'persistent', installationId: osStore.identity!.installationId,
@@ -381,7 +381,7 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
         ? { resolveRequesterSessionRuntimeContext: options.sessionStartup.resolveRequesterSessionRuntimeContext } : {}),
       ...(options.sessionStartup?.releaseRequesterSessionRuntimeContext
         ? { releaseRequesterSessionRuntimeContext: options.sessionStartup.releaseRequesterSessionRuntimeContext } : {}),
-      ...(options.sessionStartup?.pidToAwaiter ? { pidToAwaiter: options.sessionStartup.pidToAwaiter } : {}),
+      ...(options.sessionStartup?.spawnAwaiterByKey ? { spawnAwaiterByKey: options.sessionStartup.spawnAwaiterByKey } : {}),
       ...(options.sessionStartup?.processEnv ? { processEnv: options.sessionStartup.processEnv } : {}),
       getApiMachineForSessions: () => client, resolveQualifiedConnectedAccountV4Support: () => 'advertised',
       startup: { pluginRuntimeController: runtime.controller,
@@ -576,6 +576,9 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
       const runtime = createProductionDaemonWorkflowRuntime({ credentials: selectedCredentials,
         accountId: attribution.accountId, serverId });
       const requesterTransport = nativeConfirmed ? createWorkflowRunMachineTransport({ runId: claim.runId,
+        machineAdmissionBoundary: { machineId, daemonToken: credentials.token,
+          isHomeCurrent: () => !workflowLifetime.signal.aborted && configuration.activeServerId === serverId,
+          readInstallation: () => osStore.identity, getObservedServerIdentityId: () => homeId },
         credentials: selectedCredentials, requesterWorkAttributionV1: attribution,
         isCurrent: async () => !workflowLifetime.signal.aborted && configuration.activeServerId === serverId
           && osStore.identity?.installationId === installation.installationId
