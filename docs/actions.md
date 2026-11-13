@@ -6,6 +6,19 @@ tools, MCP, CLI, Machine RPC, the public HTTP API, and plugins. The point of the
 a new capability is added by declaring a row, not by writing a command, a tool, a route, a
 permission check and a confirmation dialog five times.
 
+In unreleased 0.3 source, `machines.scheduled.list` and
+`machines.scheduled.watch` read native cron, systemd timers, launchd schedules or
+Windows Task Scheduler through the Machine's existing inventory custody and
+protected Action transport. The caller supplies `pageSize` and optional `offset`;
+`nextOffset` requests another page. Sources report read failures independently.
+Readable sources can also report `observation: {kind: 'unavailable', reason}`,
+which retains useful rows while exposing a failed native producer. Reads load on
+page presentation and explicit refresh; push uses existing native producers where
+available, without polling or adding a systemd subscription source. An explicit
+`refresh: true` also reattaches failed observations. Command bodies and executable arguments are never returned or
+stored on the server. The daemon shares one native observation across pages;
+UI data consumers share the existing demand, cancellation and recovery store.
+
 This page describes the platform's owners and its admission vocabulary. The public HTTP wire
 contract lives in [api.md](api.md#external-action-api-developer-preview-source-contract); the CLI
 host is in [cli-architecture.md](cli-architecture.md#action-derived-command-arguments).

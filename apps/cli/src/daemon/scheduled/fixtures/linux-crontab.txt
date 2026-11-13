@@ -1,0 +1,6 @@
+# Captured system crontab; accounts, paths and commands redacted.
+SHELL=redacted
+17 * * * * account redacted-command
+25 6 * * * account redacted-command
+47 6 * * 7 account redacted-command
+52 6 1 * * account redacted-command

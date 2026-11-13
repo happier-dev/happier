@@ -43,7 +43,7 @@ export function createCliMachineResourceActionDeps(
     observeEnvironmentAccessChanges: CliDeploymentEnvironmentAccessObserve;
     executionRunActionFailure: (code: string, message?: string, details?: unknown) => CliProjectAdmissionFailure;
   }>,
-): Pick<ActionExecutorDeps, 'machineStorageAction' | 'machineProcessesAction' | 'machineVitalsAction' | 'machineAgentIsolationAction' | 'machineServiceAction' | 'machineServiceScope' | 'machineServiceControl' | 'machineServiceExec' | 'machineServiceLogsRead' | 'machineAdminAccessAction' | 'machineReboot' | 'machineReachabilityAction' | 'machineResourcesPolicyAction' | 'machineRolesAction' | 'machineGuardAction' | 'usageSourceAction'> {
+): Pick<ActionExecutorDeps, 'machineScheduledAction' | 'machineStorageAction' | 'machineProcessesAction' | 'machineVitalsAction' | 'machineAgentIsolationAction' | 'machineServiceAction' | 'machineServiceScope' | 'machineServiceControl' | 'machineServiceExec' | 'machineServiceLogsRead' | 'machineAdminAccessAction' | 'machineReboot' | 'machineReachabilityAction' | 'machineResourcesPolicyAction' | 'machineRolesAction' | 'machineGuardAction' | 'usageSourceAction'> {
   const admitMachineService = async (serverId: string, actionContext: ActionExecutorContext, machineId: string,
     method: string): Promise<CliProjectAdmissionFailure | null> => {
     const denied = await projectAccountAdmission(serverId, actionContext);
@@ -183,6 +183,19 @@ export function createCliMachineResourceActionDeps(
         const output = MACHINE_STORAGE_ACTION_OUTPUT_SCHEMAS[actionId].safeParse(raw);
         return output.success ? output.data : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
       });
+    },
+    machineScheduledAction: async ({ actionId, input, context, signal }) => {
+      const denied = await projectAccountAdmission(input.serverId, context);
+      if (denied) return denied;
+      const assertCurrent = async () => {
+        signal?.throwIfAborted();
+        await assertProjectRequesterCurrent(context);
+        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+      };
+      return withProjectHome(() => executeCapturedMachineAction({ actionId, assertCurrent,
+        invoke: options => callMachineAction({ machineId: input.machineId, serverId: input.serverId,
+          method: getActionSpec(actionId).bindings!.rpcMethod!, request: input, authority: context.authority,
+          context, effectActionId: actionId, exactMachine: true, timeoutMs: null, ...(signal ? { signal } : {}), ...options }) }));
     },
     machineProcessesAction: async ({ actionId, input, context, signal }) => {
       const parsed = MACHINE_PROCESSES_ACTION_INPUT_SCHEMAS[actionId].safeParse(input);

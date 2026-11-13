@@ -10,7 +10,6 @@ export type ScheduledJob = {
     id: string;
     name: string;
     schedule: string;
-    command?: string;
     nextRun?: string;
     lastRun?: string;
     enabled?: boolean;
@@ -114,7 +113,7 @@ export async function readNativeScheduledSources(options: { signal?: AbortSignal
                 return timers.map(({ id, name }) => {
                     const schedule = schedules.get(id);
                     if (!schedule) throw new TypeError('Missing systemd timer schedule');
-                    // Config push covers definitions. Runtime next/last fields need
+                    // Definitions are read on demand. Runtime next/last fields need
                     // a subscribed D-Bus connection, so this projection omits them.
                     return { id, name, schedule };
                 });

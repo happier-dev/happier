@@ -1,0 +1,6 @@
+TimersCalendar={ OnCalendar=*-*-* *:00/10:00 ; next_elapse=Fri 2026-11-13 05:20:00 CET }
+Id=sysstat-collect.timer
+
+TimersMonotonic={ OnUnitActiveUSec=3h ; next_elapse=0 }
+TimersMonotonic={ OnStartupUSec=1h ; next_elapse=0 }
+Id=apport-autoreport.timer
