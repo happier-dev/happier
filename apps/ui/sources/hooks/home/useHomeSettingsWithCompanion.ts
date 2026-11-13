@@ -4,7 +4,7 @@ import type { HomeSettingsProjectionV1 } from '@happier-dev/protocol/home/govern
 import type { HomeActionFailure as HomeDomainFailure } from '@/sync/ops/home/homeActionOutcome';
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { HomeGovernanceQueryOutcome } from '@/sync/ops/home/homeGovernanceOperations';
-import { observeHomeSettings, refreshHomeSettings } from '@/sync/engine/home/governance/homeSettingsEngine';
+import { observeHomeSettings, refreshHomeSettings, type HomeSettingsRefreshReason } from '@/sync/engine/home/governance/homeSettingsEngine';
 import { adoptHomeSettingsProjection, getHomeSettingsSnapshot, subscribeHomeSettingsAdoptions, subscribeHomeSettingsSnapshots } from '@/sync/store/home/governance/homeSettingsSnapshots';
 import { useHomeSettingsLifetime } from './homeSettingsLifetime';
 
@@ -20,7 +20,7 @@ export type HomeSettingsWithCompanion<TCompanion> = Readonly<{
     /** Failure of the latest companion read; the last successful answer is retained. */
     companionFailure: HomeDomainFailure | null;
     /** Completes after the settings answer has been adopted (or its failure recorded). */
-    reload: () => Promise<void>;
+    reload: (reason?: HomeSettingsRefreshReason) => Promise<void>;
     /** Adopts the projection a settings write answered with and re-reads the companion. */
     adoptSettings: (settings: HomeSettingsProjectionV1) => void;
     /** Adopts a companion answer a mutation returned (for example the new reachability). */
@@ -75,11 +75,11 @@ export function useHomeSettingsWithCompanion<TCompanion>(
         })();
     }, [serverId, accountId, scopeKey]);
 
-    const load = React.useCallback(async () => {
+    const load = React.useCallback(async (reason?: HomeSettingsRefreshReason) => {
         if (!enabled || !capturedScope || currentScopeKey.current !== scopeKey) return;
         const currentGeneration = (generation.current += 1);
         refreshCompanion(currentGeneration);
-        await refreshHomeSettings(capturedScope);
+        await refreshHomeSettings(capturedScope, reason);
     }, [enabled, capturedScope, scopeKey, refreshCompanion]);
 
     // Only another Home (or another Account on it) starts from nothing. A read that is merely

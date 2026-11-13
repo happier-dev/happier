@@ -3,6 +3,7 @@ import type { HomeSettingsProjectionV1 } from '@happier-dev/protocol/home/govern
 
 import type { HomeActionFailure as HomeDomainFailure } from '@/sync/ops/home/homeActionOutcome';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { HomeSettingsRefreshReason } from '@/sync/engine/home/governance/homeSettingsEngine';
 
 import { useHomeSettingsWithCompanion } from './useHomeSettingsWithCompanion';
 
@@ -12,7 +13,7 @@ export type HomeSettingsRead = Readonly<{
     loading: boolean;
     /** The failure of the latest read, when it failed. */
     failure: HomeDomainFailure | null;
-    reload: () => Promise<void>;
+    reload: (reason?: HomeSettingsRefreshReason) => Promise<void>;
     /** Adopts the projection a settings write answered with. */
     adoptSettings: (settings: HomeSettingsProjectionV1) => void;
 }>;

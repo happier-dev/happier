@@ -120,7 +120,8 @@ export async function restartHomeRuntime(
                             const executed = await actions.execute(actionId, actionInput,
                                 { surface: 'ui', authority: 'present_user', serverId: scope.serverId,
                                     expectedAccountId: scope.accountId, ...(context.signal ? { signal: context.signal } : {}) });
-                            if (!executed.ok) return { kind: 'failed', message: executed.error };
+                            if (!executed.ok) return isActionApprovalDeclinedErrorCode(executed.errorCode)
+                                ? { kind: 'cancelled' } : { kind: 'failed', message: executed.error };
                             const pending = ActionApprovalRequestCreatedResultSchema.safeParse(executed.result);
                             if (!pending.success) return { kind: 'completed', value: executed.result };
                             if (pending.data.actionId !== actionId) return { kind: 'failed', message: 'approval_binding_mismatch' };
@@ -178,7 +179,8 @@ export async function restartHomeRuntime(
                                 } },
                                 ...(context.signal ? { signal: context.signal } : {}),
                             });
-                            if (!executed.ok) return { kind: 'failed', message: executed.errorCode === 'request_not_sent' ? null : executed.error };
+                            if (!executed.ok) return isActionApprovalDeclinedErrorCode(executed.errorCode)
+                                ? { kind: 'cancelled' } : { kind: 'failed', message: executed.errorCode === 'request_not_sent' ? null : executed.error };
                             const pending = ActionApprovalRequestCreatedResultSchema.safeParse(executed.result);
                             if (!pending.success) return { kind: 'completed', value: executed.result };
                             if (pending.data.actionId !== actionId) return { kind: 'failed', message: 'approval_binding_mismatch' };

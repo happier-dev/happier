@@ -15,7 +15,7 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
@@ -56,7 +56,14 @@ vi.mock('@react-navigation/native', async () => {
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
     return createReactNavigationNativeMock();
 });
-installSettingsViewCommonModuleMocks({ storage: 'real' });
+installSettingsViewCommonModuleMocks({
+    storage: 'real',
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        // Accept the person's transient review; Account approval and restart completion stay real.
+        return createModalModuleMock({ confirmResult: true }).module;
+    },
+});
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 installDisconnectedServerSocketBoundary();
@@ -168,7 +175,7 @@ it.each(['home-runtime-pending-restart.action', 'settings.personalHomeRuntime.re
     const restartTask = [...desktop.listeners.keys()].find(id => id.endsWith('relay.runtime.restart.v1'));
     expect(restartTask).toBeDefined();
     expect(runtimeItem(screen, 'settings.personalHomeRuntime.restart').props.disabled).toBe(true);
-    expect(screen.tree.findByTestId('home-runtime-pending-restart.action')!.props.disabled).toBe(true);
+    expect(screen.tree.findByTestId('home-runtime-pending-restart.action')!.props.accessibilityState.disabled).toBe(true);
     expect(home.requestsFor(SETTINGS_GET)).toHaveLength(1);
     const otherControl = controlId === 'settings.personalHomeRuntime.restart' ? 'home-runtime-pending-restart.action' : 'settings.personalHomeRuntime.restart';
     await screen.tree.pressByTestIdAsync(otherControl);
@@ -201,17 +208,22 @@ it('Runtime shows initial settings failure with Retry rather than interpreting i
     expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('home-runtime-settings-unknown');
 });
 
-it('keeps a Home search approval reachable on Runtime without claiming completion', async () => {
+it('keeps Home search pending until the person accepts its native review', async () => {
     const serverId = await hostingHome();
     home.answer(serverId, SETTINGS_GET, { body: projection(false) });
+    home.answer(serverId, '/v1/home/search/rebuild', { body: { ok: true } });
     await home.requireUiApproval(serverId, 'home.search.rebuild');
+    let answerReview!: (accepted: boolean) => void;
+    vi.mocked(modules.modal.Modal.confirm).mockImplementationOnce(() => new Promise<boolean>(resolve => { answerReview = resolve; }));
     const screen = await renderRuntime(serverId);
     await waitForHomeGovernance(() => expect(runtimeItem(screen, 'settings.personalHomeRuntime.repairSearch').props.disabled).toBe(false));
     await screen.tree.pressByTestIdAsync('settings.personalHomeRuntime.repairSearch');
-    await waitForHomeGovernance(() => expect(home.requestsFor('/v1/artifacts').length).toBeGreaterThan(0));
-    await act(async () => {});
-    expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-runtime-search-approval');
+    await waitForHomeGovernance(() => expect(answerReview).toBeDefined());
+    expect(home.requestsFor('/v1/home/search/rebuild')).toHaveLength(0);
+    expect(home.requestsFor('/v1/artifacts')).toHaveLength(0);
     expect(modules.modal.Modal.alert).not.toHaveBeenCalled();
+    await act(async () => answerReview(true));
+    await waitForHomeGovernance(() => expect(home.requestsFor('/v1/home/search/rebuild')).toHaveLength(1));
 });
 
 it('Runtime marks post-reconnect settings unknown after a typed read failure and Retry adopts the fresh projection', async () => {
@@ -304,14 +316,20 @@ it.each([
         },
     });
     const serverId = restored.serverId;
-    modules.store.storage.getState().applyMachines([createMachineFixture({ id: 'host', activeAt: Date.now() })], true,
+    modules.store.storage.getState().applyMachines([createHydratedPlainMachineFixture({ id: 'host', accountId: 'account', machine: { activeAt: Date.now() } })], true,
         { sourceServerId: serverId, sourceAccountId: 'account' });
     modules.store.storage.getState().markMachineListSettled(serverId);
     const screen = await renderScreen(<RestartScreen serverId={serverId} surface={surface} />);
     await waitForHomeGovernance(() => expect(home.requestsFor(SETTINGS_GET), JSON.stringify(screen.tree.toJSON())).toHaveLength(1));
     if (surface !== 'runtime') await waitForHomeGovernance(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-runtime-pending-restart.action'));
     await screen.tree.pressByTestIdAsync(restartControl === 'banner' ? 'home-runtime-pending-restart.action' : 'home-runtime-restart');
-    await waitForHomeGovernance(() => expect(daemonRequests.some(call => (call.payload as { method?: string }).method === (phase === 'start' ? 'start' : 'wait'))).toBe(true));
+    await waitForHomeGovernance(() => expect(daemonRequests.some(call => (call.payload as { method?: string }).method === (phase === 'start' ? 'start' : 'wait')), JSON.stringify({
+        requests: home.requests.map(({ method, path }) => ({ method, path })),
+        confirmations: vi.mocked(modules.modal.Modal.confirm).mock.calls.length,
+        reviews: vi.mocked(modules.modal.Modal.show).mock.calls.map(([config]) => config.chrome?.testID),
+        alerts: vi.mocked(modules.modal.Modal.alertAsync).mock.calls,
+        daemonRequests,
+    })).toBe(true));
     expect(JSON.stringify(screen.tree.toJSON())).toContain('homeGovernance.runtime.waitingForHome');
     expect(modules.modal.Modal.alertAsync).not.toHaveBeenCalled();
     expect(home.requestsFor(SETTINGS_GET)).toHaveLength(1);
@@ -320,7 +338,7 @@ it.each([
     await screen.tree.pressByTestIdAsync(surface === 'runtime' || (surface === 'both' && restartControl === 'banner') ? 'home-runtime-restart' : 'home-runtime-pending-restart.action');
     expect(daemonRequests.filter(call => (call.payload as { method?: string }).method === 'start')).toHaveLength(1);
 
-    await act(async () => modules.wakes.publishHomeAccountChange(serverId));
+    await act(async () => modules.wakes.publishHomeAccountChange(serverId, ['unrelated-session'], { source: 'socket', changeKinds: ['session'] }));
     await act(async () => modules.wakes.publishHomeAccountChange('other-home', undefined, { source: 'connected' }));
     expect(home.requestsFor(SETTINGS_GET)).toHaveLength(1);
 

@@ -18,6 +18,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { Modal } from '@/modal';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
+import type { HomeSettingsRefreshReason } from '@/sync/engine/home/governance/homeSettingsEngine';
 import { useSocketStatus } from '@/sync/domains/state/storage';
 import { getAppliedActiveServerId } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -68,7 +69,7 @@ type RestartObservation = {
     refreshStarted: boolean;
     finished: boolean;
     refresh: () => void;
-    reload?: () => void | Promise<void>;
+    reload?: (reason?: HomeSettingsRefreshReason) => void | Promise<void>;
 };
 
 /**
@@ -78,7 +79,7 @@ type RestartObservation = {
 export function useHomeRuntimeRestart(
     context: HomeAdministrationContext,
     executor: HomeRuntimeExecutor,
-    onRestarted?: () => void | Promise<void>,
+    onRestarted?: (reason?: HomeSettingsRefreshReason) => void | Promise<void>,
 ) {
     const secretMaterialAllowed = useFeatureEnabled('remoteHosts.secretMaterial');
     const socket = useSocketStatus();
@@ -96,12 +97,12 @@ export function useHomeRuntimeRestart(
         return () => { current.current = null; };
     }, [serverId, accountId]);
 
-    const refreshOnce = React.useCallback(async (observation: RestartObservation) => {
+    const refreshOnce = React.useCallback(async (observation: RestartObservation, reason?: HomeSettingsRefreshReason) => {
         if (current.current !== observation || observation.refreshStarted) return;
         observation.refreshStarted = true;
         try {
             observation.refresh();
-            await observation.reload?.();
+            await observation.reload?.(reason);
         } finally {
             if (current.current === observation) {
                 observation.finished = true;
@@ -115,7 +116,7 @@ export function useHomeRuntimeRestart(
         const observation = current.current;
         if (!observation || observation.finished) return;
         observation.connected = true;
-        if (observation.waiting) void refreshOnce(observation);
+        if (observation.waiting) void refreshOnce(observation, 'reconnected');
     }, [refreshOnce]);
 
     React.useEffect(() => {
@@ -143,7 +144,7 @@ export function useHomeRuntimeRestart(
             observation.waiting = true;
             setWaitingForHome(true);
             // The connection may have returned before the initial admission ACK was lost.
-            if (observation.connected) void refreshOnce(observation);
+            if (observation.connected) void refreshOnce(observation, 'reconnected');
         };
         const outcome = await restartHomeRuntime(executor, {
             serverId, secretMaterialAllowed, onApprovalPending: context.requestApproval,
@@ -203,7 +204,7 @@ type HomeRestartNowBannerProps = Readonly<{
      * cannot restart the runtime. Owners only.
      */
     discard?: Readonly<{ onPress: () => void; loading: boolean }>;
-    onRestarted?: () => void | Promise<void>;
+    onRestarted?: (reason?: HomeSettingsRefreshReason) => void | Promise<void>;
 }>;
 
 export const HomeRestartNowBanner = React.memo(function HomeRestartNowBanner(props: HomeRestartNowBannerProps) {
@@ -261,7 +262,7 @@ export const HomePendingRestartAttentionRow = React.memo(function HomePendingRes
     executor: HomeRuntimeExecutor;
     pendingCount: number;
     pendingSummary: string;
-    onRestarted?: () => void | Promise<void>;
+    onRestarted?: (reason?: HomeSettingsRefreshReason) => void | Promise<void>;
     /** Opens Runtime, for a viewer or device that cannot restart from here. */
     onReview: () => void;
 }>) {
@@ -298,7 +299,7 @@ type HomeRuntimeSectionProps = Readonly<{
     context: HomeAdministrationContext;
     release: HomeServerRelease;
     executor: HomeRuntimeExecutor;
-    onRestarted?: () => void | Promise<void>;
+    onRestarted?: (reason?: HomeSettingsRefreshReason) => void | Promise<void>;
 }>;
 
 export const HomeRuntimeSection = React.memo(function HomeRuntimeSection(props: HomeRuntimeSectionProps) {
@@ -370,8 +371,8 @@ export const HomeRuntimeRestartSections = React.memo(function HomeRuntimeRestart
 function HostingRuntimeRestartSections(props: RuntimeRestartSectionsProps) {
     const controller = useLocalRelayRuntimeControl({ actionScope: props.context.scope });
     const refreshStatus = controller.refreshStatus;
-    const onRestarted = React.useCallback(async () => {
-        await props.onRestarted?.();
+    const onRestarted = React.useCallback(async (reason?: HomeSettingsRefreshReason) => {
+        await props.onRestarted?.(reason);
         await refreshStatus();
     }, [props.onRestarted, refreshStatus]);
     return <RuntimeRestartSections {...props} onRestarted={onRestarted} localController={controller} />;

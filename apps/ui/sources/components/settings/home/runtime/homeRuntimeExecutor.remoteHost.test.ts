@@ -5,8 +5,6 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 import { createManualSystemTaskRunner } from '@/dev/testkit/harness/manualSystemTaskRunner';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
-import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { homeGovernanceProjectionFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -26,7 +24,14 @@ vi.mock('socket.io-client', async importOriginal =>
 
 // Native presentation boundaries use the same setup as neighboring Home suites;
 // admission, catalog scope, credentials and task completion keep the real store.
-installSettingsViewCommonModuleMocks({ storage: 'real' });
+installSettingsViewCommonModuleMocks({
+    storage: 'real',
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        // Each case can hold the person's native review at the presentation boundary.
+        return createModalModuleMock({ confirmResult: true }).module;
+    },
+});
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 installDisconnectedServerSocketBoundary();
@@ -41,9 +46,12 @@ const loadModules = async () => {
     const catalog = await import('@/sync/store/settings/remoteHostCatalogSnapshot');
     const executor = await import('./homeRuntimeExecutor');
     await import('@/sync/ops/actions/defaultActionExecutor');
-    return { runtime, catalog, executor };
+    await import('@/components/approvals/ActionConfirmationReview');
+    const sections = await import('./HomeRuntimeSections');
+    return { runtime, catalog, executor, sections };
 };
 const modules = await loadModules();
+const { Modal } = await import('@/modal');
 
 afterEach(async () => {
     await standardCleanup();
@@ -58,6 +66,8 @@ afterEach(async () => {
 });
 
 async function prepareHome() {
+    vi.mocked(Modal.confirm).mockReset().mockResolvedValue(true);
+    vi.mocked(Modal.show).mockClear();
     const { runtime, catalog: { applyRemoteHostCatalogSnapshot }, executor: { restartHomeRuntime } } = modules;
     const serverId = await home.addHome({ name: 'SSH Home', serverUrl: 'https://ssh-home.test', accountId: 'account', currentAccount: true });
     const scope = { serverId, accountId: 'account' };
@@ -88,41 +98,35 @@ async function prepareHome() {
     return { serverId, scope, host, manual, restartHomeRuntime };
 }
 
-it.each([true, false, 'reject', 'cancel', 'observation_failed'] as const)('joins the real SSH approval and task lifecycle before accepting runtime health (%s)', async (healthy) => {
+it.each([true, false, 'reject', 'cancel', 'observation_failed'] as const)('joins the native SSH review and real task lifecycle before accepting runtime health (%s)', async (healthy) => {
     const { serverId, scope, host, manual, restartHomeRuntime } = await prepareHome();
     let settled = false;
     let observed: Awaited<ReturnType<typeof restartHomeRuntime>> | undefined;
-    let approval: Exclude<ActionApprovalRegistration, string> | undefined;
+    let answer: ((confirmed: boolean) => void) | undefined;
+    vi.mocked(Modal.confirm).mockImplementationOnce(() => new Promise(resolve => { answer = resolve; }));
+    const controller = new AbortController();
+    const onApprovalPending = vi.fn();
     const restarting = restartHomeRuntime({ kind: 'remote_host', host, hostName: host.name, scope, catalogRevision: 4 },
-        { serverId, secretMaterialAllowed: false, onApprovalPending: (registration: ActionApprovalRegistration) => {
-            if (typeof registration === 'string') throw new Error('Restart must retain its result continuation');
-            approval = registration;
-        } }).then(outcome => { settled = true; observed = outcome; return outcome; });
-    await waitForHomeGovernance(() => {
-        expect(approval !== undefined || observed !== undefined).toBe(true);
-    });
+        { serverId, secretMaterialAllowed: false, onApprovalPending, signal: controller.signal })
+        .then(outcome => { settled = true; observed = outcome; return outcome; });
+    await waitForHomeGovernance(() => expect(answer).toBeTypeOf('function'));
     expect(observed).toBeUndefined();
-    expect(approval).toBeDefined();
+    expect(Modal.confirm).toHaveBeenCalledOnce();
     expect(manual.runner.listActiveTasks!()).toHaveLength(0);
-    const artifactId = approval!.artifactId;
+    expect(home.artifacts(serverId).list()).toEqual([]);
+    expect(onApprovalPending).not.toHaveBeenCalled();
     const denied = healthy === 'reject' || healthy === 'cancel';
-    const decision = await decideApprovalAsInbox(serverId, artifactId, denied ? healthy : 'approve');
-    expect(decision.ok).toBe(true);
-    const { captureActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
-    const captured = await captureActionAccountContext(serverId);
-    const artifact = await captured.fetchArtifact(artifactId);
-    captured.dispose();
-    expect(artifact).not.toBeNull();
+    if (healthy === 'cancel') controller.abort();
+    else answer!(!denied);
     if (denied) {
-        approval!.onTerminal!(healthy === 'reject' ? 'rejected' : 'canceled', artifact);
         await expect(restarting).resolves.toMatchObject({ kind: 'cancelled' });
         expect(manual.runner.listActiveTasks!()).toHaveLength(0);
+        expect(manual.bridge.start).not.toHaveBeenCalled();
         return;
     }
-    await approval!.onExecuted(artifact!);
-    expect(manual.runner.listActiveTasks!(), JSON.stringify({ decision, observed })).toHaveLength(1);
+    await waitForHomeGovernance(() => expect(manual.runner.listActiveTasks!()).toHaveLength(1));
     const taskId = manual.runner.listActiveTasks!()[0].taskId;
-    expect(manual.bridge.start.mock.calls[0][0].params).toMatchObject({ action: 'relayRuntime.restart' });
+    expect(manual.bridge.start.mock.calls[0][0].params).toMatchObject({ action: 'relayRuntime.restart', ssh: { target: host.ssh.target, auth: 'agent' } });
     expect(settled).toBe(false);
     const result = { protocolVersion: 1 as const, taskId, ok: true as const, data: { action: 'relayRuntime.restart' } };
     manual.emitResult(taskId, result);
@@ -142,33 +146,31 @@ it.each([true, false, 'reject', 'cancel', 'observation_failed'] as const)('joins
 it.each([
     { surface: 'banner', decision: 'reject' },
     { surface: 'runtime', decision: 'cancel' },
-] as const)('the $surface releases a $decision approval without reporting failed restart or reloading', async ({ surface, decision }) => {
+] as const)('the $surface releases a $decision review without reporting failed restart or reloading', async ({ surface }) => {
     const { serverId, scope, host, manual } = await prepareHome();
-    const { HomeRestartNowBanner, HomeRuntimeSection } = await import('./HomeRuntimeSections');
-    const { Modal } = await import('@/modal');
-    let approval: Exclude<ActionApprovalRegistration, string> | undefined;
+    const { HomeRestartNowBanner, HomeRuntimeSection } = modules.sections;
+    let answer: ((confirmed: boolean) => void) | undefined;
+    vi.mocked(Modal.confirm).mockImplementationOnce(() => new Promise(resolve => { answer = resolve; }));
     const refresh = vi.fn();
     const onRestarted = vi.fn();
     const context = { scope, homeName: 'SSH Home', projection: homeGovernanceProjectionFixture(), mutationsAvailable: true,
-        approvalPending: false, refresh, requestApproval: (registration: ActionApprovalRegistration) => {
-            if (typeof registration === 'string') throw new Error('Restart must retain its result continuation');
-            approval = registration;
-        } };
+        approvalPending: false, refresh, requestApproval: vi.fn() };
     const executor = { kind: 'remote_host' as const, host, hostName: host.name, scope, catalogRevision: 4 };
     const screen = await renderScreen(surface === 'banner'
         ? React.createElement(HomeRestartNowBanner, { context, executor, pendingCount: 1, onRestarted })
         : React.createElement(HomeRuntimeSection, { context, executor, release: { version: '0.3', flavor: 'light' }, onRestarted }));
-    await screen.tree.pressByTestIdAsync(surface === 'banner' ? 'home-runtime-pending-restart.action' : 'home-runtime-restart');
-    await waitForHomeGovernance(() => expect(approval).toBeDefined());
-    expect(manual.runner.listActiveTasks!()).toHaveLength(0);
-    const result = await decideApprovalAsInbox(serverId, approval!.artifactId, decision);
-    expect(result.ok).toBe(true);
-    const { captureActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
-    const captured = await captureActionAccountContext(serverId);
-    const artifact = await captured.fetchArtifact(approval!.artifactId);
-    captured.dispose();
+    const restartTestId = surface === 'banner' ? 'home-runtime-pending-restart.action' : 'home-runtime-restart';
     const { act } = await import('react-test-renderer');
-    await act(async () => approval!.onTerminal!(decision === 'reject' ? 'rejected' : 'canceled', artifact));
+    await act(async () => { await screen.tree.pressByTestIdAsync(restartTestId); });
+    await waitForHomeGovernance(() => expect(answer).toBeTypeOf('function'));
+    expect(screen.tree.findByTestId(restartTestId)?.props.accessibilityState.disabled).toBe(true);
+    await screen.tree.pressByTestIdAsync(restartTestId);
+    expect(Modal.confirm).toHaveBeenCalledOnce();
+    expect(manual.runner.listActiveTasks!()).toHaveLength(0);
+    expect(home.artifacts(serverId).list()).toEqual([]);
+    expect(context.requestApproval).not.toHaveBeenCalled();
+    await act(async () => answer!(false));
+    await waitForHomeGovernance(() => expect(screen.tree.findByTestId(restartTestId)?.props.accessibilityState.disabled).toBe(false));
     expect(manual.runner.listActiveTasks!()).toHaveLength(0);
     expect(Modal.alertAsync).not.toHaveBeenCalled();
     expect(refresh).not.toHaveBeenCalled();

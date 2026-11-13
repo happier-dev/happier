@@ -124,6 +124,10 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
 
 /** Host code copy is the fallback when the author supplied no reason. */
 function readFailureFallbackMessage(record: Record<string, unknown>, options?: FailurePresentationOptions): string | null {
+    const childSession = SessionSpawnNewActionResultV1Schema.safeParse(record.details);
+    if (childSession.success && childSession.data.type === 'error') {
+        return resolveSessionSpawnNewResultFailureMessage(childSession.data);
+    }
     const code = record.errorCode ?? record.code ?? record.rpcErrorCode;
     if (code === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE) return t('errors.networkError');
     const transient = readTransientFailure(record, options);
