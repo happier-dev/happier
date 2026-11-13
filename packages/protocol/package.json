@@ -21,7 +21,6 @@
       "types": "./dist/*.d.ts",
       "default": "./dist/*.js"
     },
-    "./*.d": null,
     "./*.spec": null,
     "./*.test": null,
     "./*.test-d": null,
@@ -581,6 +580,11 @@
       "happier-source": "./src/sessions/spawnSession.ts",
       "types": "./dist/sessions/spawnSession.d.ts",
       "default": "./dist/sessions/spawnSession.js"
+    },
+    "./system/tasks/spec": {
+      "happier-source": "./src/system/tasks/spec.ts",
+      "types": "./dist/system/tasks/spec.d.ts",
+      "default": "./dist/system/tasks/spec.js"
     },
     "./teams": {
       "happier-source": "./src/teams/index.ts",

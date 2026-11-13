@@ -1,4 +1,4 @@
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -16,31 +16,64 @@ export async function deriveProtocolExports(packageRoot) {
   if (inputs.errors.length) {
     throw new Error(inputs.errors.map(error => ts.flattenDiagnosticMessageText(error.messageText, '\n')).join('\n'));
   }
-  const exports = {};
   const entry = source => ({
     'happier-source': source,
     types: source.replace(/^\.\/src\//, './dist/').replace(/\.ts$/, '.d.ts'),
     default: source.replace(/^\.\/src\//, './dist/').replace(/\.ts$/, '.js'),
   });
+  // Compiler roots also include declaration inputs and support for tests.
+  // They have no public executable module contract.
+  const privateSuffix = /(?:\.d|\.test|\.spec|\.testkit|\.test-d)$/;
+  const isPublic = source => !privateSuffix.test(source)
+    && !/(?:^|\/)(?:test|tests|__tests__|fixtures|__fixtures__)(?:\/|$)/.test(source);
+  const publicSources = new Set();
   for (const file of inputs.fileNames) {
     const source = relative(join(packageRoot, 'src'), file).replaceAll('\\', '/');
-    // Compiler roots also include declaration inputs and support for tests.
-    // They have no public executable module contract.
-    if (source.startsWith('../') || !source.endsWith('.ts')
-      || /(?:\.d|\.test|\.spec|\.testkit|\.test-d)\.ts$/.test(source)
-      || /(?:^|\/)(?:test|tests|__tests__|fixtures|__fixtures__)(?:\/|$)/.test(source)) continue;
-    exports[`./${source.slice(0, -3)}`] = entry(`./src/${source}`);
+    if (source.startsWith('../') || !source.endsWith('.ts') || !isPublic(source.slice(0, -3))) continue;
+    publicSources.add(source.slice(0, -3));
+  }
+  // One subpath pattern publishes every public module. Node re-reads the
+  // nearest package.json for each loaded file, so an enumerated map (3,000+
+  // entries, ~750 KB) cost ~5 ms CPU per protocol module on every Node import.
+  // Tests, specs, testkits and type tests are excluded by suffix patterns; the
+  // few remaining private files (fixtures, test support) by exact keys.
+  // Vite 7 (resolve.exports 2.0.3) turns a pattern key into an unescaped RegExp,
+  // so the `.` in `./*.test` matches any character there. A public module ending
+  // in one of these words (`latest`, `tasks/spec`) therefore gets an exact entry,
+  // which wins in every resolver. Declaration inputs (`*.d.ts`) get no key: the
+  // compiler emits no `dist` target for them, and a `./*.d` pattern would hide
+  // every public subpath ending in `d` under Vite.
+  const privatePatternSuffixes = ['.test', '.spec', '.testkit', '.test-d'];
+  const exports = { './*': entry('./src/*.ts') };
+  for (const suffix of privatePatternSuffixes) exports[`./*${suffix}`] = null;
+  for (const source of publicSources) {
+    if (privatePatternSuffixes.some(suffix => source.endsWith(suffix.slice(1)))) exports[`./${source}`] = entry(`./src/${source}.ts`);
+  }
+  for (const source of await listSourceModules(join(packageRoot, 'src'))) {
+    if (!publicSources.has(source) && !source.endsWith('.d')
+      && !privatePatternSuffixes.some(suffix => source.endsWith(suffix))) {
+      exports[`./${source}`] = null;
+    }
   }
   const aliases = JSON.parse(await readFile(join(packageRoot, 'export-aliases.json'), 'utf8'));
   for (const [specifier, alias] of Object.entries(aliases)) {
     const source = typeof alias === 'string' ? alias : alias['happier-source'];
-    if (!Object.hasOwn(exports, source.replace(/^\.\/src\//, './').replace(/\.ts$/, ''))) {
+    if (!publicSources.has(source.replace(/^\.\/src\//, '').replace(/\.ts$/, ''))) {
       throw new Error(`Protocol export alias has no compiled source: ${specifier}`);
     }
     exports[specifier] = typeof alias === 'string' ? entry(source) : alias;
   }
   return { './package.json': './package.json',
     ...Object.fromEntries(Object.entries(exports).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)) };
+}
+
+async function listSourceModules(directory, prefix = '') {
+  const modules = [];
+  for (const item of await readdir(directory, { withFileTypes: true })) {
+    if (item.isDirectory()) modules.push(...await listSourceModules(join(directory, item.name), `${prefix}${item.name}/`));
+    else if (item.name.endsWith('.ts')) modules.push(`${prefix}${item.name.slice(0, -3)}`);
+  }
+  return modules;
 }
 
 export async function generateProtocolExports({ packageRoot = defaultPackageRoot, check = false, signal } = {}) {
