@@ -42,6 +42,7 @@ import { SessionPaneHeader } from '@/components/sessions/shell/view/SessionPaneH
 import { useOpenStoreBots } from '@/components/store/catalog/useOpenStoreBots';
 import { MultiPaneHost } from '@/components/ui/panels/MultiPaneHost';
 import { router } from 'expo-router';
+import { ChartTooltip } from '@/components/ui/charts/ChartTooltip';
 
 // The portal is a platform boundary; command admission, request demand and retirement stay real.
 vi.mock('@/components/ui/popover', async importOriginal =>
@@ -118,6 +119,70 @@ afterEach(async () => {
 });
 
 describe('mounted current-context descendant commands', () => {
+    it('releases retired chart definitions across repeated renders and mounts while a native callback survives', async () => {
+        const { Session } = await import('node:inspector');
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://chart-command-retention.test', accountId: 'account-a' }],
+            route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const authority = captureActiveServerAccountScopeLifetime();
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const seen = new WeakSet<object>();
+        const definitions: WeakRef<object>[] = [];
+        let publishedCount = 0;
+        let nativeCallback: ReturnType<typeof useCurrentUiContextLocalCommands> | undefined;
+        const nativeChartCallbacks: (() => void)[] = [];
+        function Observe() {
+            const commands = useCurrentUiContextComposedCommands();
+            publishedCount = commands.length;
+            for (const definition of commands) {
+                if (!seen.has(definition)) {
+                    seen.add(definition);
+                    definitions.push(new WeakRef(definition));
+                }
+            }
+            // An external host may retain one callback beyond its source's unmount.
+            // Its empty source must not keep sibling chart definitions alive.
+            nativeCallback = useCurrentUiContextLocalCommands([]);
+            return null;
+        }
+        const tree = (generation: number, value: string, visible: boolean) => <InjectedAuthProvider credentials={credentials}>
+            <CurrentUiContextCommandsProvider authority={authority}>
+                <Observe />{visible ? Array.from({ length: 12 }, (_, index) =>
+                    <ChartTooltip key={`${generation}:${index}`} title={`Datum ${index}`} value={value} accentColor="#123456"
+                        renderTrigger={interaction => {
+                            nativeChartCallbacks.push(interaction.onPress);
+                            return <View />;
+                        }}>
+                        <View />
+                    </ChartTooltip>) : null}
+            </CurrentUiContextCommandsProvider>
+        </InjectedAuthProvider>;
+        const screen = await renderScreen(tree(0, '1', true));
+        for (let generation = 0; generation < 4; generation++) {
+            await screen.update(tree(generation, '1', true));
+            expect(publishedCount).toBe(24);
+            await screen.update(tree(generation, '2', true));
+            expect(publishedCount).toBe(24);
+            await screen.update(tree(generation, '2', false));
+            expect(publishedCount).toBe(0);
+        }
+        await screen.update(tree(4, '3', true));
+        expect(publishedCount).toBe(24);
+        await screen.unmount();
+        const inspector = new Session();
+        inspector.connect();
+        try {
+            await new Promise<void>(resolve => setImmediate(resolve));
+            await new Promise<void>((resolve, reject) => inspector.post('HeapProfiler.collectGarbage', error => error ? reject(error) : resolve()));
+            expect(definitions.length).toBeGreaterThanOrEqual(4 * 24);
+            expect(definitions.filter(definition => definition.deref() !== undefined).length,
+                'an unmounted source and retained callback release every retired chart definition').toBe(0);
+            expect(await nativeCallback!.invoke('reveal')).toBe(false);
+            expect(nativeChartCallbacks.length).toBeGreaterThanOrEqual(4 * 12);
+        } finally { inspector.disconnect(); }
+    });
     it('keeps the presented page mount address after Apply closes over its phone details pane', async () => {
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://page-dialog-binding.test', accountId: 'account-a' }],
             route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });

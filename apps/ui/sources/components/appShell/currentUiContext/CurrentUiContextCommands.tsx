@@ -54,6 +54,12 @@ const EMPTY_COMMANDS: ComposedCommands = Object.freeze([]);
 const CompositionContext = React.createContext<CommandComposition | null>(null);
 const CommandsContext = React.createContext<ComposedCommands>(EMPTY_COMMANDS);
 
+// React keeps the last reducer on its dispatch queue. It must not capture a
+// provider render and its obsolete composed command inventory in Hermes.
+function advanceCommandRevision(current: number): number {
+    return current + 1;
+}
+
 /** Reparent modal commands into the existing root composer, retaining its Account lifetime and reader. */
 export function useCurrentUiContextCommandBridge() {
     const pageComposition = React.useContext(CompositionContext);
@@ -87,7 +93,7 @@ export function CurrentUiContextCommandsProvider(props: Readonly<{
     const entries = React.useRef<Map<object, ComposedCommands> | null>(null);
     if (entries.current === null) entries.current = new Map();
     const registry = entries.current;
-    const [revision, invalidate] = React.useReducer((current: number) => current + 1, 0);
+    const [revision, invalidate] = React.useReducer(advanceCommandRevision, 0);
     const latest = React.useRef(props);
     latest.current = props;
     const mounted = React.useRef(true);
@@ -263,34 +269,24 @@ export function useCurrentUiContextLocalCommandDefinitions(
     return definitions.rows;
 }
 
-export function useCurrentUiContextLocalCommands(commands: readonly CurrentUiContextLocalCommand[], options?: Readonly<{
-    foregroundOverlay?: boolean;
-    contextKey?: string;
-    /** Shared controls in non-page hosts (PluginPageWidgetArea, ProjectAsideDocument) may run the same
-     * declaration only when composition is absent. Effects must still delegate their canonical Action
-     * admission with the caller context; this grants no authority. Retired/inactive providers never fall back. */
-    unbound?: 'local';
-}>): Readonly<{
-    invoke(key: string, input?: PluginUiJsonValueV1, callerContext?: ActionExecutorContext,
-        invocation?: CurrentUiContextCommandInvocation): Promise<boolean>;
-}> {
-    const composition = React.useContext(CompositionContext);
-    const reader = useOptionalCurrentUiContextReader();
-    const latest = React.useRef(commands);
-    React.useLayoutEffect(() => { latest.current = commands; }, [commands]);
-    const isCurrent = React.useCallback(() => composition?.isCurrent() === true, [composition]);
-    const definitions = useCurrentUiContextLocalCommandDefinitions(commands, isCurrent, options?.contextKey);
-    const modalId = useModalContentId();
-    const mountedDefinitions = React.useMemo(() => options?.foregroundOverlay
-        ? definitions.map(definition => ({ ...definition, foreground: { modalId } })) : definitions,
-    [definitions, options?.foregroundOverlay, modalId]);
-    React.useLayoutEffect(() => {
-        return composition?.register(definitions, mountedDefinitions);
-    }, [composition, definitions, mountedDefinitions]);
-    const invoke = React.useCallback(async (key: string, input?: PluginUiJsonValueV1, callerContext?: ActionExecutorContext,
+type LocalCommandInvocationState = Readonly<{
+    composition: CommandComposition | null;
+    reader: ReturnType<typeof useOptionalCurrentUiContextReader>;
+    definitions: ReturnType<typeof useCurrentUiContextLocalCommandDefinitions>;
+    commands: readonly CurrentUiContextLocalCommand[];
+    unbound: 'local' | undefined;
+}>;
+
+// Native event handlers can outlive their source. Capture only a cleared-on-retire
+// cell, rather than the hook render's definitions and its provider environment.
+function createLocalCommandInvoker(binding: { current: LocalCommandInvocationState | null }) {
+    return async (key: string, input?: PluginUiJsonValueV1, callerContext?: ActionExecutorContext,
         invocation?: CurrentUiContextCommandInvocation): Promise<boolean> => {
+        const state = binding.current;
+        if (!state) return false;
+        const { composition, reader, definitions } = state;
         if (!composition) {
-            const local = options?.unbound === 'local' ? latest.current.find(candidate => candidate.key === key) : undefined;
+            const local = state.unbound === 'local' ? state.commands.find(candidate => candidate.key === key) : undefined;
             if (!local) return false;
             const caller = callerContext ?? { surface: 'ui' as const, authority: 'present_user' as const,
                 actionCaller: { kind: 'host' as const } };
@@ -304,6 +300,36 @@ export function useCurrentUiContextLocalCommands(commands: readonly CurrentUiCon
             ? origin.execute(composition.execution, actionId, actionInput)
             : composition.execution.execute(actionId, actionInput);
         return (await executeMountedCurrentUiContextCommand({ reader, command, execute, input })).ok;
-    }, [composition, definitions, options?.unbound, reader]);
-    return React.useMemo(() => ({ invoke }), [invoke]);
+    };
+}
+
+export function useCurrentUiContextLocalCommands(commands: readonly CurrentUiContextLocalCommand[], options?: Readonly<{
+    foregroundOverlay?: boolean;
+    contextKey?: string;
+    /** Shared controls in non-page hosts (PluginPageWidgetArea, ProjectAsideDocument) may run the same
+     * declaration only when composition is absent. Effects must still delegate their canonical Action
+     * admission with the caller context; this grants no authority. Retired/inactive providers never fall back. */
+    unbound?: 'local';
+}>): Readonly<{
+    invoke(key: string, input?: PluginUiJsonValueV1, callerContext?: ActionExecutorContext,
+        invocation?: CurrentUiContextCommandInvocation): Promise<boolean>;
+}> {
+    const composition = React.useContext(CompositionContext);
+    const reader = useOptionalCurrentUiContextReader();
+    const isCurrent = React.useCallback(() => composition?.isCurrent() === true, [composition]);
+    const definitions = useCurrentUiContextLocalCommandDefinitions(commands, isCurrent, options?.contextKey);
+    const modalId = useModalContentId();
+    const mountedDefinitions = React.useMemo(() => options?.foregroundOverlay
+        ? definitions.map(definition => ({ ...definition, foreground: { modalId } })) : definitions,
+    [definitions, options?.foregroundOverlay, modalId]);
+    React.useLayoutEffect(() => {
+        return composition?.register(definitions, mountedDefinitions);
+    }, [composition, definitions, mountedDefinitions]);
+    const binding = React.useMemo<{ current: LocalCommandInvocationState | null }>(() => ({ current: null }),
+        [composition, definitions, options?.unbound, reader]);
+    React.useLayoutEffect(() => {
+        binding.current = { composition, reader, definitions, commands, unbound: options?.unbound };
+        return () => { binding.current = null; };
+    }, [binding, composition, reader, definitions, commands, options?.unbound]);
+    return React.useMemo(() => ({ invoke: createLocalCommandInvoker(binding) }), [binding]);
 }
