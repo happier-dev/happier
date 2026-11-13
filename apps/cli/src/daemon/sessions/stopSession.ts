@@ -373,7 +373,10 @@ export function createStopSession(params: Readonly<{
       ? await (params.readTerminalAttachmentInfo ?? readDefaultTerminalAttachmentInfo)({
           happyHomeDir: configuration.happyHomeDir,
           sessionId: normalizedSessionId,
-        }).catch(() => null)
+        }).catch((error: unknown) => {
+          logWarning(`[DAEMON RUN] Could not read terminal attachment metadata for session ${normalizedSessionId}`, error);
+          return null;
+        })
       : null;
     const predecessorAttachmentHandle = predecessorAttachmentInfo
       ? buildLegacyTerminalAttachmentHostHandle(
@@ -577,7 +580,10 @@ export function createStopSession(params: Readonly<{
         happyHomeDir: configuration.happyHomeDir,
         sessionId: normalizedSessionId,
         expected: evidence.attachmentInfo,
-      }).catch(() => false);
+      }).catch((error: unknown) => {
+        logWarning(`[DAEMON RUN] Could not remove terminal attachment metadata for session ${normalizedSessionId}`, error);
+        return false;
+      });
       return removed
         ? options.trackedPids.length > 0 ? await retireAbsentRunnerServiceability() : { status: 'stopped' }
         : incompleteStopSession('attachment_mismatch');

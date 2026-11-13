@@ -1917,7 +1917,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             retryTimer = null;
             if (params.isShuttingDown?.() === true) return;
             void flush('timer').catch((error) => {
-                logger.debug('[API] Durable session mutation retry flush failed', {
+                logger.infoFile('[API] Durable session mutation retry flush failed', {
                     sessionId: params.sessionId,
                     error: serializeAxiosErrorForLog(error),
                 });
@@ -2483,7 +2483,8 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                     } else {
                         attemptFailureReason = 'delivery_error';
                     }
-                    (mutation.kind === 'agent_state_request_settlement' ? logger.infoFile.bind(logger) : logger.debug.bind(logger))('[API] Durable session mutation delivery failed', {
+                    // Session runners log at info: a debug-only failure is invisible where it happens.
+                    logger.infoFile('[API] Durable session mutation delivery failed', {
                         sessionId: params.sessionId,
                         mutationKind: mutation.kind,
                         mutationId: mutation.mutationId,
@@ -2857,7 +2858,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             ? waitForAcknowledgedDelivery(deliveryMutationId, { signal: flushObservation.signal })
             : null;
         const flushPromise = flush(reusedDurableCustody ? 'flush' : 'enqueue').catch((error) => {
-            logger.debug('[API] Durable session mutation enqueue flush failed', {
+            logger.infoFile('[API] Durable session mutation enqueue flush failed', {
                 sessionId: params.sessionId,
                 mutationKind: mutation.kind,
                 mutationId: admittedMutation.mutationId,
@@ -2901,7 +2902,12 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                 return flush('startup');
             }
             return undefined;
-        }).catch(() => {});
+        }).catch((error) => {
+            logger.infoFile('[API] Durable session mutation startup flush failed', {
+                sessionId: params.sessionId,
+                error: serializeAxiosErrorForLog(error),
+            });
+        });
     }
 
     return {
