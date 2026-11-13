@@ -6,14 +6,23 @@ import { Readable } from 'node:stream';
 import { prepareRunnerDaemonPluginServices } from '@/agent/runtime/session/process/runnerDaemonPluginServices';
 import { AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { RunnerDaemonPluginServiceOperationV1Schema, decodeRunnerDaemonPluginServiceWireValueV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonPluginServicesProtocol';
+import { createProviderRedactionLease } from '@/providers/spawn/redaction';
+import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
+import { createUnavailableManagedServices } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import { authorizeResolvedAgentNativeExecLaunchForHost, createStablePluginExecService, spawnAuthorizedHostExecLaunchForHost,
     issueAgentNativeLaunchQualifierForHost, type HostAgentNativeLaunchPreparation } from '@/plugins/runtime/invocation/services/exec';
 import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
+import { createPublicAcpSession } from '@/agent/acp/runtime/publicSession/createPublicAcpSession';
+import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createRunnerDaemonPluginServicesHost } from './runnerDaemonPluginServicesHost';
+
+import { buildPiRpcLaunch } from '../../../../../packages/plugins/pi/src/agent/runtime/rpc/args';
+import { buildOpenCodeManagedServerSpawnSpec } from '../../../../../packages/plugins/opencode/src/agent/runtime/server/spawnSpec';
 
 const executable = Object.freeze({ kind: 'systemTool', id: 'fixture-node' } as const);
 
@@ -34,7 +43,7 @@ vi.mock('node:child_process', async importOriginal => {
 });
 
 describe('runner native launch authority', () => {
-    it.skipIf(process.platform !== 'linux').each(['ordinary', 'resolved native'] as const)(
+    it.skipIf(process.platform !== 'linux').each(['ordinary', 'custom ACP', 'OpenCode managed service', 'Pi'] as const)(
         'keeps the private payload cwd out of the physical RunAs spawn through %s authorization', async variant => {
         await withTempDir('runner-private-cwd-', async root => {
             const memberHome = join(root, 'member-home');
@@ -45,11 +54,18 @@ describe('runner native launch authority', () => {
             const memberIdentity = { ...deriveAgentIsolationMemberIdentity({ homeServerIdentityId: 'home',
                 requester: { serverId: 'home', accountId: 'member', machineId: 'machine', installationId: 'installation' } }),
                 home: cwd, agentUid: 994, agentGid: 994 };
+            const runtimeHome = join(cwd, 'runtime');
+            const pi = buildPiRpcLaunch({ happierToolsExtension: { extensionPath: join(runtimeHome, 'tools.mjs'), configPath: join(runtimeHome, 'tools.json') } });
+            const openCode = buildOpenCodeManagedServerSpawnSpec({ id: 'fixture', dialect: 'v2', systemToolId: 'opencode-cli' });
+            if (openCode.mode.kind !== 'spawn') throw new Error('Expected owned OpenCode server');
+            const requiredFiles = variant === 'Pi' ? pi.requiredFiles : variant === 'OpenCode managed service' ? openCode.mode.launch.requiredFiles : undefined;
+            const args = variant === 'Pi' ? pi.args : variant === 'OpenCode managed service' ? openCode.mode.launch.args ?? [] : ['--version'];
+            let selectedMaterials: { relativePath: string; contentBase64: string }[] = [];
             const agentIsolation = { read: () => ({ enabled: true,
                 status: { kind: 'effective' as const, platform: 'linux' as const, agentUser: 'happier-agent' },
                 workspaceRoots: [cwd], memberIdentity, localTransport: { agentUid: 994, agentGid: 994 },
                 launch: { managedHappierBinaryPath: '/fixture/happier-private-cwd',
-                    runtimeHome: join(cwd, 'runtime'), selectedEnvironmentKeys: [], selectedMaterials: [],
+                    runtimeHome, selectedEnvironmentKeys: [], selectedMaterials,
                     sessionMcpContext: { v: 1 as const, socketPath: join(root, 'mcp.sock'), bearerToken: 'selected-session' } } }) };
             const exec = createStablePluginExecService({ signal: controller.signal,
                 isOccurrenceCurrent: () => true, resolveExecutable: async () => ({ command: process.execPath }),
@@ -79,11 +95,18 @@ describe('runner native launch authority', () => {
                 },
             });
             try {
+                if (variant === 'Pi') {
+                    await expect(authorizeResolvedAgentNativeExecLaunchForHost(runnerServices.exec,
+                        { command: process.execPath, args, cwd, env: {}, requiredFiles }, undefined, undefined, 'exec'))
+                        .rejects.toMatchObject({ code: 'agent_launch_required_file_unavailable' });
+                    selectedMaterials = [{ relativePath: 'tools.mjs', contentBase64: '' }, { relativePath: 'tools.json', contentBase64: '' }];
+                }
                 const result = variant === 'ordinary'
                     ? await runnerServices.exec.run({ executable, args: ['--version'], cwd: { root: 'workspace', relativePath: '' } })
                     : await (async () => {
                         const launch = await authorizeResolvedAgentNativeExecLaunchForHost(runnerServices.exec,
-                            { command: process.execPath, args: ['--version'], cwd, env: {}, stdin: new Uint8Array() });
+                            { command: process.execPath, args, cwd, env: {}, requiredFiles, stdin: new Uint8Array() },
+                            undefined, undefined, 'exec');
                         const supervised = spawnAuthorizedHostExecLaunchForHost(launch);
                         try { return await supervised.handle.wait(); }
                         finally { await supervised.dispose(); await launch.release(); }
@@ -91,7 +114,7 @@ describe('runner native launch authority', () => {
                 expect(result.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
                 const output = JSON.parse(new TextDecoder().decode(result.stdout));
                 const frame = await readAgentLaunchFrame(Readable.from([Buffer.from(output.frame, 'base64')], { objectMode: false }));
-                expect(frame).toMatchObject({ cwd, executable: process.execPath, args: ['--version'],
+                expect(frame).toMatchObject({ cwd, executable: process.execPath, args: variant === 'ordinary' ? ['--version'] : [...args],
                     nativeIdentity: { username: memberIdentity.username, home: cwd, agentUid: 994, agentGid: 994 } });
                 expect(output.cwd).toBe(process.cwd());
             } finally { controller.abort(); await host.dispose(); }
@@ -173,6 +196,57 @@ describe('runner native launch authority', () => {
                 await final.release(); await final.release();
                 expect(release).toHaveBeenCalledOnce();
                 expect(nativeRun).toHaveBeenCalledTimes(2);
+                // Custom ACP supplies an explicit undefined requiredFiles key.
+                // Initialize a real ACP subprocess after the runner/daemon hop.
+                const script = writeAcpTestAgentScript({ dir: root, fileName: 'custom-acp.mjs', source: `
+                    import { createInterface } from 'node:readline';
+                    for await (const line of createInterface({ input: process.stdin })) {
+                        const r = JSON.parse(line); if (r.id === undefined) continue;
+                        const result = r.method === 'initialize' ? { protocolVersion: 1, agentCapabilities: {} }
+                            : r.method === 'session/new' ? { sessionId: 'custom-ready' } : {};
+                        process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: r.id, result }) + '\\n');
+                    }
+                ` });
+                const session = await createPublicAcpSession({ kind: 'create', sessionId: 'custom', cwd: root },
+                    { transport: { kind: 'stdio', executable } }, {
+                        pluginId: 'fixture.plugin', agentId: 'custom', signal: controller.signal, isCurrent: () => true,
+                        exec: runnerServices.exec, nativeLaunch,
+                        resolveHostLaunch: () => ({ command: process.execPath, args: [script],
+                            env: { KEEP: 'request', REMOVE: 'old' }, unsetEnv: [], timeouts: {}, release() {} }),
+                        systemTools: { resolve: async () => { throw new Error('Already resolved'); } },
+                        interactions: { async request() { throw new Error('Unexpected interaction'); } },
+                        media: { async registerSourceRoot() { throw new Error('Unexpected media'); } },
+                        models: { bind: () => ({ dispose() {} }) }, modes: { bind: () => ({ dispose() {} }) },
+                    });
+                await session.dispose();
+                const redaction = createProviderRedactionLease({ values: [] });
+                const managedOwner = createManagedServicesOwner({
+                    registerRawForRedaction: (_scope, value) => redaction.add([value]),
+                    processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
+                    dependencies: createUnavailableManagedServices().dependencies, resolveScope: scope => scope,
+                });
+                const serverExec = createStablePluginExecService({ signal: controller.signal, isOccurrenceCurrent: () => true,
+                    environment: { REMOVE: 'old' }, resolvePath: async () => root,
+                    resolveExecutable: async () => ({ command: process.execPath }),
+                    authorizeLaunch: (request, options) => authorizeResolvedAgentNativeExecLaunchForHost(runnerServices.exec, {
+                        command: process.execPath, args: ['-e', `
+                            require('node:http').createServer((req,res)=>res.end('{}')).listen(
+                                Number(process.argv[process.argv.indexOf('--port')+1]), '127.0.0.1');
+                        `, '--', ...(request.args ?? [])], cwd: root,
+                        env: { REMOVE: 'old', ...request.env }, requiredFiles: request.requiredFiles,
+                    }, options?.signal, undefined, 'managedService'),
+                });
+                const managed = managedOwner.bindScope({ occurrenceId: 'opencode-ready', pluginId: 'fixture.plugin',
+                    contributionQualifiedId: 'fixture.plugin/agents/opencode', operationId: 'session',
+                    signal: controller.signal, isOccurrenceCurrent: () => true }, serverExec);
+                try {
+                    const service = await managed.supervise(buildOpenCodeManagedServerSpawnSpec({ id: 'opencode-ready',
+                        dialect: 'v2', systemToolId: 'opencode-cli', additionalEnv: { KEEP: 'request' } }));
+                    try { await service.waitUntilHealthy(); }
+                    finally { await service.dispose(); }
+                } finally { await managedOwner.dispose(); redaction.close(); }
+
+
                 isolationEnabled = true;
                 await expect(authorizeResolvedAgentNativeExecLaunchForHost(runnerServices.exec, {
                     command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root, env: { KEEP: 'request', REMOVE: 'old' },

@@ -1251,6 +1251,7 @@ export const RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS = [
         launch: z.optional(z.strictObject({
             command: z.string().check(z.minLength(1)),
             args: z.array(z.string()),
+            requiredFiles: z.optional(z.array(BoundedTextSchema)),
             env: StringRecordSchema,
             cwd: z.optional(z.string()),
             stdin: z.optional(Base64Schema),
