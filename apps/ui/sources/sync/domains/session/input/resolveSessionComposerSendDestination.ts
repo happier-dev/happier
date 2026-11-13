@@ -33,9 +33,9 @@ export type SessionComposerSendDestination =
         localId: string;
     }>
     /**
-     * Same Agent, another route or model (D15): restart the Session's runtime on
-     * the route the reader armed, then send this message through the ordinary
-     * path. Nothing is carried over as text — it is the same session, resumed.
+     * Same Agent, another source (D15), or an explicit empty model apply:
+     * apply the selection before dispatch. A model-only message instead reaches
+     * ordinary input admission; the runtime applies its arm at the next prompt.
      */
     | Readonly<{ kind: 'armedRouteContinuation'; machineId: string }>
     /**
@@ -79,10 +79,13 @@ export function resolveSessionComposerSendDestination(params: Readonly<{
     armedContinuationLocalId: string | null;
     /**
      * Non-null exactly when a route or model change for the SAME Agent waits for
-     * the next message (the Session's pending model selection). `turnActive` says
-     * whether the runtime is still working, since applying it restarts the runtime.
+     * the next message (the Session's pending model selection). `modelOnly` is
+     * the existing route presentation owner's same-source result. A source change
+     * needs a restart; the prompt owner already consumes model-only changes.
      */
-    armedRoute?: Readonly<{ turnActive: boolean }> | null;
+    armedRoute?: Readonly<{ turnActive: boolean; modelOnly?: boolean }> | null;
+    /** A message, including attachments, rather than the empty Continue action. */
+    hasMessage?: boolean;
     /** The machine hosting the Session. The transition only runs there. */
     machineId: string | null;
     /**
@@ -110,6 +113,7 @@ export function resolveSessionComposerSendDestination(params: Readonly<{
         // Same rule as an armed Agent: the change is a promise about the next
         // message to this Session's Agent, so it cannot ride on a send to anything else.
         if (route !== 'sessionAgent') return { kind: 'refused', reason: 'conflictingDestination' };
+        if (armedRoute.modelOnly && params.hasMessage) return { kind: 'sessionAgent' };
         if (machineId === null || machineId.length === 0) return { kind: 'refused', reason: 'armedTargetUnreachable' };
         if (armedRoute.turnActive) return { kind: 'refused', reason: 'sourceNotIdle' };
         return { kind: 'armedRouteContinuation', machineId };

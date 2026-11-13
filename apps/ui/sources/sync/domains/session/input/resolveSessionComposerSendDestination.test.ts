@@ -124,6 +124,22 @@ describe('resolveSessionComposerSendDestination', () => {
     describe('an armed route or model change for the same Agent (D15)', () => {
         const ROUTE_IDLE = { turnActive: false } as const;
 
+        it.each([false, true])('admits a message through the prompt owner for a model-only change (busy %s)', turnActive => {
+            expect(resolveSessionComposerSendDestination({
+                route: 'sessionAgent', armedContinuation: null, armedContinuationLocalId: null,
+                armedRoute: { turnActive, modelOnly: true }, hasMessage: true,
+                machineId: 'machine-1', pendingTransitionOutcome: 'settled',
+            })).toEqual({ kind: 'sessionAgent' });
+        });
+
+        it('retains the explicit apply action for an empty model continuation', () => {
+            expect(resolveSessionComposerSendDestination({
+                route: 'sessionAgent', armedContinuation: null, armedContinuationLocalId: null,
+                armedRoute: { turnActive: false, modelOnly: true }, hasMessage: false,
+                machineId: 'machine-1', pendingTransitionOutcome: 'settled',
+            })).toEqual({ kind: 'armedRouteContinuation', machineId: 'machine-1' });
+        });
+
         it('applies the armed route on the next send, then sends to the same Agent', () => {
             // Same Agent, so no transition and nothing carried over as text: the
             // Session resumes on the new route and this message is its first input.

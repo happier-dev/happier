@@ -141,8 +141,8 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
      */
     armedContinuationTarget?: Readonly<{ agentId: string; label: string }> | null;
     /**
-     * A route or model change for the running Agent, armed for the next message
-     * (D15): pressing send restarts it on that source, then sends.
+     * A route or model change for the running Agent, armed for the next message.
+     * The prompt owner applies a model change; another source may require restart.
      */
     armedRouteContinuation?: ArmedRouteContinuation | null;
     /**
@@ -164,7 +164,8 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
     const sendMenuAnchorRef = React.useRef<View>(null);
     const [sendMenuOpen, setSendMenuOpen] = React.useState(false);
     const sendMenuEnabled = props.hasSendableContent && !props.disabled && !props.isSending
-        && !dictationActive && !props.armedContinuationTarget && !props.armedRouteContinuation
+        && !dictationActive && !props.armedContinuationTarget
+        && (!props.armedRouteContinuation || props.armedRouteContinuation.modelLabel !== undefined)
         && Boolean(props.sendMenuItems?.length);
     const openSendMenu = () => {
         if (!sendMenuEnabled) return;
@@ -239,6 +240,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
         />
     ) : null;
 
+    let armedSubmit: React.ReactNode = null;
     if (armedContinuation) {
         const canonicalMark = armed?.kind === 'agent' && canonicalIdentityMark
             ? React.cloneElement(canonicalIdentityMark, {
@@ -256,7 +258,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
                 color={theme.colors.button.primary.tint}
             />
         ) : undefined);
-        return (
+        armedSubmit = (
             <AgentInputSubmitShape>
                 {unarmRoute}
                 <RoundButton
@@ -278,15 +280,25 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
                     loading={props.isSending}
                     disabled={disabled}
                     onPress={submitPress}
+                    onLongPress={sendMenuEnabled ? openSendMenu : undefined}
+                    accessibilityHint={sendMenuEnabled ? t('agentInput.sendOptions.hint') : undefined}
+                    expanded={sendMenuEnabled ? sendMenuOpen : undefined}
+                    accessibilityActions={sendMenuEnabled ? [{ name: 'longpress', label: t('agentInput.sendOptions.title') }] : undefined}
+                    onAccessibilityAction={sendMenuEnabled ? (event) => {
+                        if (event.nativeEvent.actionName === 'longpress') openSendMenu();
+                    } : undefined}
                 />
             </AgentInputSubmitShape>
         );
     }
 
+    if (armedSubmit && !sendMenuEnabled) return armedSubmit;
+
     return (
         <View
             ref={sendMenuAnchorRef}
             collapsable={false}
+            style={armedSubmit ? ARMED_SUBMIT_SHRINKABLE_STYLE : undefined}
             {...(Platform.OS === 'web' && sendMenuEnabled ? {
                 onContextMenu: (event: React.MouseEvent) => {
                     event.preventDefault();
@@ -300,7 +312,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
                 },
             } : {})}
         >
-          <AgentInputSubmitShape>
+          {armedSubmit ?? <AgentInputSubmitShape>
         {unarmRoute}
         <Shaker ref={props.stopShakerRef}>
         <PrimaryCircleIconButton
@@ -371,7 +383,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
             )}
         </PrimaryCircleIconButton>
         </Shaker>
-          </AgentInputSubmitShape>
+          </AgentInputSubmitShape>}
           {sendMenuOpen && sendMenuEnabled ? (
             <DropdownMenu
                 open

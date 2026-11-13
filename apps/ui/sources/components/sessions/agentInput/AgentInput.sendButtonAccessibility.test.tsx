@@ -291,6 +291,25 @@ async function renderDictationComposer(element: React.ReactElement) {
 }
 
 describe('AgentInput (send button accessibility)', () => {
+    it('queues a draft from the armed model submit control', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const onSend = vi.fn();
+        const screen = await renderScreen(<AgentInput
+            sessionId="session-1" value="Deliver after this turn" placeholder="Type"
+            onChangeText={() => {}} onSend={onSend}
+            armedRouteContinuation={{ modelLabel: 'Next model' }}
+            sendMenuModes={['server_pending']} autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+        try {
+            const send = screen.findByTestId('session-composer-send');
+            expect(send?.props.onLongPress).toBeTypeOf('function');
+            await act(async () => { send?.props.onLongPress(); });
+            await act(async () => { screen.pressByTestId('agent-input-send-option-server_pending'); });
+            expect(onSend).toHaveBeenCalledExactlyOnceWith({ deliveryIntent: 'server_pending' });
+        } finally { await screen.unmount(); }
+    });
+
     it('exposes available send choices to assistive technology and dismisses without changing the draft', async () => {
         const { AgentInput } = await import('./AgentInput');
         const { Popover } = await import('@/components/ui/popover');

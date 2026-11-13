@@ -1351,6 +1351,33 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         } finally { await screen.unmount(); }
     });
 
+    it.each([undefined, 'server_pending'] as const)('queues busy input on an armed model without restarting the runner (intent %s)', async deliveryIntent => {
+        const now = Date.now();
+        const agentTargetKey = 'agent:happier.agent.codex/codex';
+        const selection = { agentTargetKey, providerConnectionId: null, modelId: 'next-model' };
+        updateSession({ active: true, activeAt: now, presence: 'online', thinking: true, thinkingAt: now,
+            latestTurnStatus: 'in_progress', latestTurnStatusObservedAt: now,
+            metadata: { ...currentSession().metadata, modelSelectionIntentV1: { v: 1, updatedAt: now, selection },
+                sessionModelsV1: { v: 1, agentId: 'codex', updatedAt: now - 1,
+                    currentModelId: 'old-model', availableModels: [{ id: 'old-model', name: 'Old' }, { id: 'next-model', name: 'Next' }],
+                    activeSelectionV1: { v: 1, source: 'runtime_readback', selection: { ...selection, modelId: 'old-model' },
+                        runner: { pid: 42, processStartTimeMs: 10 } } } },
+        });
+        const screen = await renderSessionView({ routeServerId: runtime.serverId });
+        try {
+            await changeText(screen, 'Deliver after the busy turn');
+            expect(findAgentInput(screen).props.armedRouteContinuation).toMatchObject({ modelLabel: expect.any(String) });
+            await send(screen, deliveryIntent ? { deliveryIntent } : undefined);
+            await vi.waitFor(() => expect(pendingWrites()).toHaveLength(1));
+            expect(pendingWrites()[0]?.body).toMatchObject({ requestedAction: { v: 1, kind: 'enqueue' } });
+            expect(findAgentInput(screen).props.sendMenuModes).toContain('server_pending');
+            await waitForSubmittedDraft(screen);
+            expect(readComposerText(findAgentInput(screen))).toBe('');
+            expect(resumeCalls()).toHaveLength(0);
+            expect(rpcCalls.some(call => call.method === SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION)).toBe(false);
+        } finally { await screen.unmount(); }
+    });
+
     it.each([
         ['agent_queue', 'steer_now'],
         ['server_pending', 'enqueue'],

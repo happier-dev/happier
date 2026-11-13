@@ -2102,7 +2102,7 @@ export function useSessionComposerController({
         usageLimitRecoveryPresentation,
     ]);
     const presentMachineAgentRefusal = useEventCallback((code: unknown, targetMachineId: string | null,
-        agentTitle = currentAgentLabel): boolean => presentMachineAgentStartRefusal({
+        agentTitle: string = currentAgentLabel): boolean => presentMachineAgentStartRefusal({
         code,
         agentTitle,
         machineName: getMachineSentenceName(sessionMachineRecord),
@@ -4360,7 +4360,7 @@ export function useSessionComposerController({
                                 ) } });
                             } },
                     });
-                } else if (presentation.kind !== 'directory_missing') {
+                } else if (presentation.kind !== 'directory_missing' && presentation.kind !== 'agent_setup') {
                     if (!silent && !presentSessionCredentialReconnectFailure(presentation,
                         () => router.push('/(app)/settings/connected-services'), Modal.alert)) {
                         maybeAlert(presentation.message, presentation.errorCode ?? null);
@@ -5800,7 +5800,7 @@ export function useSessionComposerController({
     });
     const canChooseComposerSendActions = !pendingMessageEdit && !pendingComposerDocument
         && !recipientState.recipient && !recipientState.scmDiffSummaryDiscussion
-        && !armedContinuationTarget && !armedRouteContinuation
+        && !armedContinuationTarget && (!armedRouteContinuation || armedModelOnly)
         && resolveVoiceSessionComposerRouting({ conversationSessionId: sessionId, sessionMetadata: ownerMetadata })?.kind !== 'adapter_text';
     const handleAgentInputAbort = useEventCallback(async () => {
         const lifetime = sessionAccountLifetime;
@@ -6628,6 +6628,8 @@ export function useSessionComposerController({
                         const outboundBase = shouldSendReviewComments
                             ? { kind: 'review_comments' as const }
                             : { kind: 'plain' as const };
+                        const hasOutboundMessage = trimmedText.length > 0 || hasAttachments
+                            || hasComposerAttachments || shouldSendReviewComments;
                         // One destination fact for both the attachment and the plain send path.
                         // Recomputing it per branch is how the attachment branch silently kept
                         // addressing the parent Session's Agent.
@@ -6652,7 +6654,8 @@ export function useSessionComposerController({
                         ): SessionComposerSendDestination => resolveSessionComposerSendDestination({
                             route,
                             armedContinuation: inSessionAgentPicker.armedContinuation,
-                            armedRoute: armedRouteContinuation ? { turnActive: isRuntimeFreshActiveTurn } : null,
+                            armedRoute: armedRouteContinuation ? { turnActive: isRuntimeFreshActiveTurn, modelOnly: armedModelOnly } : null,
+                            hasMessage: hasOutboundMessage,
                             armedContinuationLocalId: inSessionAgentPicker.armedContinuationLocalId,
                             machineId: typeof machineId === 'string' ? machineId : null,
                             pendingTransitionOutcome,
@@ -6764,8 +6767,7 @@ export function useSessionComposerController({
                         };
                         // Empty Continue applies the same destination decision and refusal UI,
                         // then stops before admitting a user message.
-                        if (!trimmedText && !hasAttachments && !hasComposerAttachments && !shouldSendReviewComments
-                            && armedRouteContinuation && !armedContinuationTarget) {
+                        if (!hasOutboundMessage && armedRouteContinuation && !armedContinuationTarget) {
                             if (outboundDestination.kind === 'refused') presentRefusedArmedSend(outboundDestination);
                             else if (outboundDestination.kind === 'armedRouteContinuation') await restartSessionRunnerOnRequestedRoute();
                             return;

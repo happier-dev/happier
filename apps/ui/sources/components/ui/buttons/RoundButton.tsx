@@ -294,6 +294,9 @@ export const RoundButton = React.memo((props: {
      */
     joinedEdge?: 'start' | 'end',
     onPress?: HappierPressableProps['onPress'],
+    onLongPress?: HappierPressableProps['onLongPress'],
+    accessibilityActions?: HappierPressableProps['accessibilityActions'],
+    onAccessibilityAction?: HappierPressableProps['onAccessibilityAction'],
     action?: (event?: Parameters<HappierPressableProps['onPress']>[0]) => Promise<unknown>
 }) => {
     const { theme } = useUnistyles();
@@ -430,6 +433,9 @@ export const RoundButton = React.memo((props: {
             onPressIn={pressFeedback.onPressIn}
             onPressOut={pressFeedback.onPressOut}
             onPress={doAction}
+            onLongPress={props.onLongPress}
+            accessibilityActions={props.accessibilityActions}
+            onAccessibilityAction={props.onAccessibilityAction}
         >
             {(state) => (
                 <Animated.View
