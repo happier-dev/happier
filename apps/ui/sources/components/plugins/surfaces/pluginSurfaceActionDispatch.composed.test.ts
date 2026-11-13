@@ -6302,6 +6302,66 @@ describe('plugin-surface action branch selection', () => {
         } finally { await activation.composition.unload(); accountLifetime.retire(); }
     });
 
+    it('reads a retained hidden New Session draft through a client Action without admitting hidden edits or a retired draft', async () => {
+        const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+        await prepareSessionDraftPersistenceStorage();
+        const { createNewSessionComposerDocumentOwner } = await import('@/components/sessions/composer/newSessionComposerDocumentOwner');
+        const { projectComposerDocumentSnapshot } = await import('@/components/sessions/composer/composerSnapshotProjection');
+        const { registerComposerPresentationTarget } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        const accountLifetime = { ...clientAccountLifetime(),
+            scope: { serverId: resolveServerProfileScopeIdForIdentifier(rpcHomes.get('server-client-action')!.id), accountId: 'test-account' } };
+        const ref = { kind: 'newSession', instanceId: 'retained-client-action-draft' } as const;
+        const previous = getStorage().getState();
+        const previousApplied = getAppliedActiveServerSnapshot();
+        const previousRuntimeAvailable = isAppliedActiveServerRuntimeAvailable();
+        getStorage().setState({ sessionLocalStateScope: accountLifetime.scope, profileScope: accountLifetime.scope });
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const owner = createNewSessionComposerDocumentOwner({ scope: accountLifetime.scope, ref });
+        let presented = false;
+        owner.replaceDocument({ text: 'Retained note', structuredInputMentions: [], composerAttachments: [] });
+        const release = registerComposerPresentationTarget(ref, {
+            readScope: () => accountLifetime.scope, readRevision: () => owner.read().revision,
+            replace: () => owner.read().revision, isPresented: () => presented,
+            readSnapshot: () => projectComposerDocumentSnapshot({ owner, attachmentCatalog: { entriesById: null },
+                presentation: { layout: 'wrap', focused: false, editable: true, submittable: true, submitting: false, running: false } }),
+            commitDocument: ({ expectedRevision, mutation }) => owner.apply(expectedRevision, mutation),
+            commitDocumentEmitsChange: true,
+        });
+        const activation = createClientActionActivation({ accountLifetime, handler: async (_input, context) => ({
+            read: await context.ui.readComposer(ref),
+            applied: await context.ui.applyComposer(ref, { expectedRevision: owner.read().revision,
+                operations: [{ kind: 'text.set', text: 'Presented edit' }] }),
+        }) });
+        const dispatch = () => dispatchPluginSurfaceAction({
+            action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id },
+            resolveContributedAction: resolveExactClientAction(activation.action), clientAction: {},
+        });
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            const outcome = await dispatch();
+            expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true, result: {
+                read: { status: 'ready', snapshot: { ref, text: 'Retained note' } },
+                applied: { status: 'composerUnavailable' },
+            } });
+            expect(owner.read().document.text).toBe('Retained note');
+            presented = true;
+            expect(await dispatch()).toMatchObject({ ok: true, result: {
+                read: { status: 'ready', snapshot: { text: 'Retained note' } }, applied: { status: 'applied' },
+            } });
+            expect(owner.read().document.text).toBe('Presented edit');
+            release();
+            expect(await dispatch()).toMatchObject({ ok: true, result: {
+                read: { status: 'unavailable', reason: 'scopeClosed' }, applied: { status: 'composerUnavailable' },
+            } });
+        } finally {
+            release(); await activation.composition.unload(); accountLifetime.retire();
+            getStorage().setState({ sessionLocalStateScope: previous.sessionLocalStateScope, profileScope: previous.profileScope });
+            publishAppliedActiveServerSnapshot(previousApplied, previousRuntimeAvailable);
+        }
+    });
+
     it('applies a client Action Composer transaction to its real scoped draft while preserving prior text', async () => {
         const { createExistingSessionComposerDocumentOwner } = await import('@/components/sessions/composer/existingSessionComposerDocumentOwner');
         const { projectComposerDocumentSnapshot } = await import('@/components/sessions/composer/composerSnapshotProjection');

@@ -1626,7 +1626,7 @@ export function createComposerPresentationTransactionApplier(input: Readonly<{
         target: ComposerPresentationTarget | null;
         isTargetCurrent: (target: ComposerPresentationTarget) => boolean;
     }> | undefined => {
-        if (ref.kind === 'discussion' && input.scope !== undefined) {
+        if (ref.kind !== 'session' && input.scope !== undefined) {
             const scope = input.scope;
             const target = scope ? resolveScopedMountedComposerTarget(ref, scope) : null;
             return {
@@ -1726,6 +1726,11 @@ function resolveScopedMountedComposerTarget(
     return target && (!requirePresented || isComposerPresentationTargetPresented(target)) ? target : null;
 }
 
+/** Snapshot reads retain exact New Session documents across navigation; effects still require presentation. */
+function resolveScopedMountedComposerSnapshotTarget(ref: ComposerRefV1, scope: ServerAccountScope): ComposerPresentationTarget | null {
+    return resolveScopedMountedComposerTarget(ref, scope, ref.kind !== 'newSession');
+}
+
 /** Scope-ready physical retention is independent of visibility; document operations keep their presented-only fences. */
 export function isScopedMountedComposerPresentationTargetReady(
     ref: ComposerRefV1,
@@ -1734,17 +1739,17 @@ export function isScopedMountedComposerPresentationTargetReady(
     return scope != null && resolveScopedMountedComposerTarget(ref, scope, false) !== null;
 }
 
-function readScopedMountedComposerTarget(ref: ComposerRefV1, scope: ServerAccountScope): ComposerPresentationTarget | null {
+function readScopedMountedComposerTarget(ref: ComposerRefV1, scope: ServerAccountScope, snapshot = false): ComposerPresentationTarget | null {
     if (!areServerAccountScopesEqual(getActiveServerAccountScope(), scope)) return null;
-    return resolveScopedMountedComposerTarget(ref, scope);
+    return snapshot ? resolveScopedMountedComposerSnapshotTarget(ref, scope) : resolveScopedMountedComposerTarget(ref, scope);
 }
 
-/** Scoped mounted admission reads the same owner the client Action will mutate. */
+/** Reads the exact live document without treating a retained New Session opener as closed. */
 export function readMountedComposerPresentationSnapshot(request: Readonly<{
     ref: ComposerRefV1;
     scope: ServerAccountScope;
 }>): ComposerSnapshotV1 | null {
-    return readScopedMountedComposerTarget(request.ref, request.scope)?.readSnapshot?.() ?? null;
+    return readScopedMountedComposerTarget(request.ref, request.scope, true)?.readSnapshot?.() ?? null;
 }
 
 /** Annotation resolves through the same scoped mounted registration as composer transactions. */
@@ -2026,7 +2031,7 @@ export async function applyRegisteredNewSessionModelIntent(ref: ComposerRefV1, i
  * draft when that Session has no mounted visual owner.
  */
 export function readComposerPresentationSnapshot(ref: ComposerRefV1, scope?: ServerAccountScope | null): ComposerSnapshotV1 | null {
-    const target = scope === undefined ? readTarget(ref) : scope ? resolveScopedMountedComposerTarget(ref, scope) : null;
+    const target = scope === undefined ? readTarget(ref) : scope ? resolveScopedMountedComposerSnapshotTarget(ref, scope) : null;
     return target?.readSnapshot?.() ?? null;
 }
 
@@ -2289,19 +2294,19 @@ export function createComposerPresentationHostHandlers(
     }
     const activeOwner = owner;
     const capturedScope = input.scope ?? getActiveServerAccountScope();
-    const readHostTarget = (ref: ComposerRefV1, requirePresented = true): ComposerPresentationTarget | null => {
+    const readHostTarget = (ref: ComposerRefV1, snapshot = false): ComposerPresentationTarget | null => {
         if (input.mountedComposer) {
             if (composerRefV1Key(ref) !== composerRefV1Key(input.mountedComposer)) return null;
-            return capturedScope ? resolveScopedMountedComposerTarget(ref, capturedScope, requirePresented) : null;
+            if (!capturedScope) return null;
+            return snapshot ? resolveScopedMountedComposerSnapshotTarget(ref, capturedScope)
+                : resolveScopedMountedComposerTarget(ref, capturedScope);
         }
         return ref.kind === 'discussion'
             ? capturedScope ? resolveScopedMountedComposerTarget(ref, capturedScope) : null
             : readTarget(ref);
     };
     const readHostSnapshot = (ref: ComposerRefV1): ComposerSnapshotV1 | null => {
-        // A retained New Session draft remains readable when its opener is hidden by
-        // navigation to details. Focus and presentation effects still require presentation.
-        const target = readHostTarget(ref, ref.kind !== 'newSession');
+        const target = readHostTarget(ref, true);
         return target ? readComposerSnapshot(target) : null;
     };
 

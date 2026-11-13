@@ -656,7 +656,8 @@ describe('composer presentation targets', () => {
         expect(isScopedMountedComposerPresentationTargetReady(ref, scope)).toBe(true);
         presented = false;
         expect(isScopedMountedComposerPresentationTargetReady(ref, scope)).toBe(true);
-        expect(readComposerPresentationSnapshot(ref, scope)).toBeNull();
+        if (kind === 'newSession') expect(readComposerPresentationSnapshot(ref, scope)).toMatchObject({ ref });
+        else expect(readComposerPresentationSnapshot(ref, scope)).toBeNull();
         documentScope = null;
         expect(isScopedMountedComposerPresentationTargetReady(ref, scope)).toBe(false);
         documentScope = { ...scope, accountId: 'foreign-account' };
