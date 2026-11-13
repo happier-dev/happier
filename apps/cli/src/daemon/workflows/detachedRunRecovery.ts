@@ -42,12 +42,16 @@ export async function observeWorkflowDetachedRunRecovery(params: Readonly<{
   let actionFailure: string | null = null;
   let retainedRun: ReturnType<typeof ExecutionRunGetResponseSchema.parse>['run'] | undefined;
   const stoppedCustody = () => {
+    const activeCurrent = retainedRun?.inputTurns?.current;
+    const staleExactActive = activeCurrent?.state === 'active' && activeCurrent.inputIds.includes(execution.localInputId);
+    const exactTurn = retainedRun && resolveWorkflowDetachedExecutionRunInputTurn(retainedRun, execution.runId, execution.localInputId);
     if (!input.terminalParent || input.observationOnly || !retainedRun
       || (retainedRun.status !== 'failed' && retainedRun.status !== 'succeeded' && retainedRun.status !== 'cancelled')
-      || retainedRun.inputTurns?.current?.state === 'active'
-      || resolveWorkflowDetachedExecutionRunInputTurn(retainedRun, execution.runId, execution.localInputId)) return null;
+      || (activeCurrent?.state === 'active' && !staleExactActive)
+      || (exactTurn && !staleExactActive)) return null;
     // Inactivity does not prove this historical input's outcome. Never copy a
-    // different turn's result or failure into its invocation row.
+    // different turn's result or failure into its invocation row. A terminal
+    // Run's retained active witness is stale: no input can remain executing.
     return { kind: 'stopped' as const, code: 'execution_run_input_not_observed' };
   };
   const actionContext = {
@@ -78,6 +82,10 @@ export async function observeWorkflowDetachedRunRecovery(params: Readonly<{
   if (actionFailure) return { kind: 'unresolved', code: actionFailure };
   if (observed.kind === 'outcome_uncertain' && observed.code === 'execution_run_input_not_observed') {
     return stoppedCustody() ?? observed;
+  }
+  if (observed.kind === 'pending') {
+    const stopped = stoppedCustody();
+    if (stopped) return stopped;
   }
   if (observed.kind !== 'pending') return observed;
   if (input.observationOnly || (!input.terminalParent && !input.cancellationRequested)) {

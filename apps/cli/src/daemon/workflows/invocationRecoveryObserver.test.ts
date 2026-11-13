@@ -250,7 +250,13 @@ describe('exact Workflow recovery observation', () => {
     observedRun = { ...run, inputTurns: { occurrenceId: 'retained-occurrence', current: {
       turnId: 'another-input', inputIds: ['another-input'], state: 'active' } } };
     expect(await observe(request)).toEqual(uncertain);
-    observedRun = { ...run, runId: 'another-run' };
+    // A terminal native Run cannot still be executing its own exact input.
+    // Older Stop producers could retain this active witness after retirement.
+    observedRun = { ...run, inputTurns: { occurrenceId: 'retained-occurrence', current: {
+      turnId: 'input-1', inputIds: ['input-1'], state: 'active' } } };
+    expect(await observe(request)).toEqual({ kind: 'stopped', code: uncertain.code });
+    observedRun = { ...run, runId: 'another-run', inputTurns: { occurrenceId: 'retained-occurrence', current: {
+      turnId: 'input-1', inputIds: ['input-1'], state: 'active' } } };
     expect(await observe(request)).not.toMatchObject({ kind: 'stopped' });
     observedRun = run;
     expect(await observe(request)).toEqual({ kind: 'stopped', code: uncertain.code });

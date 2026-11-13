@@ -47,6 +47,38 @@ afterEach(() => {
 });
 
 describe('execution run start transcript custody', () => {
+  it('retires the exact retained input when Stop finds no live controller', async () => {
+    const runId = 'stopped-retained-run';
+    const localInputId = 'workflow-input';
+    const runs = new Map<string, ExecutionRunState>([[runId, {
+      runId, callId: 'call', sidechainId: 'sidechain', sessionId: null, depth: 0,
+      intent: 'agent', backendId: 'claude', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Work', permissionMode: 'read_only', retentionPolicy: 'resumable',
+      runClass: 'long_lived', ioMode: 'request_response', status: 'running', startedAtMs: 1,
+      inputTurns: { occurrenceId: 'retained-occurrence', current: {
+        turnId: 'turn', inputIds: [localInputId], state: 'active',
+      } },
+    }]]);
+    const controllers = new Map<string, ExecutionRunController>();
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => {
+      throw new Error('No Voice runtime is involved');
+    } });
+    try {
+      await expect(stopExecutionRun({ runId, runs, controllers, voiceAgentManager, getNowMs: () => 2,
+        finishRun: async (id, next, toolResult) => { await finishExecutionRun({ runId: id, next, toolResult,
+          runs, controllers, budgetRegistry: null, parentProvider: 'daemon.executionRuns', sendAcp: async () => {},
+          enqueueMarkerWrite: async (_id, write) => { await write(); }, terminalMarkerWritePromises: new Map(),
+        }); },
+      })).resolves.toEqual({ ok: true });
+      const stopped = runs.get(runId);
+      expect(stopped?.status).toBe('cancelled');
+      await expect(observeWorkflowDetachedExecutionRunInput({ runId, localInputId,
+        get: async () => ({ run: projectExecutionRunPublicState(stopped!) }),
+      })).resolves.toEqual({ kind: 'cancelled', code: 'execution_run_input_cancelled' });
+    } finally {
+      await voiceAgentManager.dispose();
+    }
+  });
   it('keeps pending daemon admission visible to maintenance without consuming run capacity', async () => {
     const drain = createDaemonAdmissionDrain();
     const requestReceived = createDeferred();

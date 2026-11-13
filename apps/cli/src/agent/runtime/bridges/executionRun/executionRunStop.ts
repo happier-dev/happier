@@ -59,6 +59,14 @@ export async function stopExecutionRun(args: Readonly<{
     })().catch(() => {
       // Best effort: synchronous throws and async rejections are absorbed here.
     });
+  } else if (run.inputTurns?.current?.state === 'active') {
+    // A retained Run can outlive its controller. Stop is the host's terminal
+    // fact for that input too; otherwise the saved active witness survives the
+    // cancelled Run and its Workflow keeps waiting for a turn that cannot run.
+    const { current, ...turns } = run.inputTurns;
+    args.runs.set(args.runId, { ...run, inputTurns: {
+      ...turns, last: { ...current, state: 'cancelled' },
+    } });
   }
 
   const finishedAtMs = args.getNowMs();
