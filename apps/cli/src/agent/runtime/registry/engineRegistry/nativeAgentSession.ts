@@ -15,7 +15,7 @@ import { probeMcpStdioServerTools } from '@/mcp/servers/probeMcpStdioServerTools
 import { isToolAllowedForSession } from '@/agent/permissions/permissionToolIdentifier';
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 import { realpath } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
 import { isAbsolute, join, relative, sep } from 'node:path';
 
 import { AgentRuntimeJsonValueV1Schema, AgentSessionConfigurationSnapshotV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
@@ -2008,7 +2008,7 @@ export async function resolveNativeAgentSessionNativeHomeService(params: Readonl
         root: resolveConnectedServiceNativeHomeRoot({
             nativeHome: descriptor.nativeHome,
             sourceEnvironment: params.sourceEnvironment,
-            homeDir: homedir(),
+            homeDir: resolveHomeDirFromEnvironment(params.sourceEnvironment),
         }),
         declaredFileIds: descriptor.authIsolation.secretEntries,
     });

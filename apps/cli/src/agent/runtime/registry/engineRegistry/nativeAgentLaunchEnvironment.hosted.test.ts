@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentExecutionRunOpenRequest, AgentRuntime, AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { ResolvedAgentContribution } from '@/plugins/projection/registry/types';
+import type { AgentExecutionRunOpenRequest, AgentRuntime, AgentSessionOpenRequest, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createNativeAgentExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/nativeAgentExecutionRun';
 import { resolveBackendIsolationBundle } from '@/packagedRuntime/isolation/resolveBackendIsolationBundle';
@@ -17,13 +21,18 @@ const environmentFor = (id: string): NodeJS.ProcessEnv => ({
     OPENAI_API_KEY: `connected-service-${id}`,
 });
 
-async function openAtNativeBoundary(kind: 'session' | 'run' | 'isolated-run', id: string) {
+async function openAtNativeBoundary(kind: 'session' | 'run' | 'isolated-run', id: string, options?: Readonly<{
+    catalogEntry: ResolvedAgentContribution['catalogEntry'];
+    environmentVariables?: Readonly<Record<string, string>>;
+    readNativeHome(context: AgentSessionRuntimeContext): Promise<void>;
+}>) {
     let opened: OpenRequest | undefined;
     // The Agent implementation is the external native boundary; all launch,
     // isolation, Session host services and Run lifecycle owners remain real.
     const runtime: AgentRuntime = {
-        sessions: { async open(request) {
+        sessions: { async open(request, context) {
             opened = request;
+            await options?.readNativeHome(context);
             await Promise.resolve();
             return { send: async () => ({ status: 'admitted' }), watch: () => ({ dispose() {} }), dispose: async () => {} };
         } },
@@ -37,7 +46,10 @@ async function openAtNativeBoundary(kind: 'session' | 'run' | 'isolated-run', id
     const agentId = 'acme-environment';
     const lease = createLease(agentId);
     if (kind === 'session') {
-        const contributions = createExternalContributionFixtures(agentId);
+        const baseContributions = createExternalContributionFixtures(agentId);
+        const contributions = { ...baseContributions, agent: { ...baseContributions.agent,
+            ...(options ? { catalogEntry: options.catalogEntry } : {}),
+        } };
         const plan = await createNativeAgentRuntimeSessionPlanFixture({
             runtime, lease, ...contributions,
             createSessionHostServiceOwners: input => createNativeAgentSessionHostServiceOwners({
@@ -45,7 +57,7 @@ async function openAtNativeBoundary(kind: 'session' | 'run' | 'isolated-run', id
             }),
             sessionInput: buildPluginSessionBindingInput({ credentials: { token: 'native-env-fixture', encryption: null },
                 directory: '/repo', backendTarget: { kind: 'backend', backendId: agentId },
-                environmentVariables: { EXPLICIT_NATIVE_ENV: id, ...(id === 'b' ? { NODE_EXTRA_CA_CERTS: `/override/${id}.pem` } : {}) },
+                environmentVariables: { ...options?.environmentVariables, EXPLICIT_NATIVE_ENV: id, ...(id === 'b' ? { NODE_EXTRA_CA_CERTS: `/override/${id}.pem` } : {}) },
             }),
         });
         // Only the Session client transport fields reached by native open are
@@ -88,6 +100,46 @@ describe('native launch hosted Session baseline', () => {
             if (process.platform === 'win32') expect(values[index]?.USERPROFILE).toBe(`C:\\Users\\${id}`);
             expect(values[index]?.OPENAI_API_KEY).toBeUndefined();
         }
+    });
+
+    it.each([false, true])('reads each Session native home with explicit native-root override %s', async explicitRoot => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-native-session-home-'));
+        try {
+            const observed = await Promise.all(['a', 'b'].map(async id => {
+                const home = join(root, id);
+                const nativeRoot = explicitRoot ? join(root, `override-${id}`) : join(home, '.happier-ambient-scope-hunt-1113-fixture');
+                await mkdir(nativeRoot, { recursive: true });
+                await writeFile(join(nativeRoot, 'AMBIENT-SCOPE-HUNT-1113.marker.json'), JSON.stringify({ account: id }));
+                return runAddedHostedSession({ environment: { ...environmentFor(id), HOME: home, USERPROFILE: home,
+                    ...(explicitRoot ? { ACME_NATIVE_HOME: nativeRoot } : {}) }, workingDirectory: '/repo', end() {},
+                }, async () => {
+                    let account: unknown;
+                    await Promise.resolve();
+                    await openAtNativeBoundary('session', id, {
+                        environmentVariables: explicitRoot ? { ACME_NATIVE_HOME: nativeRoot } : {},
+                        // This external Agent declares its native credential root. Home
+                        // resolution and restricted file access remain production owners.
+                        catalogEntry: { id: 'acme-environment', cliSubcommand: 'acme-environment',
+                            getConnectedServiceStateSharingDescriptor: async () => ({
+                                providerId: 'acme', providerSupportStatus: 'supported',
+                                config: { supported: true, modes: ['isolated'], entries: [] },
+                                state: { supported: true, modes: ['isolated'], entries: [],
+                                    symlinkUnavailableDegradePolicy: 'block_continuity' },
+                                authIsolation: { mode: 'materialized_home', secretEntries: ['AMBIENT-SCOPE-HUNT-1113.marker.json'] },
+                                nativeHome: { environmentKey: 'ACME_NATIVE_HOME', defaultRelativePath: '.happier-ambient-scope-hunt-1113-fixture' },
+                            }),
+                        },
+                        async readNativeHome(context) {
+                            expect(context.session.services.nativeHome).toBeDefined();
+                            const files = await context.session.services.nativeHome!.readFiles(['AMBIENT-SCOPE-HUNT-1113.marker.json']);
+                            account = files?.['AMBIENT-SCOPE-HUNT-1113.marker.json'] ? JSON.parse(new TextDecoder().decode(files['AMBIENT-SCOPE-HUNT-1113.marker.json'])) : null;
+                        },
+                    });
+                    return account;
+                });
+            }));
+            expect(observed).toEqual([{ account: 'a' }, { account: 'b' }]);
+        } finally { await rm(root, { recursive: true, force: true }); }
     });
 
     it('uses the process baseline outside a hosted Session', async () => {
