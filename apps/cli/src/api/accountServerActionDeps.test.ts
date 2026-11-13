@@ -2683,7 +2683,7 @@ describe('Session access HTTP adapter', () => {
     })).rejects.toThrow();
   });
 
-  it('returns a complete Plain fragment public link with or without a mounted consumer', async () => {
+  it('privately delivers a Plain public link with settings only and retains the URL for direct CLI delivery', async () => {
     const issued: ArtifactPublicLinkIssuedV1[] = [];
     const physicalBodies: unknown[] = [];
     let sessionReads = 0;
@@ -2739,7 +2739,7 @@ describe('Session access HTTP adapter', () => {
     expect(physical).toHaveProperty('keyDerivation', 'fragment_v1');
     expect(physical).not.toHaveProperty('token');
     expect(issued[0]?.url).toBe(`https://public.example.test/s/${issued[0]?.lookupId}#k=${issued[0]?.secret}`);
-    expect(result).toMatchObject({ url: issued[0]?.url });
+    expect(result).not.toHaveProperty('url');
     expect(JSON.stringify(physical)).not.toContain(issued[0]?.secret);
     expect(physical).not.toHaveProperty('encryptedDataKey');
     expect(physical).not.toHaveProperty('networkOff');
@@ -2747,7 +2747,7 @@ describe('Session access HTTP adapter', () => {
     expect(physical.subject).toEqual({ kind: 'session', id: 'session-plain' });
     const noCustody = createAccountServerActionDeps({ token: 'bound-home-token', serverId: 'home', serverHttpBaseUrl: 'http://access.test' });
     await expect(noCustody.sessionAccessAction!({ actionId: 'session.public_link.create', input: logicalInput,
-      context: { surface: 'cli', serverId: 'home' } })).resolves.toMatchObject({ url: expect.stringMatching(/^https:\/\/public.example.test\/s\/[^#]+#k=.+$/) });
+      context: { surface: 'cli', serverId: 'home' } })).resolves.toHaveProperty('url');
     expect(physicalBodies).toHaveLength(2);
     await expect(deps.sessionAccessAction!({ actionId: 'session.public_link.create',
       input: { ...logicalInput, networkOff: true }, context: { surface: 'cli', serverId: 'home' } }))
@@ -2910,7 +2910,7 @@ describe('Session access HTTP adapter', () => {
     expect(openPublicShareDataKeyV1({ encryptedDataKey: physical.encryptedDataKey as string, secret: physical.lookupId as string })).toBeNull();
     expect(result).not.toHaveProperty('token');
     expect(result).not.toHaveProperty('encryptedDataKey');
-    expect(result).toMatchObject({ url: issued[0]!.url });
+    expect(result).not.toHaveProperty('url');
     expect(JSON.stringify(result)).not.toContain(physical.encryptedDataKey as string);
     expect(JSON.stringify(physical)).not.toContain(secret);
   });

@@ -1673,7 +1673,7 @@ async function verifyCommon(
         return principal ? { binding, signedChildPurpose, effectActionId: effectActionId.data, target, principal,
             effectiveAuthority: principal.authority,
             acceptedDeploymentReceipt: { environmentId: acceptedDeployment.environmentId,
-                ...(acceptedPreparationRead ? { read: acceptedPreparationRead } : {}),
+                ...(acceptedPreparationRead ? { read: { ...acceptedPreparationRead, contentCustody: true } } : {}),
                 ...(platformMaterial ? { platformMaterial } : {}) },
             ...(domainPurpose ? { deploymentDomainPurpose: domainPurpose } : {}),
             ...(targetRetentionPurpose ? { deploymentTargetRetentionAdmission: targetRetentionPurpose } : {}),

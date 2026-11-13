@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ActionIdSchema, isSessionAccessActionId } from './actionIds.js';
-import { getActionSpec } from './actionSpecs.js';
+import { getActionSpec, resolveActionExecutionPlacementForInput } from './actionSpecs.js';
 import { PluginInvocableActionIdSchema } from './pluginActionSurface.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { SessionAccessCandidatesInspectRequestV1Schema, ResolveSessionAccessPrincipalsRequestV1Schema } from '../sessions/access/sessionAccessOperationsV1.js';
@@ -9,6 +9,14 @@ import { projectSessionPublicLinkActionResultV1, projectSessionPublicLinkCreateA
 import { bindSessionAccessActionHttpRequestV1 } from './sessionAccessActionFamily.js';
 
 describe('Session access Action contracts', () => {
+  it('privately issues Session links on the answering client for agent callers and keeps direct people on Account placement', () => {
+    const spec = getActionSpec('session.public_link.create');
+    const input = { sessionId: 'shared-session' };
+    expect(resolveActionExecutionPlacementForInput(spec, input, { kind: 'session' })).toBe('client');
+    expect(resolveActionExecutionPlacementForInput(spec, input, { kind: 'workflowRun' })).toBe('client');
+    expect(resolveActionExecutionPlacementForInput(spec, input, { kind: 'host' })).toBe('account');
+    expect(resolveActionExecutionPlacementForInput(spec, input)).toBe('account');
+  });
   it('routes manual crypto and layout intents to the connected client with strict non-secret operands and the shared Ask-first floor', () => {
     for (const [name, input] of [
       ['session.access.encryption.prepare', { sessionId: 's' }],
@@ -27,7 +35,9 @@ describe('Session access Action contracts', () => {
       expect(resolveActionApprovalRouting({ actionId: id, spec, input,
         context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(true);
       expect(resolveActionApprovalRouting({ actionId: id, spec, input,
-        context: { surface: 'ui', authority: 'present_user' } }).required).toBe(name === 'session.access.layout.update');
+        context: { surface: 'ui', authority: 'present_user' } }).required).toBe(false);
+      expect(resolveActionApprovalRouting({ actionId: id, spec, input,
+        context: { surface: 'ui', authority: 'present_user' } }).uiConfirmationRequired === true).toBe(name === 'session.access.layout.update');
     }
   });
   it('exposes sharing discovery reads to agents and plugins through the existing server contracts', () => {
@@ -88,6 +98,7 @@ describe('Session access Action contracts', () => {
       isConsentRequired: false, keyDerivation: 'fragment_v1',
     } };
     const material = { lookupId: 'A'.repeat(43), secret: 'B'.repeat(43) };
+    expect(projectSessionPublicLinkCreateActionResultV1(response, material, false, true)).not.toHaveProperty('url');
     expect(() => projectSessionPublicLinkCreateActionResultV1(response, material, true)).toThrow();
     expect(() => projectSessionPublicLinkCreateActionResultV1({ ...response,
       publicShare: { ...response.publicShare, networkOff: false } }, material, true)).toThrow();
@@ -125,7 +136,7 @@ describe('Session access Action contracts', () => {
     const spec = getActionSpec(ActionIdSchema.parse('session.public_link.create'));
     const settings = { expiresAt: null, maxUses: null, useCount: 0, isConsentRequired: false };
     expect(spec.outputSchema?.safeParse(settings).success).toBe(false);
-    expect(spec.outputSchema?.safeParse({ ...settings, id: 'publication', updatedAt: 7 }).success).toBe(false);
+    expect(spec.outputSchema?.safeParse({ ...settings, id: 'publication', updatedAt: 7 }).success).toBe(true);
     expect(spec.outputSchema?.safeParse({ ...settings, id: 'publication', updatedAt: 7, url: 'https://public.example/s/lookup#k=secret' }).success).toBe(true);
   });
   it('projects publication identity from the released owner response without its bearer', () => {

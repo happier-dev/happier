@@ -835,6 +835,29 @@ describe('ApprovalRequestV1Schema', () => {
     }
   });
 
+  it.each([
+    { caller: { kind: 'host' }, client: false },
+    { caller: { kind: 'session', sessionId: 'source', starterDepth: 0, turnDepth: 0 }, client: true },
+    { caller: { kind: 'workflowRun', runId: 'run', authorization: {
+      principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } }, client: true },
+  ] as const)('retains only the public-link failure kind owned by its $caller.kind placement', ({ caller, client }) => {
+    const actionId = 'artifact.public_link.create';
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'system' }, requestedSurface: 'cli', actionId,
+      actionArgs: { artifactId: 'artifact', audience: 'anonymous' }, summary: 'Create public link',
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller,
+        serverId: 'home', accountId: 'account', machineId: 'machine', actionId, requestId: 'request' } });
+    const clientFailure = { ok: false as const, errorCode: 'outcome_uncertain', error: 'outcome_uncertain',
+      details: { reason: 'client_rpc_transport_failure', errorCode: 'RPC_OUTCOME_UNKNOWN' } };
+    const accountFailure = { ok: false as const, errorCode: 'outcome_unknown', error: 'outcome_unknown',
+      details: { category: 'transport_timeout' } };
+    for (const [failure, retained] of [[clientFailure, client], [accountFailure, !client]] as const) {
+      const execution = projectApprovalExecutionFailureV2({ request, failure, executedAtMs: 3 });
+      if (retained) expect(execution).toMatchObject({ details: failure.details });
+      else expect(execution).not.toHaveProperty('details');
+    }
+  });
+
   it('retains only a typed content-free approval staleness fact', () => {
     const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
       createdBy: { surface: 'system' }, actionId: 'session.open', actionArgs: { sessionId: 's1' }, summary: 'Open',

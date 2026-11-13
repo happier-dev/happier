@@ -22,8 +22,9 @@ import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serve
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { createPlainSessionCurrentProjectionRecordFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { Encryption } from '@/sync/encryption/encryption';
+import { AES256Encryption } from '@/sync/encryption/encryptor';
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
+import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 
 // Substitute native UI boundaries only; the default Action executor and its
 // account-scoped Session HTTP dependency remain real.
@@ -40,7 +41,7 @@ afterEach(() => {
 });
 
 describe.each(['plain', 'e2ee'] as const)('Session public-link physical materialization (%s)', mode => {
-    it('returns a link on the selected Home origin and sends only an independent lookup and wrapped key', async () => {
+    it('privately delivers material on the selected Home and returns publication settings only', async () => {
         const active = await upsertAndActivateServer({ serverUrl: 'https://active-material.example', name: 'Active' });
         await switchConnectionToActiveServer();
         const target = await upsertServerProfile({ serverUrl: 'https://target-material.example', name: 'Target' });
@@ -60,13 +61,17 @@ describe.each(['plain', 'e2ee'] as const)('Session public-link physical material
         const callerEnvelope = encryptDataKeyForRecipientV0(dataKey, encodeBase64(contentKeys.publicKey, 'base64'));
         const metadata = createSessionFixture().metadata;
         if (!metadata) throw new Error('Canonical Session fixture must include readable metadata');
-        let wireMetadata = JSON.stringify(metadata);
+        const currentSession = createPlainSessionCurrentProjectionRecordFixture({ id: 'same', metadata });
+        if (currentSession.ownerMetadata?.t !== 'plain') throw new Error('Expected canonical owner metadata fixture');
+        const ownerMetadata = mode === 'e2ee' ? sealSessionOwnerMetadataEnvelopeV1({
+            material: { type: 'dataKey', machineKey: contentKeys.secretKey },
+            ownerMetadata: currentSession.ownerMetadata.v, randomBytes: tweetnacl.randomBytes,
+        }) : currentSession.ownerMetadata;
+        let wireMetadata = currentSession.metadata;
         if (mode === 'e2ee') {
-            const producer = await Encryption.createFromContentKeyPair({ publicKey: contentKeys.publicKey, machineKey: contentKeys.secretKey });
-            await producer.initializeSessions(new Map([['same', dataKey]]));
-            const sessionEncryption = producer.getSessionEncryption('same');
-            if (!sessionEncryption) throw new Error('Expected initialized Session encryption producer');
-            wireMetadata = await sessionEncryption.encryptMetadata(metadata);
+            const [encryptedShared] = await new AES256Encryption(dataKey).encrypt([JSON.parse(currentSession.metadata)]);
+            if (!encryptedShared) throw new Error('Expected encrypted Session shared metadata');
+            wireMetadata = encodeBase64(encryptedShared, 'base64');
         }
         const accountCurrentness = mode === 'plain'
             ? createPlainAccountEncryptionCurrentnessFixture()
@@ -76,12 +81,11 @@ describe.each(['plain', 'e2ee'] as const)('Session public-link physical material
                 contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(contentKeys.publicKey),
                 recipientEnvelopeReadiness: { status: 'available' },
             } satisfies AccountEncryptionCurrentnessResponse;
-        const { ownerMetadata: _ownerMetadata, ...currentSession } = createPlainSessionCurrentProjectionRecordFixture({ id: 'same', metadata });
         const session = SessionCurrentProjectionRecordV1Schema.parse({
             ...currentSession,
             seq: 0, active: true, activeAt: 2, updatedAt: 2,
             encryptionMode: mode, dataEncryptionKey: mode === 'e2ee' ? callerEnvelope : null,
-            metadataLayoutVersion: 0, metadata: wireMetadata,
+            metadata: wireMetadata, ownerMetadata,
         });
         let body: Record<string, unknown> | null = null;
         let posts = 0;
@@ -118,7 +122,7 @@ describe.each(['plain', 'e2ee'] as const)('Session public-link physical material
         const issued: {lookupId:string;secret:string}[] = [];
         const result = await executeSessionAccessHttpAction({scope:{serverId:target.id,accountId:'target-account'},
             availability:'available',actionId:'session.public_link.create',input:{sessionId:'same',isConsentRequired:false},
-            onPublicLinkIssued: material => { issued.push(material); },
+            onPublicLinkIssued: async material => { await Promise.resolve(); issued.push(material); },
         });
         expect(issued).toHaveLength(1);
         expect(legacyPosts).toBe(0);
@@ -129,7 +133,9 @@ describe.each(['plain', 'e2ee'] as const)('Session public-link physical material
         expect(body).not.toHaveProperty('sessionId');
         expect(body).not.toHaveProperty('token');
         expect(JSON.stringify(body)).not.toContain(issued[0]!.secret);
-        expect(result).toMatchObject({ url: `https://target-material.example/s/${issued[0]!.lookupId}#k=${issued[0]!.secret}` });
+        expect(result).toMatchObject({ id: 'share', viewerOrigin: 'https://target-material.example' });
+        expect(result).not.toHaveProperty('url');
+        expect(JSON.stringify(result).includes(issued[0]!.secret)).toBe(false);
         if (mode === 'e2ee') {
             await expect(decryptDataKeyFromPublicShare(String(body!.encryptedDataKey),issued[0]!.secret)).resolves.toEqual(dataKey);
             await expect(decryptDataKeyFromPublicShare(String(body!.encryptedDataKey),issued[0]!.lookupId)).resolves.toBeNull();
@@ -138,24 +144,30 @@ describe.each(['plain', 'e2ee'] as const)('Session public-link physical material
         }
         await expect(executeSessionAccessHttpAction({scope:{serverId:target.id,accountId:'target-account'},
             availability:'available',actionId:'session.public_link.create',input:{sessionId:'same',isConsentRequired:false},
-            onPublicLinkIssued: material => { throw new Error(material.secret); },
+            onPublicLinkIssued: async material => { await Promise.resolve(); throw new Error(material.secret); },
         })).rejects.toMatchObject({code:'outcome_unknown'});
         expect(posts).toBe(3);
         await expect(executeSessionAccessHttpAction({scope:{serverId:target.id,accountId:'target-account'},
             availability:'available',actionId:'session.public_link.create',input:{sessionId:'same',isConsentRequired:false},
-        })).resolves.toMatchObject({ url: expect.stringMatching(/^https:\/\/target-material.example\/s\/[^#]+#k=.+$/) });
+        })).resolves.toHaveProperty('url');
         expect(posts).toBe(4);
-        const actionResult = await createDefaultActionExecutor().execute('session.public_link.create',
+        const privatelyIssued: import('@happier-dev/protocol/actions/executor/artifactPublicLinkActions').ArtifactPublicLinkIssuedV1[] = [];
+        const actionResult = await createDefaultActionExecutor({ onPublicLinkIssued: async link => {
+            await Promise.resolve();
+            privatelyIssued.push(link);
+        } }).execute('session.public_link.create',
             { sessionId: 'same', isConsentRequired: false }, {
                 serverId: target.id, expectedAccountId: 'target-account', surface: 'ui', authority: 'present_user',
                 actionCaller: { kind: 'host' }, presentUserConfirmation: { actionId: 'session.public_link.create' },
             });
         expect(actionResult, JSON.stringify(actionResult)).toMatchObject({ ok: true, result: {
-            id: 'share', url: expect.stringMatching(/^https:\/\/target-material.example\/s\/[^#]+#k=.+$/),
+            id: 'share',
         } });
-        const callerUrl = new URL((actionResult as { result: { url: string } }).result.url);
-        const callerSecret = new URLSearchParams(callerUrl.hash.slice(1)).get('k')!;
-        expect(JSON.stringify(body)).not.toContain(callerSecret);
+        expect(JSON.stringify(actionResult).includes('#k=')).toBe(false);
+        expect(actionResult).not.toHaveProperty('result.url');
+        expect(privatelyIssued).toHaveLength(1);
+        expect(privatelyIssued[0]).toMatchObject({ shareId: 'share', audience: 'anonymous' });
+        expect(new URL(privatelyIssued[0]!.url).hash.length > 0).toBe(true);
         expect(posts).toBe(5);
     });
 });

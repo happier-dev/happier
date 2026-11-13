@@ -221,6 +221,8 @@ import { HappyError } from '@/utils/errors/errors';
 import { isActionAccountScopeChangedError } from '@/sync/domains/scope/actionAccountScopeError';
 import { bindPresentUserActionConfirmation } from './presentUserConfirmation';
 import { admitDeploymentHomeInputV1 } from '@happier-dev/protocol/actions/executor/deploymentHomeAdmission';
+import { isMachineTerminalActionId } from '@happier-dev/protocol/actions/specs/machineTerminal';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 
 import { captureLazyActionAccountContext, captureApprovalSettlementAccount, withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
 import { createUiPendingEditAction } from './pendingEdit';
@@ -408,7 +410,7 @@ import { listProjectsForActions } from './listProjects';
 import { createUiProjectPagesList } from './projectPagesAction';
 import { createProjectSourceActionDeps } from '@/sync/api/projects/projectSourceActions';
 import { createProjectSourceTeamMoveDeps } from '@/sync/api/projects/projectSourceTeamMove';
-import { createUiDeploymentActionDeps, createUiDeploymentWorkspaceMachineReader, recoverUiDeploymentActionResult } from '@/sync/api/deployments/deploymentActions';
+import { createUiDeploymentActionDeps, createUiDeploymentWorkspaceMachineReader, isDeploymentActionFailure, recoverUiDeploymentActionResult } from '@/sync/api/deployments/deploymentActions';
 import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, isDeploymentPromoteActionIdV1, isDeploymentAccountMachineTransportActionIdV1, isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentActionInputSchemasV1, DeploymentEnvironmentGetResultV1Schema, DeploymentMoveToRepositoryInputV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
@@ -1129,7 +1131,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (!readEnvironment) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
       const selected = await resolveDeploymentTemplateExecutionMachineIdV1(input.data, async selector => {
         const loaded = await readEnvironment('deployments.environments.get', selector, args.context);
-        return 'errorCode' in loaded ? loaded : DeploymentEnvironmentGetResultV1Schema.parse(loaded);
+        return isDeploymentActionFailure(loaded) ? loaded : DeploymentEnvironmentGetResultV1Schema.parse(loaded);
       }, async ({ workspace }) => accountContext ? createUiDeploymentWorkspaceMachineReader(accountContext, args.context)(workspace)
         : { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' });
       if (!selected.ok) return selected;
@@ -1299,7 +1301,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   const executePluginPermissionGrantAction = createPluginPermissionGrantHttpActionExecutor(accountContext ? { request: accountContext.request } : undefined);
   const executePluginWebhookAction = createPluginWebhookEndpointHttpActionExecutor(accountContext ? { request: accountContext.request } : undefined);
   const approvalCoordinator = getSharedBlockingApprovalCoordinator();
-  const capturedFamilyPorts = accountContext ? createCapturedScopeFamilyPorts(accountContext, opts?.discussionAttachmentSources) : null;
+  const capturedFamilyPorts = accountContext ? createCapturedScopeFamilyPorts(accountContext, opts?.discussionAttachmentSources, onPublicLinkIssued) : null;
   const machineAccessAction = opts?.machineAccessAction ?? capturedFamilyPorts?.machineAccessAction;
   const workflowAction = opts?.workflowAction ?? (accountContext ? createUiWorkflowAction({ account: accountContext }) : undefined);
   const projectSourceTeamMove = accountContext && deploymentActionDeps?.deploymentAction && machineAccessAction && workflowAction
@@ -3273,7 +3275,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         });
         return result;
       }
-      return forwardSessionSpawnNew({ ...admittedInput, creationKey }, context ?? {});
+      // The admitted input is the canonical (folderId) shape; the forwarder consumes the Action shape.
+      return forwardSessionSpawnNew(projectSessionSpawnNewActionInputV2({ ...admittedInput, creationKey }), context ?? {});
     },
 
     presentUserActionConfirmation: accountContext ? async ({ actionId, input, context, preview }) => {
@@ -5158,7 +5161,17 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       : executeMachineOwnedAction({ actionId, input: actionInput, context, confirmInFlow }), deps.presentUserActionConfirmation);
   };
 
+  // Bind review and transport to the same portable Home before terminal approval is prepared.
+  const normalizeTerminalHomeInput = (actionId: ActionId, input: unknown): unknown => {
+    if (!isMachineTerminalActionId(actionId)) return input;
+    const request = readRecord(input);
+    if (typeof request.serverId !== 'string') return input;
+    const serverId = resolveServerProfileScopeIdForIdentifier(request.serverId);
+    return serverId ? { ...request, serverId } : input;
+  };
+
   const executeAction = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext, confirmInFlow = false) => {
+    input = normalizeTerminalHomeInput(actionId, input);
     const resolved = resolveContext(context, input, actionId);
     if (opts?.admittedClientActionId !== actionId && !isSessionSpawnNewActionIdV1(actionId)) {
       const unavailable = await readNewWorkFeatureAdmission(actionId, input, resolved, accountContext?.serverId ?? resolved.serverId ?? undefined,
@@ -5212,6 +5225,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     readWidgetMovementAdmission: (ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, context: ActionExecutorContext) =>
       readWidgetEntityMovementAdmission(widgetInputDeps, ref, surface, resolveContext(context, { ref })),
     prepare: async (actionId, input, context, options) => {
+      input = normalizeTerminalHomeInput(actionId, input);
       const resolved = resolveContext(context, input, actionId);
       if (opts?.admittedClientActionId !== actionId && !isSessionSpawnNewActionIdV1(actionId)) {
         const unavailable = await readNewWorkFeatureAdmission(actionId, input, resolved, accountContext?.serverId ?? resolved.serverId ?? undefined,
@@ -5289,7 +5303,8 @@ function assertExpectedActionAccount(account: Pick<LazyActionAccountContext, 'ac
  * checks stay there — and only add the currentness of the captured scope.
  */
 function createCapturedScopeFamilyPorts(account: LazyActionAccountContext,
-  discussionAttachmentSources?: readonly import('@/sync/domains/attachments/prepareAttachmentPayloads').PreparedAttachmentSource[]): Readonly<{
+  discussionAttachmentSources?: readonly import('@/sync/domains/attachments/prepareAttachmentPayloads').PreparedAttachmentSource[],
+  onPublicLinkIssued?: (link: ArtifactPublicLinkIssuedV1) => void | Promise<void>): Readonly<{
   sessionAccessAction: NonNullable<ActionExecutorDeps['sessionAccessAction']>;
   machineAccessAction: NonNullable<ActionExecutorDeps['machineAccessAction']>;
   machineWorkSummaryGet: NonNullable<ActionExecutorDeps['machineWorkSummaryGet']>;
@@ -5495,6 +5510,7 @@ function createCapturedScopeFamilyPorts(account: LazyActionAccountContext,
           isCurrent,
           actionId: args.actionId,
           input: args.input,
+          ...(onPublicLinkIssued ? { onPublicLinkIssued } : {}),
           ...(args.signal ? { signal: args.signal } : {}),
         });
       } catch (error) {

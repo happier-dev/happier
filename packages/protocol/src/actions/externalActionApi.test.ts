@@ -63,6 +63,11 @@ it('admits Workflow preview creation, preparation, receipt and cleanup roots wit
   }
 });
 
+it('refuses Workflow-origin Artifact and Session public-link creation', () => {
+  expect(externalActionApi.isExternalActionWorkflowActionIdV1('artifact.public_link.create')).toBe(false);
+  expect(externalActionApi.isExternalActionWorkflowActionIdV1('session.public_link.create')).toBe(false);
+});
+
 it('admits an owned Workflow preview teardown through exact approval while retaining irreversible Ask', () => {
   const actionId = 'deployments.teardown';
   const input = DeploymentTeardownInputV1Schema.parse({ serverId: 'home', environmentId: 'owned-preview',

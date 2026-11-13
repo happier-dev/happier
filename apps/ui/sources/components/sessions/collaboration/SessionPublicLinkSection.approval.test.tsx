@@ -441,7 +441,7 @@ describe('SessionPublicLinkSection deferred approval', () => {
         expect(pending).toMatchObject({ actionArgs: { networkOff: true } });
     });
 
-    it('renders an approval-routed publication as pending and settles it through the executed approval', async () => {
+    it('privately delivers an explicit publication approval and persists only publication settings', async () => {
         const serverId = await addPublishingHome();
         const { SessionPublicLinkSection, useSessionCollaborationPublicLink } = await import('./SessionPublicLinkSection');
         function PublicLink() {
@@ -455,14 +455,11 @@ describe('SessionPublicLinkSection deferred approval', () => {
         }
         const screen = await renderScreen(<PublicLink />);
         await waitForHomeGovernance(() => expect(screen.findByTestId('session-public-link-status')?.props.children).toBe('Off'));
-        await screen.pressByTestIdAsync('session-public-link-create');
-        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('0 of 0'));
-
-        // Not an error and not a committed link: the change waits on its approval.
-        await screen.pressByTestIdAsync('session-public-link-options-create');
-        expect(modal.alert).not.toHaveBeenCalled();
-        await waitForHomeGovernance(() => expect(screen.findByTestId('session-public-link-approval')).not.toBeNull());
-        expect(screen.findByTestId('session-public-link-status')?.props.children).toBe('Off');
+        // A person's ordinary Create answers Ask in its native confirmation.
+        // An explicit proposal uses the shared approval Action and Inbox replay.
+        await createUiApprovalRequest({ serverId, actionId: 'session.public_link.create',
+            actionInput: { sessionId: SESSION_ID, isConsentRequired: true },
+            actionRequestId: 'private-session-publication' });
         const rows = harness.artifacts(serverId).list();
         expect(rows).toHaveLength(1);
         const pending = JSON.parse(harness.artifacts(serverId).readPlainBody(rows[0]!.id)!) as Record<string, unknown>;
@@ -506,8 +503,8 @@ describe('SessionPublicLinkSection deferred approval', () => {
         await expect(decision).resolves.toBe(true);
         expect(JSON.parse(harness.artifacts(serverId).readPlainBody(rows[0]!.id)!)).toMatchObject({ status: 'executed' });
 
-        await waitForHomeGovernance(() => expect(screen.findByTestId('session-public-link-approval')).toBeNull());
-        await waitForHomeGovernance(() => expect(screen.findByTestId('session-public-link-status')?.props.children)
+        const settledScreen = await renderScreen(<PublicLink />);
+        await waitForHomeGovernance(() => expect(settledScreen.findByTestId('session-public-link-status')?.props.children)
             .toBe('On'));
         // Settlement read the authoritative publication; nothing was submitted twice.
         const publications = harness.requestsFor(PUBLIC_SHARE_CREATE_PATH).filter((request) => request.input !== null);
@@ -517,15 +514,24 @@ describe('SessionPublicLinkSection deferred approval', () => {
             isConsentRequired: true, lookupId: expect.any(String), keyDerivation: 'fragment_v1',
         });
         expect(publications[0]?.input).not.toHaveProperty('token');
-        // The approval caller receives the complete link. This sheet only
-        // reloads the settings projection and cannot reconstruct its secret.
-        expect(screen.findByTestId('session-public-link-url')).toBeNull();
-        expect(screen.findByTestId('session-public-link-hidden')).not.toBeNull();
+        // Approval replay delivers privately; a later sheet reads only
+        // settings and cannot reconstruct the newly issued capability.
+        expect(settledScreen.findByTestId('session-public-link-url')).toBeNull();
+        expect(settledScreen.findByTestId('session-public-link-hidden')).not.toBeNull();
         const settled = JSON.parse(harness.artifacts(serverId).readPlainBody(rows[0]!.id)!) as Readonly<{
             execution?: Readonly<{ result?: unknown }>;
         }>;
         const approvedPublication = SessionPublicLinkCreateActionResultV1Schema.parse(settled.execution?.result);
-        const approvedUrl = new URL(approvedPublication.url);
+        expect(approvedPublication).not.toHaveProperty('url');
+        const delivered = modal.show.mock.calls.map(([config]) => config as Readonly<{
+            chrome?: Readonly<{ testID?: string }>;
+            props?: Readonly<{ shareUrl?: string; audience?: string }>;
+        }>).filter(config => config.chrome?.testID === 'document-issued-link');
+        expect(delivered).toHaveLength(1);
+        expect(delivered[0]?.props?.audience).toBe('anonymous');
+        const issuedUrl = delivered[0]?.props?.shareUrl;
+        if (typeof issuedUrl !== 'string') throw new Error('Expected private issued-link presentation');
+        const approvedUrl = new URL(issuedUrl);
         const secret = new URLSearchParams(approvedUrl.hash.slice(1)).get('k');
         expect(secret).toBeTruthy();
         expect(JSON.stringify(publications[0]?.input)).not.toContain(secret);

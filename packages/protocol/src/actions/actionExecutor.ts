@@ -1888,7 +1888,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           : {}),
       } : {}),
       ...(replaySessionTargets ? { sessionTargetsV1: replaySessionTargets } : {}),
-      actionCaller: retainedPluginContext?.context.actionCaller ?? (appOwnedContextReplay ? { kind: 'host' } : replayCaller),
+      // The approval owner already chose client custody from the originating
+      // caller. A fresh human decision must not turn that into Account placement.
+      actionCaller: retainedPluginContext?.context.actionCaller ?? (appOwnedContextReplay
+        && !(approvalExecutor.kind === 'app' && approvalExecutor.placement === 'client') ? { kind: 'host' } : replayCaller),
       // This exact live plugin invocation already holds the receiver's admitted
       // Machine custody. Consent resumes that invocation rather than borrowing
       // the deciding person's filesystem identity.
@@ -2424,11 +2427,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
     }
     if (spec.clientActionDomainInputSchema && typeof readRecord(parsed.data).clientId === 'string'
-      && resolveActionExecutionPlacementForInput(spec, parsed.data) !== 'client') {
+      && resolveActionExecutionPlacementForInput(spec, parsed.data, ctx.actionCaller) !== 'client') {
       return { ok: false, errorCode: 'client_routing_not_applicable', error: 'This input selects an owner other than a UI client' };
     }
     if (ctx.interactivePresentation === 'unavailable'
-        && (actionId === 'approval.request.create' || resolveActionExecutionPlacementForInput(spec, parsed.data) === 'client')) {
+        && (actionId === 'approval.request.create' || resolveActionExecutionPlacementForInput(spec, parsed.data, ctx.actionCaller) === 'client')) {
       return { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required' };
     }
     if (isScmActionId(actionId) && sessionTarget?.field === 'sessionId') {
@@ -3811,7 +3814,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             } finally { await prepared?.dispose?.(); }
           } } : {}) });
       }
-      const executionPlacement = resolveActionExecutionPlacementForInput(spec, admittedInput);
+      const executionPlacement = resolveActionExecutionPlacementForInput(spec, admittedInput, ctx.actionCaller);
       if (actionId === 'inbox.get') {
         const accountId = readNoticeInboxAccountIdV1(ctx);
         if (!accountId) return { ok: false, errorCode: 'forbidden', error: 'forbidden' };
@@ -5401,7 +5404,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             result: {
               actionSpecs: searchSerializedActionSpecsForSurface({
                 surface: ctx.surface ?? null,
-                includeOutputSchema: ctx.surface !== 'agent' && ctx.surface !== 'mcp' && ctx.surface !== 'cli',
+                includeOutputSchema: ctx.surface !== 'agent' && ctx.surface !== 'mcp' && ctx.surface !== 'cli' && ctx.surface !== 'voice',
                 query: typeof data.query === 'string' ? data.query : '',
                 limit: typeof data.limit === 'number' ? data.limit : undefined,
                 isActionEnabled: (id) => !credentialScopeFailure(id, ctx, undefined, true) && isActionEnabled(getActionSpec(id), ctx),
@@ -7584,7 +7587,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       && actionId !== 'action.invoke') {
       const spec = getActionSpec(actionId);
       const admitted = prepared.admission;
-      if (resolveActionExecutionPlacementForInput(spec, admitted.input) === 'machine') {
+      if (resolveActionExecutionPlacementForInput(spec, admitted.input, admitted.context.actionCaller) === 'machine') {
         const routed = await deps.routeHostChildAction({ actionId, input: admitted.input, context: admitted.context });
         if (routed) return settleActionOutput(actionId, routed, context?.actionRequestId ?? undefined);
       }
@@ -7620,7 +7623,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
   const executeAdmittedClientAction = (actionId: ActionId, input: unknown, context: ActionExecutorContext): Promise<ActionExecuteResult> => {
     const spec = getActionSpec(actionId);
-    if (resolveActionExecutionPlacementForInput(spec, input) !== 'client') {
+    if (resolveActionExecutionPlacementForInput(spec, input, context.actionCaller) !== 'client') {
       return Promise.resolve(clientActionUnavailable(actionId));
     }
     const children = context.admittedHostReviewedChildren;

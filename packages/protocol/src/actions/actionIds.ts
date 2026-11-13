@@ -8,6 +8,13 @@ import { INTERNAL_TASK_ACTION_IDS } from './internalTaskActionIdsV1.js';
 import { RPC_METHODS } from '../rpc/methods.js';
 export const SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 = 'sessions.spawn.connected_services.list' as const;
 export const ACTION_INVOKE_ACTION_ID_V1 = 'action.invoke' as const;
+export const SCM_REMOTE_PUSH_ACTION_ID_V1 = 'scm.remote.push' as const;
+export const SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1 = 'scm.pullRequest.openOrReuse' as const;
+/** Native publication results whose reported facts can be read by Prepare. */
+export function isScmPublicationActionIdV1(actionId: string): actionId is
+  typeof SCM_REMOTE_PUSH_ACTION_ID_V1 | typeof SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1 {
+  return actionId === SCM_REMOTE_PUSH_ACTION_ID_V1 || actionId === SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1;
+}
 export const APPROVAL_REQUEST_LIST_ACTION_ID_V1 = 'approval.request.list' as const;
 export const APPROVAL_REQUEST_DECIDE_ACTION_ID_V1 = 'approval.request.decide' as const;
 export { INBOX_GET_ACTION_ID_V1 } from './appShellActionIdsV1.js';
@@ -35,6 +42,7 @@ export function isSessionSpawnNewActionIdV1(actionId: string): actionId is typeo
 }
 export const SESSION_OPEN_ACTION_ID_V1 = 'session.open' as const;
 export const SESSION_MESSAGE_SEND_ACTION_ID_V1 = 'session.message.send' as const;
+export const SESSION_PUBLIC_LINK_CREATE_ACTION_ID_V1 = 'session.public_link.create' as const;
 /** Prepare's existing-Session handoff is the canonical message Action. */
 export function isDeploymentPrepareSessionMessageEffectV1(rootActionId: string, effectActionId: string): boolean {
   return rootActionId === DEPLOYMENT_PREPARE_ACTION_ID_V1 && effectActionId === SESSION_MESSAGE_SEND_ACTION_ID_V1;
@@ -361,7 +369,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.responsibility.set',
     'session.responsibility.candidates.list',
     'session.public_link.get',
-    'session.public_link.create',
+    SESSION_PUBLIC_LINK_CREATE_ACTION_ID_V1,
     'session.public_link.remove',
   ],
   session_lifecycle: [
@@ -915,7 +923,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'scm.remote.remove',
     'scm.remote.fetch',
     'scm.remote.pull',
-    'scm.remote.push',
+    SCM_REMOTE_PUSH_ACTION_ID_V1,
     'scm.remote.publish',
     'scm.stash.list',
     'scm.stash.show',
@@ -927,7 +935,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   scm_pull_request: [
     'scm.pullRequest.list',
     'scm.pullRequest.get',
-    'scm.pullRequest.openOrReuse',
+    SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1,
     'scm.pullRequest.openCompose',
     'scm.pullRequest.checkout',
     'scm.pullRequest.prepareWorktree',

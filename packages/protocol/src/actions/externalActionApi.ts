@@ -2,8 +2,7 @@ import { ExternalActionRequestIdV1Schema, ExternalActionPreOpenFailureCodeSchema
 import { ExternalActionWorkflowSessionLeafV1Schema } from './workflowSessionChildV1.js';
 export { ExternalActionWorkflowSessionLeafV1Schema, projectExternalActionWorkflowSessionLeafContextV1, type ExternalActionWorkflowSessionLeafV1,
   type InstalledWorkflowSessionLeafAdmission } from './workflowSessionChildV1.js';
-import { ACTION_INVOKE_ACTION_ID_V1, SESSION_PUBLIC_LINK_CREATE_ACTION_ID_V1, WorkflowActionIdV1Schema } from './actionIds.js';
-import { ARTIFACT_PUBLIC_LINK_CREATE_ACTION_ID_V1 } from '../artifacts/artifactActionIdsV1.js';
+import { ACTION_INVOKE_ACTION_ID_V1, WorkflowActionIdV1Schema } from './actionIds.js';
 export * from './externalActionHttpError.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -1213,8 +1212,6 @@ export function isExternalActionMachineWorkflowActionIdV1(actionId: string): boo
 /** The incumbent Workflow signed-root admission, shared by issuance and rechecks. */
 export function isExternalActionWorkflowActionIdV1(actionId: string): boolean {
   return WorkflowActionIdV1Schema.safeParse(actionId).success
-    || actionId === ARTIFACT_PUBLIC_LINK_CREATE_ACTION_ID_V1
-    || actionId === SESSION_PUBLIC_LINK_CREATE_ACTION_ID_V1
     || isExternalActionMachineWorkflowActionIdV1(actionId)
     || actionId.startsWith('session.') && isRoleActionIdV1(actionId);
 }

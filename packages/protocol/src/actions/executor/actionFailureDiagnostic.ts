@@ -42,6 +42,13 @@ export function withActionFailureDiagnostic<T extends object>(value: T, input: A
   try { record?.(diagnostic); } catch { /* Logging cannot replace the original refusal. */ }
   return result;
 }
+
+/** Terminal boundary failures retain closed cause facts without exception prose. */
+export function withActionFailureCauseDiagnostic<T extends object>(value: T, error: unknown, phase: string): T {
+  return attachDiagnostic(value, readActionOutputDiagnostic(error) ?? readActionOutputDiagnostic(value)
+    ?? { source: phase, phase, issues: [], failureCause: projectActionFailureCauseV1(error, phase) });
+}
+
 /** Parsing public fields must not erase the already-projected in-process diagnosis. */
 export function carryActionFailureDiagnostic<T extends object>(value: T, from: unknown,
   options?: Readonly<{ enumerable: true }>,
@@ -68,8 +75,12 @@ export function readActionOutputDiagnostic(value: unknown): ActionOutputDiagnost
 }
 
 /** One output-failure owner; the input issue projector alone interprets schema issues. */
-export function invalidActionOutputFailure(error?: core.$ZodError, source = 'action.output', thrown?: unknown): DiagnosticFailure {
-  const issues = error ? projectActionInputIssues(error).map(({ path, code, expected }) => ({ path, code,
+export function invalidActionOutputFailure(error?: core.$ZodError, source = 'action.output', thrown?: unknown,
+  options?: Readonly<{ issuePaths: 'omit' }>,
+): DiagnosticFailure {
+  // External record keys are response content; their caller can retain repair facts without paths.
+  const issues = error ? projectActionInputIssues(error).map(({ path, code, expected }) => ({
+    path: options?.issuePaths === 'omit' ? [] : path, code,
     ...(code === 'invalid_type' && expected ? { expected } : {}) })) : [];
   return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output',
     [outputDiagnostic]: { source, issues,

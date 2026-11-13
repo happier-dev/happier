@@ -1,5 +1,5 @@
 import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
-import { ActionFailureCauseV1Schema, AccountActionHttpFailureDetailsV1Schema, ClientActionFailureDetailsV1Schema, ClientActionRpcFailureCodeV1Schema } from '../actions/actionExecutionResult.js';
+import { ApprovalRequestConflictFailureDetailsV1Schema, ActionFailureCauseV1Schema, AccountActionHttpFailureDetailsV1Schema, ClientActionFailureDetailsV1Schema, ClientActionRpcFailureCodeV1Schema } from '../actions/actionExecutionResult.js';
 import * as z from '../zodRuntimePolicy.js';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '../actions/actionSpecs.js';
 import { ActionIdSchema, WorkflowActionIdV1Schema, isPluginDevLoopActionIdV1, type ActionId } from '../actions/actionIds.js';
@@ -79,10 +79,15 @@ function parseStrictApprovalFailure(input: Readonly<{
   request: Readonly<{
     actionId: ActionId;
     actionArgs: unknown;
-    executionOriginV1: Pick<ApprovalRequestV2['executionOriginV1'], 'serverId' | 'serverIdentityId' | 'sessionId' | 'target'>;
+    executionOriginV1: Pick<ApprovalRequestV2['executionOriginV1'], 'serverId' | 'serverIdentityId' | 'sessionId' | 'target' | 'caller'>;
   }>;
   failure: ActionExecuteFailure;
 }>, storedRead = false): ActionExecuteFailure | null {
+  if (input.failure.errorCode === 'approval_request_conflict') {
+    const details = (storedRead ? createStoredReadSchema(ApprovalRequestConflictFailureDetailsV1Schema)
+      : ApprovalRequestConflictFailureDetailsV1Schema).safeParse(input.failure.details);
+    return details.success ? { ...input.failure, details: details.data } : null;
+  }
   const finiteCommand = (storedRead ? createStoredReadSchema(FiniteCommandFailureDetailsV1Schema)
     : FiniteCommandFailureDetailsV1Schema).safeParse(input.failure.details);
   if (finiteCommand.success) {
@@ -230,7 +235,7 @@ function parseStrictApprovalFailure(input: Readonly<{
   if (clientDetails.success) {
     const spec = getActionSpec(input.request.actionId);
     const args = (storedRead ? createStoredReadSchema(spec.inputSchema) : spec.inputSchema).safeParse(input.request.actionArgs);
-    if (!args.success || resolveActionExecutionPlacementForInput(spec, args.data) !== 'client') return null;
+    if (!args.success || resolveActionExecutionPlacementForInput(spec, args.data, input.request.executionOriginV1.caller) !== 'client') return null;
     const mayHaveEffect = spec.sideEffectClass !== 'read' && spec.sideEffectClass !== 'none';
     const code = input.failure.errorCode;
     const expected = mayHaveEffect ? code === 'outcome_uncertain'
@@ -258,7 +263,7 @@ function parseStrictApprovalFailure(input: Readonly<{
     if (details.success) {
       const spec = getActionSpec(input.request.actionId);
       const args = (storedRead ? createStoredReadSchema(spec.inputSchema) : spec.inputSchema).safeParse(input.request.actionArgs);
-      if (!args.success || resolveActionExecutionPlacementForInput(spec, args.data) !== 'account'
+      if (!args.success || resolveActionExecutionPlacementForInput(spec, args.data, input.request.executionOriginV1.caller) !== 'account'
         || spec.sideEffectClass === 'read' || spec.sideEffectClass === 'none') return null;
       return { ...input.failure, details: details.data };
     }

@@ -6,6 +6,7 @@ import { UserRecipientEnvelopeResponseSchema } from '@happier-dev/protocol/socia
 import { SessionAccessGrantsListResponseV1Schema, SetSessionAccessContextRequestV1Schema, SetSessionAccessGrantResponseV1Schema, RemoveSessionAccessGrantResponseV1Schema, SetSessionAccessContextResponseV1Schema, ResolveSessionAccessPrincipalsRequestV1Schema, ResolveSessionAccessPrincipalsResponseV1Schema, type SessionAccessPrincipalSummaryV1, type SessionAccessCreationDecisionV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { SessionPublicLinkGetActionResultV1Schema, SessionPublicLinkRemoveActionResultV1Schema, SessionPublicLinkCreateActionInputV1Schema, SessionPublicLinkCreateActionResultV1Schema, projectSessionPublicLinkActionResultV1, projectSessionPublicLinkCreateActionResultV1 } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import type { SessionAccessAccountSummaryV1 } from '@happier-dev/protocol/sessions/access/sessionAccessPrincipalV1';
 import { generateStoredContentPublicShareMaterialV1 } from '@happier-dev/protocol/sharing/storedContentPublicShareV1';
@@ -94,8 +95,8 @@ export type SessionAccessRequestOptions = Readonly<{
     availability: SessionCollaborationAvailability;
     isCurrent?: () => boolean;
     signal?: AbortSignal;
-    /** Optional mounted-sheet notification; the approved result also carries the full URL. */
-    onPublicLinkIssued?: (material: Readonly<{ lookupId: string; secret: string }>) => void;
+    /** Private delivery removes the capability from the returned Action result. */
+    onPublicLinkIssued?: (material: ArtifactPublicLinkIssuedV1) => void | Promise<void>;
     /** View observation only; the existing detached preparation owner retains the work. */
     onEncryptionPreparationProgress?: (progress: CurrentSessionPreparationProgress) => void;
 }>;
@@ -478,7 +479,14 @@ export async function executeSessionAccessHttpAction(params: SessionAccessReques
                     ? projectSessionPublicLinkCreateActionResultV1(payload, issuedPublicLink,
                         SessionPublicLinkCreateActionInputV1Schema.parse(publicInput).networkOff === true)
                     : actionId === 'session.public_link.get' ? projectSessionPublicLinkActionResultV1(payload) : payload;
-                if (issuedPublicLink) params.onPublicLinkIssued?.(issuedPublicLink);
+                if (issuedPublicLink && params.onPublicLinkIssued) {
+                    const publication = SessionPublicLinkCreateActionResultV1Schema.parse(value);
+                    if (!publication.url) throw new Error('public_link_publication_unconfirmed');
+                    await params.onPublicLinkIssued({ ...issuedPublicLink, shareId: publication.id,
+                        url: publication.url, audience: 'anonymous' });
+                    return projectSessionPublicLinkCreateActionResultV1(payload, issuedPublicLink,
+                        SessionPublicLinkCreateActionInputV1Schema.parse(publicInput).networkOff === true, true);
+                }
                 return spec.outputSchema!.parse(value);
             } catch (error) {
                 if (!mutation) throw error;

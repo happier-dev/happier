@@ -48,6 +48,58 @@ const workflowRequesterAttribution = materializeActionRequestAttributionV1({
 });
 
 describe('createActionExecutor (durable plugin approval caller provenance)', () => {
+  it('retains client placement when a person approves a Session public-link proposal from the CLI', async () => {
+    let stored: ApprovalRequest | null = null;
+    const executor = createActionExecutor({
+      // Artifact persistence, origin currentness and the answering-client transport
+      // are boundaries; proposal parsing, placement and approval replay stay real.
+      approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'private-link-proposal' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+      isApprovalExecutionOriginCurrent: async () => true,
+      clientActionExecute: async () => ({ ok: false, errorCode: 'unavailable', error: 'unavailable' }),
+      sessionSendMessage: async input => ({ status: 'accepted', localId: input.localId }),
+    });
+    expect(await executor.execute('artifact.public_link.create', { artifactId: 'document', audience: 'anonymous' }, {
+      surface: 'agent', authority: 'account_automation', serverId: 'home', serverIdentityId: 'identity',
+      runtimeAccountId: 'account', defaultSessionId: 'origin-session', actionRequestId: 'private-link-request',
+      actionCaller: { kind: 'session', sessionId: 'origin-session', starterDepth: 0, turnDepth: 0 },
+    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(await executor.execute('approval.request.decide', { artifactId: 'private-link-proposal', decision: 'approve' }, {
+      surface: 'cli', authority: 'present_user', serverId: 'home', serverIdentityId: 'identity',
+      runtimeAccountId: 'account', actionCaller: { kind: 'host' },
+    })).toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'unavailable' } } });
+  });
+  it.each(['reject', 'cancel'] as const)('withdraws an own pending approval with terminal automation using %s and refuses another Account', async decision => {
+    let stored: ApprovalRequest | null = null;
+    let effects = 0;
+    const executor = createActionExecutor({
+      // Artifact persistence and the Session writer are the only substituted boundaries.
+      approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'pending-withdrawal' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+      isApprovalExecutionOriginCurrent: async () => true,
+      sessionStateFieldSet: async () => { effects++; return { ok: true }; },
+    });
+    const context: ActionExecutorContext = { surface: 'cli', authority: 'account_automation', serverId: 'profile',
+      serverIdentityId: 'home', runtimeAccountId: 'owner', actionCaller: { kind: 'host' },
+      actionRequestId: 'pending-change', actionRequestAttributionV1: materializeActionRequestAttributionV1({
+        requestRef: 'pending-change', requester: { serverId: 'home', accountId: 'owner' },
+        persona: { serverId: 'home', sessionId: 'session' }, origin: null,
+      }),
+      defaultSessionId: 'session', defaultSessionMachineId: 'machine',
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.title.set': { approvalRequiredSurfaces: ['cli'] } } }),
+    };
+    const proposed = await executor.execute('session.title.set', { title: 'Pending change' }, context);
+    expect(proposed, JSON.stringify(proposed)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(stored).toMatchObject({ status: 'open' });
+    expect(await executor.execute('approval.request.decide', { artifactId: 'pending-withdrawal', decision },
+      { ...context, runtimeAccountId: 'another-account' })).toMatchObject({ ok: false });
+    expect(stored).toMatchObject({ status: 'open' });
+    expect(await executor.execute('approval.request.decide', { artifactId: 'pending-withdrawal', decision }, context))
+      .toMatchObject({ ok: true, result: { status: decision === 'reject' ? 'rejected' : 'canceled' } });
+    expect(effects).toBe(0);
+  });
   it('replays an omitted Session operand against the approval origin on another focused device', async () => {
     let stored: ApprovalRequest | null = null;
     const renamedSessions: string[] = [];

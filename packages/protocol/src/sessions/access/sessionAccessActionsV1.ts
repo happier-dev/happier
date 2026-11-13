@@ -50,8 +50,8 @@ export const SessionPublicLinkCreateActionInputV1Schema = lazyZodSchema(() => z.
 }));
 
 /**
- * Publication reads contain settings only. Approved creation adds the complete
- * URL for its caller; the wrapped key remains an HTTP-only field.
+ * Publication reads contain settings only. Creation adds the complete URL
+ * only when it was not privately delivered; the wrapped key stays HTTP-only.
  *
  * `id` and `updatedAt` are publication metadata, not bearer identity. Public
  * reads can mutate `updatedAt`, and token rotation keeps the row `id`, so
@@ -74,7 +74,7 @@ export const SessionPublicLinkSettingsV1Schema = lazyZodSchema(() => z.strictObj
 }));
 export type SessionPublicLinkSettingsV1 = z.infer<typeof SessionPublicLinkSettingsV1Schema>;
 export const SessionPublicLinkGetActionResultV1Schema = lazyZodSchema(() => z.nullable(SessionPublicLinkSettingsV1Schema));
-export const SessionPublicLinkCreateActionResultV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(SessionPublicLinkSettingsV1Schema, { url: z.string().check(z.url()) })));
+export const SessionPublicLinkCreateActionResultV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(SessionPublicLinkSettingsV1Schema, { url: z.optional(z.string().check(z.url())) })));
 export const SessionPublicLinkRemoveActionResultV1Schema = lazyZodSchema(() => z.strictObject({ changed: z.boolean() }));
 
 /** The released owner route is additive; project only explicitly public settings. */
@@ -92,15 +92,16 @@ export function projectSessionPublicLinkActionResultV1(value: unknown): SessionP
   };
 }
 
-/** Complete approved result built from host-held material, never from server bearer fields. */
+/** Project host-held material only when the caller still needs direct delivery. */
 export function projectSessionPublicLinkCreateActionResultV1(
   value: unknown,
   material: Readonly<{ lookupId: string; secret: string }>,
   networkOff: boolean,
+  privatelyDelivered = false,
 ): z.infer<typeof SessionPublicLinkCreateActionResultV1Schema> {
   const settings = projectSessionPublicLinkActionResultV1(value);
   if (!settings || !settings.viewerOrigin || settings.keyDerivation !== 'fragment_v1'
     || (networkOff && settings.networkOff !== true)) throw new Error('public_link_publication_unconfirmed');
   return SessionPublicLinkCreateActionResultV1Schema.parse({ ...settings,
-    url: buildStoredContentPublicShareUrlV1({ origin: settings.viewerOrigin, ...material }) });
+    ...(privatelyDelivered ? {} : { url: buildStoredContentPublicShareUrlV1({ origin: settings.viewerOrigin, ...material }) }) });
 }

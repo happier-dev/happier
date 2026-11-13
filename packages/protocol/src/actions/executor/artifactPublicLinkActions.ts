@@ -119,9 +119,6 @@ export function createArtifactPublicLinkActionsV1(params: Readonly<{
     args.signal?.throwIfAborted();
     const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
     const audience = 'audience' in input ? input.audience ?? 'anonymous' : 'anonymous';
-    if (args.actionId === 'artifact.public_link.create' && audience === 'signed_in' && !params.onPublicLinkIssued) {
-      throw Object.assign(new Error('unsupported_action'), { code: 'unsupported_action' });
-    }
     const resource = await params.read(input.artifactId, args.signal);
     args.signal?.throwIfAborted();
     if (!resource || resource.artifactId !== input.artifactId) throw Object.assign(new Error('artifact_not_found'), { code: 'artifact_not_found' });
@@ -177,7 +174,7 @@ export function createArtifactPublicLinkActionsV1(params: Readonly<{
       throw Object.assign(new Error('outcome_unknown'), { code: 'outcome_unknown' });
     }
     args.signal?.throwIfAborted();
-    const resultUrl = audience === 'signed_in' ? url.slice(0, url.indexOf('#')) : url;
-    return ArtifactActionOutputSchemasV1[args.actionId].parse({ publicShare: result.publicShare, url: resultUrl });
+    return ArtifactActionOutputSchemasV1[args.actionId].parse({ publicShare: result.publicShare,
+      ...(params.onPublicLinkIssued ? {} : { url }) });
   };
 }

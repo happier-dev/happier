@@ -34,7 +34,8 @@ export type PublicLinkCreationObservation = Readonly<{
 export function projectPublicLinkCreationObservation(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const result = value as Record<string, unknown>;
-  if (typeof result.url !== 'string') return result;
+  if (typeof result.url !== 'string' && !(result.publicShare && typeof result.publicShare === 'object')
+    && !(result.keyDerivation === 'fragment_v1' && typeof result.id === 'string')) return result;
   // Issued capability material stays with the person, never as an agent-openable template.
   const { url: _url, ...rest } = result;
   return { ...rest, status: 'public_link_created', nextStep: 'artifact_share_sheet',
@@ -106,9 +107,12 @@ export const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly
     title: ARTIFACT_ACTION_COPY[id][0], description: id === 'artifact.export' ? ARTIFACT_ACTION_COPY[id][1]
       : 'Read, publish and manage ordinary Account Artifacts through their mode-aware store.',
     safety: read ? 'safe' : 'danger', sideEffectClass: read || id === 'artifact.public_link.list' ? 'read' : 'write',
-    // Issuance uses the answering App; Home admission reads this same declaration.
-    requiredAuthority: 'account_automation', executionPlacement: id === 'artifact.public_link.create' ? 'client'
-      : id === 'artifact.publish_from_file' || id === 'artifact.export' ? 'machine' : 'account',
+    // Agent issuance uses the answering App; a person at the CLI uses Account placement.
+    requiredAuthority: 'account_automation', executionPlacement:
+      id === 'artifact.publish_from_file' || id === 'artifact.export' ? 'machine' : 'account',
+    ...(id === 'artifact.public_link.create' ? { executionPlacements: ['account', 'client'] as const,
+      executionPlacementForInput: (_input: unknown, caller?: Readonly<{ kind: string }>) =>
+        caller?.kind === 'session' || caller?.kind === 'workflowRun' ? 'client' as const : 'account' as const } : {}),
     placements: [], bindings: { rpcMethod: id, mcpToolName: id.replaceAll('.', '_'),
       ...(voice ? { voiceClientToolName: id.replaceAll('.', '_') } : {}) },
     surfaces: { ui: true, cli: true, rpc: true, agent: true, mcp: true,

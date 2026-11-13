@@ -1,3 +1,4 @@
+import type { ApprovalActionReference } from '../actionApprovalPresentation.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
 import { ActionSessionTargetDeclarationV1Schema } from '../sessionTargetV1.js';
@@ -284,6 +285,8 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
     projectInput: z.optional(z.custom<(input: unknown, context?: ApprovalPresentationContext) => unknown>((value) => typeof value === 'function')),
     /** Admits private review/history operands when they intentionally differ from executable input. */
     inputSchema: z.optional(ZodSchemaLike),
+    /** Domain-declared reference identity; undefined delegates to the shared value reading. */
+    referenceForField: z.optional(z.custom<(path: string, value: unknown, input: unknown) => ApprovalActionReference | undefined>((value) => typeof value === 'function')),
     /** Private review field labels may differ from the executable authoring form. */
     inputHints: z.optional(ActionInputHintsSchema),
     /** Private history may retain this declared review after replay; live-only custody still wins. */

@@ -4824,61 +4824,6 @@ describe("external Action execution authorization", () => {
                 expect((await mint()).statusCode).toBe(403);
                 publisher = fixture.machine.id;
             }
-            const runId = crypto.randomUUID();
-            const snapshot = await materializeWorkflowAcceptedSnapshotFixture({ definition: { version: 1,
-                defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } }, blocks: ['work'] },
-                context: { source: { kind: 'inline' }, inputs: {}, machineId: fixture.machine.id,
-                    executionTarget: { kind: 'session' }, workspaceTarget: { project: { machineId: fixture.machine.id,
-                        directory: '/repo', checkoutRootPath: '/repo' } }, origin: { kind: 'direct', originSessionId: session.id },
-                    authorization: { principal: { kind: 'host' } } } });
-            const run = await db.automationRun.create({ data: { id: runId, accountId: fixture.account.id,
-                originKind: 'direct', originSessionId: session.id, state: 'running', workflowCustodyState: 'pending',
-                claimedByMachineId: fixture.machine.id,
-                scheduledAt: new Date(), dueAt: new Date(), causeKind: null,
-                workflowAcceptedSnapshotEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
-                    mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: fixture.account.id, runId }, acceptedSnapshot: snapshot })),
-                assignments: { create: { machineId: fixture.machine.id } } } });
-            for (const actionId of ['artifact.public_link.create', 'session.public_link.create'] as const) {
-                const envelope = { v: 1, requestId: crypto.randomUUID(),
-                    target: { kind: 'machine', machineId: fixture.machine.id },
-                    input: actionId === 'artifact.public_link.create'
-                        ? { artifactId: namedEnvironment.artifact.id, audience: 'anonymous' }
-                        : { sessionId: session.id } } satisfies ExternalActionRequestEnvelopeV1;
-                const workflowActionOrigin = { runId: run.id, requestId: envelope.requestId };
-                const installationProof = signMachineInstallationProof({ privateKey: fixture.keyPair.secretKey,
-                    payload: { version: 1, accountId: fixture.account.id, ...source, externalActionOrigin: {
-                        homeId, actionId, requestId: envelope.requestId,
-                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin: workflowActionOrigin } } });
-                const workflowRequest = { v: 1, machineId: fixture.machine.id, envelope, workflowActionOrigin, installationProof };
-                const mintWorkflow = (payload: unknown = workflowRequest) => app.inject({ method: 'POST',
-                    url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
-                    headers: { authorization: `Bearer ${token}` }, payload });
-                const workflowMinted = await mintWorkflow();
-                expect(workflowMinted.statusCode, workflowMinted.body).toBe(200);
-                expect(ExternalActionExecutionAuthorizationV1Schema.parse(workflowMinted.json()).binding)
-                    .toMatchObject({ actionId, workflowActionOrigin });
-                expect((await mintWorkflow({ ...workflowRequest, installationProof: undefined })).statusCode).not.toBe(200);
-                expect((await mintWorkflow({ ...workflowRequest,
-                    workflowActionOrigin: { ...workflowActionOrigin, runId: crypto.randomUUID() } })).statusCode).not.toBe(200);
-                const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
-                const foreignTarget = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: custodian.id,
-                    metadata: fixture.machine.metadata, dataEncryptionKey: fixture.machine.dataEncryptionKey,
-                    installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(fixture.keyPair.publicKey) } });
-                await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: foreignTarget.id,
-                    principal: { kind: 'account', accountId: fixture.account.id }, level: 'admin' }));
-                const foreignEnvelope = { ...envelope, target: { kind: 'machine' as const, machineId: foreignTarget.id } };
-                const foreignProof = signMachineInstallationProof({ privateKey: fixture.keyPair.secretKey,
-                    payload: { version: 1, accountId: fixture.account.id, ...source, externalActionOrigin: {
-                        homeId, actionId, requestId: envelope.requestId,
-                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(foreignEnvelope), origin: workflowActionOrigin } } });
-                const foreignMinted = await mintWorkflow({ ...workflowRequest, envelope: foreignEnvelope, installationProof: foreignProof });
-                expect(foreignMinted.statusCode, foreignMinted.body).toBe(409);
-                expect(foreignMinted.json()).toMatchObject({ error: 'invalid_request', code: 'target_unavailable' });
-                expect(foreignMinted.json()).not.toHaveProperty('token');
-                await db.automationRunAssignment.deleteMany({ where: { runId: run.id } });
-                expect((await mintWorkflow()).statusCode).toBe(403);
-                await db.automationRunAssignment.create({ data: { runId: run.id, machineId: fixture.machine.id } });
-            }
         } finally { await app.close(); }
     });
 

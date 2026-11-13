@@ -14,6 +14,9 @@ import type { PreNormalizedActionSpec } from '../definition.js';
 
 
 function createSessionAccessActionSpecs() {
+  const removePublicLinkSummary = 'Turn off a session\'s public link. People who have it can no longer open the session.';
+  const createPublicLinkSummary = 'Make a link that lets anyone who has it read a session.';
+  const teamContextSummary = 'Choose the Team a session is part of, which decides who sees it by default.';
   return Object.freeze([
   {
     id: 'session.access.grants.list', approval: {result: 'none'},
@@ -105,7 +108,8 @@ function createSessionAccessActionSpecs() {
     bindings: { mcpToolName: 'session_access_context_set' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     sideEffectClass: 'danger',
-    inputHints: { description: 'Choose the Team a session is part of, which decides who sees it by default.', fields: [] },
+    approvalPresentation: { summary: () => teamContextSummary },
+    inputHints: { description: teamContextSummary, fields: [] },
     inputSchema: SetSessionAccessContextRequestV1Schema,
     outputSchema: SetSessionAccessContextResponseV1Schema,
     serverTransport: { method: 'POST', path: '/v2/sessions/access-context/set' },
@@ -197,12 +201,16 @@ function createSessionAccessActionSpecs() {
     safety: 'danger',
     requiredAuthority: 'account_automation',
     executionPlacement: 'account',
+    executionPlacements: ['account', 'client'],
+    executionPlacementForInput: (_input: unknown, caller?: Readonly<{ kind: string }>) =>
+      caller?.kind === 'session' || caller?.kind === 'workflowRun' ? 'client' : 'account',
     cli: { commands: [{ path: ['session', 'public-link', 'create'], visibility: 'canonical' }] },
     placements: [],
     bindings: { mcpToolName: 'session_public_link_create' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     sideEffectClass: 'danger',
-    inputHints: { description: 'Make a link that lets anyone who has it read a session.', fields: [] },
+    approvalPresentation: { summary: () => createPublicLinkSummary },
+    inputHints: { description: createPublicLinkSummary, fields: [] },
     inputSchema: SessionPublicLinkCreateActionInputV1Schema,
     outputSchema: SessionPublicLinkCreateActionResultV1Schema,
     serverTransport: { method: 'POST', path: '/v1/public-shares' },
@@ -219,7 +227,8 @@ function createSessionAccessActionSpecs() {
     bindings: { mcpToolName: 'session_public_link_remove' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     sideEffectClass: 'danger',
-    inputHints: { description: 'Turn off a session\'s public link. People who have it can no longer open the session.', fields: [] },
+    approvalPresentation: { summary: () => removePublicLinkSummary },
+    inputHints: { description: removePublicLinkSummary, fields: [] },
     inputSchema: SessionAccessGrantsListRequestV1Schema,
     outputSchema: SessionPublicLinkRemoveActionResultV1Schema,
     serverTransport: { method: 'DELETE', path: '/v1/sessions/:sessionId/public-share' },

@@ -6172,6 +6172,16 @@ canonical Protocol codec and reject a content-kind/mode mismatch before disclosu
 publication-use admission, or visit logging. A viewer's later decryption failure
 is not a server-side confidentiality guard.
 
+In 0.3 development, Artifact and Session public-link creation uses the Action
+placement owner with captured caller provenance. Session-agent and Workflow
+callers create links in the answering app, which delivers the complete capability
+once through the existing private link-issued callback and Share sheet. Successful
+private delivery omits the entire `url` field from the Action result, including
+when approval is waived; transcript projection is not the live-result boundary.
+A person creating a link directly from the CLI uses Account placement and receives
+the complete link in their terminal without an answering app. These paths share
+the existing keyholding creation owners and introduce no second link store.
+
 Signed-in Artifact links in 0.3 development use the same keyholding and fragment
 wrapping owners. `artifact.public_link.create/list/revoke` select them with
 `audience: 'signed_in'`; omitted audience retains anonymous-link behavior. Their

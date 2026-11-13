@@ -138,7 +138,7 @@ export const UiActionDispatchRequestV1Schema = lazyZodSchema(() => z.strictObjec
 }).check(z.superRefine((request, ctx) => {
   const spec = getActionSpec(request.actionId);
   const input = spec.inputSchema.safeParse(request.input);
-  if (!Object.hasOwn(request, 'input') || !input.success || resolveActionExecutionPlacementForInput(spec, input.data) !== 'client') {
+  if (!Object.hasOwn(request, 'input') || !input.success || resolveActionExecutionPlacementForInput(spec, input.data, request.context.actionCaller) !== 'client') {
     ctx.addIssue({ code: 'custom', message: 'Invalid client Action', path: ['input'] });
   }
   const children = request.context.admittedHostReviewedChildren;

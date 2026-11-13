@@ -15,13 +15,16 @@ const publicShare = StoredContentPublicShareV1Schema.parse({ id: 'share-1', subj
   maxUses: null, useCount: 0, isConsentRequired: false, networkOff: false, createdAt: 1, updatedAt: 1, keyDerivation: 'fragment_v1' });
 
 describe('keyholding Artifact public-link Actions', () => {
-  it('refuses signed-in publication without transient delivery before any host effects', async () => {
-    const effects: unknown[] = [];
-    const execute = createArtifactPublicLinkActionsV1({ read: async () => { effects.push('read'); return null; },
-      randomBytes: length => new Uint8Array(length), request: async request => { effects.push(request); return {}; } });
-    await expect(execute({ actionId: 'artifact.public_link.create', input: { artifactId: 'artifact', audience: 'signed_in' } }))
-      .rejects.toMatchObject({ code: 'unsupported_action' });
-    expect(effects).toEqual([]);
+  it('returns a complete signed-in link to a person in a callback-free CLI host', async () => {
+    const execute = createArtifactPublicLinkActionsV1({
+      read: async () => ({ artifactId: 'artifact-1', access: 'owner', header: {}, encryptionMode: 'plain', dataKey: null }),
+      randomBytes: length => new Uint8Array(length).fill(1),
+      request: async () => ({ publicShare: { ...publicShare, id: 'artifact-1', audience: 'signed_in' },
+        viewerOrigin: new URL('/ui', 'https:' + '//home.example.test').href }),
+    });
+    const result = await execute({ actionId: 'artifact.public_link.create', input: { artifactId: 'artifact-1', audience: 'signed_in' } });
+    expect(result).toMatchObject({ publicShare: { audience: 'signed_in' }, url: expect.any(String) });
+    expect(new URL((result as { url: string }).url).hash.length).toBeGreaterThan(1);
   });
   it('rejects private or malformed opened template bytes before granting access or presenting them', async () => {
     const requests: string[] = [], opened: unknown[] = [];
@@ -134,7 +137,7 @@ describe('keyholding Artifact public-link Actions', () => {
       },
     });
     const created = await execute({ actionId: 'artifact.public_link.create', input: { artifactId: 'artifact-1', audience: 'signed_in' } });
-    expect(created).toMatchObject({ publicShare: signedIn, url: expect.not.stringContaining('#') });
+    expect(created).toEqual({ publicShare: signedIn });
     expect(issued[0]).toMatchObject({ audience: 'signed_in' });
     const issuedUrl = new URL(issued[0]!.url);
     expect(issuedUrl.pathname).toBe(`/ui/share/artifact/${issued[0]!.lookupId}`);
@@ -235,7 +238,7 @@ describe('keyholding Artifact public-link Actions', () => {
     await expect(execute({ actionId, input: { artifactId: 'artifact-1', shareId: 'share-1' } })).rejects.toMatchObject({ code: 'artifact_access_forbidden' });
     expect(requests).toEqual([]);
   });
-  it.each(['plain', 'e2ee'] as const)('returns complete %s links to the approved caller without HTTP secret disclosure', async encryptionMode => {
+  it.each(['plain', 'e2ee'] as const)('delivers %s links privately and returns publication settings only', async encryptionMode => {
     const dataKey = encryptionMode === 'plain' ? null : new Uint8Array(32).fill(42);
     const resource: ArtifactPublicLinkKeyholdingResourceV1 = { artifactId: 'artifact-1', access: 'owner', header: {}, encryptionMode, dataKey };
     const issued: ArtifactPublicLinkIssuedV1[] = [];
@@ -250,7 +253,7 @@ describe('keyholding Artifact public-link Actions', () => {
     const result = await execute({ actionId: 'artifact.public_link.create', input: { artifactId: 'artifact-1' } });
     const link = issued[0]!;
     expect(link).toMatchObject({ audience: 'anonymous' });
-    expect(result).toEqual({ publicShare, url: link.url });
+    expect(result).toEqual({ publicShare });
     const observation = getActionSpec('artifact.public_link.create').projectObservationOutput?.(result);
     expect(observation).toMatchObject({ status: 'public_link_created', nextStep: 'artifact_share_sheet', publicShare });
     expect(observation).not.toHaveProperty('url');
@@ -266,6 +269,15 @@ describe('keyholding Artifact public-link Actions', () => {
     } else expect(bodies[0]).not.toHaveProperty('encryptedDataKey');
   });
 
+  it('selects person and agent placement at the declaration owner', async () => {
+    const { resolveActionExecutionPlacementForInput } = await import('../actionSpecs.js');
+    const spec = getActionSpec('artifact.public_link.create');
+    const input = { artifactId: 'artifact-1' };
+    expect(resolveActionExecutionPlacementForInput(spec, input, { kind: 'host' })).toBe('account');
+    expect(resolveActionExecutionPlacementForInput(spec, input, { kind: 'session' })).toBe('client');
+    expect(resolveActionExecutionPlacementForInput(spec, input, { kind: 'workflowRun' })).toBe('client');
+  });
+
   it('issues a link without a mounted consumer and refuses foreign share revocation', async () => {
     const requests: string[] = [];
     const execute = createArtifactPublicLinkActionsV1({ read: async () => ({ artifactId: 'artifact-1', access: 'owner', header: {}, encryptionMode: 'plain', dataKey: null }),
@@ -274,7 +286,7 @@ describe('keyholding Artifact public-link Actions', () => {
         if (request.method === 'POST') return { publicShare, viewerOrigin: 'https://public.example.test' };
         return { publicShares: [{ ...publicShare, subject: { kind: 'artifact', id: 'other' } }] };
       } });
-    await expect(execute({ actionId: 'artifact.public_link.create', input: { artifactId: 'artifact-1' } })).resolves.toMatchObject({ publicShare, url: expect.stringMatching(/^https:\/\/public.example.test\/s\/[^#]+#k=.+$/) });
+    await expect(execute({ actionId: 'artifact.public_link.create', input: { artifactId: 'artifact-1' } })).resolves.toMatchObject({ publicShare, url: expect.any(String) });
     await expect(execute({ actionId: 'artifact.public_link.revoke', input: { artifactId: 'artifact-1', shareId: 'share-1' } })).rejects.toMatchObject({ code: 'public_share_subject_mismatch' });
     expect(requests).toEqual(['POST', 'GET']);
   });
