@@ -89,3 +89,31 @@ test('reload discovers running identity homes even with stale runtime intent', a
   });
   assert.deepEqual(identities.sort(), ['fixture-a', 'fixture-b']);
 });
+
+for (const unavailable of ['unreachable', 'throws']) test(`identity reload skips a scoped participant (${unavailable}) and restores later identities`, async (t) => {
+  const warnings = [];
+  const warn = console.warn;
+  console.warn = line => warnings.push(line);
+  t.after(() => { console.warn = warn; });
+  const identities = ['qa-f-e2ee-fixtures', 'b', 'c1', 'c2', 'c3', 'c4'];
+  const runtimeState = { daemon: { desiredStateByIdentity: Object.fromEntries(identities.map(id => [id, 'running'])) } };
+  // The observation adapter is the OS/daemon-control boundary; identity selection stays real.
+  const eligible = await readRunningStackIdentityDaemons({ runtimeState,
+    cliHomeDir: '/tmp/identity-reload/cli', stackName: 'identity-reload', env: {},
+  }, { checkDaemonStateImpl: async (_home, { env }) => {
+    if (env.HAPPIER_STACK_CLI_IDENTITY === identities[0]) {
+      if (unavailable === 'throws') throw Object.assign(new Error('private diagnostic'), { code: 'scope_unavailable' });
+      return { status: 'unreachable', reason: 'scope_unavailable' };
+    }
+    return { status: 'running' };
+  } });
+  const attempts = [];
+  const restored = await restartStackIdentityDaemons({ identities: eligible }, {
+    startIdentityDaemonImpl: async identity => { attempts.push(identity); return { ok: true }; },
+  });
+  assert.deepEqual(attempts, identities.slice(1));
+  assert.deepEqual(restored, { started: identities.slice(1), failures: [] });
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /qa-f-e2ee-fixtures.*skipped.*scope_unavailable/);
+  assert.doesNotMatch(warnings[0], /private diagnostic/);
+});

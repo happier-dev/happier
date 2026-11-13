@@ -167,7 +167,10 @@ capture participants before retirement; dev swaps reuse the prepared daemon
 launch. Source activation preserves named identity Session runners. Stopped
 identities remain stopped, and an identity already on the selected source
 entrypoint is reused. An identity restart failure is reported with a typed reason
-and does not fail or retry the stack reload.
+and does not fail or retry the stack reload. Discovery reports a scoped or
+unreachable identity as skipped and continues restoring the other eligible
+identities independently. The final participant verification still reports
+unavailable participants as `NOT_READY`.
 
 Use `hstack stack start <stack> --runtime=source --restart --verify` for a
 background reload followed by one `READY` or `NOT_READY` verdict. Verification

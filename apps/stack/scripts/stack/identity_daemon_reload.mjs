@@ -3,6 +3,11 @@ import { applyStackDaemonLifecycleScopeEnv } from '../utils/auth/stable_scope_id
 import { listStackCliIdentities, resolveCliHomeDirForIdentity } from '../utils/stack/cli_identities.mjs';
 import { readStackRuntimeDaemonDesiredState } from '../utils/stack/runtime_daemon_state.mjs';
 
+function typedReason(value) {
+  const candidate = String(value ?? '').trim();
+  return /^[a-z][a-z0-9_:-]{1,80}$/.test(candidate) ? candidate : 'daemon_start_failed';
+}
+
 export async function readRunningStackIdentityDaemons({
   runtimeState,
   cliHomeDir,
@@ -18,13 +23,22 @@ export async function readRunningStackIdentityDaemons({
     .filter((identity) => readStackRuntimeDaemonDesiredState(runtimeState, { cliIdentity: identity }) === 'running');
   const running = [];
   for (const identity of identities) {
-    const observation = await checkDaemonStateImpl(resolveCliHomeDirForIdentity({ cliHomeDir, identity }), {
-      stackName,
-      serverUrl,
-      env: applyStackDaemonLifecycleScopeEnv({
-        env: { ...env, HAPPIER_STACK_CLI_IDENTITY: identity }, stackName, cliIdentity: identity,
-      }),
-    });
+    let observation;
+    try {
+      observation = await checkDaemonStateImpl(resolveCliHomeDirForIdentity({ cliHomeDir, identity }), {
+        stackName,
+        serverUrl,
+        env: applyStackDaemonLifecycleScopeEnv({
+          env: { ...env, HAPPIER_STACK_CLI_IDENTITY: identity }, stackName, cliIdentity: identity,
+        }),
+      });
+    } catch (error) {
+      console.warn(`[stack] ${stackName}: identity daemon ${identity} skipped (reason=${typedReason(error?.code ?? error?.reason)})`);
+      continue;
+    }
+    if (observation?.status === 'unreachable') {
+      console.warn(`[stack] ${stackName}: identity daemon ${identity} skipped (reason=${typedReason(observation.reason)})`);
+    }
     if (observation?.status === 'running'
       && (!excludeRuntimeEntrypoint || observation.runtimeEntrypoint !== excludeRuntimeEntrypoint)) {
       running.push(identity);
@@ -57,10 +71,6 @@ export async function restartStackIdentityDaemons({
 } = {}) {
   const started = [];
   const failures = [];
-  const typedReason = (value) => {
-    const candidate = String(value ?? '').trim();
-    return /^[a-z][a-z0-9_:-]{1,80}$/.test(candidate) ? candidate : 'daemon_start_failed';
-  };
   for (const identity of identities) {
     try {
       const result = await startIdentityDaemonImpl(identity);
