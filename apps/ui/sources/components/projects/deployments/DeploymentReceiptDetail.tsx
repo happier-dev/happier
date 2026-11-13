@@ -20,8 +20,7 @@ import {
 } from '@/components/ui/layout/PageHeader';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
-import { InvestigationAgentActionButtons, type InvestigationAgentActionButtonModel } from '@/components/inbox/detail/InvestigationAgentActionButtons';
-import { TRIAGE_SUBJECT_ACTION_DECLARATIONS_V1 } from '@happier-dev/triage-protocol/v1';
+import { declaredSubjectAgentActions, InvestigationAgentActionButtons, type InvestigationAgentActionButtonModel } from '@/components/inbox/detail/InvestigationAgentActionButtons';
 import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
 import { useAccountNoticeInvestigation } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
@@ -86,8 +85,6 @@ import type { DeploymentReadLogs } from './useDeploymentStepLog';
  */
 /** The receipt draws the person's Investigate plus its own records; an unresolved placement opens the composer. */
 const RECEIPT_AGENT_ACTIONS = { agentActions: 'withDefault' } as const;
-/** The receipt's own agent records (Triage's subject declarations), drawn waiting until the person's catalog answers. */
-const RECEIPT_SUBJECT_ACTIONS = TRIAGE_SUBJECT_ACTION_DECLARATIONS_V1.filter(declaration => declaration.appliesTo.includes('deploymentReceipt'));
 
 export const DeploymentReceiptDetail = React.memo(
   function DeploymentReceiptDetail(
@@ -177,8 +174,7 @@ export const DeploymentReceiptDetail = React.memo(
     // Until the catalog answers, the default Investigate and this receipt's own records stand in, waiting: the row they
     // settle into is the row drawn at first paint, so nothing arrives later and pushes the page (VISUAL-136 D1).
     const waitingAgentActions = React.useMemo((): readonly InvestigationAgentActionButtonModel[] => [...fallbackInvestigate,
-      ...RECEIPT_SUBJECT_ACTIONS.map(declaration => ({ actionId: declaration.actionId, label: declaration.label,
-        launchMode: declaration.launchMode ?? 'review', startable: true }))], [fallbackInvestigate]);
+      ...declaredSubjectAgentActions('deploymentReceipt')], [fallbackInvestigate]);
     const persistedInvestigation = useInvestigationSessionResult(investigationOwner, investigateSubject, investigation.outcome, investigationOptions);
     const outcomeInput = React.useMemo(() => persistedInvestigation && investigateSubject ? {
       subject: investigateSubject,
@@ -299,6 +295,8 @@ export const DeploymentReceiptDetail = React.memo(
       // A succeeded receipt says its address in the outcome row; any other live one says it here.
       address: outcomeUrl && deployment.state !== 'succeeded' ? formatDeploymentLiveAddress(outcomeUrl) : null,
       addressAvailable: outcomeUrl !== null,
+      // A version running without a health check has its notice below say so; the facts don't repeat it.
+      healthSaidByNotice: deployment.state === 'running_unverified' && notice !== null,
       serving,
       health: environmentValue?.healthAggregate,
       state: deployment.state,
@@ -792,13 +790,14 @@ function receiptFacts(input: Readonly<{
   facts: DeploymentReceiptFactsV1;
   address: string | null;
   addressAvailable: boolean;
+  healthSaidByNotice: boolean;
   serving: boolean;
   health: Parameters<typeof deploymentHealthFact>[0];
   state: Parameters<typeof deploymentHealthFact>[1];
 }>): FactStripFact[] {
   const list: FactStripFact[] = [];
   if (input.serving) {
-    list.push({ key: 'health', testID: 'project-deployments.receipt.facts.health',
+    if (!input.healthSaidByNotice) list.push({ key: 'health', testID: 'project-deployments.receipt.facts.health',
       label: t('projects.deployments.factHealthNow'), ...deploymentHealthFact(input.health, input.state) });
     if (input.address || !input.addressAvailable) {
       list.push({ key: 'address', label: t('projects.deployments.factAddress'),

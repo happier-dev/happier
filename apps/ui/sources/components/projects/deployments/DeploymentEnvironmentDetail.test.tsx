@@ -1428,10 +1428,11 @@ describe('Project deployments page', () => {
       const servingText = JSON.stringify(servingRow?.findAll(node => typeof node.type === 'string' && typeof node.props.children === 'string')
         .map(node => node.props.children));
       expect(servingText.split('aaaaaaa').length - 1).toBe(1);
-      expect(JSON.stringify(screen.findByTestId('project-deployments.environment.facts')?.findAll(node =>
-        typeof node.props.children === 'string').map(node => node.props.children))).toContain('No health check');
-      // The Overview carries the receipt's own notice for a version running without a health check.
+      // The Overview carries the receipt's own notice for a version running without a health check, and says it once:
+      // the facts no longer repeat it (DEPLOY-ACCEPT-143 A7).
       expect(screen.findByTestId('project-deployments.environment.serving.notice.running_unverified')).not.toBeNull();
+      expect(JSON.stringify(screen.findByTestId('project-deployments.environment.facts')?.findAll(node =>
+        typeof node.props.children === 'string').map(node => node.props.children))).not.toContain('No health check');
     } finally { controller.retire(); }
   });
 
@@ -1467,6 +1468,20 @@ describe('Project deployments page', () => {
     );
     expect(open).toHaveBeenCalledWith(receipt.deployment.id);
     controller.retire();
+  });
+
+  it('draws the Environment\'s declared agent action in its settled place before the catalog answers (DEPLOY-ACCEPT-143 A6)', async () => {
+    const { InvestigationAgentActionButtons } = await import('@/components/inbox/detail/InvestigationAgentActionButtons');
+    const { controller, detail } = controllerFor({});
+    try {
+      const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+        demand={shown} accountId="account-owner" serverId={scope.serverId} phone={false} deploy={null} review={noReview}
+        onOpenReceipt={() => {}} />);
+      // First paint already holds "Set it up", waiting, so its later answer never pushes the page down.
+      const first = screen.findAllByType(InvestigationAgentActionButtons)
+        .flatMap(buttons => buttons.props.actions.map(action => action.label));
+      expect(first).toContain('Set it up');
+    } finally { controller.retire(); }
   });
 
   describe('the first deploy ends on the live address (FIRST-DEPLOY-URL-1112)', () => {

@@ -948,8 +948,10 @@ export const DeploymentEnvironmentDetail = React.memo(
                         // The Domain's own line, as the Domains tab says it, at the address it is about.
                         subtitle={liveAddress?.attention ? <DomainStateLine state={liveAddress.attention} route={null} /> : undefined}
                         showChevron={false}
-                        // A phone keeps only a short control beside a label; the address's actions sit beneath it.
-                        {...(props.phone ? { bottomElement: liveActions(liveUrl) } : { rightElement: liveActions(liveUrl) })}
+                        // A phone keeps only a short control beside a label; the address's actions sit beneath it,
+                        // on the title's edge rather than the row's (DEPLOY-ACCEPT-143 A5).
+                        {...(props.phone ? { bottomElement: liveActions(liveUrl), bottomElementInset: 'text' as const }
+                          : { rightElement: liveActions(liveUrl) })}
                       />
                     ) : null}
                     <Item
@@ -1002,7 +1004,8 @@ export const DeploymentEnvironmentDetail = React.memo(
                     <View style={styles.facts}>
                       <FactStrip
                         testID="project-deployments.environment.facts"
-                        facts={overviewFacts(detail, services.length, props.phone, activeReceipt?.facts.retainedPreviousCount ?? null, activeReceipt.deployment.state)}
+                        facts={overviewFacts(detail, services.length, props.phone, activeReceipt?.facts.retainedPreviousCount ?? null, activeReceipt.deployment.state,
+                          attention?.kind === 'runningUnverified' && servingNotice !== null)}
                       />
                     </View>
                   </>
@@ -1547,9 +1550,11 @@ function servingFacts(receipt: DeploymentReceiptHeaderV1, byYou: boolean): strin
 
 /** The four headline facts under the serving version (lab `fc-facts`): health, services, rollout, rollback. */
 function overviewFacts(detail: DeploymentEnvironmentDetailV1, serviceCount: number, phone: boolean, kept: number | null,
-  servingState: DeploymentReceiptHeaderV1['state']): FactStripFact[] {
+  servingState: DeploymentReceiptHeaderV1['state'],
+  /** The notice above already says how this version's health stands (no health check); the facts don't repeat it. */
+  healthSaidByNotice: boolean): FactStripFact[] {
   const health = detail.healthAggregate;
-  const facts: FactStripFact[] = [{
+  const facts: FactStripFact[] = healthSaidByNotice ? [] : [{
     key: 'health',
     testID: 'project-deployments.environment.facts.health',
     label: t('projects.deployments.healthTitle'),

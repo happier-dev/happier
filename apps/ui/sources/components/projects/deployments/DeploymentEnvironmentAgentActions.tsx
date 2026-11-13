@@ -2,13 +2,12 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { InvestigationAgentActionButtons } from '@/components/inbox/detail/InvestigationAgentActionButtons';
+import { declaredSubjectAgentActions, InvestigationAgentActionButtons } from '@/components/inbox/detail/InvestigationAgentActionButtons';
 import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
 import { DeploymentPreparationEntry, type DeploymentPreparationContext } from './DeploymentPreparation';
 
 const ENVIRONMENT_AGENT_ACTIONS = { agentActions: 'subjectOnly' } as const;
-const NO_ACTIONS = Object.freeze([]);
 
 /**
  * Repository preparation uses its registered Action; configured investigations retain their own owner.
@@ -28,12 +27,14 @@ export function DeploymentEnvironmentAgentActions(props: Readonly<{
     ...(props.controllerMachineId ? { externalActionTarget: { kind: 'machine' as const, machineId: props.controllerMachineId } } : {}),
   }), [props.controllerMachineId]);
   const investigation = useInvestigateFailure(subject, options);
-  const actions = investigation.actions ?? NO_ACTIONS;
+  // Until the catalog answers, the Environment's declared records wait in their settled place (DEPLOY-ACCEPT-143 A6).
+  const waiting = investigation.actions === undefined;
+  const actions = investigation.actions ?? declaredSubjectAgentActions('deploymentEnvironment');
   if (!props.preparation && actions.length === 0 && !investigation.showOutcome) return null;
   return (
     <>
       {props.preparation ? <DeploymentPreparationEntry {...props.preparation} environmentId={props.environmentId} mode="prepare" /> : null}
-      <InvestigationAgentActionButtons actions={actions} pending={investigation.pending} compact={props.compact}
+      <InvestigationAgentActionButtons actions={actions} pending={waiting || investigation.pending} compact={props.compact}
         emphasis={props.emphasis}
         onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }} />
       {investigation.showOutcome && investigation.outcome ? (
