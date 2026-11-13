@@ -592,6 +592,13 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
           credentials: params.credentials,
           machineId: input.machineId,
           actionExecutor,
+          observeApproval: async ({ artifactId, actionRequestId, actionId, signal }) => {
+            if (!input.serverIdentityId) throw new Error('approval_context_unavailable');
+            return await actionExecutor.observeRecordedApprovalExecution({ artifactId,
+              expectedOrigin: { actionId, requestId: actionRequestId, accountId: params.accountId,
+                serverIdentityId: input.serverIdentityId, machineId: input.machineId },
+              signal: signal ?? new AbortController().signal });
+          },
           nativeActionOperations: {
             findAction: async (execution, signal) => {
               const id = ActionIdSchema.safeParse(execution.actionId);

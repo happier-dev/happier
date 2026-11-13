@@ -288,6 +288,9 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
   credentials: StoredCredentials;
   machineId: string;
   actionExecutor: RecoveryActionExecutor;
+  /** Rejoin the existing push-driven receipt observer without replaying the Action. */
+  observeApproval?: (input: Readonly<{ artifactId: string; actionRequestId: string; actionId: string;
+    signal?: AbortSignal }>) => Promise<unknown>;
   now?: () => number;
   observeSession?: typeof observeWorkflowSessionInputResult;
   cancelSession?: typeof cancelSessionInput;
@@ -415,6 +418,15 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
       } }) : ActionApprovalRequestCreatedResultSchema.safeParse(execution.output).success
         ? { kind: 'unresolved' as const, code: 'approval_unavailable' } : null;
       if (approval) {
+        if (approval.kind === 'unresolved' && approval.code === 'approval_required'
+          && !input.observationOnly && params.observeApproval) {
+          const receipt = ActionApprovalRequestCreatedResultSchema.parse(execution.output);
+          return { ...approval, waitForCompletion: async () => {
+            await params.observeApproval!({ artifactId: receipt.artifactId,
+              actionRequestId: execution.actionRequestId, actionId: receipt.actionId,
+              ...(input.signal ? { signal: input.signal } : {}) });
+          } };
+        }
         if (input.progress.blockKind === 'step' && execution.actionId === 'discussion.invite' && approval.kind === 'completed') {
           // A reserved slot is not a Session or a completed Workflow input.
           // Rejoin the original step's ordinary creation/admission owner.

@@ -57,6 +57,71 @@ const now = '2026-09-08T12:00:00.000Z';
 const availability = { pause: false, resumeBoundary: false,
     restoreWorkspace: false, cancel: false, inspectExecution: true, disabledReasons: [] };
 
+it.each(['deny', 'approve', 'cancel', 'expiry'] as const)(
+  'retires cancelled Run approval custody once after a pushed %s receipt', async outcome => {
+    const rootId = 'approval-root';
+    const childId = 'approval-child';
+    const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {},
+      blocks: [{ kind: 'action', id: 'leaf', actionId: 'example.workflow/actions/update', input: {} }] };
+    const kit = createWorkflowRunStorageTestkit({ accountId, runId, machineId, now, origin: { kind: 'direct' },
+      acceptedEnvelope: directAcceptedEnvelope({ definition, materializedLeaves: [{ sourceKey: '$root', blockId: 'leaf',
+        kind: 'action', actionId: 'example.workflow/actions/update', actionInput: {}, authoredWorkspace: { kind: 'inherit' },
+        selection: {}, executionTarget: { kind: 'session' },
+        actionContract: { inputSchema: {}, outputSchema: { type: 'object', properties: { updated: { type: 'boolean' } },
+          required: ['updated'], additionalProperties: false } } }] }) });
+    const execution = { kind: 'action' as const, actionId: 'example.workflow/actions/update',
+      actionRequestId: 'invocation', localInputId: 'input', input: {},
+      output: { kind: 'approval_request_created', artifactId: 'receipt', actionId: 'action.invoke' } };
+    const seal = (root: boolean) => serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: root ? rootId : childId,
+        sequence: root ? '0' : '1', parentRecordId: root ? null : rootId, memberOrdinal: '0', attempt: '0' },
+      progress: { kind: 'happier.workflow-progress.v1', blockKind: root ? 'root' : 'action',
+        invocationPath: { blockId: root ? '$root' : 'leaf', scope: [] }, attempt: '0',
+        logicalInvocationRecordId: root ? rootId : childId, ...(!root ? { execution } : {}) } }));
+    await kit.execute({ operation: 'initialize', runId, expectedRevision: 0, checkpointEnvelope: checkpointEnvelope(rootId),
+      rootInvocation: { id: rootId, contentEnvelope: seal(true) } });
+    await kit.execute({ operation: 'invocations.admit', runId, expectedRevision: kit.run().revision,
+      checkpointEnvelope: checkpointEnvelope(rootId), invocations: [{ id: childId, sequence: '1', parentRecordId: rootId,
+        memberOrdinal: '0', lifecycle: 'waiting_for_approval', contentEnvelope: seal(false) }] });
+    kit.requestControl('cancelled');
+    let settled = false;
+    let wake: (() => void) | undefined;
+    const changed = new Promise<void>(resolve => { wake = resolve; });
+    const request = () => ({ v: 1, kind: 'plugin_target_action', status: !settled ? 'open'
+      : outcome === 'deny' ? 'rejected' : outcome === 'cancel' ? 'canceled' : outcome === 'approve' ? 'executed' : 'failed',
+      createdAtMs: 1, updatedAtMs: settled ? 3 : 1, createdBy: { surface: 'agent' }, requestedSurface: 'agent',
+      summary: 'Update', qualifiedActionId: execution.actionId, input: {}, secretInputPaths: [],
+      sourceCustody: { kind: 'development', registeredRootId: 'root' }, policyFingerprint: 'a'.repeat(64), subjectFingerprint: 'b'.repeat(64),
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', serverId: 'home',
+        serverIdentityId: 'home-identity', accountId, machineId, actionId: 'action.invoke', requestId: 'invocation',
+        caller: { kind: 'workflowRun', runId, authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } } },
+      ...(settled && outcome === 'deny' ? { decision: { kind: 'reject', decidedAtMs: 2 } } : {}),
+      ...(settled && (outcome === 'approve' || outcome === 'expiry') ? { decision: { kind: 'approve', decidedAtMs: 2 },
+        execution: outcome === 'approve' ? { executedAtMs: 3, ok: true, effectAttempted: true, result: { updated: true } }
+          : { executedAtMs: 3, ok: false, effectAttempted: false, errorCode: 'approval_stale', error: 'approval_stale' } } : {}) });
+    // Replace only persistent Artifact reads and their external change notification.
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), approvalsGet: async () => request() });
+    let waits = 0;
+    const observer = createWorkflowInvocationRecoveryObserver({ credentials: { token: 'token', encryption: null }, machineId,
+      actionExecutor: executor, observeApproval: async () => { waits++; await changed; } });
+    const recover = createWorkflowRunRecoveryReader({ accountId, machineId,
+      storage: { execute: async (operation, options) => operation.operation === 'recovery.list'
+        ? { candidates: kit.run().workflowCustodyState === 'pending' ? [{ run: kit.run(), parentAttempt: 0 }] : [] }
+        : await kit.execute(operation, options) },
+      resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      reconcileInvocation: observer });
+    await recover('reconnect');
+    expect(kit.run().workflowCustodyState).toBe('pending');
+    expect(waits).toBe(1);
+    settled = true;
+    wake?.();
+    await vi.waitFor(() => expect(kit.run()).toMatchObject({ state: 'cancelled', workflowCustodyState: 'settled' }));
+    const revision = kit.run().revision;
+    await recover('control', undefined, runId);
+    expect(kit.run().revision).toBe(revision);
+    expect(waits).toBe(1);
+  });
+
 it.each([
   { blockKind: 'action', terminal: true },
   { blockKind: 'step', terminal: true },
