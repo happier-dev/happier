@@ -186,14 +186,17 @@ export function StoreListingPaneHost(
     continuationId,
     storeSelectionUnavailable,
   ]);
+  // The page's controls read this descriptor through a context: a new object per render woke every page header on
+  // each Store search publication (about ten per keystroke) though only the title names it.
+  const mainColumn = React.useMemo(() => ({
+    hideLabel: t('panes.mainColumn.hidePage', { title: props.title }),
+    showLabel: t('panes.mainColumn.showPage', { title: props.title }),
+    identity: { name: props.title },
+  }), [props.title]);
   return (
     <DetailsPaneHost
       testID={`${props.testID}.detailPane`}
-      mainColumn={{
-        hideLabel: t('panes.mainColumn.hidePage', { title: props.title }),
-        showLabel: t('panes.mainColumn.showPage', { title: props.title }),
-        identity: { name: props.title },
-      }}
+      mainColumn={mainColumn}
       onCloseDetails={closeStore}
       details={details}
       main={props.children}
@@ -340,6 +343,13 @@ function ListingContent(
     />
   );
   switch (state.kind) {
+    case 'starter':
+      if (state.item) return <CapabilityListingDetail config={state.config} item={state.item}
+        onClose={props.onClose} pushed={props.pushed} />;
+      if (state.resolving) return loading;
+      return state.error ? <ListingState kind="error" size={size} testID="store.listing.failed"
+        title={t('capabilities.store.listing.failed')} body={state.error} diagnosticCode={state.status?.state}
+        action={{ label: t('capabilities.store.retry'), onPress: state.refresh }} /> : removed;
     case 'mcpServer':
       if (state.config && state.item)
         return (
@@ -447,6 +457,7 @@ export function ListingState(
     size: SurfaceStateSize;
     title: string;
     body?: string;
+    diagnosticCode?: string;
     action?: Readonly<{ label: string; onPress: () => void }>;
     testID: string;
   }>,
@@ -458,6 +469,7 @@ export function ListingState(
         kind={props.kind}
         size={props.size}
         title={props.title}
+        diagnosticCode={props.diagnosticCode}
         {...(props.body ? { reason: props.body } : {})}
         {...(props.action ? { action: props.action } : {})}
       />

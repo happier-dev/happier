@@ -21,6 +21,7 @@ import { StoreSkillListing, type StoreSkillListingState } from './StoreSkillList
 import { StoreAgentListing, type StoreAgentListingState } from './StoreAgentListing';
 import { StorePluginListing, type StorePluginListingState } from './StorePluginListing';
 import { resolveStoreContributionRoute } from './catalog/useStoreOpenReference';
+import { useStoreStarterListing } from './StoreStarterListing';
 import { StoreItemMark } from './catalog/StoreItemMark';
 import { presentBrowserExtensionInstallForm } from './submitBrowserExtensionMutation';
 
@@ -70,6 +71,7 @@ export type StoreListingState =
     | (Readonly<{ kind: 'agent' }> & StoreAgentListingState)
     | (Readonly<{ kind: 'plugin' }> & StorePluginListingState)
     | (Readonly<{ kind: 'browserExtension' }> & BrowserExtensionListingState)
+    | (Readonly<{ kind: 'starter' }> & ReturnType<typeof useStoreStarterListing>)
     | Readonly<{ kind: 'continuation'; href: string }>
     | Readonly<{ kind: 'unavailable' }>;
 
@@ -83,6 +85,7 @@ export function StoreListingController(props: Readonly<{
     const { reference, children, onClose } = props;
     const router = useRouter();
     const browserExtension = useBrowserExtensionListing(reference);
+    const starter = useStoreStarterListing(reference);
     const openMcp = React.useCallback<NonNullable<React.ComponentProps<typeof StoreMcpListing>['onAdded']>>((serverId, options) => {
         const result = runGuardedNavigation(() => router.push(mcpServerRoute(serverId, options) as never));
         if (result !== true) fireAndForget(result, { tag: 'StoreListingController.mcp' });
@@ -97,6 +100,7 @@ export function StoreListingController(props: Readonly<{
     }
     const key = JSON.stringify([reference.kind, reference.sourceId, reference.itemId, reference.version ?? null]);
     switch (reference.kind) {
+        case 'starter': return children({ kind: 'starter', ...starter });
         case 'browserExtension': return children({ kind: 'browserExtension', ...browserExtension });
         case 'mcpServer': return <StoreMcpListing key={key} selection={reference} onClose={onClose} onAdded={openMcp} continuationId={props.continuationId}>
             {state => children({ kind: 'mcpServer', ...state })}</StoreMcpListing>;

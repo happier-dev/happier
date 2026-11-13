@@ -86,7 +86,7 @@ it('D7 draws curated app marks from one source listing without acquiring app pay
         choices.map(choice => ({ uri: `https://raw.githubusercontent.com/coollabsio/coolify/${commit}/public/${choice.logo}` })));
 });
 
-async function setup(suffix: string, kind: 'browserExtension' | 'mcpServer' | 'plugin' | 'app',
+async function setup(suffix: string, kind: 'browserExtension' | 'mcpServer' | 'plugin' | 'app' | 'starter',
     handleExternalRequest?: (url: string, init?: RequestInit) => Promise<Response | null>) {
     const serverUrl = `https://store-parity-${suffix}.test`;
     const sourceUrl = `${serverUrl}/catalog.json`;
@@ -293,4 +293,18 @@ it('a pasted Chrome Web Store link in Store search installs that extension throu
     await act(async () => { outcome = await form.submit(); });
     expect(outcome).toMatchObject({ kind: 'settled', outcome: { ok: true } });
     expect(requests).toEqual([expect.objectContaining({ machineId, profileId: 'work', source: { kind: 'webStore', extensionId } })]);
+});
+
+it('DJ41 reads a starter listing through its registry owner rather than declaring it unavailable', async () => {
+    const { answer, sourceId } = await setup('starter-detail', 'starter');
+    const { readFileSync } = await import('node:fs');
+    answer('/catalog.json', { body: JSON.parse(readFileSync(new URL('../../../../../packages/plugins/deployment-templates/resources/registry/starters.json', import.meta.url), 'utf8')) });
+    let state: ListingState = { kind: 'unavailable' };
+    await renderScreen(<StoreListingController reference={{ type: 'registryItem', kind: 'starter', sourceId, itemId: 'static-website' }}
+        onClose={() => {}}>{value => { state = value; return null; }}</StoreListingController>);
+    await waitForHomeGovernance(() => expect(state).toMatchObject({ kind: 'starter', item: { summary: { title: 'Static website' } } }));
+    const selected = state as Extract<ListingState, { kind: 'starter' }>;
+    if (!selected.item) throw new Error('Expected the starter read');
+    const detail = await renderScreen(<>{selected.config.renderDetail(selected.item)}</>);
+    expect(detail.getTextContent()).toContain('Static website');
 });
