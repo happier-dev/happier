@@ -259,7 +259,7 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
                             },
                             isAccountRuntimeCurrent: async () => selected.isCurrent() && (!input.operationContext || await input.operationContext.isCurrent()),
                         });
-                        return { status: 'connectionTested', result: await owner.invoke({ account: command.account,
+                        return { status: 'connectionTested' as const, result: await owner.invoke({ account: command.account,
                             operation: { kind: 'testConnection' }, ...(options.signal ? { signal: options.signal } : {}) }) };
                     } catch (error) { return unavailable(failureCode(error)); }
                 }
@@ -296,14 +296,15 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
                             return attemptConfiguration(await select(record.scope.service), requested.attemptId, command);
                         }
                         const service = requested.kind === 'account' ? requested.account.service : requested.service;
-                        const declared = input.contributions.describe(service);
                         const modeId = requested.kind === 'account'
                             ? (await persistence.attempts.accounts.readExact(requested.account))?.authenticationModeId : requested.modeId;
-                        if (resolveCredentialedConnectedAccountAuthenticationPlacement(declared?.descriptor.authentication, machineId, modeId).kind !== 'account') return machineId
+                        // Configuration follows the service host; native-import placement applies only to acquiring credentials.
+                        const declared = input.contributions.describe(service);
+                        if (resolveCredentialedConnectedAccountAuthenticationPlacement(declared?.descriptor.authentication, machineId).kind !== 'account') return machineId
                             ? options.native(machineId, command) : unavailable('connected_account_configuration_target_unavailable');
                         const selected = await select(service);
                         const mode = selected.descriptor.authentication.modes.find(candidate => candidate.id === modeId);
-                        if (!mode || !selected.runtime.authentication.modes[mode.id]) return machineId
+                        if (!mode) return machineId
                             ? options.native(machineId, command) : unavailable('connected_account_configuration_target_unavailable');
                         const retained = runtime(selected);
                         const basis = { target: { ...requested, modeId: mode.id }, mode,

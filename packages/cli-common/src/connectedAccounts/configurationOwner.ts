@@ -255,7 +255,7 @@ function configurationControlView(
 ): ConfigurationControlView {
     return Object.freeze({
         mode,
-        status: normalized.revision !== null && normalized.missingFieldIds.length === 0
+        status: !modeConfiguration(mode) || normalized.revision !== null && normalized.missingFieldIds.length === 0
             ? 'ready' as const
             : 'configurationRequired' as const,
         revision: normalized.revision,
@@ -883,9 +883,6 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
         }>) {
             const target = snapshotTarget(input.target);
             assertTargetMatchesMode(target, input.mode);
-            if (!modeConfiguration(input.mode)) {
-                throw invalid('A mode without configuration has no configuration record');
-            }
             const service = serviceForTarget(target);
             const runtimeIdentity = Object.freeze({
                 occurrenceId: input.occurrenceId,
@@ -893,6 +890,10 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             });
             await assertRuntimeCurrent(service, runtimeIdentity);
             const effective = await resolveEffectiveMode(input.mode, target);
+            // No-configuration modes are ready without a persisted sidecar.
+            if (!modeConfiguration(input.mode)) {
+                return configurationControlView(await normalize({ target, mode: input.mode, record: null }), input.mode);
+            }
             const record = await params.read(target);
             await assertRuntimeCurrent(service, runtimeIdentity);
             const normalized = await normalize({ target, mode: effective.mode, record });

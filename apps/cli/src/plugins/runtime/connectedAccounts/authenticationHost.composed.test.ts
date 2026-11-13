@@ -64,6 +64,35 @@ it('agrees with begin admission when the catalog lists daemon-only Slack authent
     } finally { native.mockRestore(); await fixture.close(); }
 });
 
+it('routes configuration for a daemon-only service to its selected Machine', async () => {
+    const origin = 'http://slack-configuration-placement.test';
+    const service = { pluginId: 'happier.channel.slack', localId: 'slack-bot' };
+    const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin, {
+        includeBundledPluginIds: [service.pluginId],
+    });
+    let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    try {
+        await runWithServerHttpBaseUrl(origin, async () => {
+            registry = await resolveExecutablePluginRuntimeRegistry({ accountExecution: {
+                credentials: fixture.credentials, serverUrl: origin, isCurrent: () => true,
+            } });
+            const host = registry.connectedAccountAuthenticationHost;
+            if (!host) throw new Error('Missing Account host');
+            const command = { operation: 'readConfiguration' as const,
+                target: { kind: 'service' as const, service, modeId: 'bot-tokens' } };
+            const response = await host.controlCommand('slack-configuration-machine', command, {
+                // Genuine Machine RPC boundary; the remote host's response must survive routing.
+                native: async (machineId, forwarded) => {
+                    expect(machineId).toBe('slack-configuration-machine');
+                    expect(forwarded).toEqual(command);
+                    return { status: 'unavailable', code: 'remote_configuration_result' };
+                },
+            });
+            expect(response).toEqual({ status: 'unavailable', code: 'remote_configuration_result' });
+        });
+    } finally { await registry?.dispose(); await fixture.close(); }
+});
+
 it.each(['native-import', 'device'] as const)('tests a saved Muse subscription without repeating its %s sign-in placement', async authenticationModeId => {
     const origin = 'http://muse-saved-subscription-test.test';
     const service = { pluginId: 'happier.agent.muse', localId: 'muse-account' };
@@ -88,6 +117,11 @@ it.each(['native-import', 'device'] as const)('tests a saved Muse subscription w
             expect(tested).toMatchObject({ ok: true, result: { status: 'ok' } });
             expect(fixture.machineRequests).toBe(0);
             expect(fixture.directCredentialWrites).toBe(1);
+            const configuration = await executor.execute('connectedServices.configuration.get', { target: { kind: 'account', account } },
+                { surface: 'cli', actionRequestId: randomUUID() });
+            expect(configuration).toMatchObject({ ok: true, result: { configuration: {
+                status: 'ready', revision: null, missingFieldIds: [], values: {},
+            } } });
         });
     } finally { vendor.mockRestore(); await fixture.close(); }
 });

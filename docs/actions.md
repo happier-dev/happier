@@ -4960,7 +4960,9 @@ reference-revision admission, without acquiring the secret value. Account and
 attempt replacements do not accept these selections.
 
 Reads return values, readiness, configured secret field ids and service-scoped
-`secretRefs` metadata, never secret material. A conflict leaves the caller's draft intact; an
+`secretRefs` metadata, never secret material. In 0.3 development, inspecting an Account
+authentication mode that declares no configuration returns `ready` with a null
+revision and empty fields; it does not create a configuration record. A conflict leaves the caller's draft intact; an
 uncertain mutation must be observed with Get rather than automatically replayed.
 
 The acknowledgement means Account configuration was saved. It does not report a

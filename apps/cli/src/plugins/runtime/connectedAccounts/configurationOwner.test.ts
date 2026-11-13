@@ -1116,6 +1116,10 @@ describe('ConnectedAccountConfigurationOwner', () => {
         expect(harness.replace).not.toHaveBeenCalled();
         const admission = await harness.owner.admit({ intent: 'connect', service, mode, ...generation });
         if (admission.status !== 'ready') throw new Error('Expected a mode without configuration to be ready');
+        await expect(harness.owner.inspect({
+            target: { kind: 'account', account, modeId: mode.id }, mode, ...generation,
+        })).resolves.toMatchObject({ status: 'ready', revision: null, values: {},
+            configuredSecretFieldIds: [], missingFieldIds: [] });
         harness.setRecord({ kind: 'service', service, modeId: mode.id }, {
             revision: 'irrelevant-record', values: {}, secretRefs: {},
         });
