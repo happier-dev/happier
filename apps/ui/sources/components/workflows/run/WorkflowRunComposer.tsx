@@ -101,7 +101,7 @@ import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/
 import { formatWorkflowWhereSummary } from '../editor/WorkflowProjectTargetControl';
 import { resolveAgentInputColumn } from '@/components/sessions/agentInput/layout/agentInputColumn';
 import { WorkflowStartDetailsLead } from './WorkflowStartDetailsLead';
-import { WORKFLOW_START_WHERE_CHIP_KEY } from './workflowStartWhereChip';
+import { WORKFLOW_START_WHERE_CHIP_KEY } from './workflowStartPlacementChips';
 import {
   getWorkflowStartVisibilityChipPlacement,
   getWorkflowStepTargetsChipPlacement,

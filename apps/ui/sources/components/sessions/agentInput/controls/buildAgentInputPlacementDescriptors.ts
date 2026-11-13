@@ -16,7 +16,7 @@ import {
 import { getCapabilitiesActionChipPlacement } from '@/components/sessions/capabilities/capabilitiesActionChipPlacement';
 import { getNewSessionSpaceActionChipPlacement, getNewSessionTriggersActionChipPlacement } from '@/components/sessions/new/newSessionActionChipPlacements';
 import { getExecutionRunReportChipPlacement, getExecutionRunStartChipDefinitions } from '@/components/sessions/runs/launcher/executionRunStartChipPlacements';
-import { getWorkflowContextChipDefinitions, getWorkflowStartVisibilityChipPlacement, getWorkflowStartWhereChipPlacement, getWorkflowStepOptionsChipPlacement } from '@/components/workflows/workflowComposerControlPlacements';
+import { getWorkflowContextChipDefinitions, getWorkflowStartVisibilityChipPlacement, getWorkflowStartFolderChipPlacement, getWorkflowStartWhereChipPlacement, getWorkflowStepOptionsChipPlacement } from '@/components/workflows/workflowComposerControlPlacements';
 
 import { AGENT_INPUT_CONTROL_REGISTRY, AGENT_INPUT_FIELD_ACCESSORY_REGISTRY, findAgentInputControlDescriptor, getAgentInputFieldAccessoryPlacement } from './agentInputControlRegistry';
 import {
@@ -139,6 +139,7 @@ function getStaticFactoryDefinitions(context: AgentInputPlacementContext): reado
         { controlId: 'sessionAccess', placement: getWorkflowStartVisibilityChipPlacement(), contexts: ['workflow'] },
         { controlId: 'organization', placement: getNewSessionSpaceActionChipPlacement(), contexts: ['newSession'] },
         { controlId: 'machine', placement: getWorkflowStartWhereChipPlacement(), contexts: ['workflow'] },
+        { controlId: 'path', placement: getWorkflowStartFolderChipPlacement(), contexts: ['workflow'] },
         { controlId: 'automation', placement: getNewSessionTriggersActionChipPlacement(), contexts: ['newSession'] },
     ];
     return definitions.filter(definition => definition.contexts?.includes(context));

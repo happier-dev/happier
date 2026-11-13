@@ -106,7 +106,7 @@ import { createWorkflowEditorReadable, useWorkflowEditorSelector, type WorkflowE
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { formatWorkflowWhereSummary } from '../editor/WorkflowProjectTargetControl';
 import { createExecutionRunStartContentChip } from '@/components/sessions/runs/launcher/executionRunStartChips';
-import { createWorkflowStartWhereChip } from '../run/workflowStartWhereChip';
+import { createWorkflowStartPlacementChips } from '../run/workflowStartPlacementChips';
 import { useActionFieldOptionsForMachine } from '@/components/sessions/actions/useSessionActionFieldOptions';
 import { readWorkflowActionFieldRequests } from '@/components/workflows/presentation/workflowActionFieldRequests';
 import { formatWorkflowProblemMessage, resolveWorkflowProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
@@ -1060,7 +1060,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         ...(ownedPlanOriginId && activeAccountScope ? { originSession: {
             serverId: activeAccountScope.serverId, sessionId: ownedPlanOriginId,
         } } : {}),
-        extraActionChips: [createWorkflowStartWhereChip({
+        extraActionChips: [...createWorkflowStartPlacementChips({
             target: runRetained?.project ?? projectTarget, machineName: whereMachineName, machineHomeDir: whereHomeDir,
             machines, accountLifetime: props.accountLifetime,
             // The sent Where is shown without a setter; only a new start chooses again.

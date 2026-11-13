@@ -13,7 +13,7 @@ import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/
 import { MachinePathBrowserView } from '@/components/ui/pathBrowser/MachinePathBrowserModal';
 import { PathSelectionList } from '@/components/ui/pathPicker/PathSelectionList';
 import { getPathBrowserRowTestId } from '@/components/ui/pathBrowser/pathBrowserTestIds';
-import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
+import { NewSessionMachineSelectionContent } from '@/components/sessions/new/components/NewSessionMachineSelectionContent';
 import { AgentInputSelectionListPopover } from '@/components/sessions/agentInput/components/AgentInputSelectionListPopover';
 import { createWorkflowActionHttpTransport } from '@/dev/testkit/fixtures/workflowActionHttpTransport';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
@@ -260,6 +260,8 @@ describe('workflow project target control', () => {
         });
         const onChange = vi.fn();
         const screen = await renderControl({ machines, target: null, onChange });
+        // Machine and folder are New Session's two chips (owner 2026-11-12): the Machine chip opens its picker.
+        await screen.pressByTestIdAsync('agent-input-machine-chip');
         await screen.pressByTestIdAsync('workflow-editor-machine-option:machine-2');
         await vi.waitFor(async () => expect(onChange).toHaveBeenCalledWith({ machineId: 'machine-2', directory: '/member/workspace' }));
     });
@@ -295,9 +297,10 @@ describe('workflow project target control', () => {
                 expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true });
             });
         };
-        expect(screen.findByTestId('coach-placement-where-popover')).toBeNull();
+        // `open` opens the Machine chip's picker (New Session's); there is no combined Where popover.
+        expect(screen.findAllByType(NewSessionMachineSelectionContent)).toHaveLength(0);
         await invoke('open');
-        expect(screen.findByTestId('coach-placement-where-popover')).not.toBeNull();
+        expect(screen.findAllByType(NewSessionMachineSelectionContent)).toHaveLength(1);
         await invoke('browse');
         await vi.waitFor(() => expect(screen.findByTestId(getPathBrowserRowTestId('/repo/payments-feature-auth'))).not.toBeNull());
         const browserContext = screen.findAllByType(MachinePathBrowserView)[0]?.props.callerContext as
@@ -334,7 +337,7 @@ describe('workflow project target control', () => {
         await invoke('machine.activate', { id: 'machine-2' });
         expect(onChange).toHaveBeenLastCalledWith({ machineId: 'machine-2', directory: '/home/me/service' });
         await invoke('close');
-        expect(screen.findByTestId('coach-placement-where-popover')).toBeNull();
+        expect(screen.findAllByType(NewSessionMachineSelectionContent)).toHaveLength(0);
     });
     it('picks an existing checkout through the New Session picker and rebinds its project', async () => {
         const onChange = vi.fn();
@@ -377,41 +380,36 @@ describe('workflow project target control', () => {
             onChange,
         });
 
+        await screen.pressByTestIdAsync('agent-input-machine-chip');
         await screen.pressByTestIdAsync('workflow-editor-machine-option:machine-2');
 
         expect(onChange).toHaveBeenCalledWith({ machineId: 'machine-2', directory: '/home/me/service' });
     });
 
-    it('chooses the folder through the one path picker in place and returns without changing the target', async () => {
+    it('chooses the folder through New Session\'s folder chip and path picker without changing the target', async () => {
         const onChange = vi.fn();
         const { Modal } = await import('@/modal');
         const show = vi.spyOn(Modal, 'show');
         const screen = await renderControl({ target: { machineId: 'machine-1', directory: '/repo/payments' }, onChange });
         const before = show.mock.calls.length;
-        await screen.pressByTestIdAsync('workflow-editor-project-directory');
+        await screen.pressByTestIdAsync('agent-input-path-chip');
         // The new-session path picker (type a path, suggestions, favourites, browse), never a second folder control.
         expect(screen.findAllByType(PathSelectionList)).toHaveLength(1);
         expect(screen.findAllByType(MachinePathBrowserView)).toHaveLength(0);
         expect(show.mock.calls).toHaveLength(before);
-        await screen.pressByTestIdAsync('workflow-target-directory-back');
         expect(onChange).not.toHaveBeenCalled();
-        expect(screen.findAllByType(PathSelectionList)).toHaveLength(0);
-        expect(screen.findAllByType(MachineSelector)).toHaveLength(1);
         show.mockRestore();
     });
 
-    it('applies a browsed folder only to the target it was opened for', async () => {
+    it('closes the folder picker when the host moves to another Machine, applying nothing', async () => {
         const onChange = vi.fn();
         const opened = { machineId: 'machine-1', directory: '/repo/payments', workspaceRefId: 'ref-main' };
         const screen = await renderControl({ target: opened, onChange });
 
-        await screen.pressByTestIdAsync('workflow-editor-project-directory');
-        const pickers = screen.findAllByType(PathSelectionList);
-        expect(pickers).toHaveLength(1);
-        const picker = pickers[0];
-        expect(picker.props.machineId).toBe('machine-1');
+        await screen.pressByTestIdAsync('agent-input-path-chip');
+        expect(screen.findAllByType(PathSelectionList)).toHaveLength(1);
         const { WorkflowProjectTargetControl } = await import('./WorkflowProjectTargetControl');
-        // The host moved to another target while the browser was open.
+        // The host moved to another target while the picker was open.
         await screen.update(React.createElement(WorkflowProjectTargetControl, {
             machineName: 'Linux box',
             machines: MACHINES,
@@ -419,10 +417,8 @@ describe('workflow project target control', () => {
             target: { machineId: 'machine-2', directory: '/home/me/service' },
             onChange,
         } as never));
-        await act(async () => {
-            picker.props.onCommit('/repo/other');
-        });
 
+        expect(screen.findAllByType(PathSelectionList)).toHaveLength(0);
         expect(onChange).not.toHaveBeenCalled();
     });
 
@@ -433,7 +429,7 @@ describe('workflow project target control', () => {
             onChange,
         });
 
-        await screen.pressByTestIdAsync('workflow-editor-project-directory');
+        await screen.pressByTestIdAsync('agent-input-path-chip');
         expect(screen.findAllByType(PathSelectionList)).toHaveLength(1);
         await act(async () => {
             screen.findByType(PathSelectionList).props.onCommit('/Users/me/unbound');
@@ -442,7 +438,7 @@ describe('workflow project target control', () => {
         expect(onChange).toHaveBeenCalledWith({ machineId: 'machine-1', directory: '/Users/me/unbound' });
     });
 
-    it('presents Machine and project as one field select whose value is the where-summary, opening the same choices', async () => {
+    it('presents Machine and project as one settings row holding New Session\'s two chips', async () => {
         const onChange = vi.fn();
         const screen = await renderControl({
             presentation: 'field',
@@ -452,16 +448,14 @@ describe('workflow project target control', () => {
             onChange,
         });
 
-        // One row: its label, its consequence and one value — no nested Machine tile and no
-        // separate folder line until the person opens the field.
+        // One row: its label, its consequence and the Machine and folder chips; no combined Where popover.
         expect(screen.getTextContent()).toContain('Runs on');
-        expect(screen.getTextContent()).toContain('Mac Studio · ~/project');
-        expect(screen.getTextContent()).not.toContain('/Users/me/project');
-        expect(screen.findAllByType(MachineSelector)).toHaveLength(0);
-        expect(screen.findByTestId('workflow-editor-project-directory')).toBeNull();
+        expect(screen.findByTestId('agent-input-machine-chip')).not.toBeNull();
+        expect(screen.findByTestId('agent-input-path-chip')).not.toBeNull();
+        expect(screen.findByTestId('workflow-editor-where-popover')).toBeNull();
+        expect(screen.findAllByType(NewSessionMachineSelectionContent)).toHaveLength(0);
 
-        await screen.pressByTestIdAsync('workflow-editor-machine-row');
-        expect(screen.findByTestId('workflow-editor-where-popover')).not.toBeNull();
+        await screen.pressByTestIdAsync('agent-input-machine-chip');
         await screen.pressByTestIdAsync('workflow-editor-machine-option:machine-2');
         expect(onChange).toHaveBeenCalledWith({ machineId: 'machine-2', directory: '/home/me/service' });
     });

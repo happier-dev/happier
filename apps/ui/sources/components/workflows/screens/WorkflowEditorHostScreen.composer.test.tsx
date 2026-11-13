@@ -1094,8 +1094,9 @@ describe('editor workflow composer', () => {
         expect(review.retainedRequest?.input).toEqual(original);
         expect(review.directory).toBe('/repo/reviewed');
         expect(review.authoringControls).toBeUndefined();
-        expect(review.extraActionChips?.map((entry) => entry.key)).toEqual(['workflow-start-where']);
-        expect(review.extraActionChips?.[0]?.collapsedContentPopover?.label).toContain('/repo/reviewed');
+        expect(review.extraActionChips?.map((entry) => entry.key)).toEqual(['workflow-start-where', 'workflow-start-folder']);
+        // The sent place reads on its two chips: the Machine, then the folder.
+        expect(review.extraActionChips?.[1]?.collapsedContentPopover?.label).toContain('/repo/reviewed');
         expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
         const sent = startRequests().length;
         await screen.pressByTestIdAsync('workflow-run-inputs-run');

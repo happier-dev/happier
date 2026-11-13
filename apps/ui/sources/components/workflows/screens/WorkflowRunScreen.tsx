@@ -40,7 +40,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Text } from '@/components/ui/text/Text';
-import { createWorkflowStartWhereChip } from '../run/workflowStartWhereChip';
+import { createWorkflowStartPlacementChips } from '../run/workflowStartPlacementChips';
 import { createExecutionRunStartContentChip } from '@/components/sessions/runs/launcher/executionRunStartChips';
 import { t } from '@/text';
 import { getWorkflowContextChipDefinition } from '../workflowComposerControlPlacements';
@@ -2081,7 +2081,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
             executionTarget: runAgainRetained?.input.executionTarget ?? visibleAcceptedContext?.executionTarget,
             ...(visibleAcceptedContext === null ? {} : { extraActionChips: [
                 // No setter: this is the accepted (or already sent) target, not another authored choice.
-                createWorkflowStartWhereChip({ target: runAgainTarget, machineName: runMachineName,
+                ...createWorkflowStartPlacementChips({ target: runAgainTarget, machineName: runMachineName,
                     machineHomeDir: runAgainTarget?.machineId === runMachineId ? runMachineHomeDir ?? null : null,
                     fallbackLabel: visibleAcceptedContext.machineId,
                     testID: 'workflow-start-where-chip', testIDPrefix: 'workflow-repeat-where' }),

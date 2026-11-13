@@ -18,7 +18,7 @@ import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
-import { createWorkflowStartWhereChip } from '@/components/workflows/run/workflowStartWhereChip';
+import { createWorkflowStartPlacementChips } from '@/components/workflows/run/workflowStartPlacementChips';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { NewSessionSimplePanelProps } from '../components/NewSessionSimplePanel';
@@ -51,7 +51,11 @@ function WorkflowPromptLeaf(props: Readonly<{ source: ComposerTextSource; render
 }
 
 /** New's workflow selection lives at its composer leaf, alongside the existing prompt store. */
-export function useNewSessionWorkflowStart(params: Readonly<{ panelProps: NewSessionSimplePanelProps; prompt: string | ComposerTextSource; surfaceGroup?: WorkflowRunComposerProps['surfaceGroup'] }>) {
+export function useNewSessionWorkflowStart(params: Readonly<{
+    panelProps: NewSessionSimplePanelProps; prompt: string | ComposerTextSource; surfaceGroup?: WorkflowRunComposerProps['surfaceGroup'];
+    /** The card's own composer facts (its status line, side inset and width) that the workflow composer keeps. */
+    host?: Pick<WorkflowRunComposerProps, 'connectionStatus' | 'contentPaddingHorizontal' | 'maxWidthCap'>;
+}>) {
     const { panelProps: props } = params;
     const promptSource = useComposerTextSource(params.prompt);
     const router = useRouter();
@@ -235,13 +239,13 @@ export function useNewSessionWorkflowStart(params: Readonly<{ panelProps: NewSes
     const hostStatusBadges = props.statusBadges;
     const statusBadges = React.useMemo(() => managedProgressBadge
         ? [...(hostStatusBadges ?? []), managedProgressBadge] : hostStatusBadges, [hostStatusBadges, managedProgressBadge]);
-    const retainedWhere = React.useMemo(() => retained?.project === undefined ? null : [createWorkflowStartWhereChip({
+    const retainedWhere = React.useMemo(() => retained?.project === undefined ? null : createWorkflowStartPlacementChips({
         target: retained.project, machineName: retainedMachine.name ?? retained.project.machineId,
         machineHomeDir: retainedMachine.homeDir,
         testID: 'new-session-workflow-where-chip', testIDPrefix: 'new-session-workflow-where',
-    })], [retained, retainedMachine.name, retainedMachine.homeDir]);
+    }), [retained, retainedMachine.name, retainedMachine.homeDir]);
     const composer = selection === null ? null : <WorkflowPromptLeaf key={selection.id} source={promptSource} render={prompt => <WorkflowRunComposer
-        surfaceGroup={params.surfaceGroup}
+        surfaceGroup={params.surfaceGroup} {...params.host}
         definition={selection.definition} sourceArtifactId={selection.source.kind === 'saved' ? selection.source.definitionId : null}
         inputs={selection.definition.inputs} values={main ? { ...values, [main.name]: prompt } : values}
         optionsConsumer={selection.source.kind === 'saved' ? { kind: 'workflow', workflow: selection.source.definitionId }

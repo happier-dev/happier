@@ -83,6 +83,9 @@ export type NewSessionMachineSelectionContentProps<TMachine extends MachineDispl
     presentation?: 'inline';
     /** Content after the last machine that scrolls with the list, so a long list cannot clip it (see `SelectionList` `bodyFooter`). */
     bodyFooter?: React.ReactNode;
+    /** Exposes the list to an agent's UI commands under this scope, as `MachineSelector` does. */
+    currentUiContextCommandScope?: string;
+    currentUiContextForegroundOverlay?: boolean;
 }>;
 
 export function NewSessionMachineSelectionContent<TMachine extends MachineDisplayRenderable = Machine>(
@@ -145,6 +148,8 @@ export function NewSessionMachineSelectionContent<TMachine extends MachineDispla
                 onConfigure={props.onConfigureManagedMachine} /></React.Suspense> : null}
         <SelectionList
             testID={props.testID ?? 'new-session-machine-list'}
+            currentUiContextCommandScope={props.currentUiContextCommandScope}
+            currentUiContextForegroundOverlay={props.currentUiContextForegroundOverlay}
             rootStep={listModel.rootStep}
             selectedOptionId={listModel.selectedOptionId}
             onSelect={() => {}}

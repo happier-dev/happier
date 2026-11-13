@@ -9,25 +9,19 @@ import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 
 import { AgentInputSelectionListPopover } from '@/components/sessions/agentInput/components/AgentInputSelectionListPopover';
-import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
+import { SessionPlacementChips, useSessionPlacementPopovers, type SessionPlacementChipsHandle, type SessionPlacementChoiceProps } from '@/components/sessions/new/placement/SessionPlacementChips';
+import type { AgentInputContentPopoverRenderArgs } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
+import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 import { useCheckoutSelectionPicker } from '@/components/sessions/new/hooks/screenModel/useCheckoutSelectionPicker';
 import { useNewSessionRepoScmSnapshot } from '@/components/sessions/new/hooks/screenModel/useNewSessionRepoScmSnapshot';
 import { resolveNewSessionCheckoutChipModel } from '@/components/sessions/new/modules/newSessionCheckoutChipModel';
 import { Icon } from '@/components/ui/icons/Icon';
-import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
-import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
-import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
-import { Popover } from '@/components/ui/popover';
-import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
-import { MachinePathBrowserView } from '@/components/ui/pathBrowser/MachinePathBrowserModal';
-import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
-import { useInlineLevelFocusReturn } from '@/keyboard/focusReturn';
 import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { useActiveServerAccountScope, useSettingMutable } from '@/sync/domains/state/storage';
-import { NewSessionPathSelectionContent } from '@/components/sessions/new/components/NewSessionPathSelectionContent';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { useServerScopedMachine } from '@/sync/store/hooks';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import {
     selectWorkflowProjectMachine,
@@ -52,7 +46,7 @@ import { useWorkflowAccountLifetime } from '../workflowAccountScope';
  * of that folder's repository.
  *
  * Every choice here is the one New Session already offers. The Machine comes
- * from the canonical `MachineSelector`, a Machine's starting folder from the
+ * from New Session's Machine chip and picker, a Machine's starting folder from the
  * shared default-directory policy, the folder from the canonical Machine path
  * browser, and the checkout from the one checkout picker New Session's chip
  * presents — so a workflow and a Session opened side by side agree about
@@ -63,7 +57,6 @@ import { useWorkflowAccountLifetime } from '../workflowAccountScope';
  */
 
 const styles = StyleSheet.create((theme) => ({
-    back: { alignItems: 'flex-start', paddingBottom: theme.space.s8 },
     row: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -94,13 +87,6 @@ const styles = StyleSheet.create((theme) => ({
     fixedPath: {
         ...Typography.mono(),
     },
-    popover: {
-        minWidth: 320,
-        gap: theme.space.s4,
-        paddingVertical: theme.space.s4,
-        paddingHorizontal: theme.space.s8,
-    },
-    machineList: { width: '100%', minWidth: 0 },
     control: {
         minWidth: 0,
         flexShrink: 1,
@@ -182,36 +168,35 @@ export const WorkflowProjectTargetControl = React.forwardRef<
         : props.machines?.find((candidate) => candidate.id === target.machineId);
     const machineHomeDir = machine?.metadata?.homeDir ?? props.machineHomeDir ?? undefined;
     const editable = props.onChange !== undefined && (props.machines !== undefined || props.directoryEditable === true);
-    const editor = props.onChange === undefined ? null : props.machines !== undefined ? <EditableProjectTarget
-        currentUiContextCommandScope={props.currentUiContextCommandScope}
-        inline={props.presentation !== 'chip' && props.presentation !== 'field'}
-        accountLifetime={props.accountLifetime} purpose={props.purpose ?? 'workflow'}
-        target={target ?? null} machines={props.machines} onChange={props.onChange} testIDPrefix={testIDPrefix}
-    /> : props.directoryEditable && target ? <>
-        <Text testID={`${testIDPrefix}-machine`} style={props.machineName === null ? styles.unresolved : styles.value}>
-            {props.machineName ?? t('workflows.editor.targetRequired')}
-        </Text>
-        <ProjectDirectoryControl inline={props.presentation !== 'chip' && props.presentation !== 'field'}
+    // Machine and folder are New Session's two chips and pickers (owner 2026-11-12); the checkout follows.
+    const chipsRef = React.useRef<SessionPlacementChipsHandle | null>(null);
+    const editor = props.onChange !== undefined && (props.machines !== undefined || (props.directoryEditable === true && target)) ? (
+        <WorkflowWhereChips
+            handleRef={chipsRef}
             currentUiContextCommandScope={props.currentUiContextCommandScope}
-            target={target} machineHomeDir={machineHomeDir ?? null} machinePlatform={null}
-            serverId={props.accountLifetime?.scope.serverId ?? null} workspaceRefs={EMPTY_WORKSPACE_REFS}
-            onChange={props.onChange} testIDPrefix={testIDPrefix} />
-    </> : null;
-    const [pickerOpen, setPickerOpen] = React.useState(false);
+            accountLifetime={props.accountLifetime}
+            target={target ?? null}
+            machines={props.machines}
+            machineName={props.machineName}
+            machineHomeDir={machineHomeDir ?? null}
+            onChange={props.onChange}
+            testIDPrefix={testIDPrefix}
+        />
+    ) : null;
     const scope = props.currentUiContextCommandScope;
-    const commands = useCurrentUiContextLocalCommands(scope === undefined || !editable ? [] : [
-        { key: 'open', title: props.title ?? t('workflows.page.where.label'), description: `${scope}.open`, invoke: () => setPickerOpen(true) },
-        { key: 'close', title: t('common.close'), description: `${scope}.close`, invoke: () => setPickerOpen(false) },
+    const firstPicker = props.machines !== undefined ? 'machine' as const : 'folder' as const;
+    const openPicker = React.useCallback(() => chipsRef.current?.open(firstPicker), [firstPicker]);
+    useCurrentUiContextLocalCommands(scope === undefined || !editable ? [] : [
+        { key: 'open', title: props.title ?? t('workflows.page.where.label'), description: `${scope}.open`, invoke: openPicker },
+        { key: 'close', title: t('common.close'), description: `${scope}.close`, invoke: () => chipsRef.current?.close() },
     ], { foregroundOverlay: true, contextKey: scope });
-    const changeOpen = React.useCallback((open: boolean) => {
-        if (scope === undefined) setPickerOpen(open);
-        else void commands.invoke(open ? 'open' : 'close');
-    }, [commands, scope]);
     React.useImperativeHandle(ref, () => ({
-        openPicker: () => { if (editable) changeOpen(true); },
-    }), [changeOpen, editable]);
+        openPicker: () => { if (editable) openPicker(); },
+    }), [editable, openPicker]);
 
     if (props.presentation === 'chip') {
+        if (editor) return <View testID={`${testIDPrefix}-where-chips`} style={styles.row}>{editor}</View>;
+        // Read-only: the place reads as one quiet chip that cannot be chosen.
         const summary = formatWorkflowWhereSummary({ target, machineName: props.machineName, machineHomeDir });
         return (
             <SelectionListFilterChip
@@ -221,14 +206,7 @@ export const WorkflowProjectTargetControl = React.forwardRef<
                     valueLabel: summary ?? t('workflows.page.where.choose'),
                     icon: <WhereChipIcon />,
                     muted: summary === null,
-                    disabled: !editable,
-                    open: pickerOpen,
-                    onOpenChange: changeOpen,
-                    renderPopoverContent: () => (
-                        <View testID={`${testIDPrefix}-where-popover`} style={styles.popover}>
-                            {editor}
-                        </View>
-                    ),
+                    disabled: true,
                     testID: `${testIDPrefix}-where-chip`,
                 }}
             />
@@ -266,9 +244,6 @@ export const WorkflowProjectTargetControl = React.forwardRef<
             title={props.title ?? t('workflows.page.sections.machineAndProject')}
             accessoryLayout={props.accessoryLayout}
             {...(props.subtitle === undefined ? {} : { subtitle: props.subtitle })}
-            summary={summary}
-            open={pickerOpen}
-            onOpenChange={changeOpen}
             readOnlyValue={editable ? null : (
                 target === undefined || target === null || props.machineName === null ? (
                     // Someone who can't edit is never told to choose: they read what is (FIN-DESIGN-REVIEW M7).
@@ -288,71 +263,29 @@ export const WorkflowProjectTargetControl = React.forwardRef<
 });
 
 /**
- * The field presentation: one row, one field select (the canonical page field box) whose value is
- * the one where-summary; pressing it opens the same choices the chip opens. A read-only host gets
- * the summary as plain value text.
+ * The field presentation: one settings row whose control is the Machine and folder chips (the same
+ * chips the composer shows). A read-only host gets the summary as plain value text.
  */
 function WhereField(props: Readonly<{
     title: string;
     subtitle?: string;
     accessoryLayout?: ItemProps['accessoryLayout'];
-    summary: string | null;
-    open: boolean;
-    onOpenChange: (open: boolean) => void;
     /** Non-null: the target is fixed by the host and reads as this value. */
     readOnlyValue: React.ReactNode | null;
     testIDPrefix: string;
     children: React.ReactNode;
 }>): React.ReactElement {
-    const { theme } = useUnistyles();
-    const anchorRef = React.useRef<View>(null);
-    const fieldColors = React.useMemo(() => resolveFieldBoxColors(theme), [theme]);
     const editable = props.readOnlyValue === null;
     return (
-        <View ref={anchorRef} collapsable={false}>
-            <Item
-                testID={`${props.testIDPrefix}-machine-row`}
-                title={props.title}
-                {...(props.subtitle === undefined ? {} : { subtitle: props.subtitle, subtitleLines: 0 })}
-                accessoryLayout={props.accessoryLayout ?? 'stacked'}
-                showChevron={false}
-                selected={false}
-                {...(editable ? {
-                    onPress: () => props.onOpenChange(!props.open),
-                    accessibilityExpanded: props.open,
-                    rightElement: renderDropdownItemTriggerRightElement({
-                        detail: props.summary,
-                        open: props.open,
-                        detailColor: theme.colors.text.secondary,
-                        chevronColor: theme.colors.text.secondary,
-                        field: fieldColors,
-                        fieldSpan: props.accessoryLayout === 'inline' ? undefined : 'row',
-                        placeholder: t('common.choose'),
-                        placeholderColor: theme.colors.input.placeholder,
-                    }),
-                } : { mode: 'info' as const, rightElement: props.readOnlyValue })}
-            />
-            {editable && props.open ? (
-                <Popover
-                    open
-                    anchorRef={anchorRef}
-                    focusReturnRef={anchorRef}
-                    placement="auto"
-                    portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false }}
-                    maxWidthCap={420}
-                    maxHeightCap={560}
-                    onRequestClose={() => props.onOpenChange(false)}
-                >
-                    {({ maxHeight }) => (
-                        <FloatingOverlay maxHeight={maxHeight} scrollEnabled surfaceChrome="theme">
-                            <View testID={`${props.testIDPrefix}-where-popover`} style={styles.popover}>
-                                {props.children}
-                            </View>
-                        </FloatingOverlay>
-                    )}
-                </Popover>
-            ) : null}
-        </View>
+        <Item
+            testID={`${props.testIDPrefix}-machine-row`}
+            title={props.title}
+            {...(props.subtitle === undefined ? {} : { subtitle: props.subtitle, subtitleLines: 0 })}
+            accessoryLayout={props.accessoryLayout ?? 'stacked'}
+            showChevron={false}
+            selected={false}
+            {...(editable ? { rightElement: props.children } : { mode: 'info' as const, rightElement: props.readOnlyValue })}
+        />
     );
 }
 
@@ -361,17 +294,25 @@ function WhereChipIcon(): React.ReactElement {
     return <Icon name="desktop" size={14} color={theme.colors.text.secondary} />;
 }
 
-function EditableProjectTarget(props: Readonly<{
-    currentUiContextCommandScope?: string;
-    inline?: boolean;
+type WorkflowWhereInput = Readonly<{
     accountLifetime?: ServerAccountScopeLifetime | null;
-    purpose: 'workflow' | 'trigger' | 'background';
     target: WorkflowAuthoringTarget | null;
-    machines: readonly Machine[];
-    onChange: (target: WorkflowAuthoringTarget) => void;
-    testIDPrefix: string;
-}>): React.ReactElement {
-    const { machines, onChange, target, testIDPrefix } = props;
+    /** The host's eligible Machines; absent: the Machine is fixed and only its folder is chosen. */
+    machines?: readonly Machine[];
+    machineName: string | null;
+    machineHomeDir: string | null;
+    /** Absent: the place is decided (an accepted Run) and only shown. */
+    onChange?: (target: WorkflowAuthoringTarget) => void;
+}>;
+
+/**
+ * The workflow rules New Session's Machine and folder pickers don't have: a Machine's starting folder
+ * from the shared default-directory policy (a shared Machine's requester folder included), the Account's
+ * recent folders, and `workspaceRefId` kept truthful whenever the folder moves. The chips here and the
+ * run composers' Machine and folder chips both read their choices from this one owner.
+ */
+function useWorkflowWhereChoices(props: WorkflowWhereInput) {
+    const { machines, onChange, target } = props;
     const accountLifetime = useWorkflowAccountLifetime(props.accountLifetime);
     const activeScope = useActiveServerAccountScope();
     const serverId = accountLifetime === undefined ? activeScope?.serverId ?? null : accountLifetime?.scope.serverId ?? null;
@@ -385,13 +326,16 @@ function EditableProjectTarget(props: Readonly<{
         sessions: null,
     });
 
-    const machine = target === null ? undefined : machines.find((candidate) => candidate.id === target.machineId);
+    const listed = target === null ? undefined : machines?.find((candidate) => candidate.id === target.machineId);
+    const stored = useServerScopedMachine(serverId, listed || target === null ? null : target.machineId);
+    const machine = listed ?? stored ?? undefined;
     const ownIsolation = useMachineOwnIsolationStatus({ machineId: machine?.id, machine, serverId,
         enabled: machine?.isShared === true || hasUnresolvedRequesterDirectories({ machine }) });
-    const machineHomeDir = resolveMachineHomeDirectory({ machine, ownStatus: ownIsolation.status });
+    const machineHomeDir = resolveMachineHomeDirectory({ machine, ownStatus: ownIsolation.status }) ?? props.machineHomeDir;
     const machinePlatform = machine?.metadata?.platform ?? null;
     const readOwnStatus = ownIsolation.readStatus;
     const selectMachine = React.useCallback(async (selected: Machine) => {
+        if (!machines || !onChange) return;
         const needsRequesterStatus = selected.isShared === true || hasUnresolvedRequesterDirectories({ machine: selected });
         const ownStatus = needsRequesterStatus ? await readOwnStatus(selected.id) : null;
         if (needsRequesterStatus && ownStatus === null) return;
@@ -408,70 +352,47 @@ function EditableProjectTarget(props: Readonly<{
             workspaceRefs,
         }));
     }, [machines, onChange, readOwnStatus, resolveRecentPathsForMachine, serverId, target, workspaceRefs]);
-
-    return <ProjectDirectoryControl inline={props.inline} target={target} serverId={serverId}
-        currentUiContextCommandScope={props.currentUiContextCommandScope}
-        workspaceRefs={workspaceRefs} machineHomeDir={machineHomeDir} machinePlatform={machinePlatform}
-        onChange={onChange} testIDPrefix={testIDPrefix} checkout
-        recentPaths={target === null ? EMPTY_RECENT_PATHS : resolveRecentPathsForMachine(target.machineId)}
-        machineControl={<MachineSelector purpose={props.purpose} serverId={serverId} machines={machines}
-            currentUiContextCommandScope={props.currentUiContextCommandScope === undefined ? undefined : `${props.currentUiContextCommandScope}.machine`}
-            currentUiContextForegroundOverlay={props.currentUiContextCommandScope !== undefined}
-            selectedMachine={machine ?? null} onSelect={selectMachine} presentation="list"
-            showFavorites={false} showRecent={false} showCliGlyphs={false} testIdPrefix={`${testIDPrefix}-machine`} />} />;
-}
-
-const EMPTY_RECENT_PATHS: readonly string[] = [];
-const IGNORE_SEARCH_QUERY = (): void => {};
-
-/** The same folder choice serves editable placement and a host's fixed Machine. */
-function ProjectDirectoryControl(props: Readonly<{
-    currentUiContextCommandScope?: string;
-    inline?: boolean;
-    target: WorkflowAuthoringTarget | null;
-    serverId: string | null;
-    workspaceRefs: readonly WorkspaceRefV1[];
-    machineHomeDir: string | null;
-    machinePlatform: string | null;
-    onChange: (target: WorkflowAuthoringTarget) => void;
-    testIDPrefix: string;
-    checkout?: boolean;
-    machineControl?: React.ReactNode;
-    /** This Machine's recent folders (the Account's authoring memory), offered first by the path picker. */
-    recentPaths?: readonly string[];
-}>) {
-    const { target, serverId, machineHomeDir, machinePlatform, testIDPrefix } = props;
-    // A person chooses the folder with the one path picker (the new-session one: type a path, suggestions,
-    // favourites, browse), pushed in place; the mounted `browse` command keeps the browser itself.
-    const [picking, setPicking] = React.useState<WorkflowAuthoringTarget | null>(null);
-    const [favoriteDirectoriesSetting, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');
-    const favoriteDirectories = Array.isArray(favoriteDirectoriesSetting) ? favoriteDirectoriesSetting : EMPTY_RECENT_PATHS;
-    const { theme } = useUnistyles();
-    const CommandBridge = useCurrentUiContextCommandBridge();
-    const [browsing, setBrowsing] = React.useState<Readonly<{
-        target: WorkflowAuthoringTarget;
-        callerContext?: ActionExecutorContext;
-    }> | null>(null);
-    // Back (or a choice) returns focus to the folder control the inline browser replaced.
-    const directoryFocus = useInlineLevelFocusReturn(browsing !== null || picking !== null);
-    const targetRef = React.useRef(target);
-    targetRef.current = target;
-    const latest = React.useRef(props);
-    latest.current = props;
+    const latest = React.useRef({ target, serverId, workspaceRefs, onChange });
+    latest.current = { target, serverId, workspaceRefs, onChange };
     const moveToDirectory = React.useCallback((openedFor: WorkflowAuthoringTarget, directory: string) => {
-        if (targetRef.current !== openedFor) return;
-        latest.current.onChange(setWorkflowProjectDirectory({ current: openedFor, directory,
+        if (latest.current.target !== openedFor) return;
+        latest.current.onChange?.(setWorkflowProjectDirectory({ current: openedFor, directory,
             serverId: latest.current.serverId, workspaceRefs: latest.current.workspaceRefs }));
     }, []);
+    const selectPath = React.useCallback((directory: string) => {
+        if (latest.current.target) moveToDirectory(latest.current.target, directory);
+    }, [moveToDirectory]);
+    const choice: SessionPlacementChoiceProps = {
+        serverId: serverId ?? '',
+        machine: machine ?? null,
+        machineName: props.machineName,
+        machineHomeDir,
+        recentPaths: target === null ? EMPTY_RECENT_PATHS : resolveRecentPathsForMachine(target.machineId),
+        path: target !== null && isWorkflowProjectTarget(target) ? target.directory : '',
+        ...(machines && onChange ? { machines, onSelectMachine: (selected: Machine) => { void selectMachine(selected); } } : {}),
+        onSelectPath: selectPath,
+    };
+    return { choice, serverId, machineHomeDir, machinePlatform, moveToDirectory, latest };
+}
 
+/** The Machine and folder chips (New Session's), then the checkout picker, with the workflow rules. */
+function WorkflowWhereChips(props: WorkflowWhereInput & Readonly<{
+    handleRef: React.Ref<SessionPlacementChipsHandle>;
+    currentUiContextCommandScope?: string;
+    testIDPrefix: string;
+}>): React.ReactElement {
+    const { target } = props;
+    const { choice, serverId, machineHomeDir, machinePlatform, moveToDirectory, latest } = useWorkflowWhereChoices(props);
+    // An agent browses folders with the Machine path browser under `${scope}.browser`, as before the chips.
+    const scope = props.currentUiContextCommandScope;
+    const CommandBridge = useCurrentUiContextCommandBridge();
     const browseDirectory = React.useCallback((callerContext?: ActionExecutorContext) => {
-        if (target === null) return;
-        if (props.inline) { setBrowsing({ target, callerContext }); return; }
-        const openedFor = target;
+        const openedFor = latest.current.target;
+        if (openedFor === null) return;
         void (async () => {
             const directory = await openMachinePathBrowserModal({
-                currentUiContextCommandScope: props.currentUiContextCommandScope === undefined ? undefined : `${props.currentUiContextCommandScope}.browser`,
-                commandBridge: props.currentUiContextCommandScope === undefined ? undefined : CommandBridge,
+                currentUiContextCommandScope: scope === undefined ? undefined : `${scope}.browser`,
+                commandBridge: scope === undefined ? undefined : CommandBridge,
                 callerContext,
                 machineId: openedFor.machineId,
                 serverId,
@@ -481,89 +402,48 @@ function ProjectDirectoryControl(props: Readonly<{
             });
             if (directory !== null) moveToDirectory(openedFor, directory);
         })();
-    }, [CommandBridge, machineHomeDir, moveToDirectory, target, serverId, props.inline, props.currentUiContextCommandScope]);
-
-    const scope = props.currentUiContextCommandScope;
-    const commands = useCurrentUiContextLocalCommands(scope === undefined || target === null ? [] : [
+    }, [CommandBridge, latest, machineHomeDir, moveToDirectory, scope, serverId]);
+    useCurrentUiContextLocalCommands(scope === undefined || target === null ? [] : [
         { key: 'browse', title: t('workflows.workspace.projectCheckout'), description: `${scope}.browse`, invoke: (_input, context) => browseDirectory(context) },
-        ...(browsing === null ? [] : [{ key: 'back', title: t('common.back'), description: `${scope}.back`, invoke: () => setBrowsing(null) }]),
     ], { foregroundOverlay: true, contextKey: scope });
-
-    const directoryLabel = target === null ? null : isWorkflowProjectTarget(target)
-        ? formatPathRelativeToHome(target.directory, machineHomeDir, { homeLabel: t('workspacePresentation.homeFolder') })
-        : t('newSession.folder.noFolder');
-
-    if (picking) return <View>
-        <View style={styles.back}>
-            <TextLinkButton testID="workflow-target-directory-back" label={t('common.back')}
-                onPress={() => setPicking(null)} controlRef={directoryFocus.attachEntry} />
-        </View>
-        <NewSessionPathSelectionContent
-            machineHomeDir={machineHomeDir ?? ''}
-            selectedPath={isWorkflowProjectTarget(picking) ? picking.directory : ''}
-            initialSuggestionMode="history"
-            onChangeSelectedPath={(directory) => { moveToDirectory(picking, directory); setPicking(null); }}
-            recentPaths={props.recentPaths ?? EMPTY_RECENT_PATHS}
-            usePickerSearch={false}
-            searchQuery=""
-            onChangeSearchQuery={IGNORE_SEARCH_QUERY}
-            favoriteDirectories={favoriteDirectories}
-            onChangeFavoriteDirectories={setFavoriteDirectories}
-            machineBrowse={{ enabled: true, machineId: picking.machineId, serverId }}
-            machinePlatform={machinePlatform}
-        />
-    </View>;
-
-    if (browsing) return <View>
-        {/* The same inline Back as the recipe body and participant picker (one look for a pushed level). */}
-        <View style={styles.back}>
-            <TextLinkButton testID="workflow-target-directory-back" label={t('common.back')}
-                onPress={scope === undefined ? () => setBrowsing(null) : () => { void commands.invoke('back'); }}
-                controlRef={directoryFocus.attachEntry} />
-        </View>
-        <MachinePathBrowserView machineId={browsing.target.machineId} serverId={serverId}
-            callerContext={browsing.callerContext}
-            currentUiContextCommandScope={scope === undefined ? undefined : `${scope}.browser`}
-            initialPath={isWorkflowProjectTarget(browsing.target) ? browsing.target.directory : machineHomeDir}
-            selectionMode="directory" variant="popover" interaction="immediate"
-            onRequestClose={() => setBrowsing(null)}
-            onPickPath={directory => { moveToDirectory(browsing.target, directory); setBrowsing(null); }} />
-    </View>;
 
     return (
         <>
-            {/* The Machine list is a whole choice: it takes its own line, and the folder follows beneath it. */}
-            {props.machineControl ? <View style={styles.machineList}>{props.machineControl}</View> : null}
-            {target === null || directoryLabel === null ? null : (
-                <>
-                    <HappierPressable
-                        testID={`${testIDPrefix}-project-directory`}
-                        controlRef={directoryFocus.attachOrigin}
-                        accessibilityRole="button"
-                        accessibilityLabel={`${t('workflows.workspace.projectCheckout')}: ${directoryLabel}`}
-                        onPress={() => setPicking(target)}
-                        style={(state) => [
-                            workflowEditorStyles.actionTarget,
-                            styles.control,
-                            state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
-                        ]}
-                    >
-                        <Text numberOfLines={1} style={styles.value}>{directoryLabel}</Text>
-                    </HappierPressable>
-                    {props.checkout && isWorkflowProjectTarget(target) ? <ProjectCheckoutPicker
-                        currentUiContextCommandScope={scope}
-                        target={target}
-                        serverId={serverId}
-                        machineHomeDir={machineHomeDir}
-                        machinePlatform={machinePlatform}
-                        onSelectDirectory={moveToDirectory}
-                        testIDPrefix={testIDPrefix}
-                    /> : null}
-                </>
-            )}
+            <SessionPlacementChips
+                {...choice}
+                handleRef={props.handleRef}
+                testIDPrefix={props.testIDPrefix}
+                {...(scope === undefined ? {} : { currentUiContextCommandScope: scope })}
+            />
+            {target !== null && isWorkflowProjectTarget(target) ? <ProjectCheckoutPicker
+                currentUiContextCommandScope={scope}
+                target={target}
+                serverId={serverId}
+                machineHomeDir={machineHomeDir}
+                machinePlatform={machinePlatform}
+                onSelectDirectory={moveToDirectory}
+                testIDPrefix={props.testIDPrefix}
+            /> : null}
         </>
     );
 }
+
+/**
+ * A run composer's Machine or folder chip content: New Session's picker for that chip, with the
+ * workflow rules (see `useWorkflowWhereChoices`). Mounted only while its chip's popover is open.
+ */
+export function WorkflowStartPlacementPicker(props: WorkflowWhereInput & Readonly<{
+    picker: 'machine' | 'folder';
+    args: AgentInputContentPopoverRenderArgs;
+    testIDPrefix: string;
+}>): React.ReactElement | null {
+    const { choice } = useWorkflowWhereChoices(props);
+    const { machinePopover, pathPopover } = useSessionPlacementPopovers({ ...choice, testIDPrefix: props.testIDPrefix });
+    const content = (props.picker === 'machine' ? machinePopover : pathPopover).renderContent;
+    return <>{typeof content === 'function' ? content(props.args) : content}</>;
+}
+
+const EMPTY_RECENT_PATHS: readonly string[] = [];
 
 /** The canonical checkout picker for the selected project folder, when it is a Git repository. */
 function ProjectCheckoutPicker(props: Readonly<{

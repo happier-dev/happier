@@ -19,7 +19,7 @@ import { buildWorkflowEditorDraftFromDefinition } from '@/sync/domains/workflows
 import { storeWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 
 import { confirmWorkflowDocumentExport } from '../actions/confirmWorkflowDocumentExport';
-import { createWorkflowStartWhereChip } from '../run/workflowStartWhereChip';
+import { createWorkflowStartPlacementChips } from '../run/workflowStartPlacementChips';
 import { useWorkflowPluginSource } from '../library/workflowLibraryReads';
 import { useWorkflowRunComposerModal } from '../run/useWorkflowRunComposerModal';
 import { useWorkflowRunNowController } from '../run/useWorkflowRunNowController';
@@ -134,10 +134,10 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
         preview: plugin.description ?? '', values, onChangeValues: setValues, rawTextValues, onChangeRawTextValues: setRawTextValues,
         machineId: shownTarget?.machineId ?? null, directory: shownTarget && isWorkflowProjectTarget(shownTarget) ? shownTarget.directory : null, serverId: props.serverId,
         retainedRequest: retained,
-        extraActionChips: [createWorkflowStartWhereChip({ target: shownTarget, machines,
+        extraActionChips: createWorkflowStartPlacementChips({ target: shownTarget, machines,
             machineName: shownMachine ? getMachineDisplayName(shownMachine) : null,
             ...(retained?.project ? {} : { onChange: setTarget }),
-            testID: `${prefix}:run-where`, testIDPrefix: `${prefix}:run`, controlId: 'path' })],
+            testID: `${prefix}:run-where`, testIDPrefix: `${prefix}:run` }),
         onRun: (inputs, overrides) => { void admit(inputs, overrides); }, onCancel: () => { runNow.clearRefusal(); setOpen(false); },
         pending: runNow.isPending(runNow.pendingRunId ?? ''),
         startProblem: runNow.refusal,

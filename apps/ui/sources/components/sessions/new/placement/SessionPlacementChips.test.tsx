@@ -70,6 +70,10 @@ describe('SessionPlacementChips', () => {
     );
 
     await screen.pressByTestIdAsync('agent-input-machine-chip');
+
+    // Only New Session offers a managed one-off Machine; a host without one never lists it (live 2026-11-13).
+
+    expect(screen.findByType(NewSessionMachineSelectionContent).props.onSelectManagedMachine).toBeUndefined();
     await act(async () => {
       screen
         .findByType(NewSessionMachineSelectionContent)

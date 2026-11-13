@@ -51,12 +51,14 @@ describe('trigger Runs on', () => {
         expect(screen.getTextContent()).toContain(t('machineRequester.fullSignIn', { machine: 'tester.local', retention: 'trigger' }));
         expect(screen.getTextContent()).toContain(t('machineRequester.osVisibility', { owner: 'Machine owner', machine: 'tester.local' }));
     });
-    it('offers the Home Machine choices on opening Where and chooses their canonical starting project', async () => {
+    it('offers the Home Machine choices from New Session\'s Machine chip and chooses their canonical starting project', async () => {
         const onChange = vi.fn();
         const screen = await renderScreen(<TriggerRunsOnRow testID="trigger-runs-on" target={null}
             onChange={onChange} description="Where this trigger runs" />);
         expect(screen.findAllByType(SelectionList)).toHaveLength(0);
-        await screen.pressByTestIdAsync('trigger-runs-on-machine-row');
+        // Machine and folder are two chips everywhere (owner 2026-11-12); no combined Where row opens a popover.
+        expect(screen.findAllByTestId('trigger-runs-on-where-popover')).toHaveLength(0);
+        await screen.pressByTestIdAsync('agent-input-machine-chip');
         const lists = screen.findAllByType(SelectionList);
         expect(lists).toHaveLength(1);
         const options = lists[0].props.rootStep.sections.flatMap((section: import('@/components/ui/selectionList').SelectionListSection) =>

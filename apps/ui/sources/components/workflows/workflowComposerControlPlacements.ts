@@ -3,8 +3,14 @@ import type { IconName } from '@/components/ui/icons/Icon';
 import type { AgentInputControlId, AgentInputControlPlacement } from '@/components/sessions/agentInput/controls/agentInputControlTypes';
 import { AGENT_INPUT_CONTROL_REGISTRY } from '@/components/sessions/agentInput/controls/agentInputControlRegistry';
 
+/** A start's Machine chip; its id predates the folder split, so saved placements keep applying. */
 export function getWorkflowStartWhereChipPlacement(): AgentInputControlPlacement {
-    return { id: 'machine:workflow-start-where', title: t('workflows.page.where.label'), icon: 'folder', defaultPlacement: 'pinned' };
+    return { id: 'machine:workflow-start-where', title: t('newSession.wizardSection.machine'), icon: 'desktop', defaultPlacement: 'pinned' };
+}
+
+/** A start's folder chip, beside its Machine chip (owner 2026-11-12: two chips, as in New Session). */
+export function getWorkflowStartFolderChipPlacement(): AgentInputControlPlacement {
+    return { id: 'path:workflow-start-folder', title: t('newSession.wizardSection.folder'), icon: 'folder', defaultPlacement: 'pinned' };
 }
 
 export function getWorkflowStepOptionsChipPlacement(): AgentInputControlPlacement {

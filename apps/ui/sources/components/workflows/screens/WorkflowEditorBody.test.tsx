@@ -1200,17 +1200,6 @@ function renderedOrder(
     return seen;
 }
 
-function flattenTestStyle(style: unknown, state: Readonly<Record<string, boolean>> = { pressed: false }): Record<string, unknown> {
-    // A Pressable style callback is resolved at rest unless a state is named.
-    if (typeof style === 'function') return flattenTestStyle(style(state), state);
-    if (!style) return {};
-    if (Array.isArray(style)) {
-        return style.reduce<Record<string, unknown>>((acc, entry) => ({ ...acc, ...flattenTestStyle(entry, state) }), {});
-    }
-    if (typeof style === 'object') return style as Record<string, unknown>;
-    return {};
-}
-
 describe('workflow editor body', () => {
     it('keeps the authoring Session in the one details companion and retires its hidden renderer', async () => {
         const harness = await loadHarness();
@@ -1707,7 +1696,7 @@ describe('workflow editor body', () => {
         expect(promptFocus).toHaveBeenCalledTimes(1);
     });
 
-    it('shows Machine and project as one field that opens the choices, which wrap without a phone-breaking minimum', async () => {
+    it('shows Machine and project as one row holding New Session\'s Machine and folder chips', async () => {
         const harness = await loadHarness();
         const screen = await renderBody(harness, {
             projectTarget: { machineId: 'machine-1', directory: '/Users/me/project' },
@@ -1715,14 +1704,14 @@ describe('workflow editor body', () => {
             onChangeProjectTarget: vi.fn(),
         });
 
-        // One row and one value: the where-summary, home-relative, never a raw absolute path.
-        expect(screen.getTextContent()).toContain('Mac Studio · ~/project');
-        expect(screen.findByTestId('workflow-editor-project-directory')).toBeNull();
-        await screen.pressByTestIdAsync('workflow-editor-machine-row');
-        expect(screen.findByTestId('workflow-editor-where-popover')).not.toBeNull();
-        const folder = screen.findByTestId('workflow-editor-project-directory');
-        expect(folder?.props.role ?? folder?.props.accessibilityRole).toBe('button');
-        expect(flattenTestStyle(folder?.props.style)).toMatchObject({ minWidth: 0, flexShrink: 1 });
+        // One row with the two chips (owner 2026-11-12), never a combined Where popover or a raw absolute path.
+        const row = screen.findByTestId('workflow-editor-machine-row');
+        const inRow = (testID: string) => row?.findAll((node) => node.props?.testID === testID) ?? [];
+        expect(inRow('agent-input-machine-chip').length).toBeGreaterThan(0);
+        expect(inRow('agent-input-path-chip').length).toBeGreaterThan(0);
+        expect(screen.findByTestId('workflow-editor-where-popover')).toBeNull();
+        expect(screen.getTextContent()).toContain('Mac Studio');
+        expect(screen.getTextContent()).not.toContain('/Users/me/project');
     });
 
     it('authors a typed step input reference without interpolating it into prompt text', async () => {
@@ -1806,10 +1795,12 @@ describe('workflow editor body', () => {
             'workflow-editor-chips',
             'workflow-editor-steps-presentation',
         ])).toEqual(['workflow-editor-header', 'workflow-editor-chips', 'workflow-editor-steps-presentation']);
-        // Where and Agent & model are header chips over their one owners; the
-        // Where chip says the one summary string.
-        const where = screen.root.findAll((node) => node.props?.filter?.id === 'workflow-where')[0];
-        expect(where?.props.filter.valueLabel).toBe('Mac Studio · ~/project');
+        // Where it runs is New Session's Machine and folder chips in the header (owner 2026-11-12).
+        const where = screen.findByTestId('workflow-editor-where-chips');
+        const inWhere = (testID: string) => where?.findAll((node) => node.props?.testID === testID
+            && typeof node.props?.accessibilityLabel === 'string')[0];
+        expect(inWhere('agent-input-machine-chip')?.props.accessibilityLabel).toBe('Mac Studio');
+        expect(inWhere('agent-input-path-chip')?.props.accessibilityLabel).toContain('~/project');
         expect(screen.findByTestId('workflow-editor-header-engine')).not.toBeNull();
         // Settings are a pane, closed until asked for; the document carries no settings wall.
         expect(screen.findByTestId('workflow-editor-defaults')).toBeNull();
@@ -1943,15 +1934,17 @@ describe('workflow editor body', () => {
             onChangeProjectTarget: () => {},
             onRunNow: ran,
         });
-        const chip = () => screen.root.findAll((node) => node.props?.filter?.id === 'workflow-where')[0];
-        // Missing is stated once, by the Where chip.
-        expect(chip()?.props.filter.muted).toBe(true);
-        expect(chip()?.props.filter.valueLabel).toBe('workflows.page.where.choose');
-        expect(chip()?.props.filter.open).toBe(false);
+        const where = screen.findByTestId('workflow-editor-where-chips');
+        const machineChip = where?.findAll((node) => node.props?.testID === 'agent-input-machine-chip'
+            && typeof node.props?.accessibilityLabel === 'string')[0];
+        // Missing is stated once, by the Machine chip; no folder chip until a Machine is chosen.
+        expect(machineChip?.props.accessibilityLabel).toBe('agentInput.runOn');
+        expect(where?.findAll((node) => node.props?.testID === 'agent-input-path-chip')).toHaveLength(0);
+        expect(screen.findAllByTestId('workflow-editor-machine-option:machine-1')).toHaveLength(0);
 
         await screen.pressByTestIdAsync('workflow-editor-run-now');
         expect(ran).not.toHaveBeenCalled();
-        expect(chip()?.props.filter.open).toBe(true);
+        expect(screen.findAllByTestId('workflow-editor-machine-option:machine-1').length).toBeGreaterThan(0);
         expect(announcementWrites).not.toHaveBeenCalled();
     });
 
@@ -2175,9 +2168,12 @@ describe('workflow editor body', () => {
         expect(screen.findHostByTestId('workflow-editor-add-root')).not.toBeNull();
         // Where it runs and Agent and model are chosen in place (owner 25): the Where owner's field and the
         // shared engine field, never a detour through Workflow settings.
-        await screen.pressByTestIdAsync('workflow-editor-machine-row');
+        const whereRow = screen.findByTestId('workflow-editor-machine-row');
+        const machineChip = whereRow?.findAll((node) => node.props?.testID === 'agent-input-machine-chip'
+            && typeof node.props?.onPress === 'function')[0];
+        await act(async () => { machineChip?.props.onPress(); });
         expect(screen.visibleModals()).toHaveLength(0);
-        expect(screen.findByTestId('workflow-editor-where-popover')).not.toBeNull();
+        expect(screen.findAllByTestId('workflow-editor-machine-option:machine-1').length).toBeGreaterThan(0);
         // Agent and model is a value row like Where and Triggers (04 §4.10), not a chip inside a row.
         const agentRow = screen.findByTestId('workflow-editor-agent-row');
         expect(agentRow?.findAll((node) => node.props?.testID === 'workflow-editor-header-engine')).toHaveLength(0);

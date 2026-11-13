@@ -196,6 +196,8 @@ export type SessionMachineChoiceParams = Readonly<{
   /** Existing Add a machine route, the machine list's last row. */
   onOpenAddMachine?: () => void;
   testIdPrefix?: string;
+  /** Exposes the Machine list to an agent's UI commands under this scope. */
+  currentUiContextCommandScope?: string;
 }>;
 
 /** The Machine popover New Session's Machine chip opens; any host's Machine chip opens the same. */
@@ -262,6 +264,7 @@ export function useSessionMachineChoicePopover(
     onSelectManagedMachine: params.onSelectManagedMachine,
     managedMachineStartsSession: params.managedMachineStartsSession,
     testIdPrefix: params.testIdPrefix ?? 'new-session-machine',
+    currentUiContextCommandScope: params.currentUiContextCommandScope,
   });
 
   const machinePopoverSignature = React.useMemo(
@@ -353,11 +356,12 @@ export function useSessionMachineChoicePopover(
             managedMachineStartsSession={
               renderParams.managedMachineStartsSession
             }
-            onSelectManagedMachine={(draft, options) => {
+            // Managed (one-off) Machines are offered only by a host that can start one (New Session).
+            onSelectManagedMachine={renderParams.onSelectManagedMachine ? (draft, options) => {
               renderParams.machinePoolSelection.cancelPendingSelection();
               renderParams.onSelectManagedMachine?.(draft, options);
               requestClose();
-            }}
+            } : undefined}
             onOpenManagedPresets={
               renderParams.onOpenMachinePresets
                 ? () => {
@@ -368,10 +372,10 @@ export function useSessionMachineChoicePopover(
                 : undefined
             }
             // The configurator is its own modal: the picker closes as it opens (lab m-pick).
-            onConfigureManagedMachine={() => {
+            onConfigureManagedMachine={renderParams.onSelectManagedMachine ? () => {
               renderParams.machinePoolSelection.cancelPendingSelection();
               requestClose();
-            }}
+            } : undefined}
             onConnectMachine={
               renderParams.onOpenAddMachine
                 ? () => {
@@ -419,6 +423,8 @@ export function useSessionMachineChoicePopover(
             showSearch={renderParams.useMachinePickerSearch}
             searchPlacement="header"
             testIdPrefix={renderParams.testIdPrefix}
+            currentUiContextCommandScope={renderParams.currentUiContextCommandScope}
+            currentUiContextForegroundOverlay={renderParams.currentUiContextCommandScope !== undefined}
             maxHeight={maxHeight}
             presentation={inline ? 'inline' : undefined}
           />
@@ -433,6 +439,8 @@ export function useSessionMachineChoicePopover(
 
 export type SessionPathChoiceParams = Readonly<{
   selectedMachine: Machine | null;
+  /** The folder base when it is not the Machine's own home (a shared Machine's requester folder). */
+  machineHomeDir?: string | null;
   targetServerId: string | null;
   selectedPath: string;
   setSelectedPath: (path: string) => void;
@@ -463,7 +471,7 @@ export function useSessionPathChoicePopover(
     () => ({
       renderContent: ({ maxHeight, requestClose }) => (
         <NewSessionPopoverPathSelectionContent
-          machineHomeDir={params.selectedMachine?.metadata?.homeDir || '/home'}
+          machineHomeDir={params.machineHomeDir || params.selectedMachine?.metadata?.homeDir || '/home'}
           selectedPath={params.selectedPath}
           initialSuggestionMode="history"
           onChangeSelectedPath={params.setSelectedPath}
@@ -539,6 +547,7 @@ export function useSessionPathChoicePopover(
       params.readRecentPaths,
       params.selectedMachine?.id,
       params.selectedMachine?.metadata?.homeDir,
+      params.machineHomeDir,
       params.selectedPath,
       params.setDraftSelectedPath,
       params.setFavoriteDirectories,
