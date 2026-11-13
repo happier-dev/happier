@@ -622,6 +622,13 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     // Desktop Brief me sits on the greeting's line (lab B0): the hero's headline, or the page header's
     // actions; phone gives it the page's width under the Bots' faces (lab B0p).
     const briefEntry = phone ? null : <VoiceBriefButton open={briefOpen} />;
+    // Phone (owner 11-06): the Bots' faces under the greeting, a tap from their conversations (off in Appearance ›
+    // Home), then the brief's entry across the page (lab B0p). With the composer in the hero, what finished while
+    // you were away follows the hero, so this leads it there; otherwise it leads the sections.
+    const phoneLead = phone ? <>
+        <HomeBotFaces visible={focused && presented} />
+        {!briefOpen ? <ItemGroup surface="none"><VoiceBriefButton open={briefOpen} block /></ItemGroup> : null}
+    </> : null;
     const headerActions = (
         <View style={styles.headerActions}>
             {!heroActive ? <LookChip target={HOME_LOOK_TARGET} /> : null}
@@ -639,14 +646,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                     <ItemGroup surface="none"><HomeReachabilityGate variant="line">{null}</HomeReachabilityGate></ItemGroup>
                 </HomeHubReadingColumn>
             ) : null}
-            {/* Phone (owner 11-06): the Bots' faces, a tap from their conversations; off in Appearance › Home. */}
-            {phone ? <HomeBotFaces visible={focused && presented} /> : null}
-            {phone && !briefOpen ? (
-                // Phone (lab B0p): the brief's entry spans the page under the greeting.
-                <ItemGroup surface="none">
-                    <VoiceBriefButton open={briefOpen} block />
-                </ItemGroup>
-            ) : null}
+            {heroComposer ? null : phoneLead}
             {briefOpen ? <HomeHubReadingColumn><VoiceBriefBlock onClose={() => setBriefOpen(false)} /></HomeHubReadingColumn> : null}
             <SessionSurfaceEntityFeedback kind="home-section" scope={accountScope} address={null} testID="home-hub.widget-move" />
             <SessionSurfaceEntityTargetFeedback drag={homeDrop} testID="home-hub.widget-move" />
@@ -740,6 +740,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                                 </View>
                             </ItemGroup>
                         </HomeHubReadingColumn>
+                        {heroComposer ? phoneLead : null}
                         {heroComposer ? <HomeHubReadingColumn><HomeCompletedBots /></HomeHubReadingColumn> : null}
                     </View>
                     </React.Fragment> : (

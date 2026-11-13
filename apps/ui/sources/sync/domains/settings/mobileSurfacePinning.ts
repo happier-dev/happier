@@ -87,6 +87,25 @@ export function resolveNavigationPlacementAddress(address: NavigationPlacementAd
     return address;
 }
 
+/** A Bot kept on the phone bar is its own placement (owner 11-06, lab mnBots A): `bot:<serverId>:<sessionId>`. */
+const PHONE_BOT_PLACEMENT_PREFIX = 'bot:';
+
+export function phoneBotPlacementId(address: Readonly<{ serverId: string; sessionId: string }>): string {
+    return `${PHONE_BOT_PLACEMENT_PREFIX}${address.serverId}:${address.sessionId}`;
+}
+
+export function isPhoneBotPlacementId(id: string): boolean {
+    return id.startsWith(PHONE_BOT_PLACEMENT_PREFIX);
+}
+
+/** This Home's Bots kept on the phone bar: device-local pins the Session list hydrates like the Account's own pins. */
+export function readPhonePinnedBotSessionIds(stored: NavigationSurfacePlacementsV1, serverId: string): string[] {
+    const prefix = `${PHONE_BOT_PLACEMENT_PREFIX}${serverId}:`;
+    const placements = readNavigationPlacementPreferences(stored, 'phoneLauncher')?.placements ?? {};
+    return Object.keys(placements).filter(id => id.length > prefix.length && id.startsWith(prefix) && placements[id] === 'pinned')
+        .map(id => id.slice(prefix.length));
+}
+
 export function readNavigationPlacementPreferences(stored: NavigationSurfacePlacementsV1, address: NavigationPlacementAddress): NavigationPlacementPreferences | undefined {
     const resolved = resolveNavigationPlacementAddress(address);
     if (typeof resolved === 'string') return stored[resolved];

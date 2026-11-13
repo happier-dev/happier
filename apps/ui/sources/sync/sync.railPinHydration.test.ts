@@ -37,7 +37,7 @@ describe('ordinary Session refresh hydrates every personal pin surface', () => {
         connection = undefined;
     });
 
-    it.each(['retained', 'new', 'new-listed', 'unlisted-batch-unavailable', 'batched', 'batched-reloaded', 'overtaken', 'list-only-newer', 'reloaded', 'reloaded-unavailable', 'reloaded-unrecognized', 'reloaded-removed'] as const)('hydrates %s pinned Bots alongside list and dual-surface pins', async membership => {
+    it.each(['retained', 'new', 'new-listed', 'unlisted-batch-unavailable', 'batched', 'batched-reloaded', 'overtaken', 'list-only-newer', 'reloaded', 'reloaded-unavailable', 'reloaded-unrecognized', 'reloaded-removed', 'phone-pinned'] as const)('hydrates %s pinned Bots alongside list and dual-surface pins', async membership => {
         const pins = [
             { sessionId: 'list-only', sortKey: 'a', pinnedAt: 1, listPinned: true, railPinned: false },
             { sessionId: 'rail-only', sortKey: 'b', pinnedAt: 2, listPinned: false, railPinned: true },
@@ -70,6 +70,8 @@ describe('ordinary Session refresh hydrates every personal pin surface', () => {
             effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
                 capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) },
         })]));
+        // A Bot kept on the phone bar is a device-local pin (owner 11-06, lab mnBots A): no organization pin.
+        if (membership === 'phone-pinned') records.set('phone-bot', SessionCurrentProjectionRecordV1Schema.parse({ ...records.get('rail-only'), id: 'phone-bot' }));
         const exactReads: string[] = [];
         const ordinaryRecord = SessionCurrentProjectionRecordV1Schema.parse({ ...records.get('list-only'), id: 'ordinary' });
         const nextPageRecord = SessionCurrentProjectionRecordV1Schema.parse({ ...ordinaryRecord, id: 'next-page' });
@@ -167,6 +169,8 @@ describe('ordinary Session refresh hydrates every personal pin surface', () => {
         });
         const serverId = resolveServerProfileScopeIdForIdentifier(connection.home.id);
         await fetchAndApplySessionOrganizationSnapshot({ credentials: connection.credentials, serverId, serverUrl: connection.home.serverUrl });
+        if (membership === 'phone-pinned') storage.setState(state => ({ localSettings: { ...state.localSettings,
+            navigationSurfacePlacementsV1: { phoneLauncher: { orderedIds: [], placements: { [`bot:${serverId}:phone-bot`]: 'pinned' } } } } }));
         // External Agent mutations arrive through the refresh, after the app
         // already has a last-known organization snapshot.
         pinsAvailable = true;
@@ -279,7 +283,8 @@ describe('ordinary Session refresh hydrates every personal pin surface', () => {
             return;
         }
 
-        expect(new Set(exactReads)).toEqual(new Set(['list-only', 'rail-only', 'both']));
+        expect(new Set(exactReads)).toEqual(new Set(['list-only', 'rail-only', 'both', ...(membership === 'phone-pinned' ? ['phone-bot'] : [])]));
+        if (membership === 'phone-pinned') expect(storage.getState().sessions['phone-bot']).toMatchObject({ id: 'phone-bot' });
         const organization = readSessionOrganizationProjectionCached(storage.getState(), serverId);
         expect(organization.pinnedSessionIds).toEqual(['list-only', 'both']);
         expect(organization.railPinnedSessionIds).toEqual(['rail-only', 'both']);

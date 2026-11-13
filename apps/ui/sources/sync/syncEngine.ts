@@ -1,5 +1,6 @@
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { buildSessionOrganizationLabelKey } from '@/sync/domains/session/organization/keys';
+import { readNavigationSurfacePlacements, readPhonePinnedBotSessionIds } from '@/sync/domains/settings/mobileSurfacePinning';
 import { readSessionOrganizationWorkspaceLabel } from '@/sync/domains/session/organization/viewState';
 import { requireSessionOrganizationMutationScope, writeSessionOrganizationWorkspaceLabels } from '@/sync/ops/sessionOrganization';
 import { registerSyncRuntime } from './sync';
@@ -1290,9 +1291,11 @@ type SessionOrganizationSyncState = Pick<
     | 'sessionOrganizationSessionAppearancesSupportedByServerId'
     | 'sessionOrganizationOrderEntriesByScopeKey'
     | 'sessionOrganizationLabelsByLabelKey'
+    | 'localSettings'
 >;
 
-function resolveOrganizationPinnedSessionIdsForServer(state: SessionOrganizationSyncState, serverId: string | null): string[] {
+/** Every personal pin a refresh hydrates: the Account's list and rail pins, then this device's phone-bar Bots. */
+function resolvePinnedSessionIdsForServer(state: SessionOrganizationSyncState, serverId: string | null): string[] {
     const normalizedServerId = typeof serverId === 'string' && serverId.trim().length > 0 ? serverId.trim() : null;
     if (!normalizedServerId) return [];
     return [...buildSessionOrganizationProjection({
@@ -1308,7 +1311,8 @@ function resolveOrganizationPinnedSessionIdsForServer(state: SessionOrganization
         sessionAppearancesSupportedByServerId: state.sessionOrganizationSessionAppearancesSupportedByServerId,
         orderEntriesByScopeKey: state.sessionOrganizationOrderEntriesByScopeKey,
         labelsByLabelKey: state.sessionOrganizationLabelsByLabelKey,
-    }, normalizedServerId).orderedPinSessionIds];
+    }, normalizedServerId).orderedPinSessionIds,
+    ...readPhonePinnedBotSessionIds(readNavigationSurfacePlacements(state.localSettings), normalizedServerId)];
 }
 
 type AckedOutboundUserMessageCommitInput = Readonly<{
@@ -7517,7 +7521,7 @@ class Sync {
         if (!hasLastKnownOrganizationSnapshot) await organizationSnapshotOutcome;
         const organizationPinnedSessionIds = isAppend
             ? []
-            : resolveOrganizationPinnedSessionIdsForServer(storage.getState(), activeServerId);
+            : resolvePinnedSessionIdsForServer(storage.getState(), activeServerId);
         const requiredHydrationSessionIds = new Set(options?.requiredHydrationSessionIds);
         // Sessions this credential's Team sign-in policy refuses: settled per Session,
         // never an Account sign-out or a failed catch-up.
@@ -7691,7 +7695,7 @@ class Sync {
         const settledRequiredHydrationSessionIds = Array.from(new Set([
             ...requiredHydrationSessionIds,
             ...organizationPinnedSessionIds,
-            ...(isAppend ? [] : resolveOrganizationPinnedSessionIdsForServer(storage.getState(), activeServerId)),
+            ...(isAppend ? [] : resolvePinnedSessionIdsForServer(storage.getState(), activeServerId)),
         ]));
         const hasCurrentRequiredSession = (sessionId: string): boolean => {
             const session = storage.getState().sessions[sessionId];

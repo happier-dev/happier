@@ -20,7 +20,7 @@ import type { TabType } from '@/components/ui/navigation/tabTypes';
 import { StyleSheet } from 'react-native-unistyles';
 import { sfSymbolForCockpitTabIcon } from '@/components/navigation/mobile/chrome/bars/cockpitTabSymbols';
 import { useLocalSetting, useSetting } from '@/sync/domains/state/storage';
-import { readNavigationPlacementPreferences, resolveNavigationPlacements, resolveNavigationVisitor, type NavigationPlacement, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/mobileSurfacePinning';
+import { isPhoneBotPlacementId, phoneBotPlacementId, readNavigationPlacementPreferences, resolveNavigationPlacements, resolveNavigationVisitor, type NavigationPlacement, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/mobileSurfacePinning';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { Modal } from '@/modal';
@@ -52,12 +52,10 @@ export type PhoneMainTabs = Readonly<{ activeId: string | null; onTabPress: (tab
 const NATIVE_ANCHOR_STYLE = { width: 0, height: 0 } as const;
 /** Home leads the shortcuts (owner 2026-11-04): the page the desktop opens on, one tap away on a phone. */
 const HOME_ITEM_ID = 'phone-launcher:home';
-/**
+/*
  * A Bot is a bar destination like any other (owner 11-06, lab mnBots A): Bar, More or none, through the same
- * placements. Its id names the Session it opens; it starts nowhere, since More's Bots entry already lists every Bot.
+ * placements (`phoneBotPlacementId`). It starts nowhere, since More's Bots entry already lists every Bot.
  */
-const BOT_PLACEMENT_PREFIX = 'bot:';
-const botPlacementId = (bot: OrderedBot) => `${BOT_PLACEMENT_PREFIX}${bot.serverId}:${bot.sessionId}`;
 
 /** One launcher row: a catalog destination, or a Bot from the roster's own projection. */
 type LauncherEntry = Readonly<{ id: string; defaultPlacement: NavigationPlacement }> & (
@@ -133,7 +131,7 @@ export function usePhoneDestinationsMore(input: Readonly<{ native: boolean; main
     const [tabMenu, setTabMenu] = React.useState<Readonly<{ id: string; label: string; open: boolean }> | null>(null);
     // The Bots' projection is read only while a Bot is placed or a menu that lists them is open.
     const botPlaced = React.useMemo(() => Object.entries(placement.preferences.placements)
-        .some(([id, place]) => id.startsWith(BOT_PLACEMENT_PREFIX) && place !== 'hidden'), [placement.preferences]);
+        .some(([id, place]) => isPhoneBotPlacementId(id) && place !== 'hidden'), [placement.preferences]);
     const bots = useOrderedBots(open || tabMenu !== null || botPlaced);
     const botNames = useOrderedBotNames(bots);
     const navigateToSession = useNavigateToSession();
@@ -143,7 +141,7 @@ export function usePhoneDestinationsMore(input: Readonly<{ native: boolean; main
         }));
         // A stable order (the roster's is by activity): a Bot on the bar never moves on its own.
         const botEntries = bots.map((bot, index) => ({
-            kind: 'bot' as const, id: botPlacementId(bot), bot, name: botNames[index] ?? '', defaultPlacement: 'hidden' as const,
+            kind: 'bot' as const, id: phoneBotPlacementId(bot), bot, name: botNames[index] ?? '', defaultPlacement: 'hidden' as const,
         })).sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
         // Each Bot follows the Bots entry.
         const roster = kept.findIndex(entry => entry.kind === 'destination' && entry.destination.activation === 'botsRoster');

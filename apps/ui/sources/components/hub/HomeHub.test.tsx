@@ -40,6 +40,7 @@ import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 import { WelcomePlanet } from '@/components/atmosphere/moments/WelcomePlanet';
 import { PlanetCanvas } from '@/components/atmosphere/PlanetCanvas';
 import { HomeCompletedBots } from './HomeCompletedBots';
+import { HomeBotFaces } from './HomeBotFaces';
 import { HOME_HUB_COMPOSER_SECTION_ID } from './HomeHubSectionList';
 import { atmosphereStageStore } from '@/components/atmosphere/atmosphereStage';
 import { AtmosphereLayer } from '@/components/atmosphere/AtmosphereLayer';
@@ -542,6 +543,22 @@ describe('HomeHub', () => {
             await vi.waitFor(() => expect(shownSections(screen.getTextContent())).toEqual(['setup', 'start', 'attention']));
             expect(reads).toBeGreaterThan(parkedReads);
             expect(screen.findByTestId('home-hub.customizing.sections')).toBeTruthy();
+        } finally { await screen.unmount(); }
+    });
+
+    // Owner 11-06 (lab mnBots B): on a phone the Bots' faces sit under the greeting. When the composer leads
+    // Home in the hero, Done while you were away follows the hero, so the faces lead it rather than trail it.
+    it('puts the phone Bot faces under the greeting, before Done while you were away, once', async () => {
+        settings.viewport = { width: 390, height: 900 };
+        settings.layout = { order: [HOME_HUB_COMPOSER_SECTION_ID], hidden: [] };
+        const screen = await renderHome();
+        try {
+            await vi.waitFor(() => expect(screen.findHostByTestId('home-hub.below-hero')?.findAllByType(HomeCompletedBots.type)).toHaveLength(1));
+            const below = screen.findHostByTestId('home-hub.below-hero')!;
+            const order = below.findAll(node => node.type === HomeBotFaces.type || node.type === HomeCompletedBots.type)
+                .map(node => node.type === HomeBotFaces.type ? 'faces' : 'done');
+            expect(order).toEqual(['faces', 'done']);
+            expect(screen.findAllByType(HomeBotFaces.type)).toHaveLength(1);
         } finally { await screen.unmount(); }
     });
 
