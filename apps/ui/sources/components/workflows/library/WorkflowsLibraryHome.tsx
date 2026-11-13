@@ -393,7 +393,9 @@ function useLibraryAnatomy(): CollectionAnatomy<LibraryRow> {
         },
         titleMeta: row => !isAccountRow(row) && row.group !== 'fromPlugins' && row.definition.nextRunAt !== null
             ? formatNextScheduledRun(row.definition.nextRunAt) : null,
+        // A plugin row's read-only fact is its group's description, not a per-row note (F9).
         reason: (row) => isAccountRow(row) ? isAccountWorkflowReviewRequired(row) ? t('workflows.triggers.legacy.reviewRequired') : null
+            : row.group === 'fromPlugins' ? null
             : row.definition.contentStatus === 'unavailable'
                 ? formatWorkflowDefinitionContentUnavailableReason(row.definition.contentUnavailableReason) : null,
         accessibilityLabel: rowTitle,
