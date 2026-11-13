@@ -1,9 +1,11 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { HappierBodyEdgeContext, HappierPageSectionContext } from '@happier-dev/plugin-ui/presentation';
 
 import type { PageColumn } from '@/components/ui/layout/contentWidthMode';
 import { PANE_TEXT_INSET_PX } from '@/components/ui/layout/headerBand';
 import { ITEM_ROW_PADDING_HORIZONTAL } from '@/components/ui/lists/itemDensityMetrics';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 
 /**
  * How grouped list content is presented.
@@ -128,6 +130,31 @@ export function ListPresentationProvider(props: Readonly<{
 
 export function useListPresentation(): ListPresentation {
     return React.useContext(ListPresentationContext);
+}
+
+/**
+ * Whether content drawn outside `Item` (a state line, a work row) stands among a bare page section's rows
+ * (`ItemGroup surface="none"`, page presentation): no sheet and no sheet row inset, so it starts on the rows'
+ * own text edge (`PAGE_LIST_METRICS.rowPaddingHorizontalPx`) rather than a collection column's inset.
+ */
+export function useBareSectionRowEdge(): boolean {
+    const bare = React.useContext(BareSectionRowsContext);
+    const presentation = useListPresentation();
+    return bare && presentation === 'page';
+}
+
+const BARE_SECTION_LINE_STYLE = { paddingHorizontal: PAGE_LIST_METRICS.rowPaddingHorizontalPx } as const;
+
+/**
+ * The one edge of a state line (`SurfaceStateCard` or `EmptyState` at line size) among a bare page section's rows:
+ * the rows' own text edge, with the line's glyph standing on it, rather than a collection list's inset. Elsewhere,
+ * or when `enabled` is false (a line that fills its container, or one with menu or catalog density), it renders
+ * its child unchanged.
+ */
+export function BareSectionLineEdge(props: Readonly<{ children: React.ReactNode; enabled?: boolean }>): React.ReactElement {
+    const bare = useBareSectionRowEdge();
+    if (!bare || props.enabled === false) return <>{props.children}</>;
+    return <View style={BARE_SECTION_LINE_STYLE}><HappierBodyEdgeContext.Provider value>{props.children}</HappierBodyEdgeContext.Provider></View>;
 }
 
 export function usePageListInsets(): PageListInsets {

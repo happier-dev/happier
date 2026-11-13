@@ -22,7 +22,7 @@ import { KeyHint } from '@/components/ui/keyboard/KeyHint';
 import { CenteredInfoTile } from '@/components/ui/lists/CenteredInfoTile';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
-import { useListPresentation } from '@/components/ui/lists/listPresentation';
+import { BareSectionLineEdge, useListPresentation } from '@/components/ui/lists/listPresentation';
 import { useIsInsideItemSection } from '@/components/ui/lists/sectionLeadingColumn';
 import { SceneArt } from '@/components/ui/surfaces/SceneArt';
 import { Text } from '@/components/ui/text/Text';
@@ -186,6 +186,7 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
         // The one in-list line (`HappierStateLine`), which the plugin line states draw too; core binds its
         // own Text (so the reader's type scale applies), glyphs and links.
         return (
+            <BareSectionLineEdge enabled={props.lineDensity === undefined}>
             <HappierStateLine
                 testID={props.testID}
                 icon={lineGlyph}
@@ -198,6 +199,7 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
                     {sentence ? <Text testID={props.subtitleTestID} style={stylesheet.lineText}>{sentence}</Text> : null}
                 </Text>
             </HappierStateLine>
+            </BareSectionLineEdge>
         );
     }
 

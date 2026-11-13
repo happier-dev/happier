@@ -34,6 +34,8 @@ import type { WorkflowRunRow } from '@/sync/store/domains/workflowRuns';
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { Item } from '@/components/ui/lists/Item';
+import { useBareSectionRowEdge } from '@/components/ui/lists/listPresentation';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { WORKER_KIND_GLYPHS } from '@/components/sessions/work/workerKindGlyphs';
 import { resolveSessionRowTitleColorRole, sessionRowTitleInk, type SessionListActiveColorModeV1 } from './sessionRowTitleColorRole';
 
@@ -78,6 +80,9 @@ export type WorkflowRunItemProps = Readonly<{
 const styles = StyleSheet.create((theme) => ({
     // The column's gutter: a Run row lies flat on the plane beside its Session siblings (lab `clflat`).
     row: { marginHorizontal: SESSION_LIST_SHEET_INSET_PX },
+    // Among a bare page section's rows (a trigger's History) the Run is one of those rows: flat and full-bleed,
+    // its words on their text edge, rather than a column's sheet in its gutter.
+    bareSectionRow: { paddingHorizontal: PAGE_LIST_METRICS.rowPaddingHorizontalPx, borderRadius: 0 },
     context: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, minWidth: 0 },
     contextText: { flexShrink: 1, minWidth: 0 },
     status: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, flexShrink: 1, minWidth: 0 },
@@ -136,6 +141,7 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
     const router = useRouter();
     const { theme } = useUnistyles();
     const { fontScale } = useWindowDimensions();
+    const bareSectionRow = useBareSectionRowEdge();
     const activeScope = getStorage()((state) => props.accountLifetime === undefined ? state.profileScope : null);
     const scope = props.accountLifetime === undefined ? activeScope : props.accountLifetime?.scope ?? null;
     const scopeKey = scope ? serverAccountScopeKeySuffix(scope) : null;
@@ -230,10 +236,10 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
             accessibilityLabel={[name, word, context, starterLabel, editedBy].filter(Boolean).join('. ')}
             onPress={() => router.push(createWorkflowRunRoute(props.runId, props.serverId) as never)} />
     );
-    return <View testID={`workflow-run-sheet:${props.runId}`} style={[styles.row, depth > 0 ? { paddingLeft: depth * resolveHappierCollectionTreeChildIndentPx() } : null]}>
+    return <View testID={`workflow-run-sheet:${props.runId}`} style={[bareSectionRow ? null : styles.row, depth > 0 ? { paddingLeft: depth * resolveHappierCollectionTreeChildIndentPx() } : null]}>
         <View style={depth > 0 ? styles.guide : null}>
             <CollectionRowContent density={rowDensity} touchCompact={readablePhone} textScale={fontScale}
-                selected={props.selected} hovered={hovered}
+                selected={props.selected} hovered={hovered} style={bareSectionRow ? styles.bareSectionRow : undefined}
                 identity={props.kindMark === true ? <Icon name={WORKER_KIND_GLYPHS.workflow_run} size={ICON_SIZE.md} color={theme.colors.text.secondary} /> : undefined}
                 // A Run's title takes the ink a Session row in the same state takes: primary while it runs or
                 // asks, quiet once it has stopped.
