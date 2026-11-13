@@ -32,6 +32,10 @@ import { TriageReadSessionHandoffChoicesInputV1Schema, TriageSessionHandoffChoic
 import { TriageRunConfiguredActionInputV1Schema, TriageRunConfiguredActionResultV1Schema } from '../../../../../../packages/plugins/triage/src/actions/configuredActionRunProtocol';
 import { AgentActionButton } from '@happier-dev/plugin-ui/components';
 
+// The log viewport's recycler depends on native layout; render its rows deterministically at that boundary.
+vi.mock('@legendapp/list/react-native', async () =>
+    (await import('@/dev/testkit/mocks/legendList')).createLegendListModuleMock({ renderItems: true }));
+
 // Only Home HTTP, Machine RPC and Socket boundaries are substituted. The tab, Actions,
 // credential admission, Resource lifecycle, collection and detail hooks stay real.
 const machineTransport = vi.hoisted(() => ({ rpc: vi.fn() }));
@@ -1218,4 +1222,71 @@ it('withdrawn secret notice stops the admitted generation and offers Start only 
     await vi.waitFor(() => expect(operations).toHaveLength(3));
     expect(operations[2]).toMatchObject({ serviceId: row.serviceId, expectedGeneration: row.generation, operation: 'start' });
     await screen.unmount();
+});
+
+describe('Add a machine → done step (#5; UI refinements ruling 2026-11-13 08:07Z)', () => {
+    async function renderDone(next: 'picker' | 'machine') {
+        answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot',
+            services: [service('Web'), service('Worker'), service('Postgres')] }));
+        const { MachineArrivedCard } = await import('@/components/machines/add/MachineAddPanes');
+        const onStartSession = vi.fn();
+        const screen = await renderScreen(<MachineArrivedCard testID="arrived" machineId={machineId} serverId={serverId}
+            name={machineName} facts="" next={next} onStartSession={onStartSession} onAddAnother={() => {}} />);
+        return { screen, onStartSession };
+    }
+
+    it('says once what the first read of the new Machine found, and opens that Machine when the flow began on Machines', async () => {
+        const { screen, onStartSession } = await renderDone('machine');
+        try {
+            await vi.waitFor(async () => { await flushHookEffects();
+                expect(screen.getTextContent()).toContain(t('addFlows.machineFoundServices', { count: 3 })); });
+            await screen.pressByTestIdAsync('arrived.continue');
+            const { machinePageHref } = await import('@/components/machines/page/machinePageHref');
+            expect(router.push).toHaveBeenCalledWith(machinePageHref({ door: 'settings', target: { machineId, serverId } }));
+            expect(onStartSession).not.toHaveBeenCalled();
+        } finally { await screen.unmount(); }
+    });
+
+    it('hands the new Machine back to the picker that started the flow', async () => {
+        const { screen, onStartSession } = await renderDone('picker');
+        try {
+            await vi.waitFor(async () => { await flushHookEffects();
+                expect(screen.getTextContent()).toContain(t('addFlows.machineFoundServices', { count: 3 })); });
+            await screen.pressByTestIdAsync('arrived.continue');
+            expect(onStartSession).toHaveBeenCalledOnce();
+            expect(router.push).not.toHaveBeenCalled();
+        } finally { await screen.unmount(); }
+    });
+});
+
+describe('Add review → declared ports (#4)', () => {
+    it('lists what each service declares, names a managed service already on a declared port, and leaves the rest to first start', async () => {
+        const selections: unknown[] = [];
+        answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [service('meili-old', { port: 7700 })] }),
+            'machines.services.list', (value, reference) => { selections.push(reference.input); return value; });
+        const { DeploymentAddPortsFacts } = await import('@/components/approvals/DeploymentAddPortsFacts');
+        const document = [
+            'services:',
+            '  search:',
+            '    image: getmeili/meilisearch:v1.11',
+            '    container_name: search-1',
+            '    ports:',
+            '      - "7701:7700"',
+            '      - target: 7700',
+            '        published: 7700',
+        ].join('\n');
+        const screen = await renderScreen(<DeploymentAddPortsFacts document={document} services={['search']}
+            serverId={serverId} machineId={machineId} testID="ports" />);
+        try {
+            await vi.waitFor(async () => { await flushHookEffects(); expect(screen.findByTestId('ports.clash')).not.toBeNull(); });
+            const text = screen.getTextContent();
+            expect(text).toContain('search-1');
+            expect(text).toContain('7701:7700');
+            expect(text).toContain('7700:7700');
+            expect(text).toContain('meili-old');
+            expect(text).toContain(t('projects.deployments.addPortsUnresolved'));
+            // Only the literal long-form publication is asked about; the short form is not evaluated.
+            expect(selections).toContainEqual(expect.objectContaining({ preflight: { ports: [7700], nativeNames: [] } }));
+        } finally { await screen.unmount(); }
+    });
 });

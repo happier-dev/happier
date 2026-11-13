@@ -73,6 +73,9 @@ export type AddFlowsTranslation = Readonly<{
     machineConnectedJustNow: string;
     machineStartSession: (params: Readonly<{ machine: string; }>) => string;
     machineAddAnother: string;
+    machineUse: (params: Readonly<{ machine: string; }>) => string;
+    machineOpen: (params: Readonly<{ machine: string; }>) => string;
+    machineFoundServices: (params: Readonly<{ count: number; }>) => string;
     cancelSetup: string;
     detectedOs: string;
     sshSuggestionsTitle: string;
@@ -168,6 +171,9 @@ export const addFlowsTranslationsEnglish = { en: {
         machineConnectedJustNow: 'connected just now',
         machineStartSession: ({ machine }) => `Start a session on ${machine}`,
         machineAddAnother: 'Add another',
+        machineUse: ({ machine }) => `Use ${machine}`,
+        machineOpen: ({ machine }) => `Open ${machine}`,
+        machineFoundServices: ({ count }) => count === 0 ? 'Found no services. Nothing was restarted or changed.' : count === 1 ? 'Found 1 service. Nothing was restarted or changed.' : `Found ${count} services. Nothing was restarted or changed.`,
         cancelSetup: 'Cancel',
         detectedOs: 'Detected',
         sshSuggestionsTitle: 'From your SSH config and saved hosts',

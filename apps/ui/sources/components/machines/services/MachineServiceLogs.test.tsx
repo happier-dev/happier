@@ -14,6 +14,10 @@ import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppR
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { t } from '@/text';
 
+// The log viewport's recycler depends on native layout; render its rows deterministically at that boundary.
+vi.mock('@legendapp/list/react-native', async () =>
+    (await import('@/dev/testkit/mocks/legendList')).createLegendListModuleMock({ renderItems: true }));
+
 // Only the authenticated Home HTTP/device-credential boundary is substituted.
 // The mounted Machine source, Action, Resource store and log-viewer owners stay real.
 const homes = createHomeGovernanceHarness();

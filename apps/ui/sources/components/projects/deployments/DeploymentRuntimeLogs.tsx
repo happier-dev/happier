@@ -54,7 +54,7 @@ export function DeploymentRuntimeLogs(props: Readonly<{
       <NativeLogToolbar testID="deployment-runtime-logs-toolbar" viewer={viewer}
         findOpen={viewer?.findSnapshot.isOpen === true && props.active}
         partTestID={(part) => `deployment-runtime-logs-${part}`} inputFocused={inputFocused}
-        follow={{ on: logs.follow, toggle: () => logs.setFollow(value => !value) }}
+        follow={{ on: logs.follow, toggle: () => logs.setFollow(value => !value) }} navigation={logs.navigation}
         copyDisabled={!logs.index} saveDisabled={!logs.index}
         onCopy={() => { void logs.copyLoaded(); }} onSave={() => { void logs.exportLoaded(); }} />
       {logs.stale && logs.index ? (
@@ -74,7 +74,7 @@ export function DeploymentRuntimeLogs(props: Readonly<{
       ) : isNativeLogBlank(viewer.lines) ? (
         <SurfaceStateCard testID="deployment-runtime-logs-empty" kind="empty" size="line" title={t('machineServices.logs.empty')} />
       ) : <NativeLogLines testID="deployment-runtime-logs-lines" lines={viewer.lines}
-        getLineRanges={viewer.getLineRanges} revealedLine={viewer.viewState?.revealedLine ?? null} />}
+        getLineRanges={viewer.getLineRanges} revealedLine={viewer.viewState?.revealedLine ?? null} navigation={logs.navigation} />}
       {projection?.kind === 'index' && projection.truncated ? (
         <Text variant="meta" testID="deployment-runtime-logs-truncated" style={{ color: theme.colors.text.secondary }}>
           {t('machineServices.logs.truncated')}

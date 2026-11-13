@@ -14,6 +14,10 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, type Home
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 
+// The log viewport's recycler depends on native layout; render its rows deterministically at that boundary.
+vi.mock('@legendapp/list/react-native', async () =>
+    (await import('@/dev/testkit/mocks/legendList')).createLegendListModuleMock({ renderItems: true }));
+
 // Only the Home HTTP/credential boundary is substituted. The viewer, first Action,
 // Resource store, continuation transport and Forge index/Find model remain real.
 const homes = createHomeGovernanceHarness();
@@ -509,4 +513,48 @@ describe('native log viewer authority withdrawal', () => {
             await hook.unmount();
         },
     );
+});
+
+describe('native log viewport (#9)', () => {
+    it('says how many lines arrived while the reader is above the tail, and takes them back to the latest line', async () => {
+        const { useNativeLogViewer } = await import('./useMachineServiceLogViewer');
+        const { createNativeLogView, NativeLogLines } = await import('./MachineServiceLogs');
+        const { NativeLogToolbar } = await import('./NativeLogToolbar');
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const { t } = await import('@/text');
+        const view = createNativeLogView();
+        const read = async () => {};
+        const containsFocus = () => true;
+        const isInputFocused = () => false;
+        const first = (text: string) => ({ kind: 'read' as const, readAt: 1,
+            value: { kind: 'page' as const, page: { sourceRevision: 'source', text, nextCursor: null, truncated: false } } });
+        function Surface(props: Readonly<{ text: string }>) {
+            const { binding } = useServerCredentialAccountScopeBinding(serverId);
+            const firstRead = React.useMemo(() => first(props.text), [props.text]);
+            const model = useNativeLogViewer({ first: firstRead, read, accountLifetime: binding, reference: null,
+                sourceKey: 'source', active: true, fileName: 'worker.log', view, surfaceId: 'viewport-log', containsFocus, isInputFocused });
+            const inputFocused = React.useRef(false);
+            if (!model.viewer) return null;
+            return React.createElement(React.Fragment, null,
+                React.createElement(NativeLogToolbar, { viewer: model.viewer, findOpen: false, partTestID: (part: string) => `log-${part}`,
+                    inputFocused, onCopy: () => {}, onSave: () => {}, navigation: model.navigation }),
+                React.createElement(NativeLogLines, { testID: 'log-lines', lines: model.viewer.lines, getLineRanges: model.viewer.getLineRanges,
+                    revealedLine: model.viewer.viewState?.revealedLine ?? null, navigation: model.navigation }));
+        }
+        const screen = await renderScreen(React.createElement(Surface, { text: 'one\ntwo\nthree' }));
+        try {
+            await vi.waitFor(async () => { await flushHookEffects(); expect(screen.findByTestId('log-lines')).not.toBeNull(); });
+            expect(screen.findByTestId('log-unseen')).toBeNull();
+            // The reader scrolls up: the viewport reports it, and pushed lines keep arriving.
+            const scroller = screen.root.findAll(node => typeof node.props.onScroll === 'function')[0]!;
+            await act(async () => { (scroller.props.onScroll as (event: unknown) => void)({ nativeEvent: {
+                contentOffset: { x: 0, y: 0 }, layoutMeasurement: { width: 300, height: 100 }, contentSize: { width: 300, height: 1000 } } }); });
+            await screen.update(React.createElement(Surface, { text: 'one\ntwo\nthree\nfour\nfive' }));
+            await flushHookEffects();
+            expect(screen.findByTestId('log-unseen')).not.toBeNull();
+            expect(screen.getTextContent()).toContain(t('machineServices.logs.newLines', { count: 2 }));
+            await screen.pressByTestIdAsync('log-unseen');
+            expect(screen.findByTestId('log-unseen')).toBeNull();
+        } finally { await screen.unmount(); }
+    });
 });

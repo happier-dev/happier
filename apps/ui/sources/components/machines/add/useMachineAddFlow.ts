@@ -146,7 +146,16 @@ export function useMachineAddFlowServerId(requestedServerId?: string): string {
     return draftServerId ?? requestedServerId ?? active.serverId;
 }
 
-export function useMachineAddFlow(options: Readonly<{ serverId?: string; initialPath?: MachineAddPathId; initialCreating?: boolean | null; connectionPathVisible?: boolean; runner?: SystemTaskRunner }> = {}): {
+/**
+ * Where an arrived Machine takes the person (UI refinements ruling 2026-11-13 08:07Z): back to the picker that started
+ * the flow with it selected, or to its own page when the flow began on Machines, Services or Settings. A host that is
+ * neither keeps its own next step (Start a session).
+ */
+export type MachineAddArrivalNext = 'picker' | 'machine' | 'session';
+
+export function useMachineAddFlow(options: Readonly<{ serverId?: string; initialPath?: MachineAddPathId; initialCreating?: boolean | null; connectionPathVisible?: boolean; runner?: SystemTaskRunner;
+    /** Where the person started adding: a picker (New Session, Add agent, a form's Machine field) or the Machines pages. */
+    startedFrom?: 'picker' | 'machines' }> = {}): {
     serverId: string;
     homeName: string;
     paths: ReturnType<typeof useMachineAddPaths>;
@@ -177,7 +186,7 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
     } | null;
     approval: ReturnType<typeof useMountedActionExecution>['approval'];
     watch: { status: 'arrived' | 'idle' | 'watching'; startedAtMs: number | null; notSeeing: boolean };
-    arrived: { machineId: string; name: string; facts: string } | null;
+    arrived: { machineId: string; name: string; facts: string; next: MachineAddArrivalNext } | null;
     draftRow: MachineAddDraftRow | null;
     startThisComputer: () => void;
     resolveOnAnotherHome: (choice: 'move' | 'keep') => void;
@@ -337,6 +346,7 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
     ) as Record<MachineAddCommandOs, string> : null, [chosen, commandTarget, descriptor, draft.sshDraft, profile, remoteHomeUnavailable]);
     const arrived = progress.machine ? { machineId: progress.machine.id, name: getMachineDisplayName(progress.machine),
         facts: [formatOSPlatform(progress.machine.metadata?.platform), progress.machine.metadata?.arch].filter(Boolean).join(' · '),
+        next: options.startedFrom === 'picker' ? 'picker' as const : options.startedFrom === 'machines' ? 'machine' as const : 'session' as const,
     } : null;
     const respondSsh = React.useCallback((answer: z.infer<typeof MachineAddSshAnswerSchema>) => {
         if (!isActiveHome) return;

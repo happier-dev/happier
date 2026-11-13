@@ -24,6 +24,10 @@ import {
 } from '@/dev/testkit/fixtures/machineFixtures';
 import { t } from '@/text';
 
+// The log viewport's recycler depends on native layout; render its rows deterministically at that boundary.
+vi.mock('@legendapp/list/react-native', async () =>
+    (await import('@/dev/testkit/mocks/legendList')).createLegendListModuleMock({ renderItems: true }));
+
 // Only the authenticated Home HTTP boundary is substituted. The sheet, its hook, the Action front door, the executor's
 // Machine-owned admission routing and the requester sealing stay real; the daemon's reply is the boundary answer.
 const homes = createHomeGovernanceHarness();

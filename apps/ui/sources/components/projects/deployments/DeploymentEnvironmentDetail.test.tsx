@@ -24,6 +24,10 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHo
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
+// The log viewport's recycler depends on native layout; render its rows deterministically at that boundary.
+vi.mock('@legendapp/list/react-native', async () =>
+    (await import('@/dev/testkit/mocks/legendList')).createLegendListModuleMock({ renderItems: true }));
+
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } =
     await import('@/dev/testkit/mocks/reactNative');

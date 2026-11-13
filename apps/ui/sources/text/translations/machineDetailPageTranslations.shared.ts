@@ -2166,6 +2166,7 @@ export const english = {
             restarted: 'The log started over (the service restarted or its log rotated).',
             readAgain: 'Read again',
             findInLog: 'Find in this log',
+            newLines: ({ count }: { count: number }) => count === 1 ? '1 new line' : `${count} new lines`,
             copyLog: 'Copy log',
             saveLog: 'Save log',
             empty: 'No lines yet. New lines show up here as the service writes them.',

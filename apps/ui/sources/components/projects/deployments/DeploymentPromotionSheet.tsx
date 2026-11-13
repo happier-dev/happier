@@ -3,7 +3,9 @@ import { View } from 'react-native';
 import type { DeploymentReadControllerV1 } from '@happier-dev/deployments';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
 
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
@@ -19,9 +21,17 @@ import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { DeploymentEnvironmentChooser } from './DeploymentEnvironmentCollection';
 import type { DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
+import { deploymentEnvironmentRoute } from './deploymentNavigation';
+import { useDeploymentPromotionBindingGaps } from './useDeploymentPromotionBindingGaps';
+
+/** The destination a person chose: the receipt keeps it so Promote reopens on it after they add what it lacks. */
+export type DeploymentPromotionDestination = Readonly<{ environmentId: string; projectSourceId: string; title: string }>;
+/** The open sheet is the presented surface that demands the selected pair's records. */
+const SHEET_DEMAND = { mounted: true, visible: true, focused: true } as const;
 
 export type DeploymentPromotionSheetInput = Readonly<{
   controller: DeploymentReadControllerV1;
+  serverId: string;
   sourceEnvironmentId: string;
   sourceDeploymentId: string;
   name: string;
@@ -29,15 +39,31 @@ export type DeploymentPromotionSheetInput = Readonly<{
   promote: ReturnType<typeof createDeploymentActions>['promote'];
   review: DeploymentReviewHandle;
   onOpenReceipt: (environmentId: string, deploymentId: string) => void;
+  /** The destination chosen the last time Promote was open from this receipt. */
+  initialDestination?: DeploymentPromotionDestination | null;
+  onChooseDestination?: (destination: DeploymentPromotionDestination) => void;
 }>;
 
 /** Only this opened chooser demands a destination collection page. */
 function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomModalInjectedProps) {
-  const [destination, setDestination] = React.useState<string | null>(null);
+  const [chosen, setChosen] = React.useState<DeploymentPromotionDestination | null>(props.initialDestination ?? null);
+  const destination = chosen?.environmentId ?? null;
+  const { onChooseDestination } = props;
   const selectDestination = React.useCallback((row: DeploymentEnvironmentCollectionV1['items'][number]) => {
-    setDestination(row.environment.id);
-  }, []);
+    const next = { environmentId: row.environment.id, projectSourceId: row.environment.projectSourceId, title: row.title };
+    setChosen(next);
+    onChooseDestination?.(next);
+  }, [onChooseDestination]);
   const { onClose, review, onOpenReceipt } = props;
+  const router = useRouter();
+  // Advisory (SOS-GAP-PREFLIGHT #3): the promotion's own admission still decides; this only says what is missing.
+  const gaps = useDeploymentPromotionBindingGaps(props.controller, props.sourceEnvironmentId, destination, SHEET_DEMAND);
+  const openDestinationVariables = () => {
+    if (!chosen) return;
+    onClose();
+    router.push(deploymentEnvironmentRoute({ serverId: props.serverId, projectSourceId: chosen.projectSourceId,
+      environmentId: chosen.environmentId, tab: 'variables' }) as never);
+  };
   const press = useDeploymentPress({ pendingId: review.pendingId, request: (artifactId) => {
     onClose();
     review.request(artifactId);
@@ -80,6 +106,22 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
           selectedId={destination} onSelect={selectDestination} disabled={busy}
           loadFailedTitle={t('projects.deployments.promotion.loadFailed')}
           emptyTitle={t('projects.deployments.promotion.emptyTitle')} emptyBody={t('projects.deployments.promotion.emptyBody')} />
+        {chosen && gaps.result.status === 'ready' && gaps.result.gaps.length > 0 ? <AttentionBanner
+          testID="project-deployments.promote.missingVariables" tone="warning"
+          title={gaps.result.gaps.length === 1
+            ? t('projects.deployments.promotion.missingOne', { destination: chosen.title, name: gaps.result.gaps[0]!.name })
+            : t('projects.deployments.promotion.missingMany', { destination: chosen.title, count: gaps.result.gaps.length })}
+          description={t(gaps.result.gaps.length === 1 ? 'projects.deployments.promotion.missingBodyOne'
+            : 'projects.deployments.promotion.missingBodyMany', { source: props.name, destination: chosen.title })}
+          points={gaps.result.gaps.length === 1 ? undefined : gaps.result.gaps.map(gap => [{ code: gap.name }, ' · ',
+            t(gap.phase === 'build' ? 'projects.deployments.phaseBuild' : 'projects.deployments.phaseRuntime')])}
+          action={{ label: t('projects.deployments.promotion.missingAdd', { destination: chosen.title }),
+            onPress: openDestinationVariables }} />
+          : chosen && gaps.result.status === 'unavailable' ? <SurfaceStateCard testID="project-deployments.promote.compareFailed"
+          size="line" kind="unavailable" title={t('projects.deployments.promotion.compareFailed', { destination: chosen.title })}
+          diagnosticCode={gaps.result.reason}
+          action={gaps.result.retryable ? { label: t('common.retry'), onPress: () => { void gaps.retry(); } } : undefined} />
+          : null}
         <ItemGroup header="none">
           <Item title={t('projects.deployments.promotion.image')} subtitle={t('projects.deployments.promotion.imageBody')}
             showChevron={false} />

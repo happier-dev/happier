@@ -303,6 +303,7 @@ function MachineAddPane(props: Readonly<{
                 serverId={flow.serverId}
                 name={arrived.name}
                 facts={[arrived.facts, t('addFlows.machineConnectedJustNow')].filter(Boolean).join(' · ')}
+                next={arrived.next}
                 onStartSession={() => props.onStartSession({ machineId: arrived.machineId, serverId: flow.serverId })}
                 onAddAnother={flow.addAnother}
             /></PaneSection>

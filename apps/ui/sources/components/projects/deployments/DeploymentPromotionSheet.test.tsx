@@ -79,6 +79,7 @@ describe('Promote', () => {
       await act(async () => {
         showDeploymentPromotionSheet({
           controller,
+          serverId: 'home',
           sourceEnvironmentId: 'staging',
           sourceDeploymentId: 'receipt-61',
           name: 'Staging',
@@ -120,6 +121,67 @@ describe('Promote', () => {
         expect.objectContaining({ artifact: 'rebuild' }),
         expect.anything(),
       );
+    } finally {
+      await screen.unmount();
+      controller.retire();
+    }
+  });
+
+  it('says which source variables the chosen destination lacks, links to its Variables and keeps the choice on return (#3)', async () => {
+    const { createDeploymentEnvironmentDetailV1, createDeploymentSecretVariableBindingV1, createDeploymentTargetLinkHeaderV1 } =
+      await import('@happier-dev/deployment-protocol/testing/v1');
+    const production = createDeploymentEnvironmentHeaderV1({ id: 'production', projectSourceId: 'source-app' });
+    const detail = (id: string, bindings: unknown[]) => {
+      const base = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ id }),
+        targetLinks: [{ targetLink: createDeploymentTargetLinkHeaderV1({ environmentId: id }), content: {} }] });
+      return { ...base, content: { ...base.content, bindings } };
+    };
+    const token = createDeploymentSecretVariableBindingV1({ name: 'TOKEN', phase: 'runtime', resourceId: 'token', resourceRevision: 1 });
+    const controller = createDeploymentReadControllerV1({
+      scope,
+      transport: {
+        listEnvironments: async () => ({ ok: true, value: { items: [{ environment: production, title: 'Production' }], nextCursor: null } }),
+        // The two Environment records are the boundary: Staging sets TOKEN, Production doesn't.
+        readEnvironment: async (_scope, id) => ({ ok: true, value: detail(id, id === 'staging' ? [token] : []) as never }),
+        listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+        readReceipt: async () => ({ ok: false, failure: { code: 'deployment_unavailable', retryable: false } }),
+      },
+    });
+    const promote = vi.fn(async () => ({ ok: true as const, deploymentId: 'promoted' }));
+    let remembered: Parameters<NonNullable<Parameters<typeof showDeploymentPromotionSheet>[0]['onChooseDestination']>>[0] | null = null;
+    const open = () => showDeploymentPromotionSheet({
+      controller, serverId: 'home', sourceEnvironmentId: 'staging', sourceDeploymentId: 'receipt-61', name: 'Staging',
+      version: '7f3e2b1', promote: promote as never, review: { pendingId: null, request() {}, open() {} }, onOpenReceipt: () => {},
+      initialDestination: remembered, onChooseDestination: (chosen) => { remembered = chosen; },
+    });
+    const notice = 'project-deployments.promote.missingVariables';
+    const waitFor = (testID: string) => act(async () => {
+      await Promise.race([
+        waitForTestEvent(screen.subscribe, () => screen.findByTestId(testID), (node) => node !== null),
+        new Promise((resolve) => setTimeout(resolve, 5_000)),
+      ]);
+    });
+    const screen = await renderScreen(<ModalProvider><View testID="host" /></ModalProvider>);
+    try {
+      await act(async () => { open(); });
+      const row = `project-deployments.promote.destination:${production.id}`;
+      await waitFor(row);
+      expect(screen.findByTestId(notice)).toBeNull();
+      await screen.pressByTestIdAsync(row);
+      await waitFor(notice);
+      expect(screen.getTextContent()).toContain('TOKEN');
+      // Advisory: the promotion's own admission decides, so the review stays available.
+      expect(screen.findByTestId('project-deployments.promote.confirm')?.props.disabled).not.toBe(true);
+      router.spies.push.mockClear();
+      await screen.pressByTestIdAsync(`${notice}.action`);
+      expect(router.spies.push).toHaveBeenCalledWith(expect.objectContaining({
+        params: expect.objectContaining({ deploymentEnvironment: 'production', projectSourceId: 'source-app', deploymentTab: 'variables' }),
+      }));
+      expect(screen.findByTestId('project-deployments.promote')).toBeNull();
+      // Back on the receipt, Promote opens on the same destination and says it again.
+      await act(async () => { open(); });
+      await waitFor(notice);
+      expect(screen.getTextContent()).toContain('TOKEN');
     } finally {
       await screen.unmount();
       controller.retire();

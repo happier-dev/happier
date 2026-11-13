@@ -11,7 +11,7 @@ import { t } from '@/text';
 import type { useNativeLogViewer } from './useMachineServiceLogViewer';
 
 type NativeLogViewer = ReturnType<typeof useNativeLogViewer>['viewer'];
-type ToolbarPart = 'find' | 'findbar' | 'follow' | 'copy' | 'save';
+type ToolbarPart = 'find' | 'findbar' | 'unseen' | 'follow' | 'copy' | 'save';
 
 /**
  * The one toolbar over a native log (a Machine service's log, a deploy step's log): Find, which opens in its own
@@ -31,6 +31,8 @@ export function NativeLogToolbar(
     filter?: React.ReactNode;
     /** Absent where the log cannot follow new lines. */
     follow?: Readonly<{ on: boolean; toggle: () => void }> | null;
+    /** The viewer model's unseen-line count while the reader is above the tail, and its Jump to latest. */
+    navigation?: Readonly<{ newLineCount: number; jumpToLatest: () => void }> | null;
     onCopy: () => void;
     copyDisabled?: boolean;
     onSave: () => void;
@@ -88,6 +90,14 @@ export function NativeLogToolbar(
       )}
       {findOpen ? null : props.filter}
       {findOpen ? null : <View style={styles.spacer} />}
+      {props.navigation && props.navigation.newLineCount > 0 ? (
+        <ToolbarButton
+          testID={partTestID('unseen')}
+          label={t('machineServices.logs.newLines', { count: props.navigation.newLineCount })}
+          icon={<Icon name="arrow-down" size={14} color={theme.colors.text.secondary} />}
+          onPress={props.navigation.jumpToLatest}
+        />
+      ) : null}
       {props.follow ? (
         <ToolbarButton
           testID={partTestID('follow')}

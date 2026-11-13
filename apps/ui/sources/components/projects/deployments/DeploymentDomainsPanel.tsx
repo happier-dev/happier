@@ -35,12 +35,13 @@ import {
 import { useDeploymentDomainIngressFields, type DomainIngressInspection } from './DeploymentDomainIngressFields';
 import { DeploymentTabState } from './DeploymentTabState';
 import { useDeploymentEnvironmentDomains, useDeploymentEnvironmentRecord } from './useDeploymentReads';
+import { projectDeploymentDomainDnsReadinessV1, type DeploymentDomainDnsReadinessV1 } from '@happier-dev/deployments';
 import { DeploymentDomainRow, type DomainCredentialRole, type DomainItem } from './DeploymentDomainRow';
 
 type DomainActions = Pick<
   ReturnType<typeof createDeploymentActions>,
   'addDomain' | 'removeDomain' | 'verifyDomain'
-> & Partial<Pick<ReturnType<typeof createDeploymentActions>, 'setBindings'>>
+> & Partial<Pick<ReturnType<typeof createDeploymentActions>, 'setBindings' | 'previewDomainDns'>>
   & Readonly<{ inspectPlatformTarget?: DomainIngressInspection }>;
 type EnvironmentContent = DeploymentEnvironmentContentV1;
 type RouteExport = Readonly<{ service: string; containerPort: number }>;
@@ -182,6 +183,13 @@ export function DeploymentDomainsPanel(
             <DeployOutcomeBanner controller={change.banner} machine={editing.machine} copy="domainAdd" placement="inline" />
           ) : null}
           onCancel={() => setAdding(false)}
+          checkDns={editing.actions.previewDomainDns ? async (content) => {
+            const link = editing.targetLink!;
+            const result = await editing.actions.previewDomainDns!({ environmentId: props.environmentId,
+              expectedRevision: editing.environmentRevision, targetLinkId: link.id,
+              expectedTargetLinkRevision: link.revision, content });
+            return projectDeploymentDomainDnsReadinessV1(result.dnsHealth);
+          } : undefined}
           onAdd={async (content) => {
             const link = editing.targetLink!;
             const added = await press(() => editing.actions.addDomain({
@@ -315,6 +323,8 @@ function DomainAddForm(
     /** The last add's outcome, drawn above the form's actions. */
     notice: React.ReactNode;
     onCancel: () => void;
+    /** The native DNS check of this exact draft (verify Action, preview mode); absent where the route is not native. */
+    checkDns?: (content: DeploymentDomainContentV1) => Promise<DeploymentDomainDnsReadinessV1>;
     onAdd: (content: DeploymentDomainContentV1) => void | Promise<void>;
   }>,
 ) {
@@ -365,6 +375,26 @@ function DomainAddForm(
     : !/^\d+$/.test(checkStatus.trim()) ? t('projects.deployments.domainFieldCheckStatus')
     : !healthCheck.success ? t('projects.deployments.domainFieldCheck')
     : null;
+  // The one content this form adds, and the one the DNS check inspects.
+  const draft = (): DeploymentDomainContentV1 | null => {
+    if (host.length === 0 || duplicate) return null;
+    if (provider) return needsZone && !zone ? null : { hostname: host, target: { kind: 'provider', ...(zone ? { zone } : {}) } };
+    if (!healthCheck.success || !(service.trim().length > 0 && portValid && pathValid && (!needsSelection || !!ingress))) return null;
+    return {
+      hostname: host,
+      target: {
+        service: service.trim(),
+        containerPort,
+        ...(routePath ? { path: routePath } : {}),
+        ...(redirect ? { redirectTo: redirect } : {}),
+      },
+      healthCheck: healthCheck.data,
+      ...(needsSelection && ingress ? { ingress } : {}),
+      ...(props.credentials && certificate === 'custom' ? { tls: { kind: 'custom' as const } } : {}),
+      ...(props.credentials && user ? { basicAuth: { username: user } } : {}),
+    };
+  };
+  const dnsDraft = !provider && props.checkDns ? draft() : null;
   return (
     <InlineAddExpander
       isOpen
@@ -375,25 +405,8 @@ function DomainAddForm(
       trigger={null}
       onCancel={props.onCancel}
       onSave={() => {
-        if (!ready) return;
-        if (provider) {
-          void props.onAdd({ hostname: host, target: { kind: 'provider', ...(zone ? { zone } : {}) } });
-          return;
-        }
-        if (!healthCheck.success) return;
-        void props.onAdd({
-          hostname: host,
-          target: {
-            service: service.trim(),
-            containerPort,
-            ...(routePath ? { path: routePath } : {}),
-            ...(redirect ? { redirectTo: redirect } : {}),
-          },
-          healthCheck: healthCheck.data,
-          ...(needsSelection && ingress ? { ingress } : {}),
-          ...(props.credentials && certificate === 'custom' ? { tls: { kind: 'custom' as const } } : {}),
-          ...(props.credentials && user ? { basicAuth: { username: user } } : {}),
-        });
+        const content = draft();
+        if (ready && content) void props.onAdd(content);
       }}
       saveDisabled={!ready}
       cancelLabel={t('common.cancel')}
@@ -556,6 +569,7 @@ function DomainAddForm(
           />
         </FieldItem>
         </> : null}
+        {dnsDraft && props.checkDns ? <DomainDnsCheck content={dnsDraft} machine={props.machine} check={props.checkDns} /> : null}
         {missingField ? (
           <Text testID="project-deployments.environment.domains.add.needs" variant="meta" style={styles.needs}>
             {t('projects.deployments.editors.addNeeds', { field: missingField })}
@@ -565,6 +579,62 @@ function DomainAddForm(
       </View>
     </InlineAddExpander>
   );
+}
+
+type DnsCheck = Readonly<{ key: string }> & (
+  | Readonly<{ status: 'checking' }>
+  | Readonly<{ status: 'checked'; readiness: DeploymentDomainDnsReadinessV1 }>
+  | Readonly<{ status: 'failed'; code: string }>
+);
+
+/**
+ * Whether the draft's name reaches this Machine, checked only when the person asks (SOS-GAP-DOMAINS: no request per
+ * keystroke). An answer belongs to the exact draft it checked; editing the address shows the question again.
+ */
+function DomainDnsCheck(props: Readonly<{
+  content: DeploymentDomainContentV1;
+  machine: string;
+  check: (content: DeploymentDomainContentV1) => Promise<DeploymentDomainDnsReadinessV1>;
+}>) {
+  const { content, check } = props;
+  const key = JSON.stringify(content);
+  const [result, setResult] = React.useState<DnsCheck | null>(null);
+  const run = React.useCallback(() => {
+    setResult({ key, status: 'checking' });
+    const settle = (next: DnsCheck) => setResult(previous => previous?.key === key ? next : previous);
+    check(content).then(readiness => settle({ key, status: 'checked', readiness }),
+      (error: unknown) => settle({ key, status: 'failed', code: readDiagnosticCode(error) }));
+  }, [check, content, key]);
+  const current = result?.key === key ? result : null;
+  const host = content.hostname;
+  const vars = { host, machine: props.machine };
+  const testID = 'project-deployments.environment.domains.add.dns';
+  const again = { label: t('projects.deployments.domainCheckAgain'), onPress: run, testID: `${testID}.action` };
+  if (current?.status === 'checking')
+    return <SurfaceStateCard testID={`${testID}.checking`} kind="loading" size="line" title={t('projects.deployments.domainDnsUnchecked', vars)} />;
+  const state = current?.status === 'failed' ? 'unavailable' : current?.readiness.state ?? 'not_checked';
+  switch (state) {
+    case 'missing':
+      return <SurfaceStateCard testID={`${testID}.missing`} kind="warning" size="line" title={t('projects.deployments.domainDnsMissing', { host })}
+        reason={t('projects.deployments.domainDnsMissingBody', { machine: props.machine })} action={again} />;
+    case 'not_this_machine':
+      return <SurfaceStateCard testID={`${testID}.elsewhere`} kind="warning" size="line" title={t('projects.deployments.domainDnsElsewhere', vars)}
+        reason={t('projects.deployments.domainDnsElsewhereBody', { machine: props.machine })} action={again} />;
+    case 'ready':
+      return <SurfaceStateCard testID={`${testID}.ready`} kind="success" size="line" title={t('projects.deployments.domainDnsReady', vars)} action={again} />;
+    case 'unavailable':
+      return <SurfaceStateCard testID={`${testID}.unavailable`} kind="unavailable" size="line" title={t('projects.deployments.domainDnsUnavailable', { host })}
+        diagnosticCode={current?.status === 'failed' ? current.code : current?.status === 'checked' ? current.readiness.reason ?? undefined : undefined}
+        action={again} />;
+    default:
+      return <SurfaceStateCard testID={`${testID}.unchecked`} kind="empty" size="line" title={t('projects.deployments.domainDnsUnchecked', vars)}
+        action={{ label: t('projects.deployments.domainDnsCheck'), onPress: run, testID: `${testID}.action` }} />;
+  }
+}
+
+function readDiagnosticCode(error: unknown): string {
+  const code = error && typeof error === 'object' && 'code' in error ? (error as { code?: unknown }).code : null;
+  return typeof code === 'string' ? code : 'deployment_unavailable';
 }
 
 const styles = StyleSheet.create((theme) => ({

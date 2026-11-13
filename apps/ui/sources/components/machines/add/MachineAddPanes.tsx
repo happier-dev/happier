@@ -3,6 +3,9 @@ import { View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { machinePageHref } from '@/components/machines/page/machinePageHref';
+import { useMachineServicesList } from '@/components/machines/services/useMachineServicesList';
 import { MachineCliGlyphs } from '@/components/sessions/new/components/MachineCliGlyphs';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceCard } from '@/components/ui/cards/SurfaceCard';
@@ -16,6 +19,7 @@ import { hapticsSuccess } from '@/components/ui/theme/haptics';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { t } from '@/text';
+import type { MachineAddArrivalNext } from './useMachineAddFlow';
 
 /** The pane's title and one-paragraph lead (what this way does, in the person's words). */
 const MachineAddPaneTitlesContext = React.createContext(true);
@@ -183,10 +187,20 @@ export const MachineArrivedCard = React.memo(function MachineArrivedCard(props: 
     serverId: string;
     name: string;
     facts: string;
+    /** Where continuing takes the person (the add flow decides from where they started); absent, Start a session. */
+    next?: MachineAddArrivalNext;
     onStartSession: () => void;
     onAddAnother: () => void;
 }>) {
     const styles = stylesheet;
+    const router = useRouter();
+    // The arrival line (ruling 08:07Z): what the first successful read of this Machine found, said here and nowhere else.
+    const { firstInventoryCount } = useMachineServicesList({ serverId: props.serverId, machineId: props.machineId, active: true });
+    const next = props.next ?? 'session';
+    const { machineId, serverId, onStartSession } = props;
+    const openMachine = React.useCallback(() => {
+        router.push(machinePageHref({ door: 'settings', target: { machineId, serverId } }) as never);
+    }, [machineId, router, serverId]);
     const { theme } = useUnistyles();
     const reducedMotion = useReducedMotionPreference();
     const ring = useSharedValue(reducedMotion ? 0 : 1);
@@ -203,6 +217,7 @@ export const MachineArrivedCard = React.memo(function MachineArrivedCard(props: 
                 kind="success"
                 size="line"
                 title={t('addFlows.machineArrived', { machine: props.name })}
+                reason={firstInventoryCount === null ? undefined : t('addFlows.machineFoundServices', { count: firstInventoryCount })}
                 accessibilitySemantics="status"
             />
             <View style={styles.cardFrame}>
@@ -222,12 +237,17 @@ export const MachineArrivedCard = React.memo(function MachineArrivedCard(props: 
                 </SurfaceCard>
             </View>
             <View style={styles.actions}>
-                <RoundButton
+                {next === 'session' ? <RoundButton
                     testID={`${props.testID}.startSession`}
                     size="small"
                     title={t('addFlows.machineStartSession', { machine: props.name })}
-                    onPress={props.onStartSession}
-                />
+                    onPress={onStartSession}
+                /> : <RoundButton
+                    testID={`${props.testID}.continue`}
+                    size="small"
+                    title={t(next === 'picker' ? 'addFlows.machineUse' : 'addFlows.machineOpen', { machine: props.name })}
+                    onPress={next === 'picker' ? onStartSession : openMachine}
+                />}
                 <RoundButton
                     testID={`${props.testID}.addAnother`}
                     size="small"

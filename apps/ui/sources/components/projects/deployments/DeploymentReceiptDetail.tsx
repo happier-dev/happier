@@ -73,7 +73,7 @@ import { DeploymentLiveAddressActions } from './deploymentLiveAddress';
 import { deploymentLiveAddressDemand, formatDeploymentLiveAddress, resolveDeploymentLiveAddress, type DeploymentLiveAddress } from './deploymentLiveAddressFacts';
 import { DomainStateLine } from './DeploymentDomainRow';
 import { DeploymentUploadProvenance } from './DeploymentUploadProvenance';
-import { showDeploymentPromotionSheet } from './DeploymentPromotionSheet';
+import { showDeploymentPromotionSheet, type DeploymentPromotionDestination } from './DeploymentPromotionSheet';
 import type { DeploymentReadLogs } from './useDeploymentStepLog';
 
 /**
@@ -154,6 +154,8 @@ export const DeploymentReceiptDetail = React.memo(
     const onBack = props.onBack;
     const backControl = usePageBackControl('project-deployments.receipt.back', onBack);
     const router = useRouter();
+    // Promote reopens on the destination chosen last, after the person adds what it lacks.
+    const promotionDestination = React.useRef<DeploymentPromotionDestination | null>(null);
     // A failed receipt is evidence: Investigate hands this exact receipt to configured Triage (D5),
     // through the Account's one investigation owner, never a page-local investigator.
     const failed = value?.deployment.state === 'failed';
@@ -388,7 +390,9 @@ export const DeploymentReceiptDetail = React.memo(
         environmentName={props.environmentName}
         onOpenEnvironment={onBack}
         onPromote={environmentValue && canPromoteDeploymentReceipt(value, environmentValue) && promote
-          ? () => showDeploymentPromotionSheet({ controller: props.controller,
+          ? () => showDeploymentPromotionSheet({ controller: props.controller, serverId: props.serverId,
+              initialDestination: promotionDestination.current,
+              onChooseDestination: (chosen) => { promotionDestination.current = chosen; },
               sourceEnvironmentId: environmentId, sourceDeploymentId: deployment.id,
               name: props.environmentName ?? environmentValue.content.name, version: deploymentSourceLabel(content) ?? deployment.id,
               promote, review: props.review,

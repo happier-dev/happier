@@ -17,6 +17,7 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
 import { useServerScopedMachineLabel } from '@/sync/store/hooks';
+import { DeploymentAddPortsFacts } from './DeploymentAddPortsFacts';
 import { useServerScopedMachine } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
@@ -89,7 +90,7 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
     {visual ? <ApprovalVisualPreview preview={visual} artifactId={props.artifactId ?? testID} serverId={serverId} testID={`${testID}.visual`} /> : null}
     {deployment ? <DeploymentReviewApprovalFacts approval={deployment} serverId={serverId}
       testID={`${testID}.deployment-review`} decided={props.decided} /> : null}
-    {template ? <DeploymentTemplateFacts review={template} testID={`${testID}.template`} /> : null}
+    {template ? <DeploymentTemplateFacts review={template} serverId={serverId ?? null} testID={`${testID}.template`} /> : null}
     {creation ? <DeploymentCreationReviewFacts review={creation} serverId={serverId} testID={`${testID}.creation-review`} /> : null}
     {computer ? <ItemGroup title={t('computerUse.approval.sectionTitle')}><SectionContentRow>
       <ComputerActionApprovalCard presentation={computer} titled serverId={serverId} onChooseTarget={props.onChooseComputerTarget}
@@ -151,12 +152,13 @@ export function DeploymentCreationReviewFacts(props: Readonly<{
     {review.copy?.omitted.length ? <ItemGroup title={t('projects.deployments.copy.omit')}>
       {review.copy.omitted.map(value => <Item key={value} mode="info" title={value} />)}
     </ItemGroup> : null}
-    {review.template ? <DeploymentTemplateFacts review={review.template} testID={`${testID}.template`} /> : null}
+    {review.template ? <DeploymentTemplateFacts review={review.template} serverId={props.serverId} testID={`${testID}.template`} /> : null}
   </>;
 }
 
 function DeploymentTemplateFacts(props: Readonly<{
   review: DeploymentTemplateInstantiationReviewV1;
+  serverId?: string | null;
   testID: string;
 }>) {
   const { review, testID } = props;
@@ -175,6 +177,9 @@ function DeploymentTemplateFacts(props: Readonly<{
     {review.capacity?.filter(capacity => capacity.state === 'shortfall').map(capacity => <AttentionBanner key={capacity.resource}
       testID={`${testID}.capacity.${capacity.resource}`} title={t(capacity.resource === 'memoryBytes'
         ? 'projects.deployments.addShortMemory' : 'projects.deployments.addShortDisk')} />)}
+    {review.document ? <DeploymentAddPortsFacts document={review.document} services={review.services}
+      serverId={props.serverId ?? null} machineId={review.creationDefaults?.values.controllerMachineId ?? null}
+      testID={`${testID}.ports`} /> : null}
     {review.document ? <ItemGroup title="compose.yaml"><SectionContentRow>
       <CodeBlockView code={review.document} language="yaml" wrap />
     </SectionContentRow></ItemGroup> : null}

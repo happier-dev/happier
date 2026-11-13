@@ -110,7 +110,8 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
         : !accountSettings.settings && !accountSettings.error && (accountScope.resolution.kind === 'resolving' || accountScope.resolution.kind === 'bound') ? null
         : canCreate;
     const flow = useMachineAddFlow({ serverId: connectionServerId, initialPath, initialCreating,
-        connectionPathVisible: !separateCreateHome && (!pushesWays || Boolean(routePath)) });
+        connectionPathVisible: !separateCreateHome && (!pushesWays || Boolean(routePath)),
+        startedFrom: returning ? 'picker' : 'machines' });
     const navigate = React.useCallback((href: unknown, tag: string, replace: boolean) => {
         const result = runGuardedNavigation(() => (replace ? router.replace(href as never) : router.push(href as never)));
         if (result !== true) fireAndForget(result, { tag });

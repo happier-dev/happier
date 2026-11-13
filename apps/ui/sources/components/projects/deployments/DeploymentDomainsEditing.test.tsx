@@ -859,3 +859,62 @@ describe('Environment → Domains: Add domain never looks dead (UI-DOMAIN-VIEWER
     } finally { await screen.unmount(); controller.retire(); }
   });
 });
+
+describe('Environment → Domains: whether the address reaches this Machine (#2)', () => {
+  const dnsHealth = (status: 'up' | 'down' | 'unknown', reason: string) => ({ status, evidence: { v: 1 as const,
+    items: [{ source: { kind: 'alert' as const, label: 'DNS' }, author: { kind: 'process' as const },
+      text: JSON.stringify({ kind: 'dns', reason }) }] } });
+
+  it('checks a complete draft only when asked, says what the native check found, and forgets it when the address changes', async () => {
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, content: { ...base.content, ingress: undefined } };
+    // The verify Action (preview mode) is the boundary: first no record, then the Machine's own challenge.
+    const previewDomainDns = vi.fn()
+      .mockResolvedValueOnce({ ok: true, environmentId: detail.environment.id, dnsHealth: dnsHealth('down', 'dns_missing') })
+      .mockResolvedValueOnce({ ok: true, environmentId: detail.environment.id, dnsHealth: dnsHealth('up', 'dns_ready') });
+    const actions = { ...domainActions(detail), previewDomainDns };
+    const { screen, controller, settle } = await renderDomains(detail, [], actions);
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      await act(async () => {
+        screen.changeTextByTestId(`${id}.host`, 'app.example.test');
+        screen.changeTextByTestId(`${id}.service`, 'web');
+        screen.changeTextByTestId(`${id}.port`, '3000');
+        screen.changeTextByTestId(`${id}.check`, '/');
+        screen.changeTextByTestId(`${id}.checkStatus`, '200');
+      });
+      // Typing asks nothing of the Machine.
+      expect(previewDomainDns).not.toHaveBeenCalled();
+      await screen.pressByTestIdAsync(`${id}.dns.action`);
+      expect(previewDomainDns).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        environmentId: detail.environment.id, content: expect.objectContaining({ hostname: 'app.example.test' }),
+      }));
+      expect(await settle(`${id}.dns.missing`)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${id}.dns.action`);
+      expect(previewDomainDns).toHaveBeenCalledTimes(2);
+      expect(await settle(`${id}.dns.ready`)).not.toBeNull();
+      // A different address is a different question: the old answer is not shown for it.
+      await act(async () => screen.changeTextByTestId(`${id}.host`, 'www.example.test'));
+      expect(screen.findByTestId(`${id}.dns.ready`)).toBeNull();
+      expect(screen.findByTestId(`${id}.dns.unchecked`)).not.toBeNull();
+      expect(previewDomainDns).toHaveBeenCalledTimes(2);
+      // Advisory: Add domain does not wait on DNS.
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(actions.addDomain).toHaveBeenCalledOnce();
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('says on the row when the saved address does not reach this Machine yet', async () => {
+    const detail = createDeploymentEnvironmentDetailV1();
+    const known = domain('elsewhere', 'shop.example.com');
+    const item = { ...known, domain: { ...known.domain, dnsHealth: dnsHealth('down', 'dns_not_this_machine') } };
+    const { screen, controller, settle } = await renderDomains(detail, [item], domainActions(detail));
+    try {
+      const row = await settle('project-deployments.environment.domains.elsewhere');
+      expect(row).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.environment.domains.elsewhere.checkAgain')).not.toBeNull();
+      expect(screen.getTextContent()).not.toContain('Needs a look');
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+});

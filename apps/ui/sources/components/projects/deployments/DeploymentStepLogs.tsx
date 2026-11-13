@@ -242,6 +242,7 @@ export function DeploymentStepLogs(
             />
           ) : null}
           follow={followable ? { on: logs.follow, toggle: () => logs.setFollow((value) => !value) } : null}
+          navigation={followable ? logs.navigation : null}
           onCopy={() => {
             void logs.copyLoaded();
           }}
@@ -457,6 +458,7 @@ function StepLogBody(
           lines={viewer.lines}
           getLineRanges={viewer.getLineRanges}
           revealedLine={viewer.viewState?.revealedLine ?? null}
+          navigation={logs.navigation}
         />
       )}
     </View>

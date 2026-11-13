@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { AnsiText } from '@happier-dev/plugin-ui';
-import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_PAGE_METRICS, type FindTextRange } from '@happier-dev/plugin-ui/presentation';
 import type {
   MachineServiceRowV1,
   ManagedServiceUnavailableReasonV1,
@@ -12,6 +12,7 @@ import type { ForgeCiLogLineV1 } from '@happier-dev/forge-ci/runtime';
 import type { LogViewerControlsV1 } from '@happier-dev/forge-ci/ui';
 
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
+import { VirtualizedList, type VirtualizedListRef } from '@/components/ui/lists/virtualized';
 import { NativeLogToolbar } from './NativeLogToolbar';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -22,7 +23,10 @@ import { isFindSurfaceTarget } from '@/keyboard/findSurfaceTarget';
 import { t } from '@/text';
 import { describeActionExecutionPrerequisite, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
-import { useMachineServiceLogViewer } from './useMachineServiceLogViewer';
+import { useMachineServiceLogViewer, type useNativeLogViewer } from './useMachineServiceLogViewer';
+
+/** The viewer model's tail state (SOS-GAP-LOGS): the viewport reports where the reader is, the model counts arrivals. */
+export type NativeLogNavigation = Pick<ReturnType<typeof useNativeLogViewer>['navigation'], 'following' | 'setAtLatest' | 'newLineCount' | 'jumpToLatest'>;
 
 /** Codes for a log read the Machine refused because this device's Account can't be admitted there yet. */
 const ADMISSION_CODES = new Set([
@@ -221,6 +225,7 @@ export function MachineServiceLogs(
         partTestID={(part) => `machine-service-logs-${part}`}
         inputFocused={inputFocused}
         follow={{ on: logs.follow, toggle: () => logs.setFollow((value) => !value) }}
+        navigation={logs.navigation}
         onCopy={() => {
           void logs.copyLoaded();
         }}
@@ -266,6 +271,7 @@ export function MachineServiceLogs(
           lines={viewer.lines}
           getLineRanges={viewer.getLineRanges}
           revealedLine={viewer.viewState?.revealedLine ?? null}
+          navigation={logs.navigation}
         />
       )}
       {/* Only a cut-off page adds a note under the lines. */}
@@ -288,7 +294,10 @@ export function isNativeLogBlank(lines: readonly ForgeCiLogLineV1[]): boolean {
 
 /**
  * The admitted lines on the log's inset band: a quiet number column, then the line as the program wrote it.
- * Every native log (a Machine service, a deployment step) shows its lines through this one band.
+ * Every native log (a Machine service, a deployment step) shows its lines through this one band: a bounded,
+ * virtualized viewport (a long reading block's height) that keeps the newest line in view while following, holds
+ * the reader's place when they scroll up (new lines still arrive and are counted by the viewer model) and scrolls
+ * a revealed line (a Find hit, Jump to latest) into view.
  */
 export function NativeLogLines(
   props: Readonly<{
@@ -296,27 +305,63 @@ export function NativeLogLines(
     lines: readonly ForgeCiLogLineV1[];
     getLineRanges: (lineId: string) => readonly FindTextRange[];
     revealedLine: number | null;
+    /** Absent where the log never grows past its first read (a finished command): it only scrolls. */
+    navigation?: NativeLogNavigation | null;
   }>,
 ) {
-  const digits = String(
-    props.lines[props.lines.length - 1]?.number ?? 1,
-  ).length;
+  const { theme } = useUnistyles();
+  const { lines, getLineRanges, revealedLine } = props;
+  const list = React.useRef<VirtualizedListRef>(null);
+  const digits = String(lines[lines.length - 1]?.number ?? 1).length;
+  const setAtLatest = props.navigation?.setAtLatest;
+  const following = props.navigation ? props.navigation.following : true;
+  const followingRef = React.useRef(following);
+  followingRef.current = following;
+  const linesRef = React.useRef(lines);
+  linesRef.current = lines;
+  const tolerance = theme.space.s8;
+  const renderItem = React.useCallback(({ item }: { item: ForgeCiLogLineV1 }) => (
+    <LogLine line={item} digits={digits} ranges={getLineRanges(item.id)} revealed={revealedLine === item.number} />
+  ), [digits, getLineRanges, revealedLine]);
+  // Where the reader is is the viewport's fact; whether lines are unseen is the viewer model's.
+  const onScroll = React.useCallback((event: Readonly<{ nativeEvent: Readonly<{
+    contentOffset: Readonly<{ y: number }>; layoutMeasurement: Readonly<{ height: number }>; contentSize: Readonly<{ height: number }>;
+  }> }>) => {
+    const { contentOffset, layoutMeasurement, contentSize } = event.nativeEvent;
+    setAtLatest?.(contentOffset.y + layoutMeasurement.height >= contentSize.height - tolerance);
+  }, [setAtLatest, tolerance]);
+  const onContentSizeChange = React.useCallback(() => {
+    if (followingRef.current) list.current?.scrollToEnd?.({ animated: false });
+  }, []);
+  // Back to following (Jump to latest, Follow) brings the newest line into view.
+  React.useEffect(() => {
+    if (following) list.current?.scrollToEnd?.({ animated: false });
+  }, [following]);
+  React.useEffect(() => {
+    if (revealedLine === null) return;
+    const index = linesRef.current.findIndex((line) => line.number === revealedLine);
+    if (index >= 0) list.current?.scrollToIndex({ index, animated: false, viewPosition: 0.5 });
+  }, [revealedLine]);
   return (
     <CorePluginUiPresentationScope>
-      <View style={styles.block} testID={props.testID}>
-        {props.lines.map((line) => (
-          <LogLine
-            key={line.id}
-            line={line}
-            digits={digits}
-            ranges={props.getLineRanges(line.id)}
-            revealed={props.revealedLine === line.number}
-          />
-        ))}
-      </View>
+      <VirtualizedList
+        ref={list}
+        testID={props.testID}
+        data={lines}
+        keyExtractor={logLineKey}
+        renderItem={renderItem}
+        style={styles.block}
+        contentContainerStyle={styles.blockContent}
+        maintainVisibleContentPosition
+        scrollEventThrottle={16}
+        onScroll={onScroll}
+        onContentSizeChange={onContentSizeChange}
+      />
     </CorePluginUiPresentationScope>
   );
 }
+
+const logLineKey = (line: ForgeCiLogLineV1) => line.id;
 
 /** One row per admitted line; an unchanged line keeps its row through a followed page. */
 const LogLine = React.memo(function LogLine(
@@ -398,9 +443,12 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s8,
   },
   block: {
-    paddingVertical: theme.space.s8,
+    maxHeight: HAPPIER_PAGE_METRICS.readingClipHeightPx,
     borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.surface.inset,
+  },
+  blockContent: {
+    paddingVertical: theme.space.s8,
   },
   line: {
     flexDirection: 'row',
