@@ -36,6 +36,7 @@ export async function readSharedTypecheckBaseline(repoRoot, packagePath, baselin
     if (!line.trim()) continue;
     const compact = location.exec(line);
     let diagnostic;
+    let missingSource = false;
     try {
       const header = compact
         ? `${compact[1]}(${compact[2]},1): error TS${compact[3]}: location`
@@ -51,12 +52,14 @@ export async function readSharedTypecheckBaseline(repoRoot, packagePath, baselin
           if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return;
           throw error;
         });
+        if (!source) missingSource = true;
         if (source?.isFile()) {
           diagnostic = candidate;
           break;
         }
       }
     } catch { throw new Error('invalid shared typecheck baseline'); }
+    if (!diagnostic && missingSource) continue; // Deleted sources have no remaining diagnostics.
     if (!diagnostic) throw new Error('invalid shared typecheck baseline');
     locations.add(`${diagnostic.file}:${diagnostic.line}:TS${diagnostic.code}`);
   }

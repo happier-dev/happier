@@ -5,7 +5,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { readJsonIfExists, writeJsonAtomic } from '../fs/json.mjs';
-import { dependencyInstallationFailure, isDependencyRefreshDisabled, markDependencyMutation, removeInstalledDependencyQuarantine, waitForDependencyRefreshWriter, withDependencyRefreshLock } from './dependency_refresh.mjs';
+import { dependencyInstallationFailure, isDependencyRefreshDisabled, markDependencyMutation, removeInstalledDependencyQuarantine, withDependencyConsumption, withDependencyRefreshLock } from './dependency_refresh.mjs';
 
 function resolveUiPostinstallMarkerPath(installDir) {
   return join(installDir, 'node_modules', '.happier-ui-postinstall-ready');
@@ -103,8 +103,9 @@ async function inspectUiPostinstallState(componentDir, installDir, { env = proce
     .filter(file => !existsSync(file)), ...staleFailures], freshness };
 }
 
-export async function inspectUiPostinstallOutputs(componentDir, installDir, options) {
-  return (await inspectUiPostinstallState(componentDir, installDir, options)).failures;
+export async function inspectUiPostinstallOutputs(componentDir, installDir, options = {}) {
+  return await withDependencyConsumption({ installDir, env: options.env, signal: options.signal },
+    async () => (await inspectUiPostinstallState(componentDir, installDir, options)).failures);
 }
 
 // Both stage-zero/source-test installs and full PM preparation consume this
@@ -121,12 +122,9 @@ export async function ensureUiPostinstallOutputs(componentDir, installDir, {
   if (!existsSync(manifestPath)) return;
   const pkg = JSON.parse(await readFile(manifestPath, 'utf8'));
   if (pkg?.name !== '@happier-dev/app' || typeof pkg?.scripts?.['postinstall:real'] !== 'string') return;
-  await waitForDependencyRefreshWriter({ installDir, env, signal });
-  const inspection = await inspectUiPostinstallState(componentDir, installDir, { env });
-  if (!force && inspection.failures.length === 0) return;
-  return await withDependencyRefreshLock({ installDir, env, signal,
-    isRequired: force ? undefined : async () => (await inspectUiPostinstallState(componentDir, installDir, { env })).failures.length > 0,
-  }, async () => {
+  // Repair can inspect an unfinished installation. Use its existing writer
+  // scope so inspection neither races a refresh nor requires publication first.
+  return await withDependencyRefreshLock({ installDir, env, signal }, async () => {
     // Another preparer may already have repaired the outputs while we waited.
     const before = await inspectUiPostinstallState(componentDir, installDir, { env });
     if (!force && before.failures.length === 0) return;

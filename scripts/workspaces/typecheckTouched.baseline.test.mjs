@@ -64,13 +64,24 @@ test('repository-relative shared baseline matches unchanged UI, sibling CLI and 
   assert.deepEqual((await touched.readSharedTypecheckBaseline(root, 'apps/ui', baselineFile)).locations, [current[0]]);
 });
 
-test('a shared baseline path resolving to neither repository nor legacy package source is invalid', async t => {
+test('deleted baseline sources are gone while present diagnostics remain comparable', async t => {
   const root = await mkdtemp(join(tmpdir(), 'happier-touched-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const directory = join(root, '.project/tmp/systemic-orch');
   await mkdir(directory, { recursive: true });
-  await writeFile(join(directory, 'ui-invalid.locs'), 'apps/ui/sources/missing.ts:7:TS2322\n');
-  await assert.rejects(touched.readSharedTypecheckBaseline(root, 'apps/ui', '.project/tmp/systemic-orch/ui-invalid.locs'), /invalid shared typecheck baseline/u);
+  await mkdir(join(root, 'apps/ui/sources'), { recursive: true });
+  await writeFile(join(root, 'apps/ui/sources/present.ts'), '');
+  const retained = 'apps/ui/sources/present.ts:7:TS2322';
+  await writeFile(join(directory, 'ui-current.locs'), [
+    'apps/ui/sources/missing.ts:13:TS2345', retained,
+    'sources/deleted-legacy.ts:3:TS2345',
+  ].join('\n'));
+  const baseline = await touched.readSharedTypecheckBaseline(root, 'apps/ui', '.project/tmp/systemic-orch/ui-current.locs');
+  assert.deepEqual(baseline.locations, [retained]);
+  assert.deepEqual(compareTouchedTypecheckLocations({ baseline: baseline.locations,
+    current: [retained, 'apps/ui/sources/present.ts:8:TS2345'], paths: ['apps/ui'] }), {
+    added: ['apps/ui/sources/present.ts:8:TS2345'], removed: [], unattributed: [],
+  });
 });
 
 test('missing baseline is unavailable, whereas an empty completed baseline is a real zero', async t => {

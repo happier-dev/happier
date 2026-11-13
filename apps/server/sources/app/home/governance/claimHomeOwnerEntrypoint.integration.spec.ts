@@ -49,7 +49,7 @@ function runEntrypoint(entrypoint: string, args: readonly string[]): EntrypointR
 
     const result = spawnSync(
         process.execPath,
-        ["./scripts/runTsx.mjs", "--tsconfig", "./tsconfig.json", entrypoint, ...args],
+        ["./scripts/runTsx.mjs", "--tsconfig", "./tsconfig.exec.json", entrypoint, ...args],
         {
             cwd: fileURLToPath(new URL('../../../../', import.meta.url)),
             env,

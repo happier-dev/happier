@@ -1,3 +1,4 @@
+import { withDependencyConsumption } from '../proc/dependency_refresh.mjs';
 import { existsSync } from 'node:fs';
 import { SOURCE_UI_ASSET_RECORD_FILENAME } from '../../../../ui/scripts/sourceUiAssetPaths.mjs';
 import { join, relative, resolve, sep } from 'node:path';
@@ -23,7 +24,8 @@ async function prepareTypecheckBatch({ repoDir, componentRelativeDirs, batchRead
   if (!components.length || components.some(component => !existsSync(join(component, 'package.json')))) {
     throw new Error('Workspace build batch components must belong to one monorepo');
   }
-  const owner = await import('../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs');
+  const owner = await withDependencyConsumption({ installDir: repoDir, env, signal },
+    () => import('../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs'));
   const cwd = resolveComponentDir(repoDir, relative(repoDir, batchReader.cwd ?? repoDir)).componentDir;
   const policy = resolveRemoteCommandPolicy([batchReader.command, ...batchReader.args], { cwd, repoRoot: repoDir });
   const readerAdmissionClass = policy.heavyClass || 'compilation';
@@ -125,12 +127,12 @@ export async function prepareRemoteValidationWorkspace({
   const livePluginHost = components.some(component => component === 'apps/cli' || component === 'apps/ui');
   const buildOptions = { env, ...(livePluginHost ? { isolatePluginFailures: true } : {}) };
 
-  const { ensureWorkspacePackagesBuiltForComponent } = await loadWorkspaceBuildOwner();
+  const { ensureWorkspacePackagesBuiltForComponent } = await withDependencyConsumption({ installDir: repoDir, env, signal }, loadWorkspaceBuildOwner);
   if (livePluginHost) {
     const {
       resolveCliBundledWorkspacePackageNames,
       publishBundledPluginArtifactsAfterWorkspaceBuild,
-    } = await loadCliBuildOwner();
+    } = await withDependencyConsumption({ installDir: repoDir, env, signal }, loadCliBuildOwner);
     // The CLI bundled selection mixes host workspaces with bundled plugins.
     // The canonical publication owner selects the bundled-plugin subset — and
     // skips publication when it is empty — so mixed selections never reach the
@@ -181,7 +183,8 @@ export async function runRemoteValidationPreparationCli() {
   if (process.argv[2] === '--typecheck-batch-worker') {
     const request = JSON.parse(process.argv[3]);
     try {
-      const owner = await import('../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs');
+      const owner = await withDependencyConsumption({ installDir: request.repoDir },
+        () => import('../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs'));
       await owner.runWorkspaceBuildBatchWorker(request);
     }
     catch (error) {
@@ -218,7 +221,8 @@ export async function runRemoteValidationPreparationCli() {
   }) };
   if (repo && resolve(repoDir) !== resolve(executorRepoRoot) && kind !== 'source-test' && kind !== 'typecheck') {
     // The selected checkout owns its package graph and emitted output.
-    const { ensureWorkspacePackagesBuiltForComponent } = await import(pathToFileURL(resolve(repoDir, 'scripts/workspaces/ensureWorkspacePackagesBuilt.mjs')).href);
+    const { ensureWorkspacePackagesBuiltForComponent } = await withDependencyConsumption({ installDir: repoDir, env },
+      () => import(pathToFileURL(resolve(repoDir, 'scripts/workspaces/ensureWorkspacePackagesBuilt.mjs')).href));
     const components = resolveRemoteValidationPreparationComponents(readComponentRelativeDir(process.argv.slice(2)), kind, preparationScope);
     for (const component of components) {
       await ensureWorkspacePackagesBuiltForComponent(resolveComponentDir(repoDir, component).componentDir, { env: resolveRemoteValidationPreparationEnv(env, kind, mode) });

@@ -53,6 +53,7 @@ export async function readSourcePluginUiGraph({ repoDir, compiler, pluginDirecto
           // exclusion as the containing source-input inventory.
           const dependency = packages.get(packageNameOfSpecifier(path));
           if (dependency && relative(repoDir, dependency.root).split(sep)[0] === 'apps') return { path, external: true };
+          if (dependency) annotationInputs.add(resolve(dependency.root, 'package.json'));
           const source = options.resolveSourceImport(path);
           return source ? builder.resolve(source, { kind, resolveDir, importer }) : undefined;
         });
@@ -95,6 +96,7 @@ export async function readSourcePluginUiGraph({ repoDir, compiler, pluginDirecto
     // discovery must not prevent healthy sibling plugins from refreshing.
     if (!Array.isArray(error.errors)) throw error;
   }
+  for (const path of annotationInputs) inputs.add(path);
   return [...inputs].map(path => relative(repoDir, resolve(repoDir, path)).split(sep).join('/'))
     .filter(path => !isAbsolute(path) && !path.startsWith('../') && !path.split('/').includes('node_modules'));
 }

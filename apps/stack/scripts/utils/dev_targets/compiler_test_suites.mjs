@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { posix, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveVitestForwardArgs } from '../../../../../scripts/testing/vitestForwardArgs.mjs';
-import { waitForDependencyRefresh } from '../proc/dependency_refresh.mjs';
+import { withDependencyConsumption } from '../proc/dependency_refresh.mjs';
 
 // Evidence-backed compiler consumers shared by both command dispatchers.
 export const COMPILER_NATIVE_TEST_FILES = Object.freeze([
@@ -101,17 +101,18 @@ async function readVitestFileFilters(facts, env) {
     args = resolveVitestForwardArgs(['node', facts.entry, ...args]);
   }
   if (!args.length) return [];
-  await waitForDependencyRefresh({ installDir: fileURLToPath(new URL('../../../../../', import.meta.url)), env });
-  // Preserve ESM loading: the source-runtime loader cannot require Vitest's
-  // import-only dependency graph. Resolution follows the installer's wait.
-  const { parseCLI } = await import(pathToFileURL(requireVitest.resolve('vitest/node')).href);
-  // Vitest owns option parsing: option values are never file selections.
-  try {
-    const { filter } = parseCLI(['vitest', ...(args[0] === 'run' ? args : ['run', ...args])]);
-    return filter.map(value => String(value).replaceAll('\\', '/').replace(/:\d+(?::\d+)?$/u, ''));
-  } catch {
-    // Failed inspection cannot earn a smaller reservation. Let Vitest report
-    // invalid options when the actual command runs.
-    return [];
-  }
+  return await withDependencyConsumption({ installDir: fileURLToPath(new URL('../../../../../', import.meta.url)), env }, async () => {
+    // Preserve ESM loading: the source-runtime loader cannot require Vitest's
+    // import-only dependency graph. Hold consumption through module evaluation.
+    const { parseCLI } = await import(pathToFileURL(requireVitest.resolve('vitest/node')).href);
+    // Vitest owns option parsing: option values are never file selections.
+    try {
+      const { filter } = parseCLI(['vitest', ...(args[0] === 'run' ? args : ['run', ...args])]);
+      return filter.map(value => String(value).replaceAll('\\', '/').replace(/:\d+(?::\d+)?$/u, ''));
+    } catch {
+      // Failed inspection cannot earn a smaller reservation. Let Vitest report
+      // invalid options when the actual command runs.
+      return [];
+    }
+  });
 }

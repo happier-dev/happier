@@ -30,23 +30,24 @@ async function fixtureFor(t) {
   return { fixture, copy, env };
 }
 
-function launch(t, { copy, env }, mode, args) {
+function launch(t, { fixture, copy, env }, mode, args) {
   const source = `
     import { registerHooks } from 'node:module';
-    let vitestLoads = 0;
+    const { callerHoldsDependencyConsumption } = await import(${JSON.stringify(new URL('../proc/dependency_refresh.mjs', owner).href)});
+    let vitestLoads = 0, vitestProtected = false;
     const copy = ${JSON.stringify(pathToFileURL(copy).href)};
     registerHooks({ resolve(specifier, context, next) {
       if (specifier.endsWith('/compiler_test_suites.mjs')) return next(copy, context);
       if (context.parentURL === copy && specifier.startsWith('.')) {
         return next(new URL(specifier, ${JSON.stringify(owner.href)}).href, context);
       }
-      if (specifier === 'vitest/node') vitestLoads++;
+      if (specifier === 'vitest/node') { vitestLoads++; vitestProtected = callerHoldsDependencyConsumption({ installDir: ${JSON.stringify(fixture.root)}, env: process.env }); }
       return next(specifier, context);
     } });
     const { runRemoteCommandPolicyCli } = await import(${JSON.stringify(policyOwner)});
     const code = await runRemoteCommandPolicyCli([${JSON.stringify(mode)}, ${JSON.stringify(repo)},
       ${JSON.stringify(join(repo, 'packages/plugin-sdk'))}, ...${JSON.stringify(args)}]);
-    process.send({ code, vitestLoads });
+    process.send({ code, vitestLoads, vitestProtected });
     process.exitCode = code;
     process.disconnect();
   `;
@@ -94,6 +95,7 @@ for (const mode of ['--vitest-policy', '--package-policy']) {
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /policy_heavyClass='validation'/);
     assert.equal(result.result.vitestLoads, 1);
+    assert.equal(result.result.vitestProtected, true, 'Vitest evaluation must exclude a new dependency writer');
   });
 }
 
