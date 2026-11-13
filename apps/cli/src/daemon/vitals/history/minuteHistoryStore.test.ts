@@ -21,7 +21,7 @@ describe('minute history store', () => {
     roots.push(directory);
     const now = Date.UTC(2026, 9, 10, 12);
     const store = await createMinuteHistoryStore({ directory, nowMs: () => now });
-    const first = minute(now - 240_000);
+    const first = { ...minute(now - 240_000), services: [{ serviceId: 'instance/web', cpuPercent: 150, memoryBytes: 1024 }] };
     expect(await store.append(first)).toBe(true);
     const file = join(directory, 'minutes-2026-10-10.jsonl');
     const beforeAlert = await readFile(file, 'utf8');

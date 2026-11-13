@@ -165,6 +165,12 @@ describe('Machine vitals Machine admission', () => {
         if (!watch || typeof watch !== 'object' || !('samples' in watch) || !Array.isArray(watch.samples)) throw new Error('Missing watch samples');
         expect(watch.samples[0]).toBe(sample);
     });
+    it('refuses a filtered service read without the service disclosure owner', async () => {
+        const { handlers } = await setup();
+        await expect(handlers.get(RPC_METHODS.MACHINES_VITALS_HISTORY_GET)!(
+            { machineId: 'm', range: '1h', serviceId: 'private' }, context('recipient', 'use')))
+            .rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
+    });
     it('admits custodians and Use recipients to content-free machine facts', async () => {
         const { handlers } = await setup();
         for (const admitted of [context('owner', 'manage'), context('recipient', 'use')]) {
@@ -250,17 +256,17 @@ describe('Machine vitals Machine admission', () => {
         expect(reads).toHaveLength(1);
         expect(reads[0]).toMatchObject({ sampledAt: initialTime + 60_000, intervalMs: 2_000, overviewExtras: true });
     });
-    it('keeps the five-minute wire series continuous at the minute cadence for summary demand', async () => {
+    it('keeps the five-minute wire series continuous at the summary cadence for summary demand', async () => {
         const { sampler, handlers } = await sampledSetup();
         const release = sampler.demand('summary');
         try {
-            for (let minute = 0; minute < 3; minute++) await advance(sampler, 60_000);
+            for (let tick = 0; tick < 12; tick++) await advance(sampler, 15_000);
             const snapshot = MachineVitalsSnapshotV1Schema.parse(await handlers.get(RPC_METHODS.MACHINES_VITALS_GET)!(
                 { machineId: 'm', view: 'summary' }, context('recipient', 'use')));
-            expect(sampler.samplesSince(initialTime - 1).map(sample => sample.intervalMs)).toEqual(Array(4).fill(60_000));
+            expect(sampler.samplesSince(initialTime - 1).map(sample => sample.intervalMs)).toEqual([60_000, ...Array(12).fill(15_000)]);
             for (const points of Object.values(snapshot.series5m)) {
                 const live = points.filter(point => point.t >= initialTime);
-                expect(live.map(point => point.t)).toEqual(Array.from({ length: 4 }, (_, index) => initialTime + index * 60_000));
+                expect(live.map(point => point.t)).toEqual(Array.from({ length: 13 }, (_, index) => initialTime + index * 15_000));
                 expect(live.every(point => point.y !== null)).toBe(true);
             }
         } finally { release(); }
@@ -287,10 +293,12 @@ describe('Machine vitals Machine admission', () => {
         const pending = handlers.get(RPC_METHODS.DAEMON_VITALS_WATCH)!({ machineId: 'm', view: 'summary', sinceSampledAt: initialTime }, context('recipient', 'use', async () => valid));
         await advance(sampler, 0);
         valid = false;
-        await advance(sampler, 60_000);
+        await advance(sampler, 15_000);
         expect(await pending).toMatchObject({ changed: true });
-        await advance(sampler, 61_000);
-        expect(reads.at(-1)?.sampledAt).toBe(initialTime + 60_000);
+        await advance(sampler, 45_000);
+        expect(reads.at(-1)?.sampledAt).toBe(initialTime + 15_000);
+        await advance(sampler, 1000);
+        expect(reads.at(-1)?.sampledAt).toBe(initialTime + 15_000);
     });
     it('releases cadence and extras demand when the RPC transport cancels a parked watch', async () => {
         const { sampler, handlers, reads } = await sampledSetup(undefined, { mode: 'while_viewing' });

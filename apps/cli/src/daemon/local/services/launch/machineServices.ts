@@ -1,3 +1,4 @@
+import type { MachineServiceUsageV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsHistoryV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
@@ -47,7 +48,7 @@ export function createMachineServicesRuntime(input: Readonly<{
     readMetadata(): MachineMetadataFieldReadV1;
     captureMetadataPort(): MachineMetadataFieldPortV1;
     restoreEnvironmentServices?(owner: ResolvedExecutablePluginRuntimeRegistry['projectManagedServices'], signal: AbortSignal): Promise<void>;
-}>): Readonly<{ execute(request: Invocation): Promise<MachineServiceActionOutput | ActionExecuteFailure>; reconcile(): Promise<void>; ensureEnvironmentServices(): Promise<void>; dispose(): Promise<void> }> {
+}>): Readonly<{ execute(request: Invocation): Promise<MachineServiceActionOutput | ActionExecuteFailure>; sampleUsage(): Promise<readonly MachineServiceUsageV1[]>; canReadHistory(serviceId: string, request: MachineServiceDisclosureRequest): Promise<boolean>; reconcile(): Promise<void>; ensureEnvironmentServices(): Promise<void>; dispose(): Promise<void> }> {
     let disposed = false;
     const rows = createMachineServiceRowProjection(revision);
     const lifetime = new AbortController();
@@ -175,7 +176,8 @@ export function createMachineServicesRuntime(input: Readonly<{
         try { await pending; }
         finally { if (reconciliation === pending) reconciliation = undefined; }
     }
-    async function projectServices(request: Invocation, serviceId?: string, selection: ServiceSelection = {}): Promise<Readonly<{
+    async function projectServices(request: MachineServiceDisclosureRequest & { actionId?: string; signal?: AbortSignal;
+        context?: MachineServiceDisclosureRequest['context'] & { machineServicesListResource?: unknown } }, serviceId?: string, selection: ServiceSelection = {}): Promise<Readonly<{
         rows: MachineServiceRowV1[]; handles: ServiceHandle[];
     }>> {
         const { environmentId } = selection;
@@ -206,7 +208,7 @@ export function createMachineServicesRuntime(input: Readonly<{
                     && (!selection.preflight || matchesPreflight(owner.machineServiceRows.read(handle)))), request, serviceId));
             const readRow = async (handle: ServiceHandle) => {
                 // Explicit list demand samples accounting; Resource snapshots project retained facts.
-                if (!selection.preflight && request.actionId === 'machines.services.list' && !request.context.machineServicesListResource && handle.readAccounting) {
+                if (!selection.preflight && request.actionId === 'machines.services.list' && !request.context?.machineServicesListResource && handle.readAccounting) {
                     await accounting(handle, request.signal);
                 }
                 return owner.machineServiceRows.read(handle);
@@ -477,7 +479,35 @@ export function createMachineServicesRuntime(input: Readonly<{
             await owner.restoreEnvironmentServices(target, () => input.restoreEnvironmentServices!(owner, lifetime.signal), lifetime.signal);
         } finally { await lease.release(); }
     }
-    return { execute, reconcile, ensureEnvironmentServices, async dispose() {
+    // History consumes admitted handles only: no restore, discovery, or second sampling clock.
+    async function sampleUsage(): Promise<readonly MachineServiceUsageV1[]> {
+        if (disposed) return [];
+        const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+        if (!lease) return [];
+        try {
+            const owner = lease.registry.projectManagedServices;
+            const projects: ProjectManagedServiceHandle[] = [];
+            for (const handle of owner.listProjectServices()) {
+                const authority = handle.kind === 'workspace' ? handle.workspace : handle;
+                if (authority.machineId === target.machineId && await isServerProfileHomeIdentity(target.serverId, authority.serverId)) projects.push(handle);
+            }
+            const handles: ServiceHandle[] = [...projects, ...owner.listMachineServices().filter(exact)];
+            return await Promise.all(handles.filter(handle => handle.isCurrent() && !handle.retirementSignal.aborted).map(async handle => {
+                const result = await accounting(handle, lifetime.signal);
+                const samples = result.kind === 'sample' ? result.samples : [];
+                const sumKnown = (values: readonly (number | null)[]) => values.length && values.every(value => value !== null)
+                    ? values.reduce<number>((sum, value) => sum + (value ?? 0), 0) : null;
+                return { serviceId: handle.serviceId, cpuPercent: sumKnown(samples.map(sample => sample.cpuPercent)),
+                    memoryBytes: sumKnown(samples.map(sample => sample.memoryBytes)) };
+            }));
+        } finally { await lease.release(); }
+    }
+    async function canReadHistory(serviceId: string, request: MachineServiceDisclosureRequest): Promise<boolean> {
+        if (disposed) return false;
+        const projection = await projectServices(request, serviceId);
+        return projection.rows.some(row => row.serviceId === serviceId);
+    }
+    return { execute, reconcile, ensureEnvironmentServices, sampleUsage, canReadHistory, async dispose() {
         if (disposed) return;
         disposed = true;
         lifetime.abort('Machine service observations detached');

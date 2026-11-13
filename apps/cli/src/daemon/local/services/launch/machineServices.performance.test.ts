@@ -15,6 +15,11 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import type { ProjectNativeRuntimeFacts } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import { createDeploymentSourceMaterializationPort } from '@/deployments/targets/ownServer/exactCommitRelease';
 import { createScmBackendRegistry } from '@/scm/registry';
+import { createMinuteHistoryStore } from '@/daemon/vitals/history/minuteHistoryStore';
+import { createMachineVitalsSampler } from '@/daemon/vitals/createMachineVitalsSampler';
+import { createLinuxMachineVitalsReader } from '@/daemon/vitals/readers/linux';
+import { registerDaemonMachineVitalsRpcHandlers } from '@/rpc/handlers/daemonMachineVitals';
+import type { RpcHandlerMap, RpcHandlerContext } from '@/api/rpc/types';
 import { createMachineServicesRuntime } from './machineServices';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { publishServerHttpRuntimeOrigin } from '@/api/client/serverHttpBaseUrl';
@@ -143,6 +148,41 @@ describe('Machine Services exact demand cost', () => {
                 ]) });
             expect(listReads()).toBe(baseline + 3);
             expect(accountingSamples).toBe(2);
+            // History owns one accounting read per admitted service at its existing minute boundary.
+            expect(await runtime.sampleUsage()).toEqual([
+                { serviceId: 'instance/web', cpuPercent: null, memoryBytes: 256 },
+                { serviceId: 'instance/worker', cpuPercent: null, memoryBytes: 256 },
+            ]);
+            expect(accountingSamples).toBe(4);
+            expect(listReads()).toBe(baseline + 3);
+            // These callbacks are the Account HTTP access-read boundary used by disclosure.
+            expect(await runtime.canReadHistory('instance/web', { requesterAccountId: accountId,
+                canReadEnvironments: async () => new Set(['environment']) })).toBe(true);
+            expect(await runtime.canReadHistory('instance/web', { requesterAccountId: 'other',
+                canReadEnvironments: async () => new Set() })).toBe(false);
+            expect(await runtime.canReadHistory('missing', { requesterAccountId: accountId })).toBe(false);
+            expect(accountingSamples).toBe(4);
+            const historyStore = await createMinuteHistoryStore({ directory: join(fixture.happyHomeDir, 'vitals') });
+            const sampler = createMachineVitalsSampler({ historyStore, readers: createLinuxMachineVitalsReader({ root: fixture.happyHomeDir }) });
+            const routes: RpcHandlerMap = new Map();
+            let readable = true;
+            registerDaemonMachineVitalsRpcHandlers({ registerHandler: (method, handler) => { routes.set(method, handler); } }, {
+                sampler, target: () => ({ ...target, installationId: 'installation', custodianAccountId: 'owner' }),
+                canReadServiceHistory: (serviceId, ingress) => runtime.canReadHistory(serviceId, {
+                    requesterAccountId: ingress.machineAdmission?.actorAccountId,
+                    canReadEnvironments: async () => new Set(readable ? ['environment'] : []),
+                }),
+            });
+            const historyIngress: RpcHandlerContext = { signal: new AbortController().signal, machineAdmission: {
+                ...target, installationId: 'installation', custodianAccountId: 'owner', actorAccountId: accountId, role: 'use', encryptionMode: 'plain',
+            } };
+            const readHistory = routes.get(RPC_METHODS.MACHINES_VITALS_HISTORY_GET)!;
+            expect(await readHistory({ ...target, range: '24h', serviceId: 'instance/web' }, historyIngress))
+                .toMatchObject({ service: { serviceId: 'instance/web', points: expect.any(Array) } });
+            readable = false;
+            await expect(readHistory({ ...target, range: '24h', serviceId: 'instance/web' }, historyIngress))
+                .rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
+            expect(accountingSamples).toBe(4);
         } finally {
             await close(request, ingress); await account.dispose(); await channel.close();
             actions.mockRestore(); accessHttp.mockRestore(); currentnessHttp.mockRestore(); releaseHome();

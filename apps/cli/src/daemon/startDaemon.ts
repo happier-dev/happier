@@ -847,6 +847,7 @@ export async function startDaemon(
     machineVitals = createMachineVitalsSampler({
       readers: createMachineVitalsReader({ signal: homeTransportCancellation.signal }),
       historyStore: machineVitalsHistory,
+      readServiceUsage: async () => apiMachine?.sampleMachineServiceUsage() ?? [],
       readPolicy: () => {
         const snapshot = machineResourcesPolicy?.read();
         return snapshot?.status === 'ready' ? snapshot.policy : null;
@@ -2509,6 +2510,7 @@ export async function startDaemon(
       stopSession,
       stopRequesterSessionForHandoff,
       isSessionAlreadyRunning,
+      isSessionRespawnPending,
       sessionRunnerStatus,
       restartStaleSessionRunnersAfterDaemonStart,
       hasPendingRunnerRestarts: readPendingRunnerRestarts,
@@ -4218,6 +4220,7 @@ export async function startDaemon(
         installExternalSessionHostOperations,
         readMaterializedStateObservationBinding,
         isSessionAlreadyRunning,
+        isSessionRespawnPending,
         loadLocalSessionMetadataForHandoff,
         resolveHostedSessionWorkingDirectory,
         beforeShutdown,

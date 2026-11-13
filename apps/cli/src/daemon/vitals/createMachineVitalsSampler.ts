@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { MachineVitalsHistoryV1, MachineVitalsHostFactsV1, MachineVitalsMinuteRecordV1, MachineVitalsSampleV1 } from '@happier-dev/protocol';
 import { effectiveMachineMemoryPressureV1 } from '@happier-dev/protocol/machines/vitals/effectiveMachineMemoryPressureV1';
 import { MachineResourcesPolicyV1Schema, type MachineResourcesPolicyV1 } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
-import type { MachineVitalsHistoryPointV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsHistoryV1';
+import type { MachineServiceUsageV1, MachineVitalsHistoryPointV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsHistoryV1';
 
 import { logger } from '@/ui/logger';
 
@@ -22,6 +22,7 @@ type SampleEvent = Readonly<{ sample: MachineVitalsSampleV1; minute?: MachineVit
 export type MachineVitalsSamplerState = { state: 'reporting' } | Extract<MachineVitalsReaderResult, { state: 'unavailable' }>;
 export interface MachineVitalsSamplerOptions {
     readers: MachineVitalsReader;
+    readServiceUsage?: () => Promise<readonly MachineServiceUsageV1[]>;
     historyStore: MinuteHistoryStore;
     nowMs?: () => number;
     monotonicMs?: () => number;
@@ -46,7 +47,7 @@ export interface MachineVitalsSampler {
     demandOverview(): () => void;
     minutes(sinceMs: number): readonly MachineVitalsMinuteRecordV1[];
     samplesSince(cursor: number, view?: 'summary' | 'overview'): readonly MachineVitalsSampleV1[];
-    history(range: MachineVitalsHistoryV1['range']): MachineVitalsHistoryV1;
+    history(range: MachineVitalsHistoryV1['range'], serviceId?: string): MachineVitalsHistoryV1;
 }
 
 export function createMachineVitalsSampler(input: MachineVitalsSamplerOptions): MachineVitalsSampler {
@@ -90,12 +91,12 @@ export function createMachineVitalsSampler(input: MachineVitalsSamplerOptions): 
     };
     const selectedInterval = () => readPolicy()?.monitoring.intervalMs ?? MACHINE_VITALS_LIVE_INTERVAL_MS;
     const helperFailing = () => currentState.state === 'unavailable' && currentState.reason === 'helper_failing';
-    // The minute history needs one read per wall-clock minute boundary, so a Machine
-    // nobody is watching live reads exactly that often; the selected interval applies
-    // only while a Live or Overview viewer holds demand, and can never skip a boundary.
-    const followsMinuteBoundaries = () => lives + overviews === 0 || selectedInterval() >= MINUTE_MS;
+    // Three cadences. Nothing visible: one read per wall-clock minute boundary, exactly what the
+    // minute history needs. A visible summary: every 15 s on wall-clock quarter-minutes, which
+    // include every minute boundary. A Live or Overview viewer: the selected interval.
+    const fastViewer = () => lives + overviews > 0 && selectedInterval() < MINUTE_MS;
     const cadence = () => helperFailing() ? Math.max(MINUTE_MS, selectedInterval())
-        : followsMinuteBoundaries() ? MINUTE_MS : selectedInterval();
+        : fastViewer() ? selectedInterval() : summaries > 0 ? SUMMARY_MS : MINUTE_MS;
 
     const changeState = (state: MachineVitalsSamplerState) => {
         if (state.state === currentState.state && (state.state === 'reporting'
@@ -111,11 +112,11 @@ export function createMachineVitalsSampler(input: MachineVitalsSamplerOptions): 
         const monotonicNow = monotonicMs();
         const interval = cadence();
         let due = lastReadStartedAt === null ? monotonicNow : lastReadStartedAt + interval;
-        if (lastReadStartedAt !== null && !helperFailing() && followsMinuteBoundaries()) {
-            // Measured from the last read, so a read overrunning a boundary cannot skip the next one.
-            // The prior read's own interval lets a departing viewer's last sample settle before it goes stale.
-            const boundaryDelay = (Math.floor(lastReadSampledAt / MINUTE_MS) + 1) * MINUTE_MS - nowMs();
-            due = Math.min(lastReadStartedAt + lastReadIntervalMs, monotonicNow + Math.min(MINUTE_MS, Math.max(0, boundaryDelay)));
+        if (lastReadStartedAt !== null && !helperFailing() && !fastViewer()) {
+            // Wall-clock aligned and measured from the last read, so a read overrunning a boundary cannot
+            // skip the next one. The prior read's own interval lets a departing viewer's sample settle.
+            const boundaryDelay = (Math.floor(lastReadSampledAt / interval) + 1) * interval - nowMs();
+            due = Math.min(lastReadStartedAt + lastReadIntervalMs, monotonicNow + Math.min(interval, Math.max(0, boundaryDelay)));
         }
         timer = setTimeoutFn(() => {
             timer = null;
@@ -229,6 +230,11 @@ export function createMachineVitalsSampler(input: MachineVitalsSamplerOptions): 
                 bucket.push(point);
                 if (isBoundary) {
                     const record = minuteRecord(observedBoundary, result.minuteCounters);
+                    if (input.readServiceUsage) {
+                        try { record.services = [...await input.readServiceUsage()]; }
+                        catch (error) { onError(error); }
+                    }
+                    if (!samplingAllowed()) return;
                     if (await input.historyStore.append(record)) minute = record;
                     bucket = [];
                 }
@@ -314,7 +320,7 @@ export function createMachineVitalsSampler(input: MachineVitalsSamplerOptions): 
                 return true;
             }).map(point => point.sample);
         },
-        history: (range: MachineVitalsHistoryV1['range']) => {
+        history: (range: MachineVitalsHistoryV1['range'], serviceId?: string) => {
             const now = nowMs();
             const livePoints: MachineVitalsHistoryPointV1[] = ring.map(({ sample: point }) => ({
                 t: point.sampledAt, cpu: point.cpu.reported ? point.cpu.busyPct : null,
@@ -328,7 +334,7 @@ export function createMachineVitalsSampler(input: MachineVitalsSamplerOptions): 
                 ...(point.network.reported && point.network.rxBps !== null ? { rxObservedMs: point.intervalMs } : {}),
                 ...(point.network.reported && point.network.txBps !== null ? { txObservedMs: point.intervalMs } : {}),
             }));
-            return downsampleMachineVitalsHistory({ records: input.historyStore.minutes(now - 7 * 24 * HOUR_MS), range, now, livePoints });
+            return downsampleMachineVitalsHistory({ records: input.historyStore.minutes(now - 7 * 24 * HOUR_MS), range, now, livePoints, serviceId });
         },
     };
 }

@@ -7,6 +7,23 @@ const minute = (t: number, cpu = 10): MachineVitalsMinuteRecordV1 => ({ t, cpu, 
   mem: cpu * 10, memMax: cpu * 20, lvl: 'calm', swp: null, rx: cpu, tx: cpu * 2 });
 
 describe('machine vitals downsampling', () => {
+  it.each(['1h', '24h', '7d'] as const)('selects only the requested service and preserves unknowns and spikes (%s)', range => {
+    const now = Date.UTC(2026, 9, 10, 12);
+    const records = [1, 2].map(i => ({ ...minute(now - (2 - i) * 60_000), services: [
+      { serviceId: 'web', cpuPercent: i === 1 ? 150 : null, memoryBytes: i * 1024 },
+      { serviceId: 'private', cpuPercent: 99, memoryBytes: 9999 },
+    ] }));
+    const history = downsampleMachineVitalsHistory({ range, now, records, serviceId: 'web' });
+    expect(MachineVitalsHistoryV1Schema.parse(history).service).toEqual(history.service);
+    const points = history.service!.points.filter(point => point !== null);
+    expect(points.at(-1)).toMatchObject(range === '1h'
+      ? { cpuPercent: null, cpuMaxPercent: null, memoryBytes: 2048, memoryMaxBytes: 2048 }
+      : { cpuPercent: 150, cpuMaxPercent: 150, memoryBytes: 1536, memoryMaxBytes: 2048 });
+    expect(JSON.stringify(history)).not.toContain('private');
+    expect(downsampleMachineVitalsHistory({ range, now, records }).service).toBeUndefined();
+    expect(JSON.stringify(downsampleMachineVitalsHistory({ range, now, records }))).not.toContain('services');
+    expect(downsampleMachineVitalsHistory({ range, now, records, serviceId: 'missing' }).service!.points.every(point => point === null)).toBe(true);
+  });
   it.each(['24h', '7d'] as const)('preserves measured network coverage in partial, interrupted and complete %s buckets', (range) => {
     const bucketMs = range === '24h' ? 300_000 : 1_800_000;
     const start = Date.UTC(2026, 9, 10, 12);

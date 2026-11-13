@@ -1,5 +1,5 @@
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { freemem, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,6 +16,9 @@ import { MachineVitalsHistoryV1Schema, MachineVitalsMinuteRecordV1Schema } from 
 import { MachineResourcesPolicyV1Schema } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
 import { createMachineResourcesPolicyRuntime } from '../resources/machineResourcesPolicy';
 import { createMachineResourceSummary } from '../resources/machineResourceSummary';
+
+// Native OS memory boundary; sampler, reader and accounting remain real.
+vi.mock('node:os', async importOriginal => ({ ...await importOriginal<typeof import('node:os')>(), freemem: vi.fn() }));
 
 interface CounterFixture {
     busy: number;
@@ -86,6 +89,25 @@ describe('createMachineVitalsSampler', () => {
         const historyStore = await createMinuteHistoryStore({ directory: join(directory, 'history'), nowMs: () => Date.now() });
         return createMachineVitalsSampler({ readers: reader, historyStore, monotonicMs: () => Date.now() - initialTime, ...options });
     }
+
+    it('samples service accounting only on the existing minute clock, never on history reads', async () => {
+        await writeCounters({ mem: 100 });
+        let reads = 0;
+        const sampler = await setup({ readServiceUsage: async () => {
+            // OS fixture boundary: production reads native adapter accounting.
+            reads++;
+            const fixture = JSON.parse(await readFile(fixturePath, 'utf8')) as CounterFixture;
+            return [{ serviceId: 'web', cpuPercent: 150, memoryBytes: fixture.mem }];
+        } });
+        try {
+            await sampler.start();
+            for (let i = 0; i < 2; i++) { await vi.advanceTimersByTimeAsync(60_000); await sampler.start(); }
+            expect(reads).toBe(2);
+            expect(sampler.history('1h', 'web').service!.points.filter(point => point !== null)).toHaveLength(2);
+            sampler.history('24h', 'web');
+            expect(reads).toBe(2);
+        } finally { await sampler.stop(); }
+    });
 
     it('keeps publishing and streaming samples in monotonic order when the wall clock steps backwards', async () => {
         await writeCounters({ mem: 100 });
@@ -195,7 +217,7 @@ describe('createMachineVitalsSampler', () => {
         let releaseOverview = () => {};
         try {
             await sampler.start();
-            expect(reads[0]?.intervalMs).toBe(60_000);
+            expect(reads[0]?.intervalMs).toBe(15_000);
             await vi.advanceTimersByTimeAsync(2_000); await sampler.start();
             expect(reads).toHaveLength(1);
             releaseOverview = sampler.demandOverview();
@@ -313,6 +335,7 @@ describe('createMachineVitalsSampler', () => {
 
     it.each(['idle', 'summary', 'processes', 'guard', 'overview', 'on_power', 'scheduled_scan', 'manual_scan', 'scan_disabled'] as const)('enforces the Darwin %s tool spawn budget', async (view) => {
         let usedBytes = 80_000;
+        vi.mocked(freemem).mockImplementation(() => 100_000 - usedBytes);
         let wiredPages = 1;
         const execFile = vi.fn<ProcessCustodyExecFile>().mockImplementation(async (command) => ({ stdout: command === '/helper'
             ? JSON.stringify({ v: 1, t: 'vitals-sample', sample: {
@@ -746,15 +769,35 @@ describe('createMachineVitalsSampler', () => {
             } finally { await sampler.stop(); }
         });
 
-        it('does not sample faster for a summary-only watch', async () => {
+        it('reads every 15 s on quarter-minutes for a visible summary, 2 s with a Live viewer too, and back to the minute when it leaves', async () => {
             await writeCounters();
             const reads: MachineVitalsReaderInput[] = [];
             const sampler = await setup({}, undefined, input => reads.push(input));
             try {
                 await sampler.start();
-                const release = sampler.demand('summary');
+                const releaseSummary = sampler.demand('summary');
+                expect(await readCount(sampler, reads, MINUTE)).toBe(4);
+                expect(reads.slice(1).map(read => [read.sampledAt - initialTime, read.intervalMs]))
+                    .toEqual([[15_000, 15_000], [30_000, 15_000], [45_000, 15_000], [60_000, 15_000]]);
+                const releaseLive = sampler.demand('live');
+                await advance(sampler, 0);
+                expect(await readCount(sampler, reads, 10_000)).toBe(5);
+                expect(reads.at(-1)).toMatchObject({ intervalMs: 2_000 });
+                releaseLive();
+                // Live leaves first: one settling read, then summary quarter-minutes again.
+                expect(await readCount(sampler, reads, 2_000)).toBe(1);
+                await advance(sampler, 15_000 - (Date.now() - initialTime) % 15_000);
+                expect(reads.at(-1)).toMatchObject({ intervalMs: 15_000 });
+                expect((reads.at(-1)!.sampledAt - initialTime) % 15_000).toBe(0);
+                expect(await readCount(sampler, reads, 30_000)).toBe(2);
+                releaseSummary();
+                // Nothing visible: a settling read, then minute boundaries only.
+                const atRelease = Date.now();
+                await advance(sampler, MINUTE - (atRelease - initialTime) % MINUTE);
                 expect(await readCount(sampler, reads, 2 * MINUTE)).toBe(2);
-                release();
+                expect(reads.slice(-2).map(read => [(read.sampledAt - initialTime) % MINUTE, read.intervalMs])).toEqual([[0, MINUTE], [0, MINUTE]]);
+                const end = Math.floor((Date.now() - initialTime) / MINUTE);
+                expectNoHistoryGaps(sampler, 1, end);
             } finally { await sampler.stop(); }
         });
 

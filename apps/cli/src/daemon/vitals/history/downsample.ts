@@ -1,9 +1,15 @@
 import type { MachineVitalsHistoryPointV1, MachineVitalsHistoryV1, MachineVitalsMinuteRecordV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsHistoryV1';
 
+function withoutServices(record: MachineVitalsMinuteRecordV1): MachineVitalsMinuteRecordV1 {
+  const { services: _services, ...machine } = record;
+  return machine;
+}
+
 export function downsampleMachineVitalsHistory(input: Readonly<{
   records: readonly MachineVitalsMinuteRecordV1[];
   range: MachineVitalsHistoryV1['range'];
   now: number;
+  serviceId?: string;
   livePoints?: readonly MachineVitalsHistoryPointV1[];
 }>): MachineVitalsHistoryV1 {
   const minuteMs = 60_000;
@@ -48,7 +54,8 @@ export function downsampleMachineVitalsHistory(input: Readonly<{
     points = [];
     const byTime = new Map(input.records.map((record) => [record.t, record]));
     for (let at = start + minuteMs; at <= firstLiveMinute && (!live.length || at < live[0].t); at += minuteMs) {
-      points.push(byTime.get(at) ?? null);
+      const record = byTime.get(at);
+      points.push(record ? withoutServices(record) : null);
     }
     let previous = firstLiveMinute;
     for (const point of live) {
@@ -65,5 +72,15 @@ export function downsampleMachineVitalsHistory(input: Readonly<{
   const today = input.records.filter((record) => record.t > todayStart && record.t <= input.now)
     .reduce((totals, record) => ({ rxBytes: totals.rxBytes + (record.rx ?? 0), txBytes: totals.txBytes + (record.tx ?? 0) }),
       { rxBytes: 0, txBytes: 0 });
-  return { range: input.range, bucketMs, points, today };
+  const service = input.serviceId === undefined ? undefined : {
+    serviceId: input.serviceId,
+    points: buckets.map((records, index) => {
+        const samples = records.flatMap(record => record.services?.filter(sample => sample.serviceId === input.serviceId) ?? []);
+        if (!samples.length) return null;
+        return { t: start + index * bucketMs,
+          cpuPercent: mean(samples.map(sample => sample.cpuPercent)), cpuMaxPercent: max(samples.map(sample => sample.cpuPercent)),
+          memoryBytes: mean(samples.map(sample => sample.memoryBytes)), memoryMaxBytes: max(samples.map(sample => sample.memoryBytes)) };
+      }),
+  };
+  return { range: input.range, bucketMs, points, today, ...(service ? { service } : {}) };
 }

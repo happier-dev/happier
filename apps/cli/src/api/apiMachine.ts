@@ -3090,8 +3090,22 @@ export class ApiMachineClient {
         return await this.machineRebootAction(request);
     }
 
+    async sampleMachineServiceUsage() {
+        return this.getMachineServicesBinding().sampleUsage();
+    }
+
     registerMachineVitalsRoutes(options: DaemonMachineVitalsRoutes): void {
-        registerDaemonMachineVitalsRpcHandlers(this.rpcHandlerManager, options);
+        registerDaemonMachineVitalsRpcHandlers(this.rpcHandlerManager, { ...options,
+            canReadServiceHistory: (serviceId, ingress) => this.getMachineServicesBinding().canReadHistory(serviceId, {
+                requesterAccountId: ingress.machineAdmission?.actorAccountId,
+                context: ingress.localActionContext,
+                canReadEnvironments: async environmentIds => {
+                    const visible = await Promise.all(environmentIds.map(async environmentId =>
+                        await this.canReadMachineServiceEnvironment({ serverId: this.machineRuntimeServerId, environmentId }, ingress) ? environmentId : null));
+                    return new Set(visible.filter((id): id is string => id !== null));
+                },
+            }),
+        });
     }
 
     registerDeploymentChildRoutes(daemonWorkSignal: AbortSignal,
@@ -3128,9 +3142,7 @@ export class ApiMachineClient {
         });
     }
 
-    registerMachineProcessesRoutes(options: DaemonProcessesRoutes): void {
-        registerDaemonProcessesRpcHandlers(this.rpcHandlerManager, { ...options,
-            readEnvironment: async (target, ingress) => {
+    private async canReadMachineServiceEnvironment(target: Readonly<{ serverId: string; environmentId: string }>, ingress: RpcHandlerContext): Promise<boolean> {
                 // Raw app/watch reads use the same admitted requester Account
                 // runtime as other private Machine reads, never a global bearer.
                 const runtime = await this.resolveOwnSessionRuntime(ingress);
@@ -3164,7 +3176,11 @@ export class ApiMachineClient {
                 }, { signal: ingress.signal, ...(authorization ? { externalActionExecutionAuthorization: authorization } : {}) }));
                 return opened.success && opened.data.ok && opened.data.environment.id === target.environmentId
                     && opened.data.environment.capabilities.read && await current();
-            },
+    }
+
+    registerMachineProcessesRoutes(options: DaemonProcessesRoutes): void {
+        registerDaemonProcessesRpcHandlers(this.rpcHandlerManager, { ...options,
+            readEnvironment: (target, ingress) => this.canReadMachineServiceEnvironment(target, ingress),
         });
     }
 

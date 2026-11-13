@@ -11,7 +11,7 @@ export const MachineVitalsGetInputV1Schema = lazyZodSchema(() => z.strictObject(
 }));
 export type MachineVitalsGetInputV1 = z.infer<typeof MachineVitalsGetInputV1Schema>;
 export const MachineVitalsHistoryGetInputV1Schema = lazyZodSchema(() => z.strictObject({
-    ...target(), range: z.enum(['1h', '24h', '7d']),
+    ...target(), range: z.enum(['1h', '24h', '7d']), serviceId: z.optional(z.string().check(z.minLength(1))),
 }));
 export type MachineVitalsHistoryGetInputV1 = z.infer<typeof MachineVitalsHistoryGetInputV1Schema>;
 export const MachineVitalsWatchInputV1Schema = lazyZodSchema(() => z.strictObject({

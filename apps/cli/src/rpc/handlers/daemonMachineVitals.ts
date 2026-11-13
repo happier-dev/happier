@@ -14,6 +14,7 @@ import { doesMachineRpcTargetMatchAdmission } from '@/api/machine/machineRpcAuth
 export type DaemonMachineVitalsRoutes = Readonly<{
     sampler: MachineVitalsSampler;
     target: () => Readonly<{ serverId: string; machineId: string; installationId: string; custodianAccountId: string }> | null;
+    canReadServiceHistory?: (serviceId: string, context: RpcHandlerContext) => Promise<boolean>;
     readAttention?: () => MachineResourceAttentionV1 | undefined;
 }>;
 
@@ -92,7 +93,12 @@ export function registerDaemonMachineVitalsRpcHandlers(rpc: RpcHandlerRegistrar,
     rpc.registerHandler(RPC_METHODS.MACHINES_VITALS_HISTORY_GET, async (raw: unknown, context) => {
         const request = MachineVitalsHistoryGetInputV1Schema.parse(raw);
         const assertLocal = bindAdmission(request, context);
-        try { return options.sampler.history(request.range); }
+        try {
+            if (request.serviceId !== undefined && (!context || !await options.canReadServiceHistory?.(request.serviceId, context))) {
+                throw new RpcError('Service access denied', RPC_ERROR_CODES.FORBIDDEN);
+            }
+            return options.sampler.history(request.range, request.serviceId);
+        }
         finally { await assertLocal(); }
     });
     rpc.registerHandler(RPC_METHODS.DAEMON_VITALS_WATCH, async (raw: unknown, context) => {

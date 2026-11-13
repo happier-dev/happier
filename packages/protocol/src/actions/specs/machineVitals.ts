@@ -54,7 +54,7 @@ function createMachineVitalsActionSpecs() {
     inputSchema: MACHINE_VITALS_ACTION_INPUT_SCHEMAS['machines.vitals.history.get'], outputSchema: MachineVitalsHistoryV1Schema,
     invocationServerIdForInput: actionInputServerId(MACHINE_VITALS_ACTION_INPUT_SCHEMAS['machines.vitals.history.get'], input => input.serverId),
     cli: { acceptsServerId: true, commands: [{ path: ['machines', 'vitals', 'history', 'get'], visibility: 'canonical' }] },
-    inputHints: { fields: [...fields, { path: 'range', title: 'History range', widget: 'select', required: true, options: [{ value: '1h', label: '1 hour' }, { value: '24h', label: '24 hours' }, { value: '7d', label: '7 days' }] }] },
+    inputHints: { fields: [...fields, { path: 'serviceId', title: 'Service ID', widget: 'text' }, { path: 'range', title: 'History range', widget: 'select', required: true, options: [{ value: '1h', label: '1 hour' }, { value: '24h', label: '24 hours' }, { value: '7d', label: '7 days' }] }] },
   },
   {
     ...read, id: 'machines.vitals.summaries.list', approval: {result: 'required'}, title: 'Read every machine at a glance',

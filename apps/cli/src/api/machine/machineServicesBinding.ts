@@ -62,6 +62,14 @@ export function createApiMachineServicesBinding(input: Readonly<{
             return !disposed && runtime ? runtime.execute(request)
                 : machineServiceAdmissionFailure(disposed ? 'service.runtime.closed' : 'service.home_identity');
         },
+        async sampleUsage() {
+            const runtime = await acquire();
+            return !disposed && runtime ? runtime.sampleUsage() : [];
+        },
+        async canReadHistory(...args: Parameters<NonNullable<Awaited<ReturnType<typeof acquire>>>['canReadHistory']>) {
+            const runtime = await acquire();
+            return !disposed && runtime ? runtime.canReadHistory(...args) : false;
+        },
         async ensureEnvironmentServices() {
             const runtime = await acquire();
             if (disposed || !runtime) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
