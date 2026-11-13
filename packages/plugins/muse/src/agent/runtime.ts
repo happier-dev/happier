@@ -266,10 +266,12 @@ async function openMuseConversation<SessionId extends string | undefined>(
       if (native.sessionId !== nativeSessionId) throw new PluginError({ code: 'PLUGIN_EXEC_PROTOCOL_ERROR',
         message: 'Muse returned a different native Session identity during fork configuration.' });
     }
-    let currentProfile = explicitPermissions || request.kind === 'create'
-      ? permissions.permissionProfile : readMuseRecord(native.permissionState).profileId;
-    let currentApproval = request.kind === 'create' ? permissions.approvalMode
-      : readMuseRecord(native.approvalMode).mode;
+    const nativeProfile = readMuseRecord(native.permissionState).profileId;
+    let currentProfile: string | undefined = explicitPermissions || request.kind === 'create'
+      ? permissions.permissionProfile : typeof nativeProfile === 'string' ? nativeProfile : undefined;
+    const nativeApproval = readMuseRecord(native.approvalMode).mode;
+    let currentApproval: string | undefined = request.kind === 'create' ? permissions.approvalMode
+      : typeof nativeApproval === 'string' ? nativeApproval : undefined;
     const applyPermissions = async (configuration: Pick<AgentSessionConfigurationUpdate, 'permissionIntent' | 'workspaceWrites'>,
       options?: { signal?: AbortSignal }) => {
       if (configuration.permissionIntent.value === null && configuration.workspaceWrites !== 'deny') {
@@ -320,12 +322,13 @@ async function openMuseConversation<SessionId extends string | undefined>(
         return { status: 'applied' as const, changed: ['permissionIntent' as const] };
       } catch (error) {
         const failure = classifyJsonRpcSubmissionFailure(error, { method, effectObserved: false });
-        const data = readMuseRecord(error instanceof Error && 'data' in error ? error.data : undefined);
+        const data = error instanceof Error && 'data' in error ? error.data : undefined;
+        const nativeReason = data && typeof data === 'object' && 'reason' in data ? data.reason : undefined;
         // Only native permission-profile reason identifiers escape; arbitrary provider
         // prose/data may contain content and is not a diagnostic carrier.
-        const reason = data.reason === 'permission_profile_ephemeral_fixed'
-          || data.reason === 'permission_profile_unknown' || data.reason === 'permission_profile_unavailable'
-          || data.reason === 'permission_profile_reviewer_unavailable' ? data.reason : undefined;
+        const reason = nativeReason === 'permission_profile_ephemeral_fixed'
+          || nativeReason === 'permission_profile_unknown' || nativeReason === 'permission_profile_unavailable'
+          || nativeReason === 'permission_profile_reviewer_unavailable' ? nativeReason : undefined;
         if (method === 'session/setPermissionProfile') context.services.logger.debug('Muse permission profile outcome', {
           method, sessionId: nativeSessionId, status: failure.kind === 'rejected_before_effect' ? 'rejected' : 'unavailable', applyOutcome: null,
           requestedProfileId: selected.permissionProfile,
