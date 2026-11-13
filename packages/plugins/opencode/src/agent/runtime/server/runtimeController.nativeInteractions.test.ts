@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import recordedNativeHistory from './opencode119.httpHistory.fixture.json';
 
 import { createOpenCodeServerClient, type OpenCodeServerClient } from './openCodeServerClient.js';
 import { buildOpenCodeV2ConnectedAuthConfigPart } from '../../auth/services/requestAuth/assets.js';
@@ -127,6 +128,57 @@ async function createRuntime(params: Readonly<{
 }
 
 describe('OpenCode native interactions', () => {
+  it('binds recorded live paid inferences to their admitted turn without assigning late accounting to a newer turn', async () => {
+    const client = createClient();
+    const history = recordedNativeHistory.history.body;
+    const user = history[0]!.info;
+    const assistant = history[1]!.info;
+    vi.mocked(client.sessionCreate).mockResolvedValue({ id: user.sessionID });
+    vi.mocked(client.sessionPromptAsync).mockResolvedValue({ id: user.id });
+    const runtime = await createRuntime({ client, askQuestions: vi.fn() });
+    const native = createOpenCodeSessionRuntime({
+      operations: runtime,
+      request: { kind: 'create', sessionId: 'happier-session-1', cwd: '/repo' },
+      disposeOperations: () => runtime.resetOrDisposeRuntime(),
+      runtimeCapabilities: {
+        sessionCapabilities: AGENT_DEFINITION.core.sessionCapabilities,
+        tools: { delivery: 'native_mcp', support: 'supported' },
+      },
+    });
+    const events: Array<{ kind: string; turnId?: string }> = [];
+    const watcher = native.watch(event => events.push(event));
+    const publish = async (info: unknown) => runtime.handleProviderEvent({
+      type: 'message.updated', properties: { info },
+    });
+    const usage = () => events.filter(event => event.kind === 'usage-observed');
+    try {
+      runtime.beginTurnLifecycle('paid-turn');
+      await runtime.sendTurnPrompt('hello');
+      await publish(assistant);
+      expect(usage()).toMatchObject([{ turnId: 'paid-turn' }]);
+      // Unchanged native deliveries do not multiply accounting observations.
+      await publish(assistant);
+      expect(usage()).toHaveLength(1);
+      vi.mocked(client.sessionMessages).mockResolvedValue(history);
+      await runtime.handleProviderEvent({ type: 'session.idle', properties: { sessionID: user.sessionID } });
+      expect(events).toContainEqual(expect.objectContaining({ kind: 'turn-complete', turnId: 'paid-turn' }));
+      // A revised accounting frame after completion has no live ownership proof.
+      await publish({ ...assistant, cost: (assistant.cost ?? 0) + 1 });
+      expect(usage().at(-1)).not.toHaveProperty('turnId');
+      vi.mocked(client.sessionMessages).mockResolvedValue([]);
+      vi.mocked(client.sessionPromptAsync).mockResolvedValue({ id: 'next-native-user' });
+      runtime.beginTurnLifecycle('next-turn');
+      await runtime.sendTurnPrompt('next');
+      await publish({ ...assistant, cost: (assistant.cost ?? 0) + 2 });
+      expect(usage().at(-1)).not.toHaveProperty('turnId');
+      await publish({ ...assistant, summary: true, parentID: 'next-native-user', cost: (assistant.cost ?? 0) + 3 });
+      expect(usage().at(-1)).not.toHaveProperty('turnId');
+    } finally {
+      watcher.dispose();
+      await native.dispose();
+    }
+  });
+
   it.each(['success', 'failed'] as const)('publishes foreground V2 MCP calls and their %s result once across live and history delivery', async (outcome) => {
     const runtime = await createRuntime({ client: createClient(), dialect: 'v2', askQuestions: vi.fn() });
     const events: unknown[] = [];

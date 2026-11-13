@@ -429,6 +429,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     const observedAtMs = Date.now();
     publishRuntimeEvent({ kind: 'usage-observed', ...projectOpenCodeRuntimeScope(params.scope), emittedAtMs: observedAtMs,
       observationId: key, source: 'opencode-native-accounting', scope: 'turn_delta', ...(modelId ? { modelId } : {}),
+      ...(ownsLiveInference && state.activeTurnId ? { turnId: state.activeTurnId } : {}),
       ...(promptCache ? { promptCache } : {}),
       // Native compaction sizes the latest assistant aggregate, not the paid
       // Session ledger. The normalizer already resolves dialect overlap.
