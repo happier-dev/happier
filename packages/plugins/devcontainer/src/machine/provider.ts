@@ -371,9 +371,21 @@ export function createDevcontainerProvider(input: Readonly<{
         return { kind: observed.running === (intent === 'start') ? 'confirmed' as const : 'unknown' as const };
       } catch (error) { return { kind: !issued ? 'refused' as const : 'unknown' as const, code: code(error) }; }
     },
-    async destroy(raw: DevcontainerResource) {
+    async destroy(raw: DevcontainerNativeOperation) {
       try {
-        const { resource } = await exact(raw);
+        const operation = DevcontainerNativeOperationSchema.parse(raw);
+        let resource: DevcontainerLaunch & { managedMachineId: string; containerId: string };
+        if ('launch' in operation) {
+          const ids = operation.nativeResourceId ? [operation.nativeResourceId] : await inventory(operation.launch, operation.managedMachineId);
+          if (ids.length === 0) return { kind: 'confirmed' as const };
+          if (ids.length !== 1 || !/^[a-f0-9]{64}$/u.test(ids[0]!)) fail('resource_mismatch');
+          const native = await inspectContainer(ids[0]!, operation.launch, operation.managedMachineId);
+          if (!native) return { kind: 'confirmed' as const };
+          assertLabels(native, operation.launch, operation.managedMachineId);
+          resource = { ...operation.launch, managedMachineId: operation.managedMachineId, containerId: ids[0]! };
+        } else {
+          resource = (await exact(operation)).resource;
+        }
         // No --volumes, Compose down, source cleanup or image deletion. Named
         // volumes and source bytes are outside this exact container deletion.
         if (!completed(await run(input.docker, ['rm', '--force', resource.containerId], undefined, false, resource.managedMachineId, resource.workspaceFolder))) return { kind: 'unknown' as const };

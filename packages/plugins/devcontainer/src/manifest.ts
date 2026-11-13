@@ -181,8 +181,9 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
       confirmation: { title: 'Delete Devcontainer', body: 'Deletes this container, preserving bind-mounted sources and named volumes.', confirmLabel: 'Delete' },
       inputSchema: DEVCONTAINER_RECONCILIATION_SCHEMAS.destroyInput, resultSchema: MachineProvisionerPowerResultV1Schema,
       async run(input, context) {
-        if (!('resource' in input)) return { kind: 'refused' as const, code: 'native_cleanup_unavailable' };
-        try { return await (await provider(context, input.resource)).destroy(input.resource); }
+        const operation = 'resource' in input ? input.resource : input.nativeOperation;
+        const selection = 'launch' in operation ? operation.launch : operation;
+        try { return await (await provider(context, { runtime: selection.runtime })).destroy(operation); }
         catch (error) { return { kind: 'unknown' as const, code: code(error) }; } } },
     rebuild: { ...defaults, title: 'Rebuild exact Devcontainer installation', dangerLevel: 'destructive',
       confirmation: { title: 'Rebuild Devcontainer', body: 'Replaces this container and runs the reviewed host and child setup hooks.', confirmLabel: 'Rebuild' },

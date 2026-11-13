@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { createDevcontainerProvider } from './provider.js';
@@ -41,7 +41,12 @@ function native(overrides: Readonly<{ runtime?: 'docker' | 'podman'; up?: Plugin
   let memoryBytes = 2 * 1024 ** 3;
   const exec: Pick<ExecService, 'run' | 'spawn'> = { spawn: async () => { throw new Error('No channel in this fixture'); }, run: async request => {
     requests.push(request);
-    if (request.args?.[0] === 'read-configuration') return result({ configuration: JSON.parse(await readFile(request.args[request.args.indexOf('--config') + 1]!, 'utf8')),
+    if (['read-configuration', 'up', 'exec'].includes(request.args?.[0] ?? '')) {
+      const config = request.args?.[request.args.indexOf('--config') + 1];
+      if (!config || !['devcontainer.json', '.devcontainer.json'].includes(basename(config))) return result('', 1);
+    }
+    if (request.args?.[0] === 'read-configuration') return result({ configuration: JSON.parse(await readFile(
+      request.args[request.args.indexOf(request.args.includes('--override-config') ? '--override-config' : '--config') + 1]!, 'utf8')),
       workspace: { workspaceFolder: '/work/custom', workspaceMount: `type=bind,source=${configurationRoot},target=/work/custom` }, mergedConfiguration: { remoteUser: 'coder', workspaceFolder: '/work/custom' },
       featuresConfiguration: { featureSets: [] } });
     if (request.args?.[0] === 'image') return result([{ Id: 'sha256:image', Config: { Labels: {} } }]);
@@ -135,6 +140,45 @@ function imageNative(runtime: 'docker' | 'podman' = 'docker', options: { imageId
 }
 
 describe('Devcontainer native roles', () => {
+  it.each([
+    { inventory: result(''), expected: { kind: 'confirmed' } },
+    { inventory: result(`${containerId}\n${'b'.repeat(64)}\n`), expected: { kind: 'refused', code: 'resource_mismatch' } },
+    { inventory: result('', 1), expected: { kind: 'unknown', code: 'native_observation_unavailable' } },
+  ])('settles retained acquisition cleanup from its complete native inventory ($expected.kind)', async ({ inventory, expected }) => {
+    const { provider, requests } = native({ inventory });
+    expect(await provider.destroy({ managedMachineId: 'managed-a', launch })).toEqual(expected);
+    expect(requests.some(request => request.args?.[0] === 'rm')).toBe(false);
+  });
+
+  it('refuses retained acquisition cleanup when the exact container belongs to a different managed row', async () => {
+    const { provider, requests } = native();
+    expect(await provider.destroy({ managedMachineId: 'managed-b', launch, nativeResourceId: containerId }))
+      .toEqual({ kind: 'refused', code: 'resource_mismatch' });
+    expect(requests.some(request => request.args?.[0] === 'rm')).toBe(false);
+  });
+
+  it.each(['resource', 'acquisition'] as const)('deletes a retained %s native operation without running configuration hooks', async kind => {
+    const { requests, tools } = native();
+    let removed = false;
+    const nativeRun = tools.exec.run;
+    const services = { exec: { ...tools.exec, run: async (...args: Parameters<ExecService['run']>) => {
+      if (args[0].args?.[0] === 'rm') removed = true;
+      if (removed && args[0].args?.[0] === 'inspect') return result('', 1);
+      if (removed && args[0].args?.[0] === 'ps') return result('');
+      return nativeRun(...args);
+    } }, managedServices: { dependencies: { status: async (id: string) => id === 'docker'
+      ? { state: 'ready', executable: tools.docker } : { state: 'missing', supported: true } } } } as unknown as PluginTestServicesFixture;
+    const kit = await createPluginTestkit({ manifest: DEVCONTAINER_PLUGIN.manifest, module: DEVCONTAINER_PLUGIN, services });
+    try {
+      expect(await kit.invokeAction('destroy', { nativeOperation: kind === 'resource' ? resource
+        : { managedMachineId: 'managed-a', launch, nativeResourceId: containerId } }, { surface: 'plugin' }))
+        .toEqual({ kind: 'confirmed' });
+      expect(requests.filter(request => request.args?.[0] === 'rm').map(request => request.args))
+        .toEqual([['rm', '--force', containerId]]);
+      expect(requests.some(request => ['exec', 'up', 'read-configuration'].includes(request.args?.[0] ?? ''))).toBe(false);
+    } finally { await kit.dispose(); }
+  });
+
   it.each([
     { runtime: 'docker', selected: 'docker' }, { runtime: 'podman', selected: 'podman' }, { runtime: undefined, selected: 'docker' },
   ] as const)('settles an unacknowledged acquisition as absent through $selected (runtime=$runtime) without evaluating launch effects', async ({ runtime, selected }) => {

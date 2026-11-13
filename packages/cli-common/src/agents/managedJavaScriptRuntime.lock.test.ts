@@ -33,6 +33,8 @@ function createBootstrapDeps(params: Readonly<{
   extractionRelease?: Promise<void>;
 }> = {}) {
   return {
+    // The native executable is a boundary fixture; bootstrap/locking stay real.
+    execFileWithDeadline: async () => ({ stdout: 'v25.8.0\n', stderr: '' }),
     fetchNodeRuntimeReleaseAsset: async () => ({
       name: 'node-v25.8.0-linux-x64.tar.gz',
       url: 'https://nodejs.org/download/release/v25.8.0/node-runtime',

@@ -4,7 +4,7 @@ import { basename, dirname, join } from 'node:path';
 
 import { withWorkspaceBundleLock } from '../../workspaceBundleLock.mjs';
 import { expandHomeDirPath } from '../path/expandHomeDirPath.js';
-import { resolveWindowsCommandOnPath, resolveWindowsCommandPath } from '../process/index.js';
+import { execFileWithDeadline, resolveWindowsCommandInvocation, resolveWindowsCommandOnPath, resolveWindowsCommandPath } from '../process/index.js';
 import { createManagedToolScratchDir } from './createManagedToolScratchDir.js';
 import { removeHappierTempDirAsync } from '../tempDirs/createHappierTempDir.js';
 import { downloadGitHubReleaseAsset } from './downloadGitHubReleaseAsset.js';
@@ -244,6 +244,7 @@ type EnsureManagedJavaScriptRuntimeDeps = Readonly<{
   fetchNodeRuntimeReleaseAsset?: typeof fetchNodeRuntimeReleaseAsset;
   downloadGitHubReleaseAsset?: typeof downloadGitHubReleaseAsset;
   extractGitHubReleaseAsset?: typeof extractGitHubReleaseAsset;
+  execFileWithDeadline?: typeof execFileWithDeadline;
 }>;
 
 const JS_RUNTIME_BOOTSTRAP_LOCK_STALE_MS = 5 * 60 * 1000;
@@ -264,8 +265,26 @@ export async function ensureManagedJavaScriptRuntimeCommand(
     return resolveExplicitJavaScriptRuntimeCommand(processEnv);
   }
 
+  const qualify = async (command: string): Promise<string> => {
+    const invocation = resolveWindowsCommandInvocation({ command, args: ['--version'], env: processEnv });
+    try {
+      await (deps.execFileWithDeadline ?? execFileWithDeadline)(invocation.command, invocation.args, {
+        env: processEnv, encoding: 'utf8', windowsHide: true,
+        windowsVerbatimArguments: invocation.windowsVerbatimArguments, signal,
+      });
+    } catch (error) {
+      signal?.throwIfAborted();
+      const stderr = typeof error === 'object' && error !== null && 'stderr' in error ? String(error.stderr) : '';
+      const library = /error while loading shared libraries: ([A-Za-z0-9_.+-]+):/u.exec(stderr)?.[1];
+      const remedy = library === 'libatomic.so.1'
+        ? ' Install the libatomic1 package on Debian/Ubuntu, then retry.' : '';
+      throw Object.assign(new Error(`Managed JavaScript runtime is unavailable: ${library ? `missing native library ${library}.` : 'native runtime qualification failed.'}${remedy}`, { cause: error }),
+        { code: 'managed-runtime-unavailable' as const });
+    }
+    return command;
+  };
   const existing = resolveExistingManagedJavaScriptRuntimeCommand(processEnv);
-  if (existing) return existing;
+  if (existing) return qualify(existing);
 
   const installDir = managedJavaScriptRuntimeInstallDir(processEnv);
   const nextDir = join(installDir, 'next');
@@ -280,7 +299,7 @@ export async function ensureManagedJavaScriptRuntimeCommand(
       signal?.throwIfAborted();
       const managedAfterLock = resolveExistingManagedJavaScriptRuntimeCommand(processEnv);
       if (managedAfterLock) {
-        return managedAfterLock;
+        return qualify(managedAfterLock);
       }
 
       options.onProgress?.({ t: 'log', line: 'Resolving managed JavaScript runtime release.' });
@@ -324,6 +343,7 @@ export async function ensureManagedJavaScriptRuntimeCommand(
           outputPath: nextBinPath,
           runtimeBinaryPath: process.platform === 'win32' ? '%~dp0..\\runtime\\node.exe' : '${0%/*}/../runtime/bin/node',
         });
+        await qualify(nextBinPath);
 
         signal?.throwIfAborted();
         await promoteManagedCurrentInstall({ signal, installRoot: installDir, candidatePath: nextDir });
@@ -349,6 +369,7 @@ export async function ensureManagedJavaScriptRuntimeCommand(
     });
   } catch (error) {
     signal?.throwIfAborted();
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'managed-runtime-unavailable') throw error;
     throw new Error('Managed JavaScript runtime is unavailable: bootstrap failed', { cause: error });
   }
 }
