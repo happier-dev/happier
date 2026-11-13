@@ -75,6 +75,7 @@ import { withPatchedProcessEnv } from '../../apps/stack/scripts/testkit/core/env
 import { bundleWorkspacePackageWithRuntimeDependencies } from '@happier-dev/cli-common/workspaces';
 import { buildNativeAdmissionFixtureEnv, holdNativeAdmissionFixtureMemory, installNativeAdmissionFixture, installWorkspaceAdmissionProcessFixture } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
 import { writeFakeBin } from '../../apps/stack/scripts/testkit/core/fake_bin_harness.mjs';
+import { readSlotAddress } from '../../apps/stack/scripts/utils/proc/admission_socket.mjs';
 import { readWorkspacePackages, resolveWorkspaceSource } from '../../packages/cli-common/sourceRuntimeEntries.mjs';
 
 function readFixturePackageName(packageDir) {
@@ -92,13 +93,18 @@ function writeUiHostedGuestFixture(root) {
   mkdirSync(entryDir, { recursive: true });
   writeFileSync(join(entryDir, 'hostedHtmlGuestEntry.ts'), 'globalThis.hostGuest = true;\n');
   mkdirSync(join(root, 'apps/ui/sources/components/plugins/hostedWeb'), { recursive: true });
+  mkdirSync(join(root, 'apps/ui/sources/text'), { recursive: true });
+  writeFileSync(join(root, 'apps/ui/sources/text/_all.ts'), 'export const SUPPORTED_LANGUAGE_CODES = ["en"] as const;\n');
+  mkdirSync(join(root, 'node_modules'), { recursive: true });
+  symlinkSync(dirname(createRequire(import.meta.url).resolve('shiki/package.json')),
+    join(root, 'node_modules/shiki'), process.platform === 'win32' ? 'junction' : 'dir');
 }
 
 for (const preparation of ['named', 'remote-validation']) test(`${preparation} workspace preparation releases dependency and dist custody while compiler capacity is unavailable`, { skip: process.platform !== 'linux', timeout: 30_000 }, async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'happier-workspace-capacity-order-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const native = await installWorkspaceAdmissionProcessFixture(t, root);
-  const { launcher, admissionRoot } = native;
+  const { launcher } = native;
   const repoRoot = join(root, 'native-owner');
   writePnpmWorkspaceFixture(repoRoot, { private: true, workspaces: ['packages/*'] });
   writeFileSync(join(repoRoot, 'pnpm-lock.yaml'), '# fixture\n');
@@ -151,9 +157,9 @@ process.exitCode = result.status ?? 1;
   void build.catch(() => {});
   const lockPath = resolveWorkspacePackageBuildLockPath(packageDir, manifest);
   try {
-    for (let attempt = 0; ; attempt++) {
-      if (existsSync(join(admissionRoot, 'waiters')) && readdirSync(join(admissionRoot, 'waiters')).length) break;
-      if (attempt === 500) assert.fail('compiler preparation did not enter the native queue');
+    for (;;) {
+      t.signal.throwIfAborted();
+      if ((await native.brokerStatus()).waitingCount === 1) break;
       await new Promise(resolveWait => setTimeout(resolveWait, 10));
     }
     // A compiler queued for capacity must not prevent another preparer from
@@ -161,7 +167,9 @@ process.exitCode = result.status ?? 1;
     assert.equal(existsSync(lockPath), false, 'capacity wait must release the publisher lease');
     await withWorkspaceBundleLock(() => {}, { lockPath, timeoutMs: 30, staleAfterMs: 1_000 });
     await withDependencyRefreshLock({ installDir: repoRoot, env, signal: t.signal }, async () => {});
-    assert.deepEqual(readdirSync(join(admissionRoot, 'owners')), [basename(pressure.ownerPath)]);
+    const queued = await native.brokerStatus();
+    assert.equal(queued.activeCount, 1, 'only the physical pressure holder retains admission');
+    assert.equal(queued.waitingCount, 1, 'the compiler still waits for capacity');
   } finally {
     await pressure.release(() => writeFileSync(memory, '73400320 73400320\n'));
     const result = await build;
@@ -192,8 +200,9 @@ test('compound build:packages publishes the real transitive closure before the r
   }
   const pnpm = join(root, 'pnpm.mjs');
   const ownerUrl = new URL('./ensureWorkspacePackagesBuilt.mjs', import.meta.url).href;
-  writeFileSync(pnpm, `import {mkdirSync,writeFileSync,existsSync,readdirSync} from 'node:fs';
+  writeFileSync(pnpm, `import {mkdirSync,writeFileSync,existsSync} from 'node:fs';
 import {join} from 'node:path';
+import {requestAdmissionSample} from ${JSON.stringify(pathToFileURL(native.admissionClientPath).href)};
 const args=process.argv.slice(2);
 if(args[0]==='run' && args[1]==='build:packages') {
   const {ensureWorkspacePackagesBuiltByName,defaultWorkspaceBuildBoundary}=await import(${JSON.stringify(ownerUrl)});
@@ -202,7 +211,7 @@ if(args[0]==='run' && args[1]==='build:packages') {
 } else if(args[0]==='--dir') {
   if(args.at(-1)!=='inspects the Codex authored manifest within the worker heap budget') process.exit(81);
   for(const name of ${JSON.stringify(names)}) if(!existsSync(join(${JSON.stringify(repoRoot)},'packages',name,'dist/index.js'))) process.exit(82);
-  if(!process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT || readdirSync(${JSON.stringify(join(native.admissionRoot, 'owners'))}).length!==1) process.exit(83);
+  if(process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT!==${JSON.stringify(native.admissionRoot)} || (await requestAdmissionSample(${JSON.stringify(native.admissionRoot)})).activeCount!==1) process.exit(83);
   process.stdout.write('closure-checked');
 } else {
   const output=process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR;
@@ -222,8 +231,9 @@ if(args[0]==='run' && args[1]==='build:packages') {
     env, quiet: true, workspaceBuildBoundary: { ...defaultWorkspaceBuildBoundary, workerLauncherPath: native.launcher },
   });
   assert.deepEqual(warm.built, [], 'the canonical owner reuses every published transitive output');
-  assert.deepEqual(readdirSync(join(native.admissionRoot, 'owners')), []);
-  assert.deepEqual(readdirSync(join(native.admissionRoot, 'waiters')), []);
+  const idle = await native.brokerStatus();
+  assert.equal(idle.activeCount, 0, 'completed publication releases every admission');
+  assert.equal(idle.waitingCount, 0, 'completed publication leaves no queued work');
 });
 
 test('captured public package builds keep their manifest identity through native self-dispatch', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
@@ -251,8 +261,16 @@ test('captured public package builds keep their manifest identity through native
   // must carry the package-dist envelope across the public dispatcher.
   writeFileSync(compiler, `import {mkdirSync,readFileSync,readdirSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
-const owners = readdirSync(${JSON.stringify(join(native.admissionRoot, 'owners'))});
-if (owners.length !== 1 || readFileSync(join(${JSON.stringify(native.admissionRoot)},'owners',owners[0],'class'),'utf8').trim() !== 'package-dist') {
+import {requestAdmissionSample} from ${JSON.stringify(pathToFileURL(native.admissionClientPath).href)};
+import {readSlotAddress} from ${JSON.stringify(new URL('../../apps/stack/scripts/utils/proc/admission_socket.mjs', import.meta.url).href)};
+import {HEAVYWEIGHT_COMMAND_RESOURCES} from ${JSON.stringify(new URL('../../apps/stack/scripts/utils/dev_targets/command_resources.mjs', import.meta.url).href)};
+const admissionRoot = ${JSON.stringify(native.admissionRoot)};
+const status = await requestAdmissionSample(admissionRoot);
+const slot = readdirSync(admissionRoot).map(name => readSlotAddress(admissionRoot, name))
+  .find(value => value?.pid === Number(process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT));
+if (status.activeCount !== 1 || status.waitingCount !== 0
+  || process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT !== admissionRoot
+  || slot?.floorKiB !== HEAVYWEIGHT_COMMAND_RESOURCES['package-dist'].memoryKiB) {
   throw new Error('public package build lost its finite admission');
 }
 mkdirSync(process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR,{recursive:true});
@@ -276,15 +294,13 @@ case "$*" in
   *) exec /usr/bin/awk "$@" ;;
 esac
 ` });
-  const ownersDir = join(native.admissionRoot, 'owners');
-  mkdirSync(ownersDir, { recursive: true });
   const build = async () => {
-    // Observe real native owner entry identities, including owners that do no
-    // compilation. Immediate admissions intentionally emit no admission log.
-    const admittedOwners = new Set();
+    // The broker retains demand in memory; each live admission has one
+    // canonical kernel slot. Observe its lifecycle, including immediate grants.
+    const admittedSlots = new Set();
     let observationError;
-    const observer = watch(ownersDir, (event, name) => {
-      if (event === 'rename' && name) admittedOwners.add(String(name));
+    const observer = watch(native.admissionRoot, (event, name) => {
+      if (event === 'rename' && name && readSlotAddress(native.admissionRoot, String(name))) admittedSlots.add(String(name));
     });
     observer.on('error', error => { observationError = error; });
     try {
@@ -295,7 +311,7 @@ esac
       });
       await new Promise(resolve => setImmediate(resolve));
       assert.ifError(observationError);
-      return { result, admissions: admittedOwners.size };
+      return { result, admissions: admittedSlots.size };
     } finally {
       observer.close();
     }
@@ -312,8 +328,9 @@ esac
   assert.deepEqual(changed.result.built, ['@happier-dev/example']);
   assert.equal(changed.admissions, 1, 'a real source change re-enters exactly one canonical native owner');
   assert.match(readFileSync(join(packageDir, 'dist/index.js'), 'utf8'), /ready = false/);
-  assert.deepEqual(readdirSync(join(native.admissionRoot, 'owners')), []);
-  assert.deepEqual(readdirSync(join(native.admissionRoot, 'waiters')), []);
+  const idle = await native.brokerStatus();
+  assert.equal(idle.activeCount, 0, 'completed publication releases every admission');
+  assert.equal(idle.waitingCount, 0, 'completed publication leaves no queued work');
 });
 
 test('finite workspace worker streams active-package progress before compiler completion', async t => {
@@ -463,7 +480,8 @@ test('unchanged workspace admission shares graph observations without retaining 
   writeFileSync(join(dirs[0], 'dist/index.js'), 'export const corrupted = true;\n');
   assert.deepEqual((await admit()).built, ['@happier-dev/example-0'], 'output corruption still re-enters canonical admission');
   changeGraphDuringObservation = true;
-  await assert.rejects(admit(), { code: 'BUILD_INPUTS_CHANGED', trailingPassExhausted: false });
+  // Moving-source preparation now recaptures once through the canonical owner.
+  // The same demand must publish the new closure, without a caller retry.
   await admit();
   assert.deepEqual(JSON.parse(readFileSync(join(dirs[11], 'dist/.happier-build-inputs.json'), 'utf8')).dependencies
     .map(({ packageDir }) => packageDir), ['packages/example-0'],
@@ -2815,7 +2833,7 @@ test('package admission follows source content and membership rather than timest
   assert.equal(buildCalls, 11);
 });
 
-test('Protocol development preparation publishes a new leaf before workspace capture', async t => {
+test('Protocol development preparation publishes a new explicit leaf alias before workspace capture', async t => {
   const root = mkdtempSync(join(tmpdir(), 'workspace-protocol-new-leaf-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   writePnpmWorkspaceFixture(root, { workspaces: ['packages/*'] });
@@ -2835,6 +2853,11 @@ test('Protocol development preparation publishes a new leaf before workspace cap
   writeFileSync(join(dir, 'scripts/generate-exports.mjs'), `export * from ${JSON.stringify(generator)};`);
   await (await import(generator)).generateProtocolExports({ packageRoot: dir });
   writeFileSync(join(dir, 'src/systemSessionMarker.ts'), 'export const value = 43;');
+  // Public leaves use the wildcard. A new explicit alias changes the projection
+  // and must be rejected by CI/artifact consumers until authoring publishes it.
+  writeFileSync(join(dir, 'export-aliases.json'), JSON.stringify({
+    '.': './src/index.ts', './systemSessionMarker': './src/systemSessionMarker.ts',
+  }));
   const options = { quiet: true,
     env: { ...process.env, CI: '', HAPPIER_DEV_TARGET_EXECUTION: '' },
     workspaceBuildBoundary: { prepareEnv: async (_dir, env) => env,
@@ -5212,3 +5235,49 @@ test('Stack workspace build boundary propagates timeoutMs to the package-manager
     ),
   );
 });
+
+for (const entry of ['names', 'component']) for (const recurring of [false, true]) {
+  test(`workspace preparation recaptures dependency publication drift via ${entry} recurring=${recurring}`, async t => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-workspace-dependency-recapture-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    writePnpmWorkspaceFixture(root, { workspaces: ['apps/*', 'packages/*'] });
+    for (const app of ['cli', 'ui', 'server']) {
+      mkdirSync(join(root, 'apps', app), { recursive: true });
+      writeFileSync(join(root, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}`,
+        dependencies: { '@happier-dev/recapture': 'workspace:*' } }));
+    }
+    const dir = join(root, 'packages/recapture');
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    writeFileSync(join(dir, 'src/index.ts'), 'export const value = 1;');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: '@happier-dev/recapture',
+      main: './dist/index.js', types: './dist/index.d.ts', scripts: { build: 'fixture-build' } }));
+    const env = { ...process.env, HAPPIER_STACK_HOME_DIR: join(root, 'home') };
+    const { resolveDependencyRefreshLockPath } = await import('../../apps/stack/scripts/utils/proc/dependency_refresh.mjs');
+    const generation = `${resolveDependencyRefreshLockPath(root, env)}.generation`;
+    mkdirSync(dirname(generation), { recursive: true });
+    writeFileSync(generation, JSON.stringify({ generation: 'initial', completedGeneration: 'initial' }));
+    let attempts = 0;
+    const options = { env, quiet: true, buildMode: 'strict', workspaceBuildBoundary: {
+      prepareEnv: async (_dir, value) => ({ ...value }),
+      runPackageBuild: async (_dir, { env: buildEnv }) => {
+        attempts++;
+        if (recurring || attempts === 1) writeFileSync(generation,
+          JSON.stringify({ generation: String(attempts), completedGeneration: String(attempts) }));
+        mkdirSync(buildEnv.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, { recursive: true });
+        writeFileSync(join(buildEnv.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'), 'export const value = 1;');
+        writeFileSync(join(buildEnv.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.d.ts'), 'export declare const value: number;');
+      },
+    } };
+    const build = () => entry === 'names'
+      ? ensureWorkspacePackagesBuiltByName(root, ['@happier-dev/recapture'], options)
+      : ensureWorkspacePackagesBuiltForComponent(join(root, 'apps/cli'), options);
+    if (recurring) {
+      await assert.rejects(build(), { code: 'BUILD_INPUTS_CHANGED', trailingPassExhausted: true });
+      assert.equal(existsSync(join(dir, 'dist/index.js')), false, 'a drifting artifact is never published');
+    } else {
+      assert.equal((await build()).ok, true);
+      assert.match(readFileSync(join(dir, 'dist/index.js'), 'utf8'), /value = 1/);
+    }
+    assert.equal(attempts, 2, 'the existing convergence owner allows exactly one trailing phase');
+  });
+}

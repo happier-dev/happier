@@ -1624,7 +1624,13 @@ async function settleWorkspaceBuilds(promises) {
   return results.map((result) => result.value);
 }
 
-async function ensureWorkspacePackageNamesBuilt(monorepoRoot, packageNames, {
+async function ensureWorkspacePackageNamesBuilt(monorepoRoot, packageNames, options) {
+  return await withSingleTrailingBuildPass({ run: trailing => ensureWorkspacePackageNamesBuiltPass(
+    monorepoRoot, packageNames, trailing ? { ...options, workspaceGraph: null } : options,
+  ) });
+}
+
+async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, {
   quiet,
   env,
   forcePackageNames = [],
