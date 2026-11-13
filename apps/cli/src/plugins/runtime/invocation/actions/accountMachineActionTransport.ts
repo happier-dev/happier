@@ -75,7 +75,7 @@ export async function invokeAccountMachineSourceAction(input: AccountMachineTran
         qualifiedActionId: buildQualifiedPluginContributionKey(input.request.action), input: input.request.input,
         ...(input.request.requiredReadOnly || input.request.readObservation ? { requiredReadOnly: true } : {}),
         // Preserve the person's host-admitted UI press across the Machine hop.
-        // This carries intent without raising the Account-automation authority ceiling.
+        // The host stamps this intent only for its admitted present-user press.
         executionSurface: input.request.presentUserIntent === 'confirmed' ? 'ui'
             : input.request.originSurface === 'agent' ? 'agent' : input.request.originSurface === 'mcp' ? 'mcp' : 'cli',
         presentUserIntent: input.request.presentUserIntent,
@@ -93,7 +93,11 @@ export async function invokeAccountMachineSourceAction(input: AccountMachineTran
         const result = DaemonPluginStructuredMessageActionExecuteResponseSchema.parse(await callExactMachineRpc({
             credentials: input.credentials, serverUrl: input.serverUrl, machineId: input.machineId,
             method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, request,
-            authorityCeiling: 'account_automation', requireCurrentMachine: true, timeoutMs: null,
+            // Preserve the authenticated person's authority for the host-stamped
+            // press. Automation still lowers its credential at this boundary;
+            // Home remains the authority producer for the receiving daemon.
+            ...(input.request.presentUserIntent === 'confirmed' ? {} : { authorityCeiling: 'account_automation' as const }),
+            requireCurrentMachine: true, timeoutMs: null,
             waitForResultOnCancel: true, signal: input.request.signal,
         }));
         return result.ok ? { status: 'executed', value: result.result }

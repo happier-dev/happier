@@ -177,7 +177,7 @@ it.each([
                 expect(input.executionSurface).toBe(presentUi ? 'ui' : 'cli');
                 expect(input.presentUserIntent).toBe(presentUi ? 'confirmed' : undefined);
                 expect(input.requestId).toBe(context.actionRequestId);
-                expect(request.authorityCeiling).toBe('account_automation');
+                expect(request.authorityCeiling).toBe(presentUi ? undefined : 'account_automation');
             }
         }
         expect(providerEffects).toBe(['notSent', 'authorizationRefused', 'modeMismatch', 'unclassified', 'declarationRefusal', 'declarationRefusalTransport'].includes(outcome) ? 0 : 1);

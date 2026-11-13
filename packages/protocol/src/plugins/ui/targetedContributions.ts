@@ -410,6 +410,23 @@ export type PluginUiTargetedContributionsV1 = Readonly<Omit<z.infer<
   typeof PluginUiTargetedContributionsV1Schema
 >, 'points'> & { points: readonly PluginUiTargetedContributionPointSnapshotV1[] }>;
 
+/**
+ * Projects an already-admitted immutable snapshot into the wire schema's output
+ * shape (mutable arrays) without re-validating it. Wire entries that embed a
+ * targeted snapshot use this one projection.
+ */
+export function projectPluginUiTargetedContributionsWireV1(
+  snapshot: PluginUiTargetedContributionsV1,
+): z.infer<typeof PluginUiTargetedContributionsV1Schema> {
+  return {
+    ...snapshot,
+    points: snapshot.points.map((point) => ({
+      ...point,
+      protocols: point.protocols.map((protocol) => ({ ...protocol, contributions: [...protocol.contributions] })),
+    })),
+  };
+}
+
 type TargetedContributorIdentity = Readonly<{
   pluginId: string;
   contributionId: string;

@@ -15,6 +15,8 @@ import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
 import { createDaemonHostResourceRead } from './daemonHostResourceRead';
 import { openDaemonActionReadWatch } from './actionReadWatch';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { configuration } from '@/configuration';
 import { runTracedExternalActionStage, traceExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
@@ -44,7 +46,7 @@ import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';
 import type { ScopedSettingsService } from '@happier-dev/plugin-sdk/settings';
 import { computePluginUiArtifactSha256DigestV1, isPluginUiHermesBytecodeArtifactV1, verifyPluginUiArtifactFileSetIntegrityV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 import { PluginUiSurfaceBindingV1Schema, selectPluginUiRendererChainMemberV1 } from '@happier-dev/protocol/plugins/contributions/ui/surfaceRegistry';
-import { projectPluginUiTargetedContributionIdentityV1, projectPluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui/targetedContributions';
+import { projectPluginUiTargetedContributionIdentityV1, projectPluginUiTargetedContributionsV1, projectPluginUiTargetedContributionsWireV1 } from '@happier-dev/protocol/plugins/ui/targetedContributions';
 import { shareDaemonPluginUiTargetedContributionsReadResponse, type DaemonPluginUiTargetedContributionsSharedReadResponse } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginUiArtifactDigestV1, PluginUiArtifactsManifestEntryV2, PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 import { DaemonPluginSettingsWatchRequestSchema, DaemonPluginSettingsWatchResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -236,11 +238,10 @@ export function invalidateDaemonContributionRegistryProjectionCache(): void {
 }
 
 /**
- * UI/Voice carry the person's settled confirmation. Automated origins ask
- * through the same durable approval owner as other contributed Actions.
+ * Automated origins ask through the durable approval owner. Native hosts
+ * carry their settled review through the exact reviewed-child port instead.
  */
 function createPresentUserCurrentIntent(
-    presentUserIntent: 'confirmed' | undefined,
     requestCurrentIntent: DaemonContributionRegistryProjectionRegistrationOptions['requestCurrentIntent'],
 ): (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult> {
     return async request => {
@@ -252,9 +253,7 @@ function createPresentUserCurrentIntent(
             }
             return await requestCurrentIntent(request);
         }
-        return presentUserIntent === 'confirmed'
-            ? { status: 'approved', fingerprint: request.fingerprint }
-            : { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
+        return { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
     };
 }
 
@@ -1581,9 +1580,9 @@ function buildProjection(
                 selectedRenderer: rendered.selectedRenderer,
                 executionOrigin,
                 resourceCapability: readTargetedSurfaceResourceCapability(runtimeRegistry, contribution.pluginId),
-                contributorTargetedContributions: readMountedTargetedContributionsProjection({
+                contributorTargetedContributions: projectPluginUiTargetedContributionsWireV1(readMountedTargetedContributionsProjection({
                     runtimeRegistry, mountedTarget: { pluginId: contribution.pluginId, occurrenceId },
-                }),
+                })),
             });
         } catch {
             return undefined;
@@ -3090,6 +3089,15 @@ export function registerDaemonContributionRegistryProjectionHandler(
                     });
                 }
             }
+            const approvalContext: ActionExecutorContext = {
+                ...context?.localActionContext,
+                ...buildActionExecutorContextForRpc({ ...context, actionId: 'action.invoke',
+                    ...(defaultSessionId ? { defaultSessionId } : {}) }),
+                ...(context && opts?.createFileDownloadPublisher ? { prepareFileDownload: opts.createFileDownloadPublisher(context) } : {}),
+                authority: context?.callerAuthority ?? context?.localActionContext?.authority ?? 'account_automation',
+                ...(context?.localActionContext?.actionRequestId ?? context?.transportRequestId
+                    ? { actionRequestId: context?.localActionContext?.actionRequestId ?? context?.transportRequestId } : {}),
+            };
             const attempt = await traceStage('contributed.execute', () => executeContributedAction({
                 daemonHoldsApprovalWaiter: true,
                 runtimeRegistry: lease.registry,
@@ -3098,18 +3106,20 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 ...(readObservation || request.data.requiredReadOnly ? { requiredReadOnly: true as const } : {}),
                 ...(request.data.input === undefined ? {} : { input: request.data.input }),
                 expectedContributorOccurrenceId: request.data.expectedContributorOccurrenceId,
-                approvalContext: {
-                    ...context?.localActionContext,
-                    ...buildActionExecutorContextForRpc({ ...context, actionId: 'action.invoke',
-                        ...(defaultSessionId ? { defaultSessionId } : {}) }),
-                    ...(context && opts?.createFileDownloadPublisher ? { prepareFileDownload: opts.createFileDownloadPublisher(context) } : {}),
-                    authority: context?.callerAuthority ?? context?.localActionContext?.authority ?? 'account_automation',
-                    ...(context?.localActionContext?.actionRequestId ?? context?.transportRequestId
-                        ? { actionRequestId: context?.localActionContext?.actionRequestId ?? context?.transportRequestId } : {}),
-                },
+                approvalContext,
+                ...(request.data.presentUserIntent === 'confirmed' && resolvedAction
+                    && (invocationSurface === 'ui' || invocationSurface === 'voice')
+                    && (isPresentUserHostInvocation({ ...approvalContext, surface: invocationSurface })
+                        || isHomeAdmittedPresentUserHostInvocation({ ...approvalContext, surface: invocationSurface }, 'action.invoke'))
+                    ? { reviewedChild: createHostReviewedChildPortV1({
+                        actionId: 'action.invoke', context: approvalContext, reviewAdmitted: true,
+                        input: { action: { pluginId: resolvedAction.pluginId, localId: resolvedAction.definition.id },
+                            ...(request.data.input === undefined ? {} : { input: request.data.input }),
+                            expectedContributorOccurrenceId: request.data.expectedContributorOccurrenceId },
+                    }) } : {}),
                 // A finite native Account caller cannot publish a live-only child
                 // approval to its caller while this RPC is awaiting that decision.
-                requestCurrentIntent: createPresentUserCurrentIntent(request.data.presentUserIntent,
+                requestCurrentIntent: createPresentUserCurrentIntent(
                     invocationSurface === 'cli' && invocation?.kind === 'clientPluginAction'
                         && mountedCaller.status === 'available' && mountedCaller.approvalInputCustody === 'live_only'
                         ? undefined : opts?.requestCurrentIntent),

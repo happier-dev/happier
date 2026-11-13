@@ -11,7 +11,7 @@ import { DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happi
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';
 import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
-import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { RpcHandler, RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadActionOutputV1Schema, normalizePluginReleaseFactsV1 } from '@happier-dev/protocol/plugins/availability';
@@ -23,6 +23,8 @@ import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSna
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { registerDaemonContributionRegistryProjectionHandler } from './daemonContributionRegistryProjection';
 import { createDeferred } from '@/testkit/async/deferred';
+import * as machineRpc from '@/session/transport/rpc/machineRpc';
+import { invokeAccountMachineSourceAction } from '@/plugins/runtime/invocation/actions/accountMachineActionTransport';
 
 describe('mounted caller admission through the real contributed Action RPC', () => {
     it('refuses unbound raw Machine Actions and correlates composer requests without replacing execution identity', async () => {
@@ -101,7 +103,7 @@ describe('mounted caller admission through the real contributed Action RPC', () 
         } finally { log.mockRestore(); vi.unstubAllEnvs(); await fixture.dispose(); }
     });
 
-    it.each(['ui', 'cli', 'page', 'source'] as const)('admits an external Account caller from %s to its declared source surface and refuses changed custody before effects', async callerSurface => {
+    it.each(['ui', 'cli', 'page', 'source'] as const)('admits an external Account caller from %s and refuses relabeled automation or changed custody before effects', async callerSurface => {
         const executionSurface = callerSurface === 'cli' ? 'cli' : 'ui';
         const mountedSurface = callerSurface === 'page' || callerSurface === 'source';
         const contributionLocalId = callerSurface === 'source' ? 'source' : callerSurface === 'page' ? 'page' : 'aggregate';
@@ -162,6 +164,14 @@ describe('mounted caller admission through the real contributed Action RPC', () 
                 { id: 'write', title: 'Write source', scopes: ['global'], surfaces: mountedSurface ? ['ui'] : ['plugin'], placementBindings: [], dangerLevel: 'writesRemote',
                     confirmation: { title: 'Write source' }, execution: { target: 'daemon' },
                     inputSchema: { type: 'object', properties: { uncertain: { type: 'boolean' } }, additionalProperties: false },
+                    resultSchema: { type: 'object', properties: { writes: { type: 'number' } }, required: ['writes'], additionalProperties: false } },
+                { id: 'cli-only', title: 'CLI-only source', scopes: ['global'], surfaces: ['cli'], placementBindings: [], dangerLevel: 'writesRemote',
+                    confirmation: { title: 'Write CLI-only source' },
+                    execution: { target: 'daemon' }, inputSchema: { type: 'object', additionalProperties: false },
+                    resultSchema: { type: 'object', properties: { writes: { type: 'number' } }, required: ['writes'], additionalProperties: false } },
+                { id: 'session-only', title: 'Session-only source', scopes: ['session'], surfaces: ['ui', 'plugin'], placementBindings: [], dangerLevel: 'writesRemote',
+                    confirmation: { title: 'Write Session-only source' },
+                    execution: { target: 'daemon' }, inputSchema: { type: 'object', additionalProperties: false },
                     resultSchema: { type: 'object', properties: { writes: { type: 'number' } }, required: ['writes'], additionalProperties: false } }],
             } }), files: { 'daemon.mjs': `import { PluginError } from ${JSON.stringify(sdkEntry)};
                 let reads = 0; let writes = 0;
@@ -172,11 +182,15 @@ describe('mounted caller admission through the real contributed Action RPC', () 
                         if (input.uncertain) throw new PluginError({ code: 'plugin_action_outcome_unknown', message: 'Response lost after effect' });
                         return { writes };
                     });
+                    api.actions.register('cli-only', () => ({ writes: ++writes }));
+                    api.actions.register('session-only', () => ({ writes: ++writes }));
                 }` },
         }], runtimeOptions: { resolveCurrentMachineId: () => 'reading-machine',
             resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'srv_account-caller', machineId: 'reading-machine' }) } })
             .catch(async error => { restore(); await app.close(); throw error; });
         try {
+            // Keep the Account policy fixture independent of the developer's CLI override.
+            vi.stubEnv('HAPPIER_ACTIONS_SETTINGS_V1', '');
             const handlers = new Map<string, RpcHandler>();
             registerDaemonContributionRegistryProjectionHandler({ registerHandler(method, handler) { handlers.set(method, handler); } }, {
                 resolveRuntimeRegistry: async () => fixture.registry, resolveInstalledPackages: async () => [],
@@ -191,19 +205,44 @@ describe('mounted caller admission through the real contributed Action RPC', () 
             expect(fixture.registry.readPluginOccurrenceId?.(pluginId)).toBeNull();
             const clientActionBinding = { pluginId, contributionLocalId, occurrenceId: 'invoking-process-occurrence',
                 sourceCustody: { kind: 'account_release' as const, pluginId, version: manifest.version, archiveDigestSha256: digest } };
-            const run = (binding = clientActionBinding, input: Record<string, unknown> = {}, localId = 'read', presentUserIntent?: 'confirmed') => handler({ machineId: 'reading-machine',
+            const run = (binding = clientActionBinding, input: Record<string, unknown> = {}, localId = 'read', presentUserIntent?: 'confirmed', requestSurface: string = executionSurface,
+                callerAuthority: RpcHandlerContext['callerAuthority'] = executionSurface === 'ui' ? 'present_user' : 'account_automation') => handler({ machineId: 'reading-machine',
                 qualifiedActionId: `com.acme.machine-source/${localId}`, expectedContributorOccurrenceId: targetOccurrence,
-                executionSurface, invocation: mountedSurface
+                executionSurface: requestSurface, invocation: mountedSurface
                     ? { kind: 'mountedPluginSurface', mountedBinding: binding }
                     : { kind: 'clientPluginAction', clientActionBinding: binding }, input,
-                ...(presentUserIntent ? { presentUserIntent } : {}) }, { signal: lifetime.signal });
+                ...(presentUserIntent ? { presentUserIntent } : {}) }, { signal: lifetime.signal, callerAuthority });
             // The physical UI/CLI origin does not expose this role as a root Action.
             if (!mountedSurface) expect(await handler({ machineId: 'reading-machine', qualifiedActionId: 'com.acme.machine-source/read',
                 expectedContributorOccurrenceId: targetOccurrence, executionSurface, input: {} }))
                 .toMatchObject({ ok: false, code: 'plugin_action_unavailable' });
+            if (executionSurface === 'ui') {
+                // Home's authenticated RPC context, not the copied current carrier,
+                // distinguishes automation from the person's native confirmation.
+                expect(await run(clientActionBinding, {}, 'write', 'confirmed', 'ui', 'account_automation'))
+                    .toMatchObject({ ok: false, code: 'plugin_action_current_intent_unavailable' });
+                expect(approvalRows.size).toBe(0);
+            }
             expect(await run()).toEqual({ ok: true, result: { reads: 1, writes: 0, caller: { kind: 'plugin', pluginId,
                 contribution: { id: contributionLocalId, qualifiedId: `${pluginId}/${contributionLocalId}` }, occurrenceId: clientActionBinding.occurrenceId,
                 sourceCustody: clientActionBinding.sourceCustody, originSurface: executionSurface } } });
+            if (executionSurface === 'ui') {
+                for (const assertedSurface of ['plugin', 'background']) {
+                    expect(await run(clientActionBinding, {}, 'write', 'confirmed', assertedSurface))
+                        .toEqual({ ok: false, code: 'plugin_structured_message_action_request_invalid' });
+                }
+                setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: 'native-target-policy', settingsVersion: 1,
+                    loadedAtMs: 1, settingsSecretsReadKeys: [], settings: accountSettingsParse({ actionsSettingsV1: {
+                        v: 1, actions: { 'com.acme.machine-source/actions/write': { enabled: false } },
+                    } }) });
+                expect(await run(clientActionBinding, {}, 'write', 'confirmed'))
+                    .toMatchObject({ ok: false, code: 'plugin_action_unavailable' });
+                resetActiveAccountSettingsSnapshotForTests();
+                expect(await run(clientActionBinding, {}, 'cli-only', 'confirmed'))
+                    .toMatchObject({ ok: false, code: 'plugin_action_unavailable' });
+                expect(await run(clientActionBinding, {}, 'session-only', 'confirmed'))
+                    .toMatchObject({ ok: false, code: 'plugin_action_session_required' });
+            }
             if (mountedSurface) {
                 expect(await run({ ...clientActionBinding, contributionLocalId: 'undeclared-source' }))
                     .toEqual({ ok: false, code: 'plugin_mounted_caller_unavailable' });
@@ -246,7 +285,27 @@ describe('mounted caller admission through the real contributed Action RPC', () 
                 // UI carries its own settled confirmation; it cannot borrow the CLI Artifact presenter.
                 expect(await run(clientActionBinding, {}, 'write'))
                     .toMatchObject({ ok: false, code: 'plugin_action_current_intent_unavailable' });
-                expect(await run(clientActionBinding, {}, 'write', 'confirmed')).toEqual({ ok: true, result: { writes: 1 } });
+                // Loop the network boundary into the real receiving ingress. A
+                // direct handler call misses the authority ceiling on this hop.
+                const transport = vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async params =>
+                    handler(params.request, { signal: lifetime.signal, callerAuthority: params.authorityCeiling ?? 'present_user' }));
+                try {
+                    const sourceCustody = fixture.registry.readPluginSourceCustody?.('com.acme.machine-source');
+                    if (!sourceCustody) throw new Error('Missing admitted source custody');
+                    const relayed = await invokeAccountMachineSourceAction({
+                        credentials: { token: accountToken, encryption: null }, serverUrl: 'http://account-caller.test',
+                        machineId: 'reading-machine', callerManifest: manifest,
+                        callerSourceCustody: clientActionBinding.sourceCustody,
+                        source: { manifest: normalizePluginManifestV2(createPluginManifestV2Fixture({ id: 'com.acme.machine-source' })),
+                            occurrenceId: targetOccurrence, sourceCustody },
+                        request: { action: { pluginId: 'com.acme.machine-source', localId: 'write' }, input: {},
+                            surface: 'plugin', originSurface: 'ui', presentUserIntent: 'confirmed',
+                            caller: { kind: 'plugin', pluginId, contribution: { id: contributionLocalId,
+                                qualifiedId: `${pluginId}/${contributionLocalId}` }, occurrenceId: clientActionBinding.occurrenceId,
+                                sourceCustody: clientActionBinding.sourceCustody, originSurface: 'ui' }, signal: lifetime.signal },
+                    });
+                    expect(relayed, JSON.stringify(relayed)).toMatchObject({ status: 'executed', value: { writes: 1 } });
+                } finally { transport.mockRestore(); }
                 expect(await run(clientActionBinding, { uncertain: true }, 'write', 'confirmed'))
                     .toMatchObject({ ok: false, code: 'plugin_action_outcome_unknown' });
                 expect(await run()).toMatchObject({ ok: true, result: { writes: 2 } });
@@ -267,7 +326,7 @@ describe('mounted caller admission through the real contributed Action RPC', () 
                     .toMatchObject({ ok: true, result: { writes: 0 } });
                 return;
             }
-        } finally { resetActiveAccountSettingsSnapshotForTests(); restore(); await app.close(); await fixture.dispose(); }
+        } finally { vi.unstubAllEnvs(); resetActiveAccountSettingsSnapshotForTests(); restore(); await app.close(); await fixture.dispose(); }
     });
     it('admits an ordinary installed external detail contributor through the same RPC and rejects retired custody', async () => {
         const targetId = 'acme.detail-host';
