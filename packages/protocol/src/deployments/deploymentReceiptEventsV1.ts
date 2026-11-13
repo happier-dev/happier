@@ -19,6 +19,7 @@ import { AutomationIdV1Schema } from '../automations/automationIdV1.js';
 import { DeploymentFailureRecoveryV1Schema } from './deploymentFailureRecoveryV1.js';
 import { DeploymentReceiptOperationV1Schema, DeploymentStateV1Schema } from './deploymentStateV1.js';
 import * as receiptResult from './deploymentReceiptResultV1.js';
+import { DeploymentSourceIntentV1Schema, type DeploymentSourceIntentV1 } from './storedAppInputV1.js';
 
 // Fast Refresh enumerates these exports while the cyclic result module is still
 // loading. Forward on use so enumeration never reads its uninitialized exports.
@@ -64,6 +65,29 @@ export const DeploymentReceiptFailureSummaryV1Schema = lazyZodSchema(() => z.str
   requiredFact: DeploymentReceiptFailureV1Schema.shape.requiredFact,
   remedy: DeploymentReceiptFailureV1Schema.shape.remedy,
 }));
+
+/** Exact native receipt evidence without the private Compose document, selectors or logs. */
+export const DeploymentReceiptInvestigationV1Schema = lazyZodSchema(() => z.strictObject({
+  source: z.optional(z.discriminatedUnion('kind', [
+    z.pick(DeploymentSourceIntentV1Schema.def.options[0], { kind: true, projectSourceId: true, sourceRevision: true, sha: true }),
+    z.pick(DeploymentSourceIntentV1Schema.def.options[1], { kind: true, contentRevision: true, composeDigest: true }),
+  ])),
+  failure: z.optional(DeploymentReceiptFailureV1Schema),
+}));
+export type DeploymentReceiptInvestigationV1 = z.infer<typeof DeploymentReceiptInvestigationV1Schema>;
+
+/** Only the Account-opened exact receipt owner supplies these private evidence facts. */
+export function projectDeploymentReceiptInvestigationV1(content: Readonly<{
+  sourceIntent?: DeploymentSourceIntentV1; failure?: DeploymentReceiptFailureV1;
+}>): DeploymentReceiptInvestigationV1 {
+  const source = content.sourceIntent;
+  return {
+    ...(source ? { source: source.kind === 'repository'
+      ? { kind: source.kind, projectSourceId: source.projectSourceId, sourceRevision: source.sourceRevision, sha: source.sha }
+      : { kind: source.kind, contentRevision: source.contentRevision, composeDigest: source.composeDigest } } : {}),
+    ...(content.failure ? { failure: content.failure } : {}),
+  };
+}
 
 /** A reviewed candidate was refused before dispatch against this observed revision. */
 export const DeploymentReviewConflictFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({

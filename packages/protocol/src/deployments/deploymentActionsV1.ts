@@ -29,7 +29,7 @@ import { DeploymentInvalidV1Schema } from './deploymentInvalidV1.js';
 export { DeploymentInvalidV1Schema, type DeploymentInvalidV1 } from './deploymentInvalidV1.js';
 export { buildDeploymentPromoteInputV1 } from './promoteInput.js';
 export * from './deploymentReceiptEventsV1.js';
-import { DeploymentReceiptFailureSummaryV1Schema, PlatformFailureEnrollmentReadBackV1Schema, PlatformFailureEnrollmentV1Schema } from './deploymentReceiptEventsV1.js';
+import { DeploymentReceiptFailureSummaryV1Schema, DeploymentReceiptInvestigationV1Schema, PlatformFailureEnrollmentReadBackV1Schema, PlatformFailureEnrollmentV1Schema } from './deploymentReceiptEventsV1.js';
 
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentReceiptAcceptedResultV1Schema } from './deploymentReceiptResultV1.js';
@@ -536,6 +536,8 @@ export type DeploymentEnvironmentAccessInputV1 = z.infer<typeof DeploymentEnviro
 export type DeploymentEnvironmentAccessResultV1 = z.infer<typeof DeploymentEnvironmentAccessResultV1Schema>;
 export const DeploymentReceiptGetInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...home, environmentId: z.optional(DeploymentIdentifierV1Schema), deploymentId: DeploymentIdentifierV1Schema,
+  /** Open exact private evidence on the Account host; never forwarded to metadata storage. */
+  projection: z.optional(z.literal('investigation')),
 }));
 /** Observe an already-issued provider deployment; the host reads its retained identity and custody. */
 export const DeploymentReceiptObserveInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -568,6 +570,8 @@ export type DeploymentEnvironmentGetResultV1 = z.infer<typeof DeploymentEnvironm
 export const DeploymentReceiptGetResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ok: z.literal(true), deployment: DeploymentReceiptHeaderV1Schema,
     failureSummary: z.optional(z.nullable(DeploymentReceiptFailureSummaryV1Schema)),
+    /** Account-opened native evidence; absent from server metadata reads. */
+    investigation: z.optional(DeploymentReceiptInvestigationV1Schema),
     cancellationConsequence: z.optional(DeploymentCancellationConsequenceV1Schema),
     /** Admitted read-time presentation fact. Absent on older readers, never inferred by clients. */
     cancellable: z.optional(z.boolean()) }), DeploymentActionFailureV1Schema,

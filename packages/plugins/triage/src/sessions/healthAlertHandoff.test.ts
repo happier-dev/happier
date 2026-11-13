@@ -5,6 +5,8 @@ import { TriageSessionHandoffInputV1Schema } from '@happier-dev/triage-protocol/
 import { createDeploymentReceiptArtifactHeaderV1, type DeploymentContentV1 } from '@happier-dev/deployment-protocol/v1';
 import { createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { readTriageHealthAlertHandoffV1 } from './healthAlertHandoff.js';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { projectDeploymentReceiptInvestigationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 
 function receiptFixture(
     sourceIntent: NonNullable<DeploymentContentV1['sourceIntent']>,
@@ -18,7 +20,7 @@ function receiptFixture(
     const content = createDeploymentReceiptDetailV1({ content: {
         ...base, sourceIntent: source, ...(failure ? { failure } : {}),
     } }).content;
-    return { deployment, artifact: {
+    return { deployment, content, artifact: {
         artifactId: deployment.contentArtifactId, ownerAccountId: 'account-a', access: 'owner', publicAudience: 'none',
         header: createDeploymentReceiptArtifactHeaderV1('Failed deployment', content), body: JSON.stringify(content),
         revision: { headerVersion: deployment.contentHeaderVersion, bodyVersion: deployment.contentBodyVersion },
@@ -116,6 +118,7 @@ describe('typed failure subjects through the existing investigation owner', () =
             revision: 3, requestedAtMs: 100, startedAtMs: 110, settledAtMs: 120, predecessorDeploymentId: 'deployment-before',
         }, { code: 'native_build_failed', phase: 'build', failureCause: { phase: 'deployment.native.build.build_failed',
             errorClass: 'Error', errorCode: 'deployment_disk_full', httpStatus: null } });
+        const artifactExecutor = createActionExecutor({ artifactAction: async () => ({ artifact: receipt.artifact }) });
         const host = {
             context: async () => ({ accountScope: { serverId: 'server-a', accountId: 'account-a' } }),
             executeAction: async (id: string, input: JsonValue) => {
@@ -129,8 +132,16 @@ describe('typed failure subjects through the existing investigation owner', () =
                     acceptedContext: { workspaceTarget: { project: { machineId: 'machine-a', workspaceRefId: 'workspace-a',
                         directory: '/project', checkoutRootPath: '/project' } } },
                     result: 'PRIVATE LOG MUST NOT BE COPIED' };
-                if (id === 'deployments.receipts.get') return { ok: true, deployment: receipt.deployment };
-                if (id === 'artifact.get') return { artifact: receipt.artifact };
+                if (id === 'deployments.receipts.get') return { ok: true, deployment: receipt.deployment,
+                    ...(input && typeof input === 'object' && !Array.isArray(input) && input.projection === 'investigation'
+                        ? { investigation: projectDeploymentReceiptInvestigationV1(receipt.content) } : {}) };
+                if (id === 'artifact.get') {
+                    const result = await artifactExecutor.execute('artifact.get', input, {
+                        surface: 'ui', authority: 'present_user', runtimeAccountId: 'account-a', serverId: 'server-a',
+                    });
+                    if (!result.ok) throw new PluginError({ code: result.errorCode });
+                    return result.result;
+                }
                 if (id === 'action.operations.get') return { kind: 'found', operation: { operationId: 'operation-a',
                     scope: { accountId: 'account-a', machineId: 'machine-a' }, state: 'failed',
                     createdAt: 100, startedAt: 110, settledAt: 120,
@@ -157,10 +168,7 @@ describe('typed failure subjects through the existing investigation owner', () =
                 recovery: { nextAction: { destination: 'machines' } },
                 failureCause: { errorCode: 'deployment_disk_full' },
             });
-            expect(reads.filter(read => read.id === 'artifact.get')).toEqual([
-                { id: 'artifact.get', input: { artifactId: receipt.deployment.contentArtifactId } },
-                { id: 'artifact.get', input: { artifactId: receipt.deployment.contentArtifactId } },
-            ]);
+            expect(reads.filter(read => read.id === 'artifact.get')).toEqual([]);
             // The composer chip names the receipt the way its page does, not a generic reference (D4).
             expect(result?.kind === 'ready' && result.evidence.source.label).toBe('Deploy of aaaaaaa failed');
             expect(result?.kind === 'ready' && JSON.parse(result.evidence.text)).toMatchObject({ read: {
@@ -220,8 +228,8 @@ describe('typed failure subjects through the existing investigation owner', () =
 });
 
 describe('a failed receipt names itself the way its page does (D4c)', () => {
-    it.each(['current', 'differentRevision', 'missing'] as const)(
-        'labels a stored Compose source only from its exact opened Artifact (%s)', async state => {
+    it.each(['current', 'missing'] as const)(
+        'labels a stored Compose source from native receipt evidence (%s)', async state => {
         const subject = { kind: 'deploymentReceipt', serverId: 'server-a', environmentId: 'environment', deploymentId: 'deployment-s' };
         const receipt = receiptFixture({ kind: 'stored', contentRevision: 2,
             composeDigest: `sha256:302cf72${'0'.repeat(57)}`, document: 'services: {}', profiles: [], services: [] },
@@ -230,10 +238,8 @@ describe('a failed receipt names itself the way its page does (D4c)', () => {
             context: async () => ({ accountScope: { serverId: 'server-a', accountId: 'account-a' } }),
             executeAction: async (id: string) => {
                 if (id === 'projects.list') return { items: [], truncated: false };
-                if (id === 'deployments.receipts.get') return { ok: true, deployment: receipt.deployment };
-                if (id === 'artifact.get') return { artifact: state === 'missing' ? null : state === 'differentRevision'
-                    ? { ...receipt.artifact, revision: { ...receipt.artifact.revision, bodyVersion: receipt.artifact.revision.bodyVersion + 1 } }
-                    : receipt.artifact };
+                if (id === 'deployments.receipts.get') return { ok: true, deployment: receipt.deployment,
+                    ...(state === 'current' ? { investigation: projectDeploymentReceiptInvestigationV1(receipt.content) } : {}) };
                 if (id === 'deployments.environments.get') return { ok: true, environment: { id: 'environment',
                     serverId: 'server-a', projectSourceId: 'project', runtimeTargetLinkId: 'link', controllerMachineId: 'machine-a' }, targetLinks: [] };
                 throw new Error(`Unexpected read ${id}`);

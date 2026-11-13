@@ -414,6 +414,11 @@ export type DeploymentsActionInputById = {
                 destination?: unknown;
             }[];
         };
+        configure?: undefined | {
+            name: string;
+            port?: number | string | undefined;
+            hostname?: string | undefined;
+        };
     };
     readonly "deployments.templates.instantiate": {
         mode: 'apply' | 'preview';
@@ -539,9 +544,9 @@ export type DeploymentsActionInputById = {
         intent?: 'add' | undefined;
         managedRetention?: 'keep' | 'until-delete' | undefined;
         generatedSecretAudience?: undefined | {
+            groupGrants?: string[] | undefined;
             accountGrants?: string[] | undefined;
             teamGrants?: string[] | undefined;
-            groupGrants?: string[] | undefined;
         };
         connectTo?: undefined | {
             service: string;
@@ -587,8 +592,8 @@ export type DeploymentsActionInputById = {
             repositoryName: string;
             description?: string | undefined;
             providerId?: string | undefined;
-            providerBaseUrl?: string | undefined;
             ownerKind?: 'org' | 'user' | undefined;
+            providerBaseUrl?: string | undefined;
             remoteUrlKind?: 'https' | 'ssh' | undefined;
             remoteConflictStrategy?: 'fail' | 'set-url' | undefined;
             pushCurrentBranch?: boolean | undefined;
@@ -771,10 +776,6 @@ export type DeploymentsActionInputById = {
                 kind: 'path';
                 path: string;
             };
-            executionTarget: {
-                serverId: string;
-                machineId: string;
-            };
             agentTarget: {
                 kind: 'agent';
                 identity: {
@@ -782,6 +783,10 @@ export type DeploymentsActionInputById = {
                     localId: string;
                 };
                 definitionId?: string | undefined;
+            };
+            executionTarget: {
+                serverId: string;
+                machineId: string;
             };
             profileId?: string | undefined;
             title?: string | undefined;
@@ -908,42 +913,12 @@ export type DeploymentsActionInputById = {
             };
             permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             roleId?: string | undefined;
-            organizationPlacement?: undefined | {
-                folderId: null | string;
-                tagIds: string[];
-            };
-            configuration?: unknown;
             manager?: undefined | {
                 sessionId: string;
             };
-            promptStack?: undefined | {
-                id: string;
-                ref: {
-                    kind: 'bundle' | 'doc';
-                    artifactId: string;
-                    serverId?: string | undefined;
-                };
-                enabled?: boolean | undefined;
-                placement?: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append' | undefined;
-                maxChars?: number | undefined;
-                required?: boolean | undefined;
-                skillMigrationV1?: true | undefined;
-                plan?: true | undefined;
-            }[];
-            placementOrigin?: undefined | {
-                kind: 'machine_pool';
-                poolId: string;
-            };
             approvalProfileId?: null | string | undefined;
-            secretReferenceOverlay?: undefined | {
-                v: 1;
-                bindings: Record<string, {
-                    ref: string;
-                    revision?: number | undefined;
-                }>;
-            };
-            agentModeId?: string | undefined;
-            unlistedTools?: 'ask' | 'deny' | undefined;
+            configuration?: unknown;
+            primaryTeamId?: null | string | undefined;
             capabilitySelection?: undefined | {
                 mcp?: undefined | {
                     v?: 1 | undefined;
@@ -959,15 +934,68 @@ export type DeploymentsActionInputById = {
                     excludeNativeSkillNames?: string[] | undefined;
                 };
             };
-            transcriptStorage?: 'direct' | 'persisted' | undefined;
+            memoryEnabled?: boolean | undefined;
+            promptStack?: undefined | {
+                id: string;
+                ref: {
+                    kind: 'bundle' | 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                enabled?: boolean | undefined;
+                placement?: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append' | undefined;
+                maxChars?: number | undefined;
+                required?: boolean | undefined;
+                skillMigrationV1?: true | undefined;
+                plan?: true | undefined;
+            }[];
+            managedCreation?: undefined | {
+                homeId: string;
+                managedId: string;
+                controller?: undefined | {
+                    machineId: string;
+                    installationId: string;
+                };
+            };
             checkoutCreationDraft?: null | undefined | {
                 kind: 'git_worktree';
                 displayName: string;
                 baseRef: null | string;
                 branchMode?: 'existing' | 'new' | undefined;
             };
-            memoryEnabled?: boolean | undefined;
-            primaryTeamId?: null | string | undefined;
+            discussionParticipant?: undefined | {
+                discussionId: string;
+                participantSlotId: string;
+            };
+            secretReferenceOverlay?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
+            agentModeId?: string | undefined;
+            unlistedTools?: 'ask' | 'deny' | undefined;
+            transcriptStorage?: 'direct' | 'persisted' | undefined;
+            placementOrigin?: undefined | {
+                kind: 'machine_pool';
+                poolId: string;
+            };
+            sourceContext?: undefined | {
+                v: 1;
+                kind: 'session_replay';
+                sourceSessionId: string;
+                forkPoint: {
+                    type: 'latest';
+                } | {
+                    type: 'seq';
+                    upToSeqInclusive: number;
+                };
+            };
+            organizationPlacement?: undefined | {
+                folderId: null | string;
+                tagIds: string[];
+            };
             teamCredentialBindings?: ({
                 v: 1;
                 slot: {
@@ -1048,18 +1076,6 @@ export type DeploymentsActionInputById = {
             };
             agentInstallConsent?: undefined | {
                 vendorRecipe: boolean;
-            };
-            managedCreation?: undefined | {
-                homeId: string;
-                managedId: string;
-                controller?: undefined | {
-                    machineId: string;
-                    installationId: string;
-                };
-            };
-            discussionParticipant?: undefined | {
-                discussionId: string;
-                participantSlotId: string;
             };
             initialTriggers?: undefined | {
                 trigger: {
@@ -1564,13 +1580,13 @@ export type DeploymentsActionInputById = {
                     kind: 'workflow';
                     ref: string;
                 };
+                inputs?: Record<string, unknown> | undefined;
+                approvalProfileId?: null | string | undefined;
                 executionTarget?: undefined | {
                     kind: 'detached_run';
                 } | {
                     kind: 'session';
                 };
-                inputs?: Record<string, unknown> | undefined;
-                approvalProfileId?: null | string | undefined;
                 visibleTeamId?: null | string | undefined;
                 roleOverrides?: undefined | {
                     roleId: string;
@@ -1630,17 +1646,6 @@ export type DeploymentsActionInputById = {
                 id: string;
                 revision: number;
             }> | undefined;
-            sourceContext?: undefined | {
-                v: 1;
-                kind: 'session_replay';
-                sourceSessionId: string;
-                forkPoint: {
-                    type: 'latest';
-                } | {
-                    type: 'seq';
-                    upToSeqInclusive: number;
-                };
-            };
         };
         importFrom?: undefined | {
             tool: string;
@@ -2122,10 +2127,6 @@ export type DeploymentsActionInputById = {
         protection: 'nonProduction' | 'production';
         deployerMode: 'chosen' | 'managers' | 'members';
         projectSourceId?: string | undefined;
-        deployerPrincipals?: undefined | {
-            principalKind: 'account' | 'teamGroup';
-            principalId: string;
-        }[];
         newProject?: undefined | {
             name: string;
             requestKey: string;
@@ -2137,6 +2138,10 @@ export type DeploymentsActionInputById = {
                 teamId: string;
             };
         };
+        deployerPrincipals?: undefined | {
+            principalKind: 'account' | 'teamGroup';
+            principalId: string;
+        }[];
         managedRetention?: 'keep' | 'until-delete' | undefined;
         previewCompanionOfEnvironmentId?: string | undefined;
         name?: string | undefined;
@@ -2485,9 +2490,9 @@ export type DeploymentsActionInputById = {
             phase: 'build' | 'runtime';
         }[];
         generatedSecretAudience?: undefined | {
+            groupGrants?: string[] | undefined;
             accountGrants?: string[] | undefined;
             teamGrants?: string[] | undefined;
-            groupGrants?: string[] | undefined;
         };
         domainBindings?: undefined | {
             templateDomainId: string;
@@ -2793,16 +2798,16 @@ export type DeploymentsActionInputById = {
                             } | {
                                 kind: 'keepEverything';
                             };
-                            configRevision: number;
-                            destinationRef: {
-                                pluginId: string;
-                                localId: string;
-                            };
                             credentialBindings: {
                                 purpose: 'backupDestination';
                                 configKey: 'destination';
                                 role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
                             }[];
+                            configRevision: number;
+                            destinationRef: {
+                                pluginId: string;
+                                localId: string;
+                            };
                         };
                         prefix: string;
                         bindings: {
@@ -3527,16 +3532,16 @@ export type DeploymentsActionInputById = {
                 volume: string;
                 consistency: 'stopDuringCopy';
             })[];
-            configRevision: number;
-            destinationRef: {
-                pluginId: string;
-                localId: string;
-            };
             credentialBindings: {
                 purpose: 'backupDestination';
                 configKey: 'destination';
                 role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
             }[];
+            configRevision: number;
+            destinationRef: {
+                pluginId: string;
+                localId: string;
+            };
             ownership: {
                 environmentId: string;
                 prefix: string;
@@ -3646,16 +3651,16 @@ export type DeploymentsActionInputById = {
                 volume: string;
                 consistency: 'stopDuringCopy';
             })[];
-            configRevision: number;
-            destinationRef: {
-                pluginId: string;
-                localId: string;
-            };
             credentialBindings: {
                 purpose: 'backupDestination';
                 configKey: 'destination';
                 role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
             }[];
+            configRevision: number;
+            destinationRef: {
+                pluginId: string;
+                localId: string;
+            };
             ownership: {
                 environmentId: string;
                 prefix: string;
@@ -3751,16 +3756,16 @@ export type DeploymentsActionInputById = {
                 volume: string;
                 consistency: 'stopDuringCopy';
             })[];
-            configRevision: number;
-            destinationRef: {
-                pluginId: string;
-                localId: string;
-            };
             credentialBindings: {
                 purpose: 'backupDestination';
                 configKey: 'destination';
                 role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
             }[];
+            configRevision: number;
+            destinationRef: {
+                pluginId: string;
+                localId: string;
+            };
             ownership: {
                 environmentId: string;
                 prefix: string;
@@ -4079,15 +4084,15 @@ export type DeploymentsActionInputById = {
             } | {
                 kind: 'keepEverything';
             };
-            destinationRef: {
-                pluginId: string;
-                localId: string;
-            };
             credentialBindings: {
                 purpose: 'backupDestination';
                 configKey: 'destination';
                 role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
             }[];
+            destinationRef: {
+                pluginId: string;
+                localId: string;
+            };
             ownership: {
                 environmentId: string;
                 prefix: string;
@@ -4098,6 +4103,7 @@ export type DeploymentsActionInputById = {
         deploymentId: string;
         serverId: string;
         environmentId?: string | undefined;
+        projection?: 'investigation' | undefined;
     };
     readonly "deployments.receipts.observe": {
         deploymentId: string;
@@ -6052,6 +6058,20 @@ export type DeploymentsActionResultById = {
                 contentBodyVersion: number;
             };
         };
+        configurePreflight?: undefined | {
+            name: {
+                status: 'invalid' | 'notProvided' | 'valid';
+                value: null | string;
+            };
+            port: {
+                status: 'invalid' | 'notProvided' | 'valid';
+                value: null | number;
+            };
+            dns: {
+                status: 'invalid' | 'notProvided' | 'valid';
+                value: null | string;
+            };
+        };
     };
     readonly "deployments.templates.instantiate": {
         kind: 'applied';
@@ -7541,8 +7561,8 @@ export type DeploymentsActionResultById = {
                 description?: string | undefined;
                 remoteName?: string | undefined;
                 providerId?: string | undefined;
-                providerBaseUrl?: string | undefined;
                 ownerKind?: 'org' | 'user' | undefined;
+                providerBaseUrl?: string | undefined;
                 remoteUrlKind?: 'https' | 'ssh' | undefined;
                 remoteConflictStrategy?: 'fail' | 'set-url' | undefined;
                 pushCurrentBranch?: boolean | undefined;
@@ -8819,10 +8839,6 @@ export type DeploymentsActionResultById = {
             deployerMode: 'chosen' | 'managers' | 'members';
             name: string;
             projectSourceId?: string | undefined;
-            deployerPrincipals?: undefined | {
-                principalKind: 'account' | 'teamGroup';
-                principalId: string;
-            }[];
             newProject?: undefined | {
                 name: string;
                 requestKey: string;
@@ -8834,6 +8850,10 @@ export type DeploymentsActionResultById = {
                     teamId: string;
                 };
             };
+            deployerPrincipals?: undefined | {
+                principalKind: 'account' | 'teamGroup';
+                principalId: string;
+            }[];
             managedRetention?: 'keep' | 'until-delete' | undefined;
             previewCompanionOfEnvironmentId?: string | undefined;
             preview?: undefined | {
@@ -9181,9 +9201,9 @@ export type DeploymentsActionResultById = {
                 phase: 'build' | 'runtime';
             }[];
             generatedSecretAudience?: undefined | {
+                groupGrants?: string[] | undefined;
                 accountGrants?: string[] | undefined;
                 teamGrants?: string[] | undefined;
-                groupGrants?: string[] | undefined;
             };
             domainBindings?: undefined | {
                 templateDomainId: string;
@@ -12045,15 +12065,15 @@ export type DeploymentsActionResultById = {
             } | {
                 kind: 'keepEverything';
             };
-            destinationRef: {
-                pluginId: string;
-                localId: string;
-            };
             credentialBindings: {
                 purpose: 'backupDestination';
                 configKey: 'destination';
                 role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
             }[];
+            destinationRef: {
+                pluginId: string;
+                localId: string;
+            };
             ownership: {
                 environmentId: string;
                 prefix: string;
@@ -12255,6 +12275,53 @@ export type DeploymentsActionResultById = {
             code: string;
             requiredFact?: 'deploymentActionResult' | 'unrestricted_workspace_requester' | 'verified_root_requester' | undefined;
             remedy?: string | undefined;
+        };
+        investigation?: undefined | {
+            source?: undefined | {
+                kind: 'repository';
+                sourceRevision: number;
+                projectSourceId: string;
+                sha: string;
+            } | {
+                kind: 'stored';
+                contentRevision: number;
+                composeDigest: string;
+            };
+            failure?: undefined | {
+                code: string;
+                phase: 'activate' | 'admission' | 'build' | 'cancel' | 'cleanup' | 'link' | 'observe' | 'restore' | 'send' | 'source' | 'teardown';
+                validation?: undefined | {
+                    source: string;
+                    httpStatus: number;
+                    issues: {
+                        code: string;
+                        path: (number | string)[];
+                        message?: string | undefined;
+                        expected?: string | undefined;
+                        acceptedValues?: (boolean | null | number | string)[] | undefined;
+                        constraint?: undefined | {
+                            rule: 'body_coverage';
+                            minimumRatio: 0.08;
+                        } | {
+                            rule: 'cut_closed' | 'cut_stroke_width' | 'fill_closed' | 'mouth_scale' | 'outline_extent' | 'path_syntax' | 'stroke_width';
+                        } | {
+                            rule: 'mouth_containment';
+                            mood: 'needsYou' | 'quiet';
+                            maximumSignedDistance: 0;
+                        };
+                    }[];
+                };
+                sourceAdmission?: undefined | {
+                    phase: 'deployment_source_admission';
+                    reason: 'requester_authority_unavailable' | 'requester_workspace_requires_owner' | 'session_requester_unavailable';
+                    requiredFact: 'unrestricted_workspace_requester' | 'verified_root_requester';
+                    remedy: 'retry_original_request' | 'run_from_authorized_host';
+                };
+                requiredFact?: 'deploymentActionResult' | 'unrestricted_workspace_requester' | 'verified_root_requester' | undefined;
+                remedy?: string | undefined;
+                failureCause?: ActionFailureCauseV1 | undefined;
+                effectAttempted?: boolean | undefined;
+            };
         };
         cancellationConsequence?: undefined | {
             kind: 'may-leave-service-down-until-rollback' | 'service-down-until-rollback';

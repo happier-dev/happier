@@ -5,7 +5,7 @@ import type { PluginActionInputById, PluginActionResultById, PluginClientActionU
 import type { TriageActionResolutionHostV1 } from './actionResolution.js';
 import type { SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
 import { deploymentRevisionShortLabelV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
-import { readDeploymentReceiptArtifactV1, type DeploymentContentV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentReceiptFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import {
     ProtocolArtifactGetOutputV1Schema,
@@ -121,7 +121,7 @@ async function readFailureSubject(
         && (context.workspace.serverId !== selected.serverId || context.workspace.machineId !== selected.machineId))) return null;
     // The host Action dispatcher admits and validates these DTOs. These are
     // authenticated read results, not caller-authored evidence or authority.
-    const read = async <K extends 'artifact.get' | 'deployments.receipts.get' | 'deployments.environments.get' | 'deployments.domains.get' | 'action.operations.get' | 'workflow.run.get'>(
+    const read = async <K extends 'deployments.receipts.get' | 'deployments.environments.get' | 'deployments.domains.get' | 'action.operations.get' | 'workflow.run.get'>(
         id: K, value: PluginActionInputById[K],
     ) => await host.executeAction(id, value as JsonReadInput, { signal }) as PluginActionResultById[K];
     let affected: { serverId: string; machineId: string } | undefined;
@@ -137,7 +137,7 @@ async function readFailureSubject(
     let reference: { actionId: string; input: JsonReadInput; retained?: object };
     // The receipt's own title for the composer chip, as its page says it; unknown → the generic reference label.
     let receiptTitle: string | undefined;
-    let receiptFailure: DeploymentContentV1['failure'];
+    let receiptFailure: DeploymentReceiptFailureV1 | undefined;
     switch (subject.kind) {
         case 'workflowRun': {
             const address = { runId: subject.runId };
@@ -156,27 +156,21 @@ async function readFailureSubject(
         }
         case 'deploymentReceipt': {
             const { kind: _kind, ...address } = subject;
-            const result = await read('deployments.receipts.get', address);
+            const result = await read('deployments.receipts.get', { ...address, projection: 'investigation' });
             if (!result.ok || result.deployment.id !== subject.deploymentId || result.deployment.environmentId !== subject.environmentId) return null;
             const controller = result.deployment.acceptedExecution?.controller;
             if (controller) affected = { serverId, machineId: controller.machineId };
             if (!selected && !await environmentPlacement(subject.environmentId)) return null;
             const receipt = result.deployment;
-            const { artifact } = await read('artifact.get', {
-                artifactId: receipt.contentArtifactId,
-            });
             if (signal.aborted) return null;
-            const opened = readDeploymentReceiptArtifactV1(receipt, artifact);
-            const source = opened.ok ? opened.content.sourceIntent : undefined;
-            receiptFailure = opened.ok ? opened.content.failure : undefined;
+            const source = result.investigation?.source;
+            receiptFailure = result.investigation?.failure;
             receiptTitle = failedReceiptTitle(receipt.operation, receipt.state, source ? deploymentRevisionShortLabelV1(source) : undefined);
             reference = { actionId: 'deployments.receipts.get', input: address, retained: {
                 state: receipt.state, receiptRevision: receipt.revision, actionOperationId: receipt.actionOperationId,
                 requestedAtMs: receipt.requestedAtMs, startedAtMs: receipt.startedAtMs, settledAtMs: receipt.settledAtMs,
                 predecessorDeploymentId: receipt.predecessorDeploymentId,
-                ...(source ? { source: source.kind === 'repository'
-                    ? { kind: source.kind, projectSourceId: source.projectSourceId, sourceRevision: source.sourceRevision, sha: source.sha }
-                    : { kind: source.kind, contentRevision: source.contentRevision, composeDigest: source.composeDigest } } : {}),
+                ...(source ? { source } : {}),
             } };
             break;
         }

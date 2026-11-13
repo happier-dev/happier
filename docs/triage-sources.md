@@ -473,6 +473,13 @@ reader. Pages do not create investigators or select replacement Machines.
 For receipts, Environment health and Domain attention, the handoff reads the
 controller and accepted Source workspace from the exact receipt/current Environment
 as evidence. The controller alone never becomes a fixed execution preference.
+Receipt investigation requests `deployments.receipts.get` with the native
+`projection: investigation`. The Account host opens the exact receipt locally and
+returns only its source revision reference and structural failure facts, including
+the recorded failure cause. Server receipt metadata stays content-free; the
+generic Artifact Action continues to exclude internal deployment receipts. A host
+without the optional projection leaves those evidence facts unavailable instead
+of falling back to the generic Artifact reader.
 The shared action-placement owner applies the saved Profile's fixed/ask preference,
 then the exact accepted Project or repository candidates, using the Project owner's
 reachability fact. A valid non-SCM Project can identify its exact workspace without
