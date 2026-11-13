@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { DEFAULT_MACHINE_PRESENCE_TIMEOUT_MS } from "@happier-dev/protocol/machines/machineReachabilityV1";
+
 import { createDbMocks, installDbModuleMock } from "../api/testkit/dbMocks";
 
 const { emitEphemeral, emitUpdate, expireSessionPublisherCandidates, refreshTrackedSessionAccountBadgePushes, emitPendingActivationHint } = vi.hoisted(() => ({
@@ -86,7 +88,7 @@ describe("presence timeout config", () => {
         const config = resolvePresenceTimeoutConfig({});
         expect(config).toEqual({
             sessionTimeoutMs: 120_000,
-            machineTimeoutMs: 180_000,
+            machineTimeoutMs: DEFAULT_MACHINE_PRESENCE_TIMEOUT_MS,
             tickMs: 60 * 1000,
         });
     });
@@ -110,7 +112,7 @@ describe("presence timeout config", () => {
         });
         expect(config).toEqual({
             sessionTimeoutMs: 120_000,
-            machineTimeoutMs: 180_000,
+            machineTimeoutMs: DEFAULT_MACHINE_PRESENCE_TIMEOUT_MS,
             tickMs: 60 * 1000,
         });
     });

@@ -1,14 +1,22 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+import { auth } from "@/app/auth/auth";
+import { db } from "@/storage/db";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import { createFakeRouteApp, getRouteEntry } from "../../testkit/routeHarness";
 import { createEnvReset } from "../../testkit/env";
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
-vi.mock("@/app/auth/auth", () => ({
-    auth: {
-        verifyToken: vi.fn(async (token: string) => (token === "token_1" ? { userId: "user-1" } : null)),
-    },
-}));
+// Exercise real token issuance and route admission against the canonical storage harness.
+let harness: LightSqliteHarness;
+let token: string;
+beforeAll(async () => {
+    harness = await createLightSqliteHarness({ tempDirPrefix: "happier-connect-rate-auth-", initAuth: true });
+    await db.account.create({ data: { id: "user-1", publicKey: "connect-rate-auth-user" } });
+    token = await auth.createToken("user-1", undefined, { kind: "account", authority: "present_user" });
+}, 120_000);
+afterAll(async () => { await harness?.close(); });
 
 describe("connectRoutes (oauth external) rate limit", () => {
     const resetRouteKeyStrategyEnv = createEnvReset();
@@ -26,7 +34,7 @@ describe("connectRoutes (oauth external) rate limit", () => {
         const connectParams = getRouteEntry(app, "GET", "/v1/connect/external/:provider/params");
         expect(connectParams.opts.config?.rateLimit).toEqual(expect.objectContaining({ max: expect.any(Number) }));
         expect(connectParams.opts.config?.rateLimit?.keyGenerator).toEqual(expect.any(Function));
-        expect(await connectParams.opts.config?.rateLimit?.keyGenerator?.({ headers: { authorization: "Bearer token_1" }, ip: "203.0.113.9" })).toBe("uid:user-1");
+        expect(await connectParams.opts.config?.rateLimit?.keyGenerator?.({ headers: { authorization: `Bearer ${token}` }, ip: "203.0.113.9" })).toBe("uid:user-1");
 
         const callback = getRouteEntry(app, "GET", "/v1/oauth/:provider/callback");
         expect(callback.opts.config?.rateLimit).toEqual(expect.objectContaining({ max: expect.any(Number) }));
@@ -41,7 +49,7 @@ describe("connectRoutes (oauth external) rate limit", () => {
         connectOAuthExternalRoutes(app as any);
 
         const connectParams = getRouteEntry(app, "GET", "/v1/connect/external/:provider/params");
-        expect(await connectParams.opts.config?.rateLimit?.keyGenerator?.({ headers: { authorization: "Bearer token_1" }, ip: "203.0.113.9" })).toBe("ip:203.0.113.9");
+        expect(await connectParams.opts.config?.rateLimit?.keyGenerator?.({ headers: { authorization: `Bearer ${token}` }, ip: "203.0.113.9" })).toBe("ip:203.0.113.9");
 
         // Public endpoints should remain IP-keyed to avoid turning auth-only into a global shared bucket.
         const authParams = getRouteEntry(app, "GET", "/v1/auth/external/:provider/params");

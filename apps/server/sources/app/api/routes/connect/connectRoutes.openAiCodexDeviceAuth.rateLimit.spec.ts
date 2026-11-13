@@ -1,14 +1,22 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+import { auth } from "@/app/auth/auth";
+import { db } from "@/storage/db";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import { createFakeRouteApp, getRouteEntry } from "../../testkit/routeHarness";
 import { registerConnectedServiceOpenAiCodexDeviceAuthRoutes } from "./connectedServicesV2/registerConnectedServiceOpenAiCodexDeviceAuthRoutes";
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
-vi.mock("@/app/auth/auth", () => ({
-    auth: {
-        verifyToken: vi.fn(async (token: string) => (token === "token_1" ? { userId: "user-1" } : null)),
-    },
-}));
+// Exercise real token issuance and route admission against the canonical storage harness.
+let harness: LightSqliteHarness;
+let token: string;
+beforeAll(async () => {
+    harness = await createLightSqliteHarness({ tempDirPrefix: "happier-connect-rate-auth-", initAuth: true });
+    await db.account.create({ data: { id: "user-1", publicKey: "connect-rate-auth-user" } });
+    token = await auth.createToken("user-1", undefined, { kind: "account", authority: "present_user" });
+}, 120_000);
+afterAll(async () => { await harness?.close(); });
 
 describe("OpenAI Codex device-auth route rate limits", () => {
     it("rate-limits provider start and poll work per authenticated account", async () => {
@@ -26,7 +34,7 @@ describe("OpenAI Codex device-auth route rate limits", () => {
             }));
             expect(rateLimit?.keyGenerator).toEqual(expect.any(Function));
             await expect(rateLimit?.keyGenerator?.({
-                headers: { authorization: "Bearer token_1" },
+                headers: { authorization: `Bearer ${token}` },
                 ip: "203.0.113.9",
             })).resolves.toBe("uid:user-1");
         }
