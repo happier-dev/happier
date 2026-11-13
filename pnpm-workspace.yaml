@@ -104,6 +104,12 @@ packageExtensions:
     dependencies:
       shiki: 4.5.0
       "@shikijs/themes": 4.5.0
+  # mermaid's published declarations import type-fest but list it only as a devDependency.
+  # Hoisting otherwise resolves them to the root type-fest@0.13.1, whose
+  # `/// <reference lib="esnext"/>` widens the UI program past its ES2022 lib.
+  "mermaid@11.12.2":
+    dependencies:
+      type-fest: 4.41.0
 allowBuilds:
   esbuild: true
   "@homebridge/node-pty-prebuilt-multiarch": true
