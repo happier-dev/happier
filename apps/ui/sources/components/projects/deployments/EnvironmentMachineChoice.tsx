@@ -3,7 +3,7 @@ import type { MachinePresetItemV1, MachineSetupV1 } from '@happier-dev/protocol/
 import type { MachineSetupCombinedPlanResultV1, MachineSetupPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { DOCKER_ENGINE_RECIPE_REF_V1 } from '@happier-dev/protocol/machines/setup/machineRecipeReferenceV1';
 import { prepareMachineSetupSoftwareApplyInput, readMachineSetupSoftwareCurrentPlan } from '@/components/settings/machines/managed/machineSetupSoftware';
-import { readMachineSetupRecipeInputState } from '@/components/settings/machines/managed/machineSetupRecipeInputs';
+import { readMachineSetupRecipeInputState } from '@/components/settings/machines/managed/machineSetupRecipeInputsModel';
 import { usePluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import type { MachineSetupPreparedApply } from '@/components/settings/machines/managed/machineSetupReview';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -84,13 +84,14 @@ export function useDeployHostReadiness(lifetime: ServerAccountScopeLifetime | nu
   }, [lifetime, machineId]);
   const current = state?.machineId === machineId && state.lifetime === lifetime ? state : null;
   const currentReadiness = current?.result.ok ? readDeployHostReadiness(current.result.plan, current.machineId) : null;
-  const editable = current?.result.ok === true && currentReadiness !== 'ready';
+  const activeReview = reviewState?.current === current ? reviewState : null;
+  const prepared = activeReview?.prepared ?? (current?.result.ok === false ? current.result : null);
+  const readiness = prepared && machineId ? readDeployHostReadiness(prepared, machineId) : currentReadiness;
+  const editable = current?.result.ok === true && readiness !== 'ready';
   const projection = usePluginUiProjectionCurrentness({ machineId, serverId: lifetime?.scope.serverId,
     enabled: editable, sections: HOST_RECIPE_SECTIONS });
   const inputs = React.useMemo(() => current ? readMachineSetupRecipeInputState(current.setup, projection.pluginUiProjection) : null,
     [current, projection.pluginUiProjection]);
-  const activeReview = reviewState?.current === current ? reviewState : null;
-  const prepared = activeReview?.prepared ?? (current?.result.ok === false ? current.result : null);
   const reviewing = activeReview?.pending === true;
   const canReview = editable && projection.interactionEnabled && inputs?.valid === true && !reviewing;
   const setSetup = (setup: MachineSetupV1) => {
@@ -117,7 +118,7 @@ export function useDeployHostReadiness(lifetime: ServerAccountScopeLifetime | nu
     } catch { next = { ok: false, errorCode: 'managed_request_failed', error: 'managed_request_failed' }; }
     if (isCurrent()) setReviewState({ current, pending: false, prepared: next });
   };
-  return { prepared, readiness: prepared && machineId ? readDeployHostReadiness(prepared, machineId) : currentReadiness,
+  return { prepared, readiness,
     setup: editable && current ? current.setup : null, inputProjection: editable ? projection.pluginUiProjection : null,
     setSetup, canReview, reviewing, review };
 }

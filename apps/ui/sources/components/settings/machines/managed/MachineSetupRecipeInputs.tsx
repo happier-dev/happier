@@ -14,7 +14,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { t } from '@/text';
 import { MachineSetupReviewFooter } from './MachineSetupPlanReview';
-import { readMachineSetupRecipeInputState } from './machineSetupRecipeInputs';
+import { readMachineSetupRecipeInputState } from './machineSetupRecipeInputsModel';
 
 /** The existing Software Action field renderer edits each selected recipe's own inputs. */
 export function MachineSetupRecipeInputs(props: Readonly<{

@@ -509,7 +509,7 @@ export const DeploymentEnvironmentDraft = React.memo(
             action={<SectionActionButton testID="project-deployments.draft.hostSetup.prepare" icon="eye"
               title={t('capabilities.store.appPage.review')} disabled={!host.canReview || hostApply.pending}
               loading={host.reviewing} onPress={() => { void host.review(); }} />} /> : null}
-          {!onPlatform && chosen && host.prepared?.ok ? <>
+          {!onPlatform && chosen && host.prepared?.ok && host.readiness !== 'ready' ? <>
             <AttentionBanner
               testID="project-deployments.draft.hostSetup"
               tone="warning"
