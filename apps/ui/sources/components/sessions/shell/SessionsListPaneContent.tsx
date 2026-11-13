@@ -134,6 +134,7 @@ function ActiveSessionsListPaneStateSubscriber(props: SessionsListPaneContentPro
         emptyQuerySelectionComplete: props.filterController.emptyQuerySelectionComplete,
         workFilter: props.filterController.displayFilters,
         spaceMembership: props.filterController.spaceMembership,
+        includeNeedsYouEverywhere: props.filterController.includeNeedsYouEverywhere,
         filterControlsRequired: props.filterController.filterControlsRequired,
     });
 

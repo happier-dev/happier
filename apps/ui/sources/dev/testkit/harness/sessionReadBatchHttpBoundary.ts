@@ -9,6 +9,7 @@ import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { V2SessionListRowSchema, V2SessionRecordSchema, type V2SessionRecord, type V2SessionListRow } from '@happier-dev/protocol/sessions/control/contract';
 import { parsePlainSessionMetadata, parsePlainSessionAgentStateResult } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { readStoredSessionMessage } from '@/sync/runtime/readStoredSessionContent';
+import { projectSessionDisplayV1, sealSessionOwnerDisplayEnvelopeV1, sealSessionSharedDisplayEnvelopeV1Sync } from '@happier-dev/protocol/sessions/metadata/sessionDisplayEnvelopesV1';
 
 /** Full external source facts, retained until the HTTP boundary projects the list wire. */
 export function createSessionListSourceFixture<T extends Readonly<{ sessions: readonly V2SessionRecord[] }>>(page: T): Omit<T, 'sessions'> & { sessions: V2SessionRecord[] } {
@@ -23,7 +24,19 @@ export function createCompactSessionListRowFixture(record: V2SessionRecord): V2S
 function compactSessionListRow(record: V2SessionRecord) {
     const { metadata: _metadata, ownerMetadata: _ownerMetadata, agentState: _agentState, ...facts } = record;
     const shared = facts.effectiveAccess !== undefined && facts.effectiveAccess.level !== 'owner';
-    return { ...facts, documents: 'omitted',
+    let displayProjectionV1 = record.displayProjectionV1;
+    // The real compact list carries the tuple's display sidecar, not its documents.
+    // Plain source fixtures can produce that same leaf through the protocol owner.
+    if (!displayProjectionV1 && record.encryptionMode === 'plain' && record.metadataLayoutVersion === 1) {
+        const display = projectSessionDisplayV1({ sharedMetadata: JSON.parse(record.metadata),
+            ...(!shared && record.ownerMetadata?.t === 'plain' ? { ownerMetadata: record.ownerMetadata.v } : {}) });
+        const sharedDisplay = sealSessionSharedDisplayEnvelopeV1Sync({ sessionMode: 'plain', display: display.shared });
+        const ownerDisplay = display.owner ? sealSessionOwnerDisplayEnvelopeV1({ accountMode: 'plain', display: display.owner }) : undefined;
+        if (!sharedDisplay.ok || ownerDisplay && !ownerDisplay.ok) throw new Error('[testkit] Could not seal plaintext Session display fixture');
+        displayProjectionV1 = { v: 1, sourceMetadataVersion: record.metadataVersion, metadataLayoutVersion: 1,
+            shared: sharedDisplay.envelope, ...(ownerDisplay?.ok ? { owner: ownerDisplay.envelope } : {}) };
+    }
+    return { ...facts, ...(displayProjectionV1 ? { displayProjectionV1 } : {}), documents: 'omitted',
         metadataLayoutVersion: facts.metadataLayoutVersion ?? 0,
         metadataAudience: shared ? 'shared' : 'owner', agentStateDocument: shared ? 'redacted' : 'omitted',
         agentStateVersion: facts.agentStateVersion ?? 0 };

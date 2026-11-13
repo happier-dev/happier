@@ -677,6 +677,48 @@ describe('visible session-list retained attention through real state', () => {
         } finally { await hook.unmount(); }
     });
 
+    it('shows a pending approval from everywhere in the mounted Failed Space', async () => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { SessionsListPaneContent } = await import('@/components/sessions/shell/SessionsListPaneContent');
+        const { SessionsListViewWithFilterController } = await import('@/components/sessions/shell/SessionsList');
+        const { selectCollectionSpace } = await import('@/sync/domains/session/listing/sessionListSpaces');
+        const pending = createSessionFixture({ id: 'outside-approval', serverId, owner: 'u1', seq: 1,
+            viewer: currentViewer(1, 1, null, 1), pendingPermissionRequestCount: 1,
+            active: true, activeAt: Date.now() });
+        listedSessions = [pending];
+        snapshotResponse.resolve();
+        const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
+        await getSyncSingleton().refreshSessions({ awaitSessionListHydration: true });
+        expect(storage.getState().sessionListRowsByServerId[serverId]?.[pending.id]?.viewer?.attention.primary)
+            .toBe('permission_required');
+        const space = { id: 'failed-space', name: 'Failed', entityKind: 'sessionWork' as const,
+            icon: { kind: 'icon' as const, name: 'list' as const },
+            filter: normalizeSessionListFilterV1({ homeServerIds: [serverId], show: 'sessions', statuses: ['failed'], includeInactive: true }),
+            includeNeedsYouEverywhere: true };
+        storage.getState().applySettingsLocal({ collectionSpacesV1: { v: 1, spaces: [space] } });
+        selectCollectionSpace({ serverId, accountId: 'u1' }, 'sessionWork', space.id);
+        route.pathname = '/';
+        mountedRowCost.os = 'ios';
+        const screen = await renderScreen(<InjectedAuthProvider credentials={account!.credentials}>
+            <InboxSummaryProvider><AppPaneProvider><CommandPaletteProvider>
+                <SessionsListPaneContent fallbackGuidanceVariant="sidebar" pathname="/" />
+            </CommandPaletteProvider></AppPaneProvider></InboxSummaryProvider>
+        </InjectedAuthProvider>);
+        const pane = () => screen.root.findByType(SessionsListViewWithFilterController).props.paneState as
+            import('./useVisibleSessionListPaneState').VisibleSessionListPaneState;
+        const ids = () => pane().visibleSessionListIndex?.flatMap(item => item.type === 'session' ? [item.sessionId] : []);
+        try {
+            await flushHookEffects({ cycles: 4, turns: 3 });
+            expect(screen.root.findByType(SessionsListViewWithFilterController).props.filterController.includeNeedsYouEverywhere).toBe(true);
+            expect(ids()).toContain(pending.id);
+            expect(pane().filterResult).toMatchObject({ matchedCount: 0, attentionSupplementCount: 1 });
+            await act(async () => storage.getState().applySettingsLocal({ collectionSpacesV1: { v: 1,
+                spaces: [{ ...space, includeNeedsYouEverywhere: false }] } }));
+            await flushHookEffects();
+            expect(ids()).not.toContain(pending.id);
+        } finally { await screen.unmount(); }
+    });
+
     it('reseeds the mounted pane when switching saved spaces with identical filters', async () => {
         const { storage } = await import('@/sync/domains/state/storage');
         const { SessionsListPaneContent } = await import('@/components/sessions/shell/SessionsListPaneContent');

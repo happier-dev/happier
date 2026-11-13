@@ -1,7 +1,8 @@
 import { expect, it } from 'vitest';
 import { SessionReadBatchResponseV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 
-import { createSessionFixture } from '../fixtures/sessionFixtures';
+import { createSessionFixture, createLockedEncryptedSessionByIdResponseFixture } from '../fixtures/sessionFixtures';
+import type { SessionDisplayProjectionV1 } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import { createSessionMetadataHttpBoundary } from './sessionMetadataHttpBoundary';
 import { createCompactSessionListFetchBoundary, createSessionReadBatchFetchBoundary } from './sessionReadBatchHttpBoundary';
 import { createPlainV2SessionRecordFixture } from '../fixtures/sessionFixtures';
@@ -34,11 +35,32 @@ it('serves compact lists and retains their full source documents only at the det
     expect(body.sessions[0]).not.toHaveProperty('metadata');
     expect(body.sessions[0]).not.toHaveProperty('ownerMetadata');
     expect(body.sessions[0]).not.toHaveProperty('agentState');
+    expect(body.sessions[0]?.displayProjectionV1).toMatchObject({ v: 1,
+        sourceMetadataVersion: session.metadataVersion, metadataLayoutVersion: 1,
+        shared: { t: 'plain', v: { display: { v: 1 } } },
+        owner: { t: 'plain', v: { display: { v: 1, path: '/Users/tester/project', machineId: 'machine-1' } } },
+    });
     const batch = await request('/v2/sessions/read-batch', { method: 'POST', body: JSON.stringify({
         sessionIds: [session.id], includeSnapshot: true, includeTurns: false, includeMessages: false,
     }) });
     const result = SessionReadBatchResponseV1Schema.parse(await batch!.json()).results[0]!;
     expect(V2SessionByIdResponseSchema.parse(result.detail!.body).session).toEqual(session);
+});
+
+it('retains an explicit display sidecar and never fabricates plaintext display for an encrypted source', async () => {
+    const session = createPlainV2SessionRecordFixture({ id: 'explicit-display' });
+    const displayProjectionV1 = { v: 1, sourceMetadataVersion: session.metadataVersion, metadataLayoutVersion: 1,
+        shared: { t: 'plain', v: { v: 1, audience: 'shared', purpose: 'session_shared_display', display: { v: 1 } } },
+        owner: { t: 'plain', v: { v: 1, audience: 'owner', purpose: 'session_owner_display', display: { v: 1, name: 'Explicit sidecar' } } },
+    } satisfies SessionDisplayProjectionV1;
+    const encrypted = await createLockedEncryptedSessionByIdResponseFixture(createSessionFixture({ id: 'encrypted-source',
+        encryptionMode: 'e2ee', encryptedContentAvailability: 'encrypted_access_pending' }));
+    const request = createCompactSessionListFetchBoundary(async () => Response.json({
+        sessions: [{ ...session, displayProjectionV1 }, encrypted.session], nextCursor: null, hasNext: false,
+    }));
+    const page = V2SessionListResponseSchema.parse(await (await request('/v2/sessions', {}))!.json());
+    expect(page.sessions[0]?.displayProjectionV1).toEqual(displayProjectionV1);
+    expect(page.sessions[1]).not.toHaveProperty('displayProjectionV1');
 });
 
 it('preserves explicit batch failures and malformed list rows rather than repairing the tested contract', async () => {
