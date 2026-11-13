@@ -6,7 +6,8 @@ import { projectDiscussionMessageReferences } from './discussionTimelineProjecti
 import { projectDiscussionMessageLabels, EMPTY_DISCUSSION_MESSAGE_LABELS, type DiscussionMessageLabelProjection } from './discussionTimelineProjection';
 import { prepareDiscussionContentForPassage, readDiscussionContentPassage } from './discussionComposerDocument';
 import type { DiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
-import { Platform, View, type ViewToken } from 'react-native';
+import { Platform, View, useWindowDimensions, type LayoutChangeEvent, type ViewToken } from 'react-native';
+import { useSessionViewContentBottomSpacing } from '@/components/sessions/shell/view/useSessionViewContentBottomSpacing';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionTokens';
@@ -386,12 +387,21 @@ function DiscussionSurfaceFrame(props: DiscussionSurfacePresentation & Readonly<
     beforeSurface?: React.ReactNode;
     drafting?: boolean;
 }>) {
+    // The composer takes a Session composer's seat (its bottom gap at this width), so a Discussion and a Session
+    // put their editor in one place and Docked New's folded pill clears both (QA-RERUN-1113 F6).
+    const { width: windowWidth } = useWindowDimensions();
+    const [width, setWidth] = React.useState<number | null>(null);
+    const onLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const next = Math.trunc(event.nativeEvent.layout.width);
+        if (next > 0) setWidth((current) => (current === next ? current : next));
+    }, []);
+    const composerBottomGap = useSessionViewContentBottomSpacing(width ?? windowWidth);
     return <TranscriptMessageSelectionBoundary sessionId={props.dataKey} eligibleMessageIdsInOrder={props.eligibleMessageIds}>
         {props.beforeSurface}
-        <View style={styles.root} testID={props.drafting ? 'session-discussion-new-details' : 'session-discussion-details'}>
+        <View style={styles.root} testID={props.drafting ? 'session-discussion-new-details' : 'session-discussion-details'} onLayout={onLayout}>
             <PaneHeaderScrollScope>
                 {props.header}
-                <AgentContentView content={props.content} input={<>
+                <AgentContentView bottomInsetPx={composerBottomGap} content={props.content} input={<>
                     {props.banners}
                     {props.composer ? <DiscussionDraftComposer key="editor" {...props.composer} /> : null}
                 </>} />
@@ -441,10 +451,11 @@ function useNewDiscussionPresentation(props: Readonly<{ target: Extract<Discussi
     const invitedProfiles = useDiscussionParticipantProfiles({ scope: props.scope, accountLifetime: props.accountLifetime,
         roster: null, accountIds: invitedFaces.accountIds, enabled: invited.length > 0 });
     // Names, not counts, say who the empty page is waiting for (lab T2-ST "Ana and Checkout UI retry states are invited").
+    const invitedAgentNames = invitedSessionTitles.map((title) => title ?? t('session.collaboration.discussion.participants.session'));
     const invitedNames = [
         ...invitedFaces.accountIds.slice(1).map((accountId) => resolveAccountDisplayName({ profile: invitedProfiles.accounts.get(accountId)?.profile,
             accountId, viewerAccountId: props.scope.accountId }).name),
-        ...invitedSessionTitles.map((title) => title ?? t('session.collaboration.discussion.participants.session')),
+        ...invitedAgentNames,
     ];
     const rosterLine = formatDiscussionRosterLine({ peopleCount: invitedFaces.accountIds.length, agentCount: invitedFaces.agents.length, inherited: false });
     const composerInvited = React.useMemo(() => ({ participants: invited, accounts: invitedProfiles.accounts }), [invited, invitedProfiles.accounts]);
@@ -526,8 +537,11 @@ function useNewDiscussionPresentation(props: Readonly<{ target: Extract<Discussi
             // Invite stays the header's one control; the panel says who is in and who reads it.
             discussionParticipants: <EmptyState testID="session-discussion-draft-people" layout="inline"
                 title={rosterLine} subtitle={t('session.collaboration.discussion.participants.privateNote')} />,
+            // The invited agents, from the same draft membership as the header's count (F11).
             discussionAgents: <EmptyState testID="session-discussion-draft-agents" layout="inline"
-                title={t('session.collaboration.discussion.participants.noAgents')}
+                title={invitedAgentNames.length
+                    ? t('session.collaboration.discussion.newPage.invitedTitle', { names: joinList(invitedAgentNames), count: invitedAgentNames.length })
+                    : t('session.collaboration.discussion.participants.noAgents')}
                 subtitle={t('session.collaboration.discussion.composer.mentionHint')} />,
             discussionDetails: <EmptyState testID="session-discussion-draft-details" layout="inline"
                 title={t('session.collaboration.discussion.draftDetails')} />,
