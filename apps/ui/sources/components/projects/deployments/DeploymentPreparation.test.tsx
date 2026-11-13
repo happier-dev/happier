@@ -12,15 +12,27 @@ import { DeploymentPrepareInputV1Schema, type DeploymentPrepareResultV1 } from '
 import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createHydratedPlainMachineFixture, createReadyMachineAgentInventoryFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contributionIdentity';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true }).module);
 const router = await vi.hoisted(async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock());
 vi.mock('expo-router', () => router.module);
-const scm = vi.hoisted(() => ({ reply: undefined as unknown }));
+const scm = vi.hoisted(() => ({ reply: undefined as unknown, inventory: undefined as unknown, capabilities: undefined as unknown }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () =>
-  (await import('@/dev/testkit/mocks/serverScopedRpc')).createServerScopedMachineRpcBoundaryMock(async () => scm.reply));
+  (await import('@/dev/testkit/mocks/serverScopedRpc')).createServerScopedMachineRpcBoundaryMock(async request => {
+    if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
+      return { protocolVersion: 1, projection: scm.inventory };
+    if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return scm.capabilities;
+    if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return scm.reply;
+    throw new Error(`Unexpected preparation Machine RPC: ${request.method}`);
+  }));
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
@@ -32,6 +44,17 @@ const { ProjectDeploymentsView } = await import('./ProjectDeploymentsBody');
 const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
 const { createDeploymentActions } = await import('./deploymentActions');
 const { buildScopedSessionRouteHref } = await import('@/hooks/session/sessionRouteServerScope');
+const { SessionServerStartDraftComposerModal } = await import('@/components/sessions/new/SessionServerStartDraftComposerModal');
+const { SessionAuthoringControls } = await import('@/components/sessions/authoring/controls/SessionAuthoringControls');
+const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+const { storage } = await import('@/sync/domains/state/storage');
+const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+const selectedRecipe = {
+  agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+  connectedServices: { v: 2, bindingsByServiceId: {
+    'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: '97bd5614-8970-4068-87f2-1447de69d604' },
+  } },
+};
 // Load the actual lazy Action graph during collection, outside the interaction's deadline.
 await import('@/sync/ops/actions/defaultActionExecutor');
 
@@ -55,12 +78,33 @@ async function fixture() {
       includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
   } });
   const account = await captureLazyActionAccountContext(serverId);
+  const inventory = createReadyMachineAgentInventoryFixture([
+    { agentId: 'happier.agent.claude/claude', title: 'Claude' },
+    { agentId: 'happier.agent.codex/codex', title: 'Codex' },
+  ]);
+  scm.inventory = PluginProjectionV2Schema.parse({ ...inventory.projection,
+    agentsById: Object.fromEntries(Object.entries(inventory.projection.agentsById ?? {}).map(([id, agent]) =>
+      [id, { ...agent, identity: parseQualifiedPluginContributionKey(id) }])) });
+  scm.capabilities = inventory.capabilities;
+  storage.getState().applyMachines([createHydratedPlainMachineFixture({ id: 'workspace-machine', accountId: 'owner',
+    machine: { active: true, activeAt: Date.now() } })], true, { sourceServerId: serverId });
+  clearDaemonMergedProjectionCacheForTests();
   return { serverId, account };
 }
 async function waitReady(screen: Awaited<ReturnType<typeof renderAccountScreen>>) {
   await waitForTestEvent(screen.subscribe, () => {
     expect(screen.findByTestId('project-deployments.prepare.confirm')?.props.disabled).toBe(false);
   });
+}
+
+async function submitSessionRecipe(screen: Awaited<ReturnType<typeof renderAccountScreen>>) {
+  await waitForTestEvent(screen.subscribe, () => {
+    expect(screen.findAllByType(SessionAuthoringControls).length, screen.getTextContent()).toBeGreaterThan(0);
+  });
+  await act(async () => { screen.findAllByType(SessionAuthoringControls)[0]!.props.onChangeFields(selectedRecipe); });
+  const submit = () => screen.findAllByType(RoundButton).find(button => button.props.title === t('newSession.recipeComposerSubmit'));
+  await waitForTestEvent(screen.subscribe, () => { expect(submit()?.props.disabled).toBe(false); });
+  await act(async () => { submit()!.props.onPress(); });
 }
 
 
@@ -71,6 +115,63 @@ afterEach(async () => {
 });
 
 describe('deployment preparation entry', () => {
+  it('retains a refused child Session cause through real HTTP preparation and the existing disclosure', async () => {
+    const { serverId, account } = await fixture();
+    const { DeploymentPreparationEntry } = await import('./DeploymentPreparation');
+    const child = SessionSpawnNewActionResultV1Schema.parse({ type: 'error', code: 'agent_signed_out',
+      retryable: false, agentId: 'claude', launchError: { kind: 'launch_error', code: 'agent_signed_out',
+        message: 'Private native authentication diagnostic',
+        failureCause: { phase: 'authentication', failureReason: 'authentication_required' } } });
+    if (child.type !== 'error') throw new Error('Expected a Session refusal');
+    let requestId: string | undefined;
+    await answerExternalActionAccountForHome(homes, serverId, { machineId: 'workspace-machine',
+      actionId: 'deployments.prepare', tokenEpoch: 0,
+      execute(_input, context) { requestId = context.requestId; return child; },
+      failure: () => ({ errorCode: child.code, error: child.code, details: child }),
+    });
+    const screen = await renderAccountScreen(<ModalProvider><DeploymentPreparationEntry
+      lifetime={account.accountLifetime} projectSourceId="project" mode="prepare" /></ModalProvider>);
+    try {
+      await screen.pressByTestIdAsync('project-deployments.prepare.open');
+      await waitReady(screen);
+      await screen.pressByTestIdAsync('project-deployments.prepare.confirm');
+      await submitSessionRecipe(screen);
+      await waitForTestEvent(screen.subscribe, () => {
+        expect(screen.findByTestId('project-deployments.prepare.refused')).not.toBeNull();
+      });
+      expect(requestId).toBeTruthy();
+      expect(screen.getTextContent()).toContain(resolveSessionSpawnNewResultFailureMessage(child));
+      expect(screen.findByTestId('project-deployments.prepare.refused-details-code')).toBeNull();
+      await screen.pressByTestIdAsync('project-deployments.prepare.refused-details-toggle');
+      expect(screen.getTextContent()).toContain(child.code);
+      expect(screen.getTextContent()).toContain(requestId);
+      expect(screen.getTextContent()).not.toContain(child.launchError?.message);
+      expect(router.spies.push).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); account.dispose(); }
+  });
+  it('opens the canonical Session recipe before dispatch and cancels without creating a Session', async () => {
+    const { serverId, account } = await fixture();
+    const { DeploymentPreparationEntry } = await import('./DeploymentPreparation');
+    const execute = vi.fn(() => ({ kind: 'handedOff' as const, sessionRef: { serverId, sessionId: 'unexpected' } }));
+    await answerExternalActionAccountForHome(homes, serverId, { machineId: 'workspace-machine',
+      actionId: 'deployments.prepare', tokenEpoch: 0, execute });
+    const screen = await renderAccountScreen(<ModalProvider><DeploymentPreparationEntry
+      lifetime={account.accountLifetime} projectSourceId="project" mode="prepare" /></ModalProvider>);
+    try {
+      await screen.pressByTestIdAsync('project-deployments.prepare.open');
+      await waitReady(screen);
+      await screen.pressByTestIdAsync('project-deployments.prepare.confirm');
+      await waitForTestEvent(screen.subscribe, () => {
+        expect(screen.findAllByType(SessionServerStartDraftComposerModal).length + execute.mock.calls.length).toBeGreaterThan(0);
+      });
+      expect(screen.findAllByType(SessionServerStartDraftComposerModal)).toHaveLength(1);
+      expect(execute).not.toHaveBeenCalled();
+      await act(async () => { screen.findByType(SessionServerStartDraftComposerModal).props.onResolve(null); });
+      expect(execute).not.toHaveBeenCalled();
+      expect(router.spies.push).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); account.dispose(); }
+  });
+
   it.each([false, true])('prepares from the repository creation draft before creating an Environment (phone=%s)', async phone => {
     const { serverId, account } = await fixture();
     const { DeploymentEnvironmentDraft } = await import('./DeploymentEnvironmentDraft');
@@ -92,12 +193,16 @@ describe('deployment preparation entry', () => {
       await screen.pressByTestIdAsync('project-deployments.prepare.open');
       await waitReady(screen);
       await screen.pressByTestIdAsync('project-deployments.prepare.confirm');
+      await submitSessionRecipe(screen);
       await waitForTestEvent(screen.subscribe, () => {
         expect(router.spies.push).toHaveBeenCalledWith(buildScopedSessionRouteHref(sessionRef));
       });
       expect(received).toMatchObject({ projectSourceId: 'project', sourceRevision: 3,
         baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId: `srv_${'7'.repeat(32)}`, id: 'checkout' } });
       expect(received).not.toHaveProperty('environmentId');
+      expect(received).toMatchObject({ sessionDraft: { ...selectedRecipe,
+        executionTarget: { serverId: `srv_${'7'.repeat(32)}`, machineId: 'workspace-machine' },
+        directory: { kind: 'path', path: '/app' } } });
       expect(homes.artifacts(serverId).list()).toEqual([]);
     } finally { await screen.unmount(); account.dispose(); }
   });
@@ -126,6 +231,7 @@ describe('deployment preparation entry', () => {
       await screen.pressByTestIdAsync('project-deployments.prepare.open');
       await waitReady(screen);
       await screen.pressByTestIdAsync('project-deployments.prepare.confirm');
+      await submitSessionRecipe(screen);
       await waitForTestEvent(screen.subscribe, () => {
         expect(router.spies.push).toHaveBeenCalledWith(buildScopedSessionRouteHref(sessionRef));
       });
@@ -193,6 +299,7 @@ describe('deployment preparation entry', () => {
       });
       await waitReady(screen);
       await screen.pressByTestIdAsync('project-deployments.prepare.confirm');
+      await submitSessionRecipe(screen);
       await waitForTestEvent(screen.subscribe, () => {
         if (kind === 'partial') expect(screen.findByTestId('project-deployments.prepare.session')).not.toBeNull();
         else {
@@ -202,10 +309,10 @@ describe('deployment preparation entry', () => {
         }
       });
       if (kind === 'partial') expect(screen.getTextContent()).not.toContain(t('projects.deployments.unavailableTitle'));
-      expect(received).toEqual({ projectSourceId: 'project', sourceRevision: 3,
+      expect(received).toMatchObject({ projectSourceId: 'project', sourceRevision: 3,
         repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
         baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId: 'srv_' + '7'.repeat(32), id: 'checkout' },
-        importFrom: { tool: 'Coolify', configurationPaths: ['compose.yaml', 'config/coolify.json'] } });
+        importFrom: { tool: 'Coolify', configurationPaths: ['compose.yaml', 'config/coolify.json'] }, sessionDraft: selectedRecipe });
       if (kind === 'partial') {
         expect(screen.findByTestId('project-deployments.import.tool')?.props.value).toBe('Coolify');
         await screen.pressByTestIdAsync('project-deployments.prepare.session');

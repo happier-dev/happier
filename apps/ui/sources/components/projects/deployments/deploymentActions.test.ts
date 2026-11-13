@@ -26,6 +26,7 @@ import { parse } from 'yaml';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { DeploymentBackupConfigurationV1Schema } from '@happier-dev/deployment-protocol';
+import type { DeploymentPreviewTemplateV1 } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';
 import { createWorkflowAutomationHttpBoundary } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
 import { AutomationStoredWorkflowDefinitionV2Schema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -37,7 +38,7 @@ vi.mock('@/modal', async () => {
     boundary.spies.show.mockImplementation(config => {
         // The modal host is the platform boundary; admission and receiving executors stay real.
         nativeReview.shown.push({ preview: config.props?.preview, actionArgs: config.props?.actionArgs,
-            title: config.chrome?.title, summary: config.chrome?.subtitle });
+            title: config.chrome?.title, summary: config.chrome && 'subtitle' in config.chrome ? config.chrome.subtitle : undefined });
         queueMicrotask(() => { if (typeof config.props?.onAnswer === 'function') config.props.onAnswer(nativeReview.answer); });
         return 'deployment-review';
     });
@@ -182,6 +183,9 @@ describe('deployment UI Action callbacks', () => {
         const input = DeploymentPrepareInputV1Schema.parse({ projectSourceId: 'project', sourceRevision: 3,
             repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
             baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId, id: 'checkout' },
+            sessionDraft: { executionTarget: { serverId: homeId, machineId: 'workspace' },
+                directory: { kind: 'path', path: '/app' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
             importFrom: { tool: 'Coolify', configurationPaths: ['compose.yaml'] } });
         await answerExternalActionAccountForHome(homes, serverId, { actionId: 'deployments.prepare', machineId: 'workspace',
             tokenEpoch: 0, execute: (raw, context) => {
@@ -268,7 +272,7 @@ describe('deployment UI Action callbacks', () => {
         });
         const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: homeId,
             owner: ownerKind === 'team' ? { kind: 'team', teamId: 'team-a' } : { kind: 'account', accountId } }) });
-        const previewTemplate = { v: 1 as const, enabled: false, forkPreviews: 'off' as const,
+        const previewTemplate: DeploymentPreviewTemplateV1 = { v: 1, enabled: false, forkPreviews: 'off',
             repository: { kind: 'github', deployment: 'https://github.example/enterprise', repository: 'private-owner/private-app' },
             runtimeTargetLinkId: 'runtime', domain: null, bindingBlueprints: [], data: [] };
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId },
@@ -354,7 +358,7 @@ describe('deployment UI Action callbacks', () => {
         const { definePlugin } = await import('@happier-dev/plugin-sdk');
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const { installPortableAccountPluginForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
-        const { createLazyAccountExecutable } = await import('@/components/plugins/reactNative/lazyAccountExecutable');
+        const { createLazyPluginUiExecutable } = await import('@/components/plugins/reactNative/lazyAccountExecutable');
         const { resolvePluginUiClientExecutablePlatform } = await import('@/sync/domains/plugins/ui/projection');
         const { readDeploymentFailureRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
         const serverId = await homes.addHome({ name: 'Zones activation', serverUrl: 'https://zones-activation.test',
@@ -367,7 +371,7 @@ describe('deployment UI Action callbacks', () => {
             } } });
         let unavailable = true;
         // Executable bytes are a genuine loader boundary; activation and Action dispatch remain real.
-        const lazy = createLazyAccountExecutable({ pluginId: authored.manifest.id, contributes: authored.manifest.contributes,
+        const lazy = createLazyPluginUiExecutable({ pluginId: authored.manifest.id, contributes: authored.manifest.contributes,
             target: { realm: 'account', artifactId: 'account-runtime', exportName: 'activateAccount',
                 platform: resolvePluginUiClientExecutablePlatform() },
             isCurrent: account.accountLifetime.isCurrent,
@@ -486,12 +490,14 @@ describe('deployment UI Action callbacks', () => {
     });
 
     const copyFrom = { environmentId: 'production', expectedRevision: 7, choices: { secrets: [], values: [], data: [] } };
+    // Authored outside the `as const` table so its arrays stay the mutable shapes the Create input takes.
+    const repositoryCreate = {
+        definition: { from: 'repository' as const, ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [] } },
+        firstTargetLink: { machines: [{ machineId: 'controller', installationId: 'controller-installation' }] }, managedRetention: 'keep' as const };
     it.each(([
         ['Duplicate', { controllerMachineId: 'controller', copyFrom },
             { controllerMachineId: 'controller', copyFrom, copyPlan: { bindings: [] }, copyIntentCommitment: 'A'.repeat(43) }],
-        ['Create with Always on retention', {
-            definition: { from: 'repository' as const, ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [] } },
-            firstTargetLink: { machines: [{ machineId: 'controller', installationId: 'controller-installation' }] }, managedRetention: 'keep' as const },
+        ['Create with Always on retention', repositoryCreate,
             { controllerMachineId: 'controller', managedRetention: 'keep', firstTargetLink: { machines: [{ machineId: 'controller',
                 installationId: 'controller-installation' }], contentArtifactId: 'reviewed-link', contentHeaderVersion: 1, contentBodyVersion: 1 } }],
     ] as const).flatMap(([name, authored, reviewed]) => (['dialog', 'review step'] as const).map(host => [name, host, authored, reviewed] as const)))(
@@ -658,9 +664,9 @@ describe('deployment UI Action callbacks', () => {
             onRetire: () => ({ dispose() {} }) };
         const header = createDeploymentEnvironmentHeaderV1({ serverId: homeId, revision: 7 });
         homes.answer(serverId, `GET /v1/deployments/environments/${header.id}`, { body: { ok: true, environment: header, targetLinks: [] } });
-        const previewTemplate = { v: 1, enabled: true, forkPreviews: 'off',
+        const previewTemplate: DeploymentPreviewTemplateV1 = { v: 1, enabled: true, forkPreviews: 'off',
             repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
-            runtimeTargetLinkId: 'runtime', domain: null, bindingBlueprints: [], data: [] } as const;
+            runtimeTargetLinkId: 'runtime', domain: null, bindingBlueprints: [], data: [] };
         const dispatched: Array<Readonly<{ input: unknown; confirmed: boolean }>> = [];
         // The controller cannot present a confirmation: it refuses the person's own press until one is carried.
         await answerExternalActionAccountForHome(homes, serverId, { machineId: header.controllerMachineId,
@@ -700,9 +706,9 @@ describe('deployment UI Action callbacks', () => {
         const header = createDeploymentEnvironmentHeaderV1({ serverId: homeId, revision: 7 });
         homes.answer(serverId, `GET /v1/deployments/environments/${header.id}`, {
             body: { ok: true, environment: header, targetLinks: [] } });
-        const previewTemplate = { v: 1, enabled: true, forkPreviews: 'off',
+        const previewTemplate: DeploymentPreviewTemplateV1 = { v: 1, enabled: true, forkPreviews: 'off',
             repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
-            runtimeTargetLinkId: 'runtime', domain: null, bindingBlueprints: [], data: [] } as const;
+            runtimeTargetLinkId: 'runtime', domain: null, bindingBlueprints: [], data: [] };
         const admissions: Array<Readonly<{ input: unknown; reviewDigest?: string; requestId?: string;
             target: unknown; confirmation: unknown; inputDigest: string }>> = [];
         let effects = 0;

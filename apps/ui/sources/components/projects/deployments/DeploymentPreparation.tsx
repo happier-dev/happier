@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { DeploymentPrepareInputV1Schema, type DeploymentPrepareResultV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
 import { readScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { projectActionExecuteFailure, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -15,6 +16,8 @@ import { ListPresentationProvider } from '@/components/ui/lists/listPresentation
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
+import { composeSessionServerStartDraft } from '@/components/sessions/new/serverStartDraftComposer';
+import { presentSessionServerStartDraftComposer } from '@/components/sessions/new/serverStartDraftComposerPresentation';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import type { CustomModalInjectedProps } from '@/modal/types';
@@ -23,6 +26,8 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { machineScmStatusSnapshot } from '@/sync/ops/scm/machineScm';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { HappyError } from '@/utils/errors/errors';
 import { t } from '@/text';
 import { buildProjectSourceOpenRoute } from '../activation/projectOpenRoute';
 import { useNavigateToProjectOpen } from '../activation/projectOpenPresentation';
@@ -123,8 +128,11 @@ function DeploymentPreparationSheet(props: DeploymentPreparationContext & Readon
     const [paths, setPaths] = React.useState('');
     const configurationPaths = paths.split(/\r?\n/).map(path => path.trim()).filter(Boolean);
     const [busy, setBusy] = React.useState(false);
-    const [refused, setRefused] = React.useState<string | null>(null);
+    const [refused, setRefused] = React.useState<ActionExecuteFailure | null>(null);
+    const refusal = refused ? resolveActionExecutionFailureMessage(refused, deploymentActionRefusalRemedy(refused.errorCode)) : null;
     const [partial, setPartial] = React.useState<Extract<DeploymentPrepareResultV1, { kind: 'partial' }> | null>(null);
+    const authoring = React.useRef<AbortController | null>(null);
+    React.useEffect(() => () => authoring.current?.abort(), []);
     const router = useRouter();
     const navigateToProjectOpen = useNavigateToProjectOpen();
     const title = t(`projects.deployments.preparation.${props.mode}`);
@@ -134,25 +142,43 @@ function DeploymentPreparationSheet(props: DeploymentPreparationContext & Readon
     const confirm = async () => {
         if (!chosen || !source || !repository || busy) return;
         setBusy(true); setRefused(null); setPartial(null);
+        const cancellation = new AbortController();
+        authoring.current = cancellation;
+        const retired = lifetime.onRetire(() => cancellation.abort());
         try {
+            const recipe = partial?.sessionRef ? null : await composeSessionServerStartDraft({
+                draft: { directory: chosen.rootPath },
+                target: { serverId: chosen.serverId, machineId: chosen.machineId },
+                signal: cancellation.signal, isCurrent: () => lifetime.isCurrent(),
+                present: presentSessionServerStartDraftComposer,
+            });
+            if (recipe && recipe.kind !== 'submitted') {
+                if (recipe.kind !== 'cancelled') setRefused({ ok: false, errorCode: recipe.reason, error: recipe.reason });
+                return;
+            }
             const status = await machineScmStatusSnapshot(chosen.machineId, { cwd: chosen.rootPath }, lifetime.scope);
-            if (!status.success) { setRefused(status.errorCode ?? 'unavailable'); return; }
+            if (!status.success) { const code = status.errorCode ?? 'unavailable'; setRefused({ ok: false, errorCode: code, error: code }); return; }
             const baseCommit = status.snapshot?.branch.headOid;
-            if (!baseCommit) { setRefused('base_changed'); return; }
+            if (!baseCommit) { setRefused({ ok: false, errorCode: 'base_changed', error: 'base_changed' }); return; }
             const input = DeploymentPrepareInputV1Schema.parse({ projectSourceId, sourceRevision: source.revision, repository, baseCommit,
                 workspace: { kind: 'workspace-ref', serverId: chosen.serverId, id: chosen.id },
                 ...(props.environmentId ? { environmentId: props.environmentId } : {}),
                 ...(partial?.sessionRef ? { sessionRef: partial.sessionRef } : {}),
+                ...(recipe?.kind === 'submitted' ? { sessionDraft: recipe.draft } : {}),
                 ...(props.mode === 'import' ? { importFrom: { tool, configurationPaths } } : {}) });
             const result = await createDeploymentActions(lifetime, projectSourceId).prepare(input, chosen.machineId);
             if (result.kind === 'handedOff') openSession(result.sessionRef);
             else if (result.kind === 'partial') {
                 if (result.sessionRef) props.onSessionAvailable(result.sessionRef);
-                setPartial(result); setRefused(result.reason);
+                setPartial(result); setRefused({ ok: false, errorCode: result.reason, error: result.reason });
             }
-            else setRefused(result.reason);
-        } catch (error) { setRefused(failureCode(error)); }
-        finally { setBusy(false); }
+            else setRefused({ ok: false, errorCode: result.reason, error: result.reason });
+        } catch (error) {
+            const code = failureCode(error);
+            setRefused(projectActionExecuteFailure({ ok: false, errorCode: code, error: code,
+                ...(error instanceof HappyError ? error : {}) }));
+        }
+        finally { retired.dispose(); authoring.current = null; setBusy(false); }
     };
     const footer = <ModalCardFooterActions cancel={{ onPress: props.onClose, disabled: busy,
         testID: 'project-deployments.prepare.cancel' }}>
@@ -199,7 +225,7 @@ function DeploymentPreparationSheet(props: DeploymentPreparationContext & Readon
                         multiline minLines={3} monospace autoCapitalize="none" accessibilityLabel={t('projects.deployments.preparation.paths')} />} />
             </ItemGroup> : null}
             {refused ? <SurfaceStateCard testID="project-deployments.prepare.refused" size="line" kind="error" title={t('common.error')}
-                reason={deploymentActionRefusalRemedy(refused)} diagnosticCode={refused}
+                reason={refusal ?? undefined} diagnosticCode={refused.errorCode} diagnosticDetail={refused.requestId}
                 {...(partial?.sessionRef ? { action: { label: t('common.open'), testID: 'project-deployments.prepare.session',
                     onPress: () => { if (partial.sessionRef) openSession(partial.sessionRef); } } } : {})} /> : null}
             {setChrome ? null : footer}

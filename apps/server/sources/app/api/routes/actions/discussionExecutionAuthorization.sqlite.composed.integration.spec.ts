@@ -46,14 +46,15 @@ import { sealExternalActionRequestV2, openExternalActionRequestV2, prepareExtern
 import { createExternalActionAuthorizedRequestHeaders } from '../../../../../../cli/src/api/externalActionExecutionAuthorization';
 import { createMachineDataEncryptionKeyV1, decodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { sealSessionStoredContent } from '../../../../../../cli/src/session/transport/encryption/sessionStoredContentCodec';
-import { buildSessionSpawnNewArgs } from '../../../../../../../packages/protocol/src/actions/executor/sessionSpawn';
+import { buildSessionSpawnNewArgs, materializeSessionCreationActionInput } from '../../../../../../../packages/protocol/src/actions/executor/sessionSpawn';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { SESSION_CREATION_AUTHORIZATION_HEADER_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
-import { DeploymentPrepareInputV1Schema, buildDeploymentPreparationBriefV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
+import { DeploymentPrepareInputV1Schema, buildDeploymentPreparationBriefV1, deriveDeploymentPrepareSessionSpawnInputV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
 import { deriveDeploymentPrepareSessionCreationIdentityV1, buildSessionActionChildCreationProofPayloadV1,
     type SessionActionChildCreationProofV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contributionIdentity';
 import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
 import { inTx } from '@/storage/inTx';
 import { materializeWorkflowAcceptedSnapshotFixture } from '@/testkit/workflowAcceptedSnapshot';
@@ -407,10 +408,11 @@ describe('signed Account Discussion HTTP admission', () => {
         } finally { await f.app.close(); }
     });
 
-    it.each(['Session', 'Workflow', 'Session-origin Workflow', 'E2EE Session'] as const)('creates exactly the Prepare child at the real Session birth boundary using the unchanged signed root (%s)', async callerKind => {
+    it.each(['Host', 'E2EE Host', 'Session', 'Workflow', 'Session-origin Workflow', 'E2EE Session'] as const)('creates exactly the Prepare child at the real Session birth boundary using the unchanged admitted root (%s)', async callerKind => {
         const f = await fixture();
         try {
-            const encrypted = callerKind === 'E2EE Session';
+            const encrypted = callerKind === 'E2EE Session' || callerKind === 'E2EE Host';
+            const host = callerKind === 'Host' || callerKind === 'E2EE Host';
             const workflow = callerKind === 'Workflow' || callerKind === 'Session-origin Workflow';
             const contentKeys = tweetnacl.box.keyPair();
             const contentKey = encrypted ? createMachineDataEncryptionKeyV1({ material: { type: 'dataKey', machineKey: contentKeys.secretKey },
@@ -435,13 +437,25 @@ describe('signed Account Discussion HTTP admission', () => {
             if (!created.ok) throw new Error(created.error);
             const input = DeploymentPrepareInputV1Schema.parse({ projectSourceId: created.source.id, sourceRevision: created.source.revision,
                 repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/prepare' },
-                baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId, id: 'prepare-workspace' } });
+                baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId, id: 'prepare-workspace' },
+                sessionDraft: { executionTarget: { serverId, machineId: f.machine.id },
+                    directory: { kind: 'path', path: '/prepare' },
+                    agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+                    title: 'Reviewed Prepare recipe', memoryEnabled: false,
+                    modelSelection: { v: 1, ref: { agentTargetKey: 'prepare-codex', providerConnectionId: null, modelId: 'reviewed-model' }, updatedAt: 0 },
+                    connectedServices: { v: 2, bindingsByServiceId: {
+                        [buildQualifiedPluginContributionKey({ pluginId: 'happier.provider.openai', localId: 'openai' })]: {
+                            source: 'connected', selection: 'profile', profileId: 'reviewed-profile',
+                        },
+                    } },
+                    organizationPlacement: { folderId: null, tagIds: [] },
+                    transcriptStorage: 'persisted', permissionMode: 'default' } });
             const caller = await db.session.create({ data: { accountId: f.account.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
             await db.accessKey.create({ data: { accountId: f.account.id, machineId: f.machine.id, sessionId: caller.id, data: 'source' } });
             const sessionOrigin = SessionActionRpcOriginV1Schema.parse({ v: 1, caller: { kind: 'session', sessionId: caller.id,
                 starterDepth: 0, turnDepth: 0 }, sourceTurnId: 'prepare-turn', callerPermissionMode: 'default',
                 causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' }, requestId: randomUUID() });
-            let actionCaller: ActionExecutorContext['actionCaller'] = sessionOrigin.caller;
+            let actionCaller: ActionExecutorContext['actionCaller'] = host ? { kind: 'host' } : sessionOrigin.caller;
             let workflowActionOrigin: { runId: string; requestId: string } | undefined;
             if (workflow) {
                 const runId = randomUUID();
@@ -476,10 +490,10 @@ describe('signed Account Discussion HTTP admission', () => {
             const source = { machineId: f.machine.id, installationId: f.machine.installationId! };
             const minted = await f.app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('deployments.prepare'),
                 headers: { authorization: `Bearer ${f.presentUserToken}` }, payload: { v: 1, machineId: f.machine.id, envelope,
-                    ...(workflowActionOrigin ? { workflowActionOrigin } : { sessionActionOrigin: sessionOrigin, sessionActionSource: source }),
-                    installationProof: signMachineInstallationProof({ privateKey: f.keyPair.secretKey, payload: { version: 1,
+                    ...(host ? {} : workflowActionOrigin ? { workflowActionOrigin } : { sessionActionOrigin: sessionOrigin, sessionActionSource: source }),
+                    ...(!host ? { installationProof: signMachineInstallationProof({ privateKey: f.keyPair.secretKey, payload: { version: 1,
                         accountId: f.account.id, ...source, externalActionOrigin: { homeId: serverId, actionId: 'deployments.prepare',
-                            requestId: origin.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin } } }) } });
+                            requestId: origin.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin } } }) } : {}) } });
             expect(minted.statusCode, minted.body).toBe(200);
             const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
             const identity = deriveDeploymentPrepareSessionCreationIdentityV1(authorization.binding);
@@ -507,27 +521,29 @@ describe('signed Account Discussion HTTP admission', () => {
                     }
                 }
             }
-            const spawn = SessionSpawnNewActionInputV2Schema.parse({ executionTarget: { serverId, machineId: f.machine.id },
-                directory: { kind: 'path', path: '/prepare' },
-                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
-                initialInput: { text: buildDeploymentPreparationBriefV1(input) } });
-            const args = buildSessionSpawnNewArgs(spawn, { serverId, runtimeAccountId: f.account.id,
-                authority: 'account_automation', surface: 'agent', defaultSessionId: callerKind !== 'Workflow' ? caller.id : null,
-                actionRequestId: identity.requestId, agentStartWorkDepth: 1, actionCaller, externalActionExecutionAuthorization: authorization });
+            const spawn = SessionSpawnNewActionInputV2Schema.parse(materializeSessionCreationActionInput('session.spawn_new',
+                deriveDeploymentPrepareSessionSpawnInputV1(input), { actionRequestId: identity.requestId }));
+            const args = buildSessionSpawnNewArgs(admitSessionSpawnNewActionInputV2(spawn), { serverId, runtimeAccountId: f.account.id,
+                authority: host ? 'present_user' : 'account_automation', surface: host ? 'ui' : 'agent',
+                defaultSessionId: !host && callerKind !== 'Workflow' ? caller.id : null,
+                actionRequestId: identity.requestId, ...(!host ? { agentStartWorkDepth: 1 } : {}),
+                actionCaller, externalActionExecutionAuthorization: authorization });
             expect(args).not.toBeNull();
             if (!args) throw new Error('missing_real_spawn_arguments');
             const sessionContent = contentKey ? sealSessionStoredContent({ mode: 'e2ee',
                 ctx: { encryptionKey: contentKey.encryptionKey, encryptionVariant: 'dataKey' }, payload: { v: 1 } })
                 : { t: 'plain' as const, v: { v: 1 } };
-            const body = { tag: identity.sessionCreationTag, metadataLayoutVersion: 1, encryptionMode: encrypted ? 'e2ee' : 'plain',
+            expect(args.sessionCreationTag).toBe(identity.sessionCreationTag);
+            const body = { tag: args.sessionCreationTag, metadataLayoutVersion: 1, encryptionMode: encrypted ? 'e2ee' : 'plain',
                 sharedMetadata: { ciphertext: sessionContent.t === 'encrypted' ? sessionContent.c : JSON.stringify(sessionContent.v) },
                 ownerMetadata: encrypted ? sealSessionOwnerMetadataEnvelopeV1({
                     material: { type: 'dataKey', machineKey: contentKeys.secretKey }, ownerMetadata: { v: 1 },
                     randomBytes: tweetnacl.randomBytes }) : sessionContent,
                 dataEncryptionKey: contentKey ? encodeBase64(contentKey.dataEncryptionKey, 'base64') : null,
-                originKind: args.originKind,
+                ...(args.originKind === undefined ? {} : { originKind: args.originKind }),
                 ...(args.originSessionId === undefined ? {} : { originSessionId: args.originSessionId }),
-                ...(args.originRunId === undefined ? {} : { originRunId: args.originRunId }), workDepth: args.workDepth };
+                ...(args.originRunId === undefined ? {} : { originRunId: args.originRunId }),
+                ...(args.workDepth === undefined ? {} : { workDepth: args.workDepth }) };
             const machineAdmission = { machineId: f.machine.id, installationId: f.machine.installationId!, actorAccountId: f.account.id,
                 custodianAccountId: f.machine.accountId, role: 'manage' as const, encryptionMode: encrypted ? 'e2ee' as const : 'plain' as const };
             const method = `${f.machine.id}:${RPC_METHODS.SESSION_SPAWN_NEW}`;
@@ -550,7 +566,7 @@ describe('signed Account Discussion HTTP admission', () => {
             const rootOnly = await send(body);
             expect(rootOnly.statusCode, rootOnly.body).toBe(401);
             expect(rootOnly.json()).toMatchObject({ error: 'invalid_token' });
-            const foreignOrigin = !workflow ? { ...body, originSessionId: 'cmvforeignparent' }
+            const foreignOrigin = !workflow ? { ...body, ...(host ? { originKind: 'session' } : {}), originSessionId: 'cmvforeignparent' }
                 : { ...body, originRunId: randomUUID() };
             const secondChild = { ...body, tag: randomUUID() };
             const forged = makeProof(body);
@@ -570,6 +586,9 @@ describe('signed Account Discussion HTTP admission', () => {
                 { ...body, creationAuthorizationProof: makeProof(body, spawn, machineAdmission, randomUUID()) },
                 ...(!encrypted ? [{ ...body, creationAuthorizationProof: makeProof(body, 'opaque-child-input') }] : []),
                 { ...body, creationAuthorizationProof: makeProof(body, { ...spawn, initialInput: { text: 'different brief' } }) },
+                ...(!encrypted ? [{ ...body, creationAuthorizationProof: makeProof(body, { ...spawn, memoryEnabled: true }) }] : []),
+                ...(!encrypted ? [{ ...body, creationAuthorizationProof: makeProof(body, { ...spawn,
+                    modelSelection: { ...spawn.modelSelection!, ref: { ...spawn.modelSelection!.ref, modelId: 'different-model' } } }) }] : []),
             ]) {
                 const refused = await send(payload);
                 expect(refused.statusCode, refused.body).toBe(401);

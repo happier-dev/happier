@@ -1,4 +1,5 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { readHomeRequestArtifactReference } from './homeRequestBody.testkit';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import axios from 'axios';
 import { normalizeGithubWebhookDelivery } from '../../../../packages/plugins/scm-github/src/observations/githubWebhookNormalization';
@@ -89,7 +90,7 @@ import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprova
 import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
-import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 import { createProductionWorkflowRunCoordinator } from '@/daemon/workflows/production';
@@ -106,7 +107,8 @@ import { WorkflowDefinitionV1Schema, openWorkflowAcceptedSnapshotStoredEnvelopeV
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { AutomationRunPluginEventTriggerEvidenceV1Schema } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import { AutomationDefinitionDetailSchema } from '@happier-dev/protocol/automations/automationApiV3';
-import { sealAutomationTriggerDefinitionStoredEnvelopeV1, AutomationTriggerIdSchema } from '@happier-dev/protocol';
+import { sealAutomationTriggerDefinitionStoredEnvelopeV1, AutomationTriggerIdSchema, PluginJsonValueV2Schema } from '@happier-dev/protocol';
+import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
 import { createAccountWorkflowTriggerActions } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
 import { createWorkflowApprovedOperationReader } from '@/daemon/workflows/workflowApprovedOperation';
 import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionContext';
@@ -399,7 +401,7 @@ describe('installed deployment storage and target composition', () => {
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
         const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
         const profile = { id: configuration.activeServerId, name: 'Home', serverUrl: 'https://home.test', webappUrl: 'https://home.test',
-            createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact' as const,
+            createdAt: 1, updatedAt: 1, homeConnectionDescriptorAuthority: 'exact' as const,
             homeConnectionDescriptor: { v: 1 as const, homeServerIdentityId: 'srv_native_home', canonicalServerUrl: 'https://home.test',
                 revision: 1, endpoints: [{ kind: 'https' as const, url: 'https://home.test' }] } };
         await persistence.updateSettings(settings => ({ ...settings, servers: { ...settings.servers, [profile.id]: profile } }));
@@ -420,6 +422,7 @@ describe('installed deployment storage and target composition', () => {
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
             } } };
             received.push(actionId);
+            if (request.envelope.v !== 1) throw new Error('The plain-Account fixture sends v1 envelopes');
             const result = await executor.execute(actionId, request.envelope.input, context);
             return { status: 200, data: { v: 1, actionId, requestId: request.envelope.requestId, execution: result } };
         });
@@ -434,7 +437,7 @@ describe('installed deployment storage and target composition', () => {
             await handleActionsCommand(['invoke', actionId, '--input-json', JSON.stringify(input),
                 '--server-id', profile.id, '--machine-id', 'machine-a', '--json'], {
                 readCredentialsFn: async () => credentials, readCredentialsForServerIdFn: async () => credentials,
-                getServerProfileFn: async () => profile,
+                getServerProfileFn: async () => ({ ...profile, lastUsedAt: 1 }),
                 createExecutorFn: params => createCliActionExecutorFromCredentials({ ...params,
                     actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }) }),
             });
@@ -536,6 +539,8 @@ describe('installed deployment storage and target composition', () => {
     it.each(['plain', 'e2ee'] as const)('projects failure and cancellation facts from %s content without reopening metadata', async mode => {
         const receipt = createDeploymentReceiptDetailV1();
         receipt.content.failure = { phase: 'build', code: 'build_failed',
+            failureCause: { phase: 'deployment.native.build.build_failed', errorClass: 'Error',
+                errorCode: 'deployment_disk_full', httpStatus: null },
             sourceAdmission: { phase: 'deployment_source_admission', reason: 'requester_authority_unavailable',
                 requiredFact: 'verified_root_requester', remedy: 'retry_original_request' } };
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
@@ -561,7 +566,8 @@ describe('installed deployment storage and target composition', () => {
                 seq: 1, createdAt: 1, updatedAt: 1 } };
         });
         let deployment = { ...receipt.deployment, state: 'succeeded' as 'succeeded' | 'failed' | 'running' };
-        const metadata = vi.spyOn(axios, 'request').mockImplementation(async () => {
+        const metadata = vi.spyOn(axios, 'request').mockImplementation(async request => {
+            expect(new URL(request.url!).searchParams.has('projection')).toBe(false);
             return { status: 200, data: { ok: true, deployment, cancellable: false } };
         });
         const deps = createDaemonDeploymentActionDeps({ credentials, serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',
@@ -571,9 +577,17 @@ describe('installed deployment storage and target composition', () => {
         await expect(deps.deploymentAction('deployments.receipts.get', input, {})).resolves.toEqual({ ok: true, deployment, cancellable: false });
         expect(contentReads).toBe(0);
         deployment = { ...deployment, state: 'failed' };
-        await expect(deps.deploymentAction('deployments.receipts.get', input, {}))
-            .resolves.toEqual({ ok: true, deployment, cancellable: false, failureSummary: { phase: 'build', code: 'build_failed',
-                requiredFact: 'verified_root_requester', remedy: 'retry_original_request' } });
+        const source = receipt.content.sourceIntent;
+        if (source.kind !== 'repository') throw new Error('Expected repository receipt fixture');
+        const failed = DeploymentReceiptGetResultV1Schema.parse(await deps.deploymentAction('deployments.receipts.get',
+            { ...input, projection: 'investigation' }, {}));
+        expect(failed).toMatchObject({ ok: true, deployment, cancellable: false, failureSummary: { phase: 'build', code: 'build_failed',
+            requiredFact: 'verified_root_requester', remedy: 'retry_original_request' }, investigation: {
+            source: { kind: 'repository', projectSourceId: source.projectSourceId,
+                sourceRevision: source.sourceRevision, sha: source.sha },
+            failure: receipt.content.failure,
+        } });
+        expect(JSON.stringify(failed)).not.toContain('sourceIntent');
         expect(contentReads).toBe(1);
         expect(metadata).toHaveBeenCalledTimes(2);
         deployment = { ...deployment, state: 'running' };
@@ -630,7 +644,7 @@ describe('installed deployment storage and target composition', () => {
         const input = { serverId: 'home', machineId: target.machineId,
             environmentId: detail.environment.id, targetLinkId: link.id };
         const envelope = { v: 1 as const, requestId: 'keyless-health', target, input };
-        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-pat-root', binding: {
+        const authorization: ExternalActionExecutionAuthorizationV1 = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-pat-root', binding: {
             accountId: 'owner', principalId: 'principal', credentialId: '00000000-0000-4000-8000-000000000001',
             grant: API_TOKEN_FULL_GRANT_V1, serverIdentityId: 'home', machineId: target.machineId,
             custodianAccountId: 'owner', installationId: 'installation-a', accountEncryptionMode: 'e2ee',
@@ -1300,7 +1314,7 @@ describe('installed deployment storage and target composition', () => {
             const settings = await persistence.readSettings();
             vi.spyOn(persistence, 'readSettings').mockResolvedValue({ ...settings, servers: { home: {
                 id: 'home', name: 'Home', serverUrl: 'https://platform.test', webappUrl: 'https://platform.test',
-                createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
+                createdAt: 1, updatedAt: 1, homeConnectionDescriptorAuthority: 'exact',
                 homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: 'srv_platform_home',
                     canonicalServerUrl: 'https://platform.test', revision: 1, endpoints: [{ kind: 'https', url: 'https://platform.test' }] }),
             } } });
@@ -1645,8 +1659,7 @@ describe('installed deployment storage and target composition', () => {
                     const path = new URL(request.url!).pathname;
                     if (domainAdd && request.method === 'POST' && path.endsWith('/domains')) {
                         Object.assign(domain, DeploymentDomainHeaderV1Schema.parse({ ...domain,
-                            contentArtifactId: request.data.contentArtifactId, contentHeaderVersion: request.data.contentHeaderVersion,
-                            contentBodyVersion: request.data.contentBodyVersion }));
+                            ...readHomeRequestArtifactReference(request.data) }));
                         return { status: 200, data: { ok: true, environmentId: environment.environment.id,
                             revision: environment.environment.revision, domain } };
                     }
@@ -1704,7 +1717,7 @@ describe('installed deployment storage and target composition', () => {
                         expect.objectContaining({ role: 'domains.remove', input: expect.objectContaining({ domainId: domain.id,
                             domain: { hostname: content.hostname } }) }),
                     ]) });
-                    if (!plan || 'errorCode' in plan) throw new Error('Expected reviewed retained provider Domain');
+                    if (!plan || !('children' in plan)) throw new Error('Expected reviewed retained provider Domain');
                     domain.state = 'removing';
                     domain.revision++;
                     retainedDomainOperations.create({ operationId: 'domain-operation', actionId: 'deployments.teardown',
@@ -1815,6 +1828,8 @@ describe('installed deployment storage and target composition', () => {
                     const prepared = request.data;
                     expect(prepared).toMatchObject({ grants: [], targetLinkContent: { targetLinkId: row.targetLink.id,
                         expectedTargetLinkRevision: row.targetLink.revision } });
+                    if (!isRecord(prepared) || typeof prepared.contentArtifactId !== 'string' || !isRecord(prepared.targetLinkContent)
+                        || typeof prepared.targetLinkContent.contentArtifactId !== 'string') throw new Error('Expected prepared bindings content references');
                     const environmentBody = decodePlainArtifactStoredContent(String(documents.get(prepared.contentArtifactId)!.body));
                     expect(environmentBody).toMatchObject({ body: expect.stringContaining('registry.example.test') });
                     const candidate = documents.get(prepared.targetLinkContent.contentArtifactId)!;
@@ -2166,9 +2181,9 @@ describe('installed deployment storage and target composition', () => {
                     onTestFinished(() => replay.dispose?.());
                     Object.assign(context, { authority: rootApproval ? 'present_user' : 'account_automation', machineAdmission: undefined,
                         verifyMachineAdmissionCurrent: undefined });
-                    context.externalActionExecutionAuthorization = scenario === 'root source missing proof'
+                    Object.assign(context, { externalActionExecutionAuthorization: scenario === 'root source missing proof'
                         ? Object.defineProperties({ ...replay.authorization }, Object.getOwnPropertyDescriptors(replay.authorization))
-                        : replay.authorization;
+                        : replay.authorization });
                     environment.content.definition = { kind: 'repository', ref: 'main', compose: rootSourceIntent.compose };
                     put(environment.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, environment.content);
                     const rootContent = { ...candidate.content, sourceIntent: rootSourceIntent };
@@ -2212,7 +2227,7 @@ describe('installed deployment storage and target composition', () => {
                             failureCause: { phase: 'deployment.source.admission.requester_authority_unavailable' } });
                         else expect(childResult, JSON.stringify(childResult)).not.toMatchObject({ errorCode: 'agent_isolation_unavailable' });
                         expect(sourceRequesters.every(item => item.identity.kind !== 'unknown' && item.hasAccountContext && item.sameHomeUrl)).toBe(true);
-                        expect(childInvocations, JSON.stringify({ execution: settled?.execution, sourceRequesters })).toBe(1);
+                        expect(childInvocations, JSON.stringify({ execution: settled && 'execution' in settled ? settled.execution : undefined, sourceRequesters })).toBe(1);
                         return;
                     }
                     if (scenario === 'root source custodian') {
@@ -2428,7 +2443,7 @@ describe('installed deployment storage and target composition', () => {
                     expect(childResult).toMatchObject({ ok: false, errorCode: roleErrorCode,
                         details: { details: sourceAdmissionFailure ? sourceAdmission : { phase: 'send' } } });
                     const stored = documents.get(receipt.contentArtifactId)!;
-                    const body = decodePlainArtifactStoredContent(stored.body);
+                    const body = decodePlainArtifactStoredContent(String(stored.body));
                     if (!body || typeof body !== 'object' || !('body' in body) || typeof body.body !== 'string')
                         throw new Error('Expected the written receipt body');
                     const recovery = sourceAdmissionFailure ? sourceAdmission : {
@@ -2474,7 +2489,7 @@ describe('installed deployment storage and target composition', () => {
             if (childSucceeds) {
                 const stored = documents.get(receipt.contentArtifactId);
                 if (!stored) throw new Error('Expected the existing receipt Artifact');
-                const body = decodePlainArtifactStoredContent(stored.body);
+                const body = decodePlainArtifactStoredContent(String(stored.body));
                 if (!body || typeof body !== 'object' || !('body' in body) || typeof body.body !== 'string') {
                     throw new Error('Expected the written receipt body');
                 }
@@ -2518,7 +2533,7 @@ describe('installed deployment storage and target composition', () => {
         const settings = await persistence.readSettings();
         vi.spyOn(persistence, 'readSettings').mockResolvedValue({ ...settings, servers: { home: {
             id: 'home', name: 'Home', serverUrl: serverHttpBaseUrl, webappUrl: serverHttpBaseUrl,
-            createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
+            createdAt: 1, updatedAt: 1, homeConnectionDescriptorAuthority: 'exact',
             homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: 'srv_backup_home',
                 canonicalServerUrl: serverHttpBaseUrl, revision: 1, endpoints: [{ kind: 'https', url: serverHttpBaseUrl }] }),
         } } });
@@ -2590,7 +2605,7 @@ describe('installed deployment storage and target composition', () => {
         const settings = await persistence.readSettings();
         vi.spyOn(persistence, 'readSettings').mockResolvedValue({ ...settings, servers: { home: {
             id: 'home', name: 'Home', serverUrl: serverHttpBaseUrl, webappUrl: serverHttpBaseUrl,
-            createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
+            createdAt: 1, updatedAt: 1, homeConnectionDescriptorAuthority: 'exact',
             homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: 'srv_backup_home',
                 canonicalServerUrl: serverHttpBaseUrl, revision: 1, endpoints: [{ kind: 'https', url: serverHttpBaseUrl }] }),
         } } });
@@ -2610,7 +2625,8 @@ describe('installed deployment storage and target composition', () => {
             return { status: 401, data: { error: 'invalid_token', authorizationRefusal: 'verification_purpose' } };
         });
         const deps = createDaemonDeploymentActionDeps({ credentials, serverId: 'home', serverHttpBaseUrl,
-            machineId: 'machine-a', resolveRequesterIdentity: resolveOwnerRequesterIdentity });
+            machineId: 'machine-a', resolveRequesterIdentity: resolveOwnerRequesterIdentity,
+            runtime: { async acquire() { throw new Error('Defaults preview cannot acquire native custody'); } } });
         const result = await deps.deploymentAction('deployments.environments.update', { serverId: 'home',
             environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
             contentArtifactId: detail.environment.contentArtifactId, contentHeaderVersion: detail.environment.contentHeaderVersion,
@@ -3267,7 +3283,7 @@ describe('installed deployment storage and target composition', () => {
         const settings = await persistence.readSettings();
         vi.spyOn(persistence, 'readSettings').mockResolvedValue({ ...settings, servers: { home: {
             id: 'home', name: 'Home', serverUrl: 'https://home.test', webappUrl: 'https://home.test',
-            createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
+            createdAt: 1, updatedAt: 1, homeConnectionDescriptorAuthority: 'exact',
             homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: 'srv_preparation_home',
                 canonicalServerUrl: 'https://home.test', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.test' }] }),
         } } });
@@ -3573,7 +3589,8 @@ describe('installed deployment storage and target composition', () => {
             runtime: { async acquire() { throw new Error('Prepare cannot acquire deployment native custody'); } } });
         const input = DeploymentActionInputSchemasV1['deployments.prepare'].parse({ projectSourceId: detail.environment.projectSourceId,
             sourceRevision: 1, repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
-            baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId: 'home', id: 'checkout' } });
+            baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId: 'home', id: 'checkout' },
+            sessionRef: { serverId: 'home', sessionId: 'preparation-session' } });
         const context = { serverId: 'home', runtimeAccountId: 'owner', surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
             interactivePresentation: 'unavailable', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) } as const;
         const resolve = deps.resolveEnvironmentApprovalScope!;
@@ -3597,7 +3614,7 @@ describe('installed deployment storage and target composition', () => {
             .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
         expect(await executor.execute('deployments.prepare', { ...input,
             workspace: { ...input.workspace, serverId: 'foreign' } }, context))
-            .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+            .toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
         expect(requests).toHaveLength(beforeExecution);
         expect(privateReads).not.toHaveBeenCalled();
     });
@@ -3694,7 +3711,7 @@ describe('installed deployment storage and target composition', () => {
             const settings = await persistence.readSettings();
             vi.spyOn(persistence, 'readSettings').mockResolvedValue({ ...settings, servers: { home: {
                 id: 'home', name: 'Home', serverUrl: 'https://home.test', webappUrl: 'https://home.test',
-                createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
+                createdAt: 1, updatedAt: 1, homeConnectionDescriptorAuthority: 'exact',
                 homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: 'srv_preparation_home',
                     canonicalServerUrl: 'https://home.test', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.test' }] }),
             } } });
@@ -4465,7 +4482,7 @@ describe('installed deployment storage and target composition', () => {
                                 assignments: input.assignments?.map(row => ({ ...row, enabled: row.enabled ?? true, priority: row.priority ?? 0, updatedAt: 1 })),
                                 triggers: input.triggers.map(row => {
                                     if (row.trigger.kind !== 'pluginEvent') throw new Error('expected_event');
-                                    const sourceSelectorId = 'sourceSelectorId' in row.trigger ? row.trigger.sourceSelectorId : '00000000-0000-4000-8000-000000000002';
+                                    const sourceSelectorId = 'sourceSelectorId' in row.trigger ? row.trigger.sourceSelectorId : AutomationSourceSelectorIdV1Schema.parse('00000000-0000-4000-8000-000000000002');
                                     const triggerDefinitionEnvelope = 'triggerDefinitionEnvelope' in row.trigger ? row.trigger.triggerDefinitionEnvelope
                                         : sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding: { v: 1, automationId: input.automationId,
                                             triggerId: AutomationTriggerIdSchema.parse(row.triggerId), triggerRevision: 0, triggerKind: 'pluginEvent',
@@ -4523,12 +4540,14 @@ describe('installed deployment storage and target composition', () => {
                 const triggerTransport = vi.mocked(axios.request).getMockImplementation()!;
                 vi.spyOn(axios, 'request').mockImplementation(async request => {
                     const response = await triggerTransport(request);
-                    return new URL(request.url!).pathname.endsWith('/secret-launch-admission')
-                        ? { ...response, data: { ok: true, grants: triggerBindings.grants } }
-                        : response;
+                    if (!new URL(request.url!).pathname.endsWith('/secret-launch-admission')) return response;
+                    if (!isRecord(response)) throw new Error('Expected the fixture HTTP response');
+                    return { ...response, data: { ok: true, grants: triggerBindings.grants } };
                 });
                 const pushedSha = git('rev-parse', 'HEAD');
-                expect(pushedSha).not.toBe(receipt.content.sourceIntent.sha);
+                const priorSourceIntent = receipt.content.sourceIntent;
+                if (priorSourceIntent.kind !== 'repository') throw new Error('Expected a repository receipt source');
+                expect(pushedSha).not.toBe(priorSourceIntent.sha);
                 const normalizeCommit = (sha: string, providerDeliveryId: string) => {
                     const merged = selection === 'trigger claim consent merge';
                     const repositoryPayload = { id: 77, full_name: 'owner/source' };
@@ -4537,7 +4556,7 @@ describe('installed deployment storage and target composition', () => {
                         user: { id: 99, login: 'octocat', type: 'User' },
                         head: { sha: 'd'.repeat(40), ref: 'feature', repo: repositoryPayload },
                         base: { ref: 'main', repo: repositoryPayload },
-                    } } : { repository: repositoryPayload, ref: 'refs/heads/main', before: receipt.content.sourceIntent.sha, after: sha };
+                    } } : { repository: repositoryPayload, ref: 'refs/heads/main', before: priorSourceIntent.sha, after: sha };
                     const event = normalizeGithubWebhookDelivery({ eventType: merged ? 'pull_request' : 'push', providerDeliveryId,
                         receivedAtMs: 1000, rawBody: new TextEncoder().encode(JSON.stringify(payload)) }).automationEvent;
                     if (!event) throw new Error('Expected normalized deployment event');
@@ -4546,8 +4565,8 @@ describe('installed deployment storage and target composition', () => {
                 const normalized = normalizeCommit(pushedSha, 'delivery-1');
                 const base = { v: 1 as const, kind: 'pluginEvent' as const,
                     eventRef: normalized.eventRef,
-                    sourceSelectorId: '00000000-0000-4000-8000-000000000002', occurrenceId: normalized.occurrenceId,
-                    occurredAt: normalized.occurredAtMs, payload: normalized.payload };
+                    sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse('00000000-0000-4000-8000-000000000002'), occurrenceId: normalized.occurrenceId,
+                    occurredAt: normalized.occurredAtMs, payload: PluginJsonValueV2Schema.parse(normalized.payload) };
                 const evidence = AutomationRunPluginEventTriggerEvidenceV1Schema.parse({ ...base, sourceInstanceId: 'github:repository:77', sourceContractVersion: 1,
                     observationReceivedAt: 1000, filter: { version: null, result: 'matched' } });
                 const cause = AutomationRunCauseSchema.parse({ kind: 'trigger', triggerKind: 'pluginEvent', triggerId, triggerRevision: 1,
@@ -4575,7 +4594,7 @@ describe('installed deployment storage and target composition', () => {
                     onCommittedTransition: async () => {}, onReviewEntered: async () => {},
                 } satisfies Parameters<typeof createProductionWorkflowRunCoordinator>[0];
                 const coordinate = createProductionWorkflowRunCoordinator({ ...coordinatorDeps,
-                    storage: { execute: async operation => {
+                    storage: { observeChanges: () => ({ dispose: async () => {} }), execute: async operation => {
                         expect(operation.operation).toBe('accepted-snapshot.resolve');
                         acceptedEnvelope = String(operation.acceptedEnvelope);
                         accepted = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'owner', runId },
@@ -4741,7 +4760,7 @@ describe('installed deployment storage and target composition', () => {
                     const journeyRunId = `00000000-0000-4000-8000-${String(ordinal + 10).padStart(12, '0')}`;
                     const normalizedJourney = normalizeCommit(sha, `journey-${ordinal}`);
                     const occurrence = { ...base, occurrenceId: normalizedJourney.occurrenceId,
-                        occurredAt: normalizedJourney.occurredAtMs, payload: normalizedJourney.payload };
+                        occurredAt: normalizedJourney.occurredAtMs, payload: PluginJsonValueV2Schema.parse(normalizedJourney.payload) };
                     const journeyEvidence = AutomationRunPluginEventTriggerEvidenceV1Schema.parse({ ...evidence, ...occurrence });
                     const journeyCause = AutomationRunCauseSchema.parse({ ...cause,
                         occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: occurrence }) });
@@ -4942,7 +4961,7 @@ describe('installed deployment storage and target composition', () => {
             if (selection === 'compact exact SHA') {
                 const authorization = preparationContext.externalActionExecutionAuthorization!;
                 const target = { kind: 'machine' as const, machineId: 'machine-a' };
-                const origin = buildApprovalExecutionOriginV1({ actionId: 'deployments.deploy', input: prepared.input,
+                const origin = buildApprovalExecutionOriginV1({ actionId: 'deployments.deploy', input: prepared.input, targetSessionId: null,
                     admittedInput: prepared.input, context: { ...preparationContext, surface: 'mcp', authority: 'account_automation',
                         actionCaller: { kind: 'host' }, serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'owner',
                         actionRequestId: authorization.binding.requestId, externalActionTarget: target,
@@ -5160,13 +5179,14 @@ describe('installed deployment storage and target composition', () => {
                     pendingPhase = 'settlement-wake-and-fresh-preparation';
                     pendingSocket.emit('update', { id: 'settled', seq: 1, createdAt: 1,
                         body: { t: 'account-change', entityIds: [change.entityId], changeKinds: [change.kind] } });
-                    const terminal = await runner.waitForTerminal(scope, 'pending-native', undefined, true);
+                    const terminal = await runner.waitForTerminal(scope, 'pending-native', undefined, { includeSetupReview: true });
                     pendingPhase = 'terminal-refusal-and-cleanup';
                     await nativePhase('pending-terminal');
-                    expect(resumed, terminal?.failure?.errorCode).toBe(1);
+                    const terminalErrorCode = terminal && 'failure' in terminal ? terminal.failure?.errorCode : undefined;
+                    expect(resumed, terminalErrorCode).toBe(1);
                     expect(terminal).toMatchObject({ state: 'failed' });
-                    expect(terminal?.failure?.errorCode).not.toBe('deployment_content_unavailable');
-                    expect(terminal?.failure?.errorCode).not.toBe('outcome_unknown');
+                    expect(terminalErrorCode).not.toBe('deployment_content_unavailable');
+                    expect(terminalErrorCode).not.toBe('outcome_unknown');
                     expect(pendingEnvelope).toBeDefined();
                     await requesterPreparation?.dispose();
                     requesterPreparation = null;
@@ -5174,7 +5194,7 @@ describe('installed deployment storage and target composition', () => {
                     expect((await docker.readInvocations()).some(call => call.args.includes('up'))).toBe(false);
                 } finally {
                     runner.cancel(scope, 'pending-native');
-                    await runner.waitForTerminal(scope, 'pending-native', undefined, true);
+                    await runner.waitForTerminal(scope, 'pending-native', undefined, { includeSetupReview: true });
                 }
             }
             // Native settlement requires original-Account signed child admission.

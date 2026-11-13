@@ -66,6 +66,7 @@ describe('CLI relocation source routing', () => {
     const prepare = { projectSourceId: 'source', sourceRevision: 1,
       repository: { kind: 'github', deployment: 'https://github.com', repository: 'prepare/app' },
       baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId: sourceRef.serverId, id: sourceRef.id },
+      sessionRef: { serverId: sourceRef.serverId, sessionId: 'preparation-session' },
       target: { environmentId: 'staging', targetLinkId: 'staging-target', expectedTargetLinkRevision: 2 } };
     const executor = createCliActionExecutorFromCredentials({ credentials, serverId: sourceRef.serverId, serverApiUrl: boundary.endpoint });
     const result = await executor.execute('deployments.prepare', prepare, { surface: 'mcp' });

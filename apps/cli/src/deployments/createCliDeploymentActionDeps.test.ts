@@ -1,4 +1,6 @@
 import axios from 'axios';
+import { isRecord } from '@happier-dev/protocol/common/records';
+import { readHomeRequestBody } from './homeRequestBody.testkit';
 import * as persistence from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -149,7 +151,7 @@ it('follows an accepted deploy to its settled receipt rather than reporting a lo
 it.each(['bearer', 'signed'] as const)('distinguishes a rejected %s request from a signed-out Home', async kind => {
     vi.spyOn(axios, 'request').mockResolvedValue({ status: 401, data: { error: 'invalid_token' } });
     const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: async () => null,
-        resolveRequestHeaders: () => kind === 'signed' ? { [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'signed-root' }
+        resolveRequestHeaders: (): Readonly<Record<string, string>> => kind === 'signed' ? { [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'signed-root' }
             : { Authorization: 'Bearer account-fixture' },
         dispatchReceipt: async () => { throw new Error('Read cannot dispatch a receipt'); } });
     const result = await deps.deploymentAction!('deployments.receipts.list', { serverId: 'home', environmentId: 'environment' },
@@ -180,7 +182,7 @@ it('does not disclose unknown Home refusal metadata or classify bearer authentic
     } });
     for (const signed of [true, false]) {
         const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: async () => null,
-            resolveRequestHeaders: () => signed ? { [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'never-record-header' }
+            resolveRequestHeaders: (): Readonly<Record<string, string>> => signed ? { [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'never-record-header' }
                 : { Authorization: 'Bearer never-record-header' },
             dispatchReceipt: async () => { throw new Error('Read cannot dispatch a receipt'); } });
         const result = await deps.deploymentAction!('deployments.receipts.list', { serverId: 'home', environmentId: 'environment' }, {});
@@ -373,6 +375,7 @@ it('admits the target-only Prepare Environment scope from its authenticated Home
     const prepare = DeploymentPrepareInputV1Schema.parse({ projectSourceId: environment.projectSourceId,
         sourceRevision: 1, repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
         baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId: environment.serverId, id: 'workspace' },
+        sessionRef: { serverId: environment.serverId, sessionId: 'preparation-session' },
         target: { environmentId: environment.id, targetLinkId: 'runtime', expectedTargetLinkRevision: 1 } });
     let current = environment;
     const requests = vi.spyOn(axios, 'request').mockImplementation(async request => {
@@ -537,9 +540,11 @@ it.each(['plain', 'e2ee'] as const)('admits an ingress-only update against its r
     expect(writes).toHaveLength(1);
     expect(writes[0]?.[0].data).toMatchObject({ contentArtifactId: expect.any(String), contentHeaderVersion: 1,
         contentBodyVersion: 1, patch: { ingress: { kind: 'edgeCaddy', edgeMachineId: 'edge' } } });
-    expect(writes[0]?.[0].data.contentArtifactId).not.toBe(detail.environment.contentArtifactId);
+    const written = writes[0]?.[0].data;
+    if (!isRecord(written)) throw new Error('Expected one PATCH body');
+    expect(written.contentArtifactId).not.toBe(detail.environment.contentArtifactId);
     expect(acknowledged).toMatchObject({ ok: true, revision: detail.environment.revision + 1, preparedArtifact: {
-        contentArtifactId: writes[0]?.[0].data.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1,
+        contentArtifactId: written.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1,
     } });
 });
 
@@ -563,7 +568,7 @@ it('uses the exact Home identity for saved observer access and Environment reads
             // Only the Home HTTP boundary is substituted; saved-profile resolution and transport admission stay real.
             vi.spyOn(axios, 'request').mockImplementation(async request => {
                 const url = new URL(request.url!);
-                const selected = request.method === 'POST' ? request.data.serverId : url.searchParams.get('serverId');
+                const selected = request.method === 'POST' ? readHomeRequestBody(request.data).serverId : url.searchParams.get('serverId');
                 requests.push(String(selected));
                 if (selected !== homeId) return { status: 200, data: { ok: false, error: 'deployment_unavailable' } };
                 return { status: 200, data: url.pathname.endsWith('/access')
@@ -571,7 +576,8 @@ it('uses the exact Home identity for saved observer access and Environment reads
                     : { ok: true, environment: detail.environment, targetLinks: [] } };
             });
             const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: serverUrl, admitAccount: () => null,
-                resolveRequestHeaders: () => ({ Authorization: 'Bearer fixture' }) });
+                resolveRequestHeaders: () => ({ Authorization: 'Bearer fixture' }),
+                dispatchReceipt: async () => { throw new Error('This read cannot dispatch a receipt'); } });
             const context = { surface: 'cli' as const };
             expect(await deps.readEnvironmentAccess({ serverId: profile.id,
                 environmentIds: [detail.environment.id] }, context, 'machines.services.detail'))

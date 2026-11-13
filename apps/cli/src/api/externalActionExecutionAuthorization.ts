@@ -23,8 +23,7 @@ import { ExternalActionMachineNpmProfileAdmissionResponseV1Schema } from '@happi
 import type { MachineNpmProfileAdmissionResponseV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { observeManagedChildApprovalExecution } from './managedChildApproval';
 import { readDeploymentTargetRetentionMachineIds } from '@/deployments/targetEnablementRetention';
-import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, isDeploymentBackupActionIdV1,
-  isDeploymentDomainChildActionIdV1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isProjectReadinessActionIdV1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
 import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions/createCliActionExecutorHarness';
 export { mintExternalActionExecutionAuthorization, type ExternalActionAuthorizationHttpResult } from './externalActionAuthorizationHttp';
@@ -53,7 +52,7 @@ import { readHostReviewedParentV1, readHostAdmittedReviewedChildV1,
   readHostReviewedChildOperationV1, isHostAdmittedReviewedChildPolicyV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { readHostAdmittedReviewedRootV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 
-import { buildDeploymentPreparationBriefV1, DeploymentPrepareInputV1Schema } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
+import { deriveDeploymentPrepareSessionSpawnInputV1, DeploymentPrepareInputV1Schema } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
 import { buildSessionActionChildCreationProofPayloadV1, deriveDeploymentPrepareSessionCreationIdentityV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
 import type { ActionRequiredAuthority } from '@happier-dev/protocol/actions/metadata';
 import type { SessionInputSourceSessionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
@@ -71,6 +70,7 @@ import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/au
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { SessionSpawnNewInputV2Schema, SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2,
   projectSessionSpawnNewActionInputV2, type SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { materializeSessionCreationActionInput } from '@happier-dev/protocol/actions/executor/sessionSpawn';
 import type { ActionExecuteResult } from '@happier-dev/protocol';
 import { type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ExternalActionExecutionAuthorizationRequestV1, ExternalActionRequesterHttpProjectionV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -87,7 +87,6 @@ import { requireAccountEncryptionCredentials } from '@/api/client/encryptionKey'
 import { hasStoredSessionCredentialProvenance, type StoredCredentials } from '@/persistence';
 import { ExternalActionSignedAuthenticationV1Schema, type ExternalActionSignedAuthenticationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { AUTHORITY_CEILING_HEADER_V1, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
-import { isDeploymentReceiptObservationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { z } from 'zod/mini';
 import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -408,7 +407,7 @@ export function createPrepareSessionCreationAuthorization(input: Readonly<{
   const parent = readHostReviewedParentV1(context);
   const child = readHostAdmittedReviewedChildV1(context);
   const root = DeploymentPrepareInputV1Schema.safeParse(parent?.input);
-  const spawn = SessionSpawnNewInputV2Schema.safeParse(child?.input);
+  const spawn = SessionSpawnNewActionInputV2Schema.safeParse(child?.input);
   const admission = context.machineAdmission;
   const identity = authorization && deriveDeploymentPrepareSessionCreationIdentityV1(authorization.binding);
   if (!authorization || !identity || !root.success || !spawn.success || root.data.sessionRef
@@ -420,11 +419,9 @@ export function createPrepareSessionCreationAuthorization(input: Readonly<{
     || admission.custodianAccountId !== authorization.binding.custodianAccountId
     || spawn.data.executionTarget.machineId !== admission.machineId
     || spawn.data.executionTarget.serverId !== root.data.workspace.serverId
-    || !sameStrictJsonValue(spawn.data.initialInput, { text: buildDeploymentPreparationBriefV1(root.data) })
-    || !sameStrictJsonValue(input.publicInput.executionTarget, spawn.data.executionTarget)
-    || !sameStrictJsonValue(input.publicInput.directory, spawn.data.directory)
-    || !sameStrictJsonValue(input.publicInput.initialInput, spawn.data.initialInput)
-    || !sameStrictJsonValue(input.publicInput.agentTarget, spawn.data.agentTarget)) return null;
+    || !sameStrictJsonValue(spawn.data, materializeSessionCreationActionInput('session.spawn_new',
+      deriveDeploymentPrepareSessionSpawnInputV1(root.data), context))
+    || !sameStrictJsonValue(input.publicInput, admitSessionSpawnNewActionInputV2(spawn.data))) return null;
   const envelope = context.originalActionEnvelope;
   if (!envelope || !isExternalActionAuthorizationBoundToEnvelope(authorization.binding, {
     actionId: 'deployments.prepare', machineId: admission.machineId, envelope,
@@ -684,58 +681,46 @@ type OriginalAccountActionInput = Readonly<{
  * admission even on an own target. Workflow birth also needs the authenticated
  * requester custody that private root control does not carry. */
 export function requiresOriginalAccountMachineActionProof(actionId: string, input?: unknown): boolean {
-  const machineAction = actionId.startsWith('machines.') ? ActionIdSchema.safeParse(actionId) : null;
-  const machineSpec = machineAction?.success ? getActionSpec(machineAction.data) : null;
-  const sessionSpawn = actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 ? SessionSpawnNewActionInputV2Schema.safeParse(input) : null;
+  const action = ActionIdSchema.safeParse(actionId);
+  const spec = action.success ? getActionSpec(action.data) : null;
   const hasSession = input !== null && typeof input === 'object' && 'sessionId' in input
     && typeof input.sessionId === 'string' && input.sessionId.trim().length > 0;
   const detachedRunLaunch = !hasSession && (actionId === 'execution.run.start' || actionId === 'execution.run.ensure'
     || actionId === 'execution.run.send' || actionId === 'execution.run.ensure_or_start');
-  // Native confirmation ownership needs the private host invocation even when
-  // this person's approval policy is waived. Account Actions keep their owner.
-  return machineAction?.success === true && machineSpec !== null
-    && resolveActionExecutionPlacementForInput(machineSpec, input) === 'machine'
+  // Every Action's declared Machine content/review demand needs the original
+  // requester, even when this person's approval policy is waived.
+  return action.success && spec !== null
+    && resolveActionExecutionPlacementForInput(spec, input) === 'machine'
     && (doesExternalActionConsumeRequesterAccountContentV1({ actionId, input })
-      || machineSpec.approvalPolicy?.uiConfirmation !== undefined
-      || isAgentInitiatedApprovalRequiredByDefault(machineAction.data))
+      // Declared host roots keep their local review; content still needs Home custody.
+      || spec.originalExecution?.terminalRoot !== 'host'
+        && (spec.approvalPolicy?.uiConfirmation !== undefined
+          || isAgentInitiatedApprovalRequiredByDefault(action.data)))
     || isWorkspaceSyncRelationshipControlActionId(actionId) || Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) || actionId === 'projects.inspect'
     || isWorkspaceSyncRelationshipWriteActionId(actionId)
-    || sessionSpawn?.success === true && sessionSpawn.data.machineSetupPlanInput !== undefined
     || readDeploymentTargetRetentionMachineIds(actionId, input).length > 0
     || actionId === 'agents.models.list' || actionId === 'agents.config_options.list'
-    || actionId === 'machines.capabilities.install' || actionId === 'home.runtime.restart'
-    || actionId === 'deployments.prepare' || actionId === 'deployments.publish.prepare'
-    || actionId === 'deployments.deploy' || actionId === 'deployments.rollback'
-    || actionId === 'deployments.promote' || actionId === 'deployments.teardown'
+    || actionId === 'deployments.rollback'
+    || actionId === 'deployments.teardown'
     || actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
-    || actionId === 'deployments.targets.link' && input !== null && typeof input === 'object' && !('contentArtifactId' in input)
-    || isDeploymentReceiptObservationActionIdV1(actionId)
     || isDeploymentReadActionIdV1(actionId)
-    || isDeploymentBackupActionIdV1(actionId) || isDeploymentDomainChildActionIdV1(actionId) || isProjectReadinessActionIdV1(actionId)
-    || actionId === 'deployments.templates.instantiate' || actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
+    || isProjectReadinessActionIdV1(actionId)
     || actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
     || actionId === 'deployments.environments.create' && projectDeploymentPreparationAdmissionV1(actionId, input) !== undefined
     || actionId.startsWith('scm.diffSummary.result.') || isScmDiffSummaryRunAction(actionId)
-    || actionId === 'projects.open' || actionId === 'projects.service.relocate'
-    || actionId === 'localServices.launcher.start' || actionId === 'localServices.actions.stopManaged'
-    || actionId === 'localServices.actions.restartManaged'
     || ACTION_ID_FAMILIES_V1.machine_processes.some(id => id === actionId)
     || actionId === 'machines.vitals.get' || actionId === 'machines.vitals.history.get'
     || ACTION_ID_FAMILIES_V1.machine_guard.some(id => id === actionId)
     || ACTION_ID_FAMILIES_V1.machine_storage.some(id => id === actionId)
-    || actionId === 'machines.resources.policy.set'
     || ACTION_ID_FAMILIES_V1.machine_reachability.some(id => id === actionId)
-    || actionId === 'machines.agentIsolation.status' || actionId === 'machines.command.run'
+    || actionId === 'machines.agentIsolation.status'
     || ACTION_ID_FAMILIES_V1.machine_work_summary.some(id => id === actionId)
     || ACTION_ID_FAMILIES_V1.usage_sources.some(id => id === actionId && id !== 'usage.sources.dismiss')
     || ACTION_ID_FAMILIES_V1.machine_agent_install.some(id => id === actionId)
-    || actionId === 'workflow.run.start'
     || detachedRunLaunch
-    || actionId === 'projects.worker.status' || actionId === 'projects.worker.copy.inspect' || actionId === 'projects.worker.copy.retire'
-    || actionId === 'projects.execution.output.read' || actionId === 'projects.execution.output.copy'
-    || actionId === 'machines.setup.remove' || actionId === 'machines.setup.updates.apply' || isMachineTerminalActionId(actionId)
+    || isMachineTerminalActionId(actionId)
     || actionId === 'machines.managed.acquire' || actionId === 'machines.managed.inspect'
-    || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.credentials.install'
+    || actionId === 'machines.managed.bootstrap.retry'
     || isManagedCreationMutationActionIdV1(actionId)
     || MANAGED_CONTROL_ACTION_IDS_V1.some(id => id === actionId);
 }

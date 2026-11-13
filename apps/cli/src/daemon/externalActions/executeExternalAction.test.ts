@@ -403,6 +403,7 @@ describe('executeExternalAction', () => {
     const target = { kind: 'machine' as const, machineId: 'prepare-machine' };
     const prepareInput = { projectSourceId: 'source', sourceRevision: 1,
       workspace: { kind: 'workspace-ref', serverId: 'srv_prepare', id: 'workspace' },
+      sessionRef: { serverId: 'srv_prepare', sessionId: 'preparation-session' },
       repository: { kind: 'github', deployment: 'https://github.com', repository: 'private/project' }, baseCommit: 'a'.repeat(40) };
     const network = vi.spyOn(axios, 'get').mockRejectedValue(new Error('A substituted preparation must not open content'));
     for (const variant of ['purpose', 'home'] as const) {

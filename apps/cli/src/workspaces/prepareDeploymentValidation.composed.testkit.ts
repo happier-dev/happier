@@ -2,7 +2,9 @@ import axios from 'axios';
 import type nacl from 'tweetnacl';
 import { delimiter, join } from 'node:path';
 import { onTestFinished, expect, vi } from 'vitest';
-import { createActionExecutor } from '@happier-dev/protocol';
+import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { computeActionReviewDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { EnvironmentSecretLaunchAdmissionResultV1Schema } from '@happier-dev/deployment-protocol';
 import type { StoredCredentials } from '@/persistence';
@@ -164,15 +166,27 @@ export async function validatePreparedDeploymentHead(input: Readonly<{
       executionRunActionFailure: (code, error = code, details) => ({ ok: false, errorCode: code, error,
         ...(details === undefined ? {} : { details }) }),
     });
-    const deploy = createActionExecutor(createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://prepare-pr-home.test',
+    const deploymentDeps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://prepare-pr-home.test',
       admitAccount: accountAdmission.projectAccountAdmission,
       resolveRequestHeaders: () => ({ Authorization: `Bearer ${token}` }),
       dispatchReceipt: dispatched => target.execute(dispatched),
-    }));
-    const result = await deploy.execute('deployments.deploy', request.input, request.context);
+    });
+    const reviewRequired = await createActionExecutor(deploymentDeps).execute('deployments.deploy', request.input, request.context);
+    expect(reviewRequired).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required',
+      details: { review: { actionArgs: request.input }, reviewDigest: expect.any(String) } });
+    const carriedReview = readRecord(reviewRequired.ok ? undefined : reviewRequired.details);
+    expect(deploymentRequests).toBe(0);
+    const confirm = vi.fn<NonNullable<ActionExecutorDeps['presentUserActionConfirmation']>>(async ({ actionId, input, preview }) => {
+      expect({ actionArgs: input, preview }).toEqual(carriedReview.review);
+      expect(computeActionReviewDigestV1(actionId, { actionArgs: input, preview })).toBe(carriedReview.reviewDigest);
+      return true;
+    });
+    const result = await createActionExecutor({ ...deploymentDeps, presentUserActionConfirmation: confirm })
+      .execute('deployments.deploy', request.input, request.context);
     expect(result, JSON.stringify({ result, buildResult, receipt, docker: await docker.readInvocations() })).toMatchObject({ ok: true,
       result: { ok: true, state: 'succeeded', deploymentId: receipt.deployment.id } });
     expect(deploymentRequests).toBe(1);
+    expect(confirm).toHaveBeenCalledOnce();
     expect(secretAdmissions).toBeGreaterThan(0);
     expect(receipt.content.sourceIntent).toMatchObject({ sha });
     expect(receipt.content.machineResults).toEqual([expect.objectContaining({ machineId,

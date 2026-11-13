@@ -655,6 +655,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
   it.each(['deployments.prepare', 'deployments.publish.prepare'] as const)('retains exact %s admission and refuses substitution before direct Account delivery', async actionId => {
     const input = actionId === 'deployments.prepare' ? { projectSourceId: 'source', sourceRevision: 1,
       workspace: { kind: 'workspace-ref', serverId: 'srv_bob_home', id: 'workspace' },
+      sessionRef: { serverId: 'srv_bob_home', sessionId: 'preparation-session' },
       repository: { kind: 'github', deployment: 'https://github.com', repository: 'private/project' }, baseCommit: 'a'.repeat(40) }
       : { serverId: 'srv_bob_home', machineId: target.machineId, installationId: 'installation',
         projectSourceId: 'source', sourceRevision: 1, templateRef: { sourceId: 'apps', itemId: 'app', version: '1',
@@ -706,6 +707,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     const actionId = 'deployments.prepare';
     const prepareInput = { projectSourceId: 'source', sourceRevision: 1,
       workspace: { kind: 'workspace-ref', serverId: 'srv_bob_home', id: 'workspace' },
+      sessionRef: { serverId: 'srv_bob_home', sessionId: 'preparation-session' },
       repository: { kind: 'github', deployment: 'https://github.com', repository: 'private/project' }, baseCommit: 'a'.repeat(40) };
     const admission = projectDeploymentPreparationAdmissionV1(actionId, prepareInput)!;
     let substitute = false;
@@ -1252,6 +1254,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
       execute: async (_input, context) => {
         const childRpc = { ...rpc, context, effectActionId: child.action };
         const childExecution = createSourceExecution(childRpc);
+        if (!childExecution) throw new Error('Expected signed child source execution');
         const reviewedChild = { actionId: child.action, role: child.role,
           inputDigest: computeActionInputApprovalDigestV1(child.action, domainInput) };
         expect(childExecution?.reviewedChild).toEqual(reviewedChild);

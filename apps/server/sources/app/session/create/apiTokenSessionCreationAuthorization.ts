@@ -8,8 +8,9 @@ import { DiscussionModelSessionCreationProofV1Schema, buildDiscussionModelSessio
     SessionActionChildCreationProofV1Schema, buildSessionActionChildCreationProofPayloadV1,
     deriveDeploymentPrepareSessionCreationIdentityV1,
     type SessionActionChildCreationProofV1, type DiscussionModelSessionCreationProofV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
-import { DeploymentPrepareInputV1Schema, buildDeploymentPreparationBriefV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
+import { DeploymentPrepareInputV1Schema, deriveDeploymentPrepareSessionSpawnInputV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
 import { SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { materializeSessionCreationActionInput } from '@happier-dev/protocol/actions/executor/sessionSpawn';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { verifyExternalActionMachineRpcRequestV1, isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { SessionDiscussionParticipantV1Schema } from '@happier-dev/protocol/sessions/creation/sessionDiscussionParticipantV1';
@@ -60,17 +61,15 @@ async function isDeploymentPrepareBirthInTx(tx: Tx, accountId: string,
         const run = await tx.automationRun.findFirst({ where: { id: binding.workflowActionOrigin.runId, accountId },
             select: { originSessionId: true } });
         if (!run || body.originSessionId !== (run.originSessionId ?? undefined)) return false;
-    } else return false;
+    } else if (body.originKind !== undefined || body.originSessionId !== undefined || body.originRunId !== undefined) return false;
     if (envelope.v === 1) {
         const root = DeploymentPrepareInputV1Schema.safeParse(envelope.input);
         const spawn = SessionSpawnNewActionInputV2Schema.safeParse(sourceExecution.params);
         if (!root.success || root.data.sessionRef !== undefined || !spawn.success
             || spawn.data.executionTarget.machineId !== binding.machineId
             || spawn.data.executionTarget.serverId !== root.data.workspace.serverId
-            || !sameStrictJsonValue(sourceExecution.params, {
-                executionTarget: spawn.data.executionTarget, directory: spawn.data.directory, agentTarget: spawn.data.agentTarget,
-                initialInput: { text: buildDeploymentPreparationBriefV1(root.data) },
-            })) return false;
+            || !sameStrictJsonValue(sourceExecution.params, materializeSessionCreationActionInput('session.spawn_new',
+                deriveDeploymentPrepareSessionSpawnInputV1(root.data), { actionRequestId: identity.requestId }))) return false;
     } else if (binding.accountEncryptionMode !== 'e2ee'
         || sourceExecution.params !== undefined && typeof sourceExecution.params !== 'string') return false;
     // Root admission already chose this installation. Birth verifies its current

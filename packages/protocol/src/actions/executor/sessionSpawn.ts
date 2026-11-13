@@ -11,6 +11,7 @@ import { SessionCreationDirectoryApprovalV1Schema, type SessionCreationDirectory
 import { resolveInheritedApprovalProfileIdV1 } from '../approvalProfiles.js';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1, type ActionId } from '../actionIds.js';
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../../bots/templates/botTemplateActionIdsV1.js';
+import { deriveDeploymentPrepareSessionCreationIdentityV1 } from '../../sessions/creation/sessionCreationAuthorizationV1.js';
 
 function resolveSessionSpawnNewCreationKey(
   data: Readonly<Record<string, unknown>>,
@@ -109,7 +110,9 @@ export function buildSessionSpawnNewArgs(
     : null;
   const workflowCreationTag = !discussionParticipant && ctx.actionCaller?.kind === 'workflowRun' && normalizeId(ctx.serverId)
     ? deriveWorkflowSessionCreationTag(normalizeId(ctx.serverId), ctx.actionCaller.runId, creationKey) : null;
-  const sessionCreationTag = workflowCreationTag ?? (callerCreationNamespace
+  const prepareIdentity = ctx.externalActionExecutionAuthorization
+    ? deriveDeploymentPrepareSessionCreationIdentityV1(ctx.externalActionExecutionAuthorization.binding) : null;
+  const sessionCreationTag = prepareIdentity?.sessionCreationTag ?? workflowCreationTag ?? (callerCreationNamespace
     ? deriveSessionCreationTagV1({ callerCreationNamespace, creationKey }) : null);
   if (!sessionCreationTag) return null;
   const args: Record<string, unknown> = {

@@ -10,7 +10,7 @@ import { isSessionActionChildCreationRootV1 } from './sessionCreationActionIdsV1
 import { deriveActionChildRequestIdV1 } from '../../workflows/workflowInvocationIdentityV1.js';
 import { deriveSessionCreationTagV1, deriveWorkflowSessionCreationTag } from './sessionCreationIdentityV1.js';
 
-/** The root's existing creation namespace reserves exactly one Prepare child. */
+/** The admitted root reserves one Prepare child, retaining signed callers' existing creation namespaces. */
 export function deriveDeploymentPrepareSessionCreationIdentityV1(binding: ExternalActionExecutionAuthorizationBindingV1): Readonly<{
   requestId: string; creationKey: string; sessionCreationTag: string;
 }> | null {
@@ -23,8 +23,10 @@ export function deriveDeploymentPrepareSessionCreationIdentityV1(binding: Extern
   const sessionCreationTag = sessionOrigin
     ? deriveSessionCreationTagV1({ callerCreationNamespace: JSON.stringify(['session', binding.serverIdentityId,
       binding.accountId, sessionOrigin.caller.sessionId]), creationKey })
-    : workflowOrigin ? deriveWorkflowSessionCreationTag(binding.serverIdentityId, workflowOrigin.runId, creationKey) : null;
-  return sessionCreationTag ? { requestId, creationKey, sessionCreationTag } : null;
+    : workflowOrigin ? deriveWorkflowSessionCreationTag(binding.serverIdentityId, workflowOrigin.runId, creationKey)
+    : deriveSessionCreationTagV1({ callerCreationNamespace: JSON.stringify(['deployment-prepare',
+      binding.serverIdentityId, binding.accountId]), creationKey });
+  return { requestId, creationKey, sessionCreationTag };
 }
 
 /** The installed receiver binds its actual birth request to the original reviewed public child. */

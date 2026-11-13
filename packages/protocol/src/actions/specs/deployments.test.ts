@@ -37,10 +37,15 @@ describe('Deployment Action front door', () => {
     const spec = getActionSpec(actionId);
     const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
     const input = { serverId: 'home', environmentId: 'production', reason: 'manual' } as const;
-    expect(resolveActionApprovalRouting({ actionId, spec, context, input: { ...input, mode: 'preview' } }).required).toBe(false);
-    expect(resolveActionApprovalRouting({ actionId, spec, context, input }).required).toBe(true);
-    expect(resolveActionApprovalRouting({ actionId, spec, input,
-      context: { ...context, presentUserConfirmation: { actionId } } }).required).toBe(false);
+    expect(resolveActionApprovalRouting({ actionId, spec, context, input: { ...input, mode: 'preview' } }))
+      .toMatchObject({ required: false });
+    expect(resolveActionApprovalRouting({ actionId, spec, context, input: { ...input, mode: 'preview' } }).uiConfirmationRequired).toBeUndefined();
+    expect(resolveActionApprovalRouting({ actionId, spec, context, input }))
+      .toMatchObject({ required: false, uiConfirmationRequired: true });
+    const confirmed = resolveActionApprovalRouting({ actionId, spec, input,
+      context: { ...context, presentUserConfirmation: { actionId } } });
+    expect(confirmed.required).toBe(false);
+    expect(confirmed.uiConfirmationRequired).toBeUndefined();
   });
   it('approves retained Domain removal through durable review without prepared-content input', async () => {
     const input = { serverId: 'home', environmentId: 'production', domainId: 'domain',
@@ -81,11 +86,12 @@ describe('Deployment Action front door', () => {
       isApprovalExecutionOriginCurrent: async () => true,
     });
     const context = { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' },
-      serverId: 'home', serverIdentityId: 'srv_home', runtimeAccountId: 'owner', actionRequestId: 'remove-domain' } as const;
+      serverId: 'home', serverIdentityId: 'srv_home', runtimeAccountId: 'owner', actionRequestId: 'remove-domain',
+      defaultSessionMachineId: 'controller' } as const;
     expect(await executor.execute('deployments.domains.remove', input, context)).toMatchObject({
       ok: true, result: { kind: 'approval_request_created' },
     });
-    expect(ApprovalRequestV2Schema.parse(stored).actionArgs).toEqual(input);
+    expect(ApprovalRequestV2Schema.parse(stored).actionArgs).toEqual({ ...input, serverId: context.serverIdentityId });
     expect(effects).toEqual([]);
     const decided = await executor.execute('approval.request.decide', {
       artifactId: 'domain-removal-review', decision: 'approve',
@@ -93,7 +99,7 @@ describe('Deployment Action front door', () => {
     expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true,
       result: { status: 'executed', execution: { ok: true, result: removed } },
     });
-    expect(effects).toEqual([{ actionId: 'deployments.domains.remove', input }]);
+    expect(effects).toEqual([{ actionId: 'deployments.domains.remove', input: { ...input, serverId: context.serverIdentityId } }]);
     expect(getActionSpec('deployments.environments.update').inputHints?.fields).toEqual(expect.arrayContaining([
       expect.objectContaining({ path: 'contentArtifactId', required: true }),
       expect.objectContaining({ path: 'contentHeaderVersion', required: true }),
@@ -442,7 +448,7 @@ describe('Deployment Action front door', () => {
       accountEncryptionMode: 'plain', actionId, requestId: envelope.requestId,
       ...(actor === 'session' ? { sessionActionOrigin,
         sessionActionSource: { machineId: target.machineId, installationId: 'controller-installation' } } : {}),
-      requestEnvelopeDigest, target,
+      requestEnvelopeDigest, target, deploymentChildRoot: true,
       deploymentCandidatePublication: createDeploymentCandidatePublicationV1({ accountId: 'requester', serverIdentityId,
         actionId, requestId: envelope.requestId, requestEnvelopeDigest, environmentId: originalInput.environmentId,
         source: { id: 'destination-source', revision: 1 } }),
@@ -502,7 +508,8 @@ describe('Deployment Action front door', () => {
   it('hands off personal Prepare only through authenticated workspace context, without a child approval waiver', async () => {
     const input = { projectSourceId: 'source', sourceRevision: 1,
       repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/repo' },
-      baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId: 'home', id: 'workspace' } };
+      baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId: 'home', id: 'workspace' },
+      sessionRef: { serverId: 'home', sessionId: 'proposal-session' } };
     const spec = getActionSpec('deployments.prepare');
     expect(spec.inputSchema.parse(input)).toEqual(input);
     for (const invalid of [{ ...input, approved: true }, { ...input, serverId: 'home' },
@@ -713,6 +720,7 @@ describe('Deployment Action front door', () => {
       contentHeaderVersion: 1, contentBodyVersion: 1 };
     const reviewed = { ...input, contentArtifactId: 'reviewed-candidate' };
     let dispatched: unknown;
+    const reviews: unknown[] = [];
     // The installed host port crosses the native Docker/SCM and authenticated Artifact boundaries.
     const executor = createActionExecutor({
       prepareDeploymentAction: async request => {
@@ -720,6 +728,11 @@ describe('Deployment Action front door', () => {
         return { input: reviewed, preview: { summary: 'Deploy the reviewed image vector.' } };
       },
       resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: 'staging' } }),
+      presentUserActionConfirmation: async request => {
+        expect(dispatched).toBeUndefined();
+        reviews.push(request.input);
+        return true;
+      },
       deploymentAction: async (_id, admitted) => {
         dispatched = admitted;
         return { ok: true, environmentId: 'staging', revision: 2,
@@ -728,6 +741,7 @@ describe('Deployment Action front door', () => {
     } as ActionExecutorDeps);
     expect(await executor.execute('deployments.deploy', input, { surface: 'ui', authority: 'present_user', serverId: 'home' }))
       .toMatchObject({ ok: true, result: { deploymentId: 'receipt-a' } });
+    expect(reviews).toEqual([reviewed]);
     expect(dispatched).toEqual(reviewed);
   });
   // Activate with P41/P42's admitted candidate producer and its live finite-exec consumer.
@@ -765,7 +779,7 @@ describe('Deployment Action front door', () => {
       expect(input).toEqual(row?.[1]);
       return row![2];
     } } satisfies Pick<ActionExecutorDeps, 'deploymentAction' | 'resolveEnvironmentApprovalScope'>;
-    const executor = createActionExecutor(deps as ActionExecutorDeps);
+    const executor = createActionExecutor({ ...deps, presentUserActionConfirmation: async () => true } as ActionExecutorDeps);
     for (const [id, input, expected] of requests) {
       const spec = getActionSpec(id);
       expect(resolveActionApprovalRouting({ actionId: id, spec, context: { surface: 'agent' } }).required).toBe(true);

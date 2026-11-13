@@ -251,7 +251,8 @@ it.each(['deployments.prepare', 'deployments.health.read'] as const)(
     const input = projectNativeJsonValueForTransport(actionId === 'deployments.prepare'
       ? { projectSourceId: 'source', sourceRevision: 1,
         repository: { kind: 'github', deployment: 'https://github.com', repository: 'private/project' },
-        baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId: 'srv_binding', id: 'workspace' } }
+        baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId: 'srv_binding', id: 'workspace' },
+        sessionRef: { serverId: 'srv_binding', sessionId: 'preparation-session' } }
       : { serverId: 'srv_binding', environmentId: 'environment', deploymentId: 'receipt', targetLinkId: 'runtime',
         machineId: target.machineId, installationId: 'installation', service: { kind: 'deployment', machineId: target.machineId,
           environmentId: 'environment', environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' } });
@@ -736,4 +737,30 @@ it('authenticates the exact reviewed-child operand proof on the existing Machine
     expect(verifyExternalActionMachineRpcRequestV1({ ...request, reviewedChild: { ...reviewedChild, ...patch },
       publicKey: key.publicKey, signature })).toBe(false);
   }
+});
+
+it.each(['plain', 'e2ee'] as const)('binds draft DNS root references and keeps private hostname sealed (%s)', mode => {
+  const actionId = 'deployments.domains.verify', target = { kind: 'machine' as const, machineId: 'controller' };
+  const input = { mode: 'preview' as const, serverId: 'srv_dns', environmentId: 'environment', targetLinkId: 'runtime',
+    expectedRevision: 1, expectedTargetLinkRevision: 2, requestKey: 'dns-attempt',
+    content: { hostname: 'private-draft.test', target: { service: 'web', containerPort: 8080 } } };
+  const envelope = mode === 'plain' ? { v: 1 as const, requestId: 'dns-root', target, input }
+    : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: { serverIdentityId: input.serverId, accountId: 'actor', actionId, requestId: 'dns-root', target,
+        authentication: { kind: 'account', tokenEpoch: 1 } }, input,
+      material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) }, randomBytes: n => new Uint8Array(n).fill(2) });
+  const deploymentNativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
+  expect(JSON.stringify(deploymentNativeAdmission)).not.toContain(input.content.hostname);
+  if (mode === 'e2ee') expect(JSON.stringify(envelope)).not.toContain(input.content.hostname);
+  const { binding } = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'dns-proof', binding: {
+    accountId: 'actor', custodianAccountId: 'actor', authentication: { kind: 'account', tokenEpoch: 1 },
+    serverIdentityId: input.serverId, machineId: target.machineId, installationId: 'installation', actionId,
+    requestId: 'dns-root', target, accountEncryptionMode: mode, environmentId: input.environmentId, deploymentChildRoot: true,
+    deploymentNativeAdmission, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+  } });
+  expect(binding.deploymentCandidatePublication).toBeUndefined();
+  expect(isExternalActionAuthorizationBoundToEnvelope(binding, { actionId, machineId: target.machineId, envelope })).toBe(true);
+  const replacement = projectDeploymentNativeAdmissionV1(actionId, { ...input, requestKey: 'another-attempt' });
+  expect(isExternalActionAuthorizationBoundToEnvelope({ ...binding, deploymentNativeAdmission: replacement },
+    { actionId, machineId: target.machineId, envelope })).toBe(false);
 });
