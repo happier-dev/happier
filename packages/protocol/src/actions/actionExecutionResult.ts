@@ -12,6 +12,8 @@ import { ActionOperationIdentifierV1Schema } from './operations/identifierV1.js'
 import { ActionIdSchema } from './actionIds.js';
 export { readActionErrorCodeV1 } from './actionErrorClassV1.js';
 
+export { ActionRefusalDiagnosticV1Schema, type ActionRefusalReasonV1, createActionRefusalDetailsV1, actionTargetUnavailable } from './actionRefusalDiagnostic.js';
+
 /** Keep authored recovery facts; the output owner supplies its domain fallback. */
 export function projectActionFailureRecoveryV1<T extends Record<string, unknown>>(
   details: T, fallback: Readonly<{ requiredFact: string; remedy: string }>,
@@ -232,8 +234,11 @@ export function readActionFailureCauseV1(value: unknown): ActionFailureCauseV1 {
 
 export function projectActionFailureCauseV1(error: unknown, phase?: string): ActionFailureCauseV1 {
   try {
-    const projected = error && typeof error === 'object' && 'failureCause' in error ? error.failureCause : undefined;
-    if (projected !== undefined) return readActionFailureCauseV1(projected);
+    const projected = error && typeof error === 'object' && 'failureCause' in error
+      ? error.failureCause : isPluginError(error) ? error.data.failureCause : undefined;
+    if (projected !== undefined) return readActionFailureCauseV1(
+      projected && typeof projected === 'object' && 'actionCause' in projected ? projected.actionCause : projected,
+    );
   } catch { /* A diagnostic accessor cannot replace the original failure. */ }
   const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
   let stage: unknown;
@@ -377,6 +382,17 @@ export function readUnexpectedActionErrorDiagnosticV1(error: unknown): Readonly<
  * not a generic error parser: known Action fields and opaque details survive,
  * while bridge-private top-level metadata cannot cross the Action boundary.
  */
+/**
+ * Discriminates a failure envelope inside a wider Action result union without
+ * re-projecting it. A success row that also reports an `errorCode` (for example
+ * an incomplete setup) is not a failure: the envelope requires `ok: false`.
+ */
+export function isActionExecuteFailure(value: unknown): value is ActionExecuteFailure {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  return 'ok' in value && value.ok === false && 'errorCode' in value && typeof value.errorCode === 'string'
+    && 'error' in value && typeof value.error === 'string';
+}
+
 export function parseActionExecuteFailure(value: unknown): ActionExecuteFailure | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const result = value as Readonly<Record<string, unknown>>;

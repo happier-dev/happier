@@ -8,6 +8,7 @@ import type { SessionCapabilitiesGetOutputV1, SessionCapabilitiesSetInputV1, Ses
 import { isMachineRpcTimeoutError, readRpcErrorCode } from '../../rpc/errors.js';
 import type { ActionExecutorContext } from './types.js';
 import { areSessionCapabilitySelectionsEquivalentV1, readSessionCapabilityOverrideV1, setSessionCapabilitySelectionItemV1 } from '../../reach/sessionCapabilitySelectionV1.js';
+import { createActionRefusalDetailsV1 } from '../actionRefusalDiagnostic.js';
 
 export type SessionCapabilitiesActionSnapshotV1 = Readonly<{
   metadata: object; sessionRunning: boolean;
@@ -43,14 +44,14 @@ export async function setSessionCapabilityV1(input: Readonly<{
   let snapshot: SessionCapabilitiesActionSnapshotV1 | null;
   try { snapshot = await port.readSession(address, context); }
   catch { context.signal?.throwIfAborted(); return { ok: false, code: 'session_unavailable' }; }
-  if (!snapshot) return { ok: false, code: 'not_found' };
+  if (!snapshot) return { ok: false, ...createActionRefusalDetailsV1('not_found', 'session_absent') };
   const applyTiming = resolveCapabilityApplyTimingV1({ kind: request.kind, sessionRunning: snapshot.sessionRunning,
     agent: snapshot.agent, launchRestart: snapshot.launchRestart });
   if (applyTiming.t === 'new_sessions_only') return { ok: false, code: 'applies_to_new_sessions_only' };
   let id: string | null;
   try { id = await port.resolveItem({ ...address, kind: request.kind, id: request.id }, context); }
   catch { context.signal?.throwIfAborted(); return { ok: false, code: 'session_unavailable' }; }
-  if (!id) return { ok: false, code: 'not_found' };
+  if (!id) return { ok: false, ...createActionRefusalDetailsV1('not_found', 'capability_identity_unresolved') };
   const current = readSessionCapabilitySelectionFromMetadataV1(snapshot.metadata);
   const previous = readSessionCapabilityOverrideV1(current, request.kind, id);
   const written = await port.writeMetadata({ ...address, update: metadata => {

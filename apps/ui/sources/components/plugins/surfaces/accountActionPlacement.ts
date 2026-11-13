@@ -4,7 +4,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { readPluginActionFailureAuthorPayload, readPluginActionFailureHandlerInvocation } from '@happier-dev/protocol/plugins/actions/invocation';
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
-import { ActionExecuteResultSchema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteResultSchema, projectActionFailureCauseV1, actionTargetUnavailable } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { PluginActionExecutionV2 } from '@happier-dev/protocol/plugins/actions/v2';
@@ -46,9 +46,15 @@ export function executeAccountActionAtRuntimeHost(params: Readonly<{
             const fallbackMachineId = params.context.externalActionTarget ? null
                 : params.sourceMachineId ?? await resolveUiAccountActionReceiverMachineId(account, { actionId: ACTION_INVOKE_ACTION_ID_V1, input,
                     context: params.context, signal: params.signal });
+            if (typeof fallbackMachineId === 'object' && fallbackMachineId !== null) {
+                throw new PluginError({ code: fallbackMachineId.errorCode, message: fallbackMachineId.error, data: fallbackMachineId.details });
+            }
             const target = params.context.externalActionTarget
                 ?? (fallbackMachineId ? { kind: 'machine' as const, machineId: fallbackMachineId } : undefined);
-            if (!target) throw new PluginError({ code: 'target_unavailable', message: 'target_unavailable' });
+            if (!target) {
+                const failure = actionTargetUnavailable('own_reachable_machine_absent');
+                throw new PluginError({ code: failure.errorCode, message: failure.error, data: failure.details });
+            }
             const requestId = params.context.actionRequestId ?? randomUUID();
             const confirmation = params.confirmedInvocation && sameStrictJsonValue(params.confirmedInvocation.input, input)
                 ? { actionId: ACTION_INVOKE_ACTION_ID_V1, inputDigest: params.confirmedInvocation.inputDigest, requestId,

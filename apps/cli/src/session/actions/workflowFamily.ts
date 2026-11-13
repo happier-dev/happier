@@ -1,3 +1,4 @@
+import { createActionRefusalDetailsV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { CliActionDepsParams, ResolvedSessionTransport } from './cliActionDeps/types';
 import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import type { logger } from '@/ui/logger';
@@ -168,16 +169,16 @@ export function createCliWorkflowFamily(
       pullRequests: {
         listLinks: async (sessionId, caller) => {
           const result = await invokeSessionPullRequestBinding({ kind: 'list', sessionId }, caller);
-          if (result.kind !== 'links') throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+          if (result.kind !== 'links') throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable', details: createActionRefusalDetailsV1('target_unavailable', 'channels_operation_mismatch') });
           return [...result.pullRequestLinks];
         },
         attach: async ({ sessionId, pullRequest, ...target }, caller) => {
           const result = await invokeSessionPullRequestBinding({ kind: 'attach', sessionId, pullRequest, target }, caller);
-          if (result.kind !== 'attached') throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+          if (result.kind !== 'attached') throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable', details: createActionRefusalDetailsV1('target_unavailable', 'channels_operation_mismatch') });
         },
         removeTrigger: async (input, caller) => {
           const result = await invokeSessionPullRequestBinding({ kind: 'removeTrigger', ...input }, caller);
-          if (result.kind !== 'removed') throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+          if (result.kind !== 'removed') throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable', details: createActionRefusalDetailsV1('target_unavailable', 'channels_operation_mismatch') });
         },
       },
       ...(params.serverHttpBaseUrl ? { serverHttpBaseUrl: params.serverHttpBaseUrl } : {}),

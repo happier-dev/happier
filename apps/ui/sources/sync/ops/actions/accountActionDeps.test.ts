@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { adoptHomeProfile, setActiveServerId } from '@/sync/domains/server/serverProfiles';
 
 installApprovalCommonModuleMocks({ storage: original => original() });
@@ -22,8 +23,7 @@ beforeEach(async () => {
     const machines = [createMachineFixture({ id: 'general', activeAt: Date.now(), createdAt: 3, access }),
         createMachineFixture({ id: 'supplier', activeAt: Date.now(), createdAt: 2, access }),
         createMachineFixture({ id: 'offline', active: false, activeAt: 0, access })];
-    storage.setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
-        machineListByServerId: { [home.id]: machines }, machineListStatusByServerId: { [home.id]: 'idle' } });
+    await publishMachineInventoryForTest(scope, machines);
 });
 afterEach(() => storage.setState(initialState, true));
 
@@ -65,7 +65,7 @@ describe('Account Action carrier selection', () => {
         });
         expect(await execute({ actionId: 'action.invoke', input: { action, input: {} },
             context: { ...scope, runtimeAccountId: scope.accountId, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } },
-        })).toEqual(usable ? { selected: 'supplier' } : { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
+        })).toEqual(usable ? { selected: 'supplier' } : { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', details: { code: 'target_unavailable', diagnostic: { reason: 'own_reachable_machine_absent' } } });
     });
 
     it('skips the stale first receiver with zero compiled Resources and chooses the current second receiver', () => {
@@ -82,10 +82,10 @@ describe('Account Action carrier selection', () => {
         });
         expect(await execute({ actionId: 'action.options.resolve', input: optionsRequest,
             context: { ...scope, runtimeAccountId: scope.accountId, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } },
-        })).toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
+        })).toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', details: { code: 'target_unavailable', diagnostic: { reason: 'own_reachable_machine_absent' } } });
     });
 
-    it('never uses a shared or unqualified Machine as an automatic Account host, while preserving explicit native targets', () => {
+    it('never uses a shared or unqualified Machine as an automatic Account host, while preserving explicit native targets', async () => {
         const access = (accountId: string, role: 'manage' | 'use' = 'manage') => ({
             custodian: { accountId, displayName: accountId }, role, resourceMode: 'plain' as const, accessState: 'ready' as const,
         });
@@ -94,8 +94,7 @@ describe('Account Action carrier selection', () => {
         const unqualified = createMachineFixture({ id: 'unqualified', activeAt: Date.now(), createdAt: 4 });
         const own = createMachineFixture({ id: 'own', activeAt: Date.now(), createdAt: 3, access: access(scope.accountId) });
         const machines = [shared, sharedUse, unqualified, own];
-        storage.setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
-            machineListByServerId: { [scope.serverId]: machines }, machineListStatusByServerId: { [scope.serverId]: 'idle' } });
+        await publishMachineInventoryForTest(scope, machines);
         expect(resolveUiAccountActionFallbackMachineId(scope)).toBe('own');
         expect(resolveUiAccountActionFallbackMachineId(scope, { candidateMachineIds: ['shared', 'shared-use', 'unqualified'] })).toBeNull();
         expect(resolveUiAccountActionFallbackMachineId(scope, { candidateMachineIds: ['shared'], allowUnreachableFallback: true })).toBeNull();
@@ -124,8 +123,7 @@ describe('Account Action carrier selection', () => {
         const retainedMachine = createMachineFixture({ id: 'retained', activeAt: Date.now(), access: {
             custodian: { accountId: scope.accountId, displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready',
         } });
-        storage.setState(state => ({ machineListByServerId: { ...state.machineListByServerId, [retained.id]: [retainedMachine] },
-            machineListStatusByServerId: { ...state.machineListStatusByServerId, [retained.id]: 'idle' } }));
+        await publishMachineInventoryForTest({ ...scope, serverId: retained.id }, [retainedMachine]);
         expect(resolveUiAccountActionFallbackMachineId({ serverId: retained.id, accountId: 'carrier-owner' })).toBe('retained');
         expect(resolveUiAccountActionFallbackMachineId(scope)).toBe('general');
     });

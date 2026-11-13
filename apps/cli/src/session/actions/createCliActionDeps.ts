@@ -1,3 +1,4 @@
+import { createActionRefusalDetailsV1, isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { prepareCliProjectSourceTeamMove } from './projectSourceTeamMove';
 import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
@@ -529,10 +530,10 @@ export function createCliActionDeps(params: CliActionDepsParams,
     );
     caller?.signal?.throwIfAborted();
     const transport = await resolveTransportForSession(input.sessionId, caller?.signal);
-    if (!transport.ok) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+    if (!transport.ok) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable', details: createActionRefusalDetailsV1('target_unavailable', 'session_transport_absent') });
     const metadata = readTransportSessionOwnerMetadata(transport);
     const machineId = normalizeStringValue(transport.rawSession.machineId) ?? normalizeStringValue(metadata?.machineId);
-    if (!machineId) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+    if (!machineId) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable', details: createActionRefusalDetailsV1('target_unavailable', 'session_machine_absent') });
     const action = { pluginId: 'happier.channels', localId: SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1 };
     // The Account collection owns the link. Keep the actual invoking host's
     // caller/target authority; the Session identifies the binding, not a new principal.
@@ -540,25 +541,24 @@ export function createCliActionDeps(params: CliActionDepsParams,
     let response: unknown;
     if (params.invokeContributedAction) {
       const result = await params.invokeContributedAction({ action, input, context, ...(caller?.signal ? { signal: caller.signal } : {}) });
-      if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+      if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode, details: result.details });
       response = result.result;
     } else {
       if ((caller?.actionCaller && caller.actionCaller.kind !== 'host') || caller?.surface === 'agent' || caller?.surface === 'mcp') {
-        throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+        throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable', details: createActionRefusalDetailsV1('target_unavailable', 'caller_fallback_unsupported') });
       }
       response = await callMachineAction({ machineId, method: 'action.invoke',
         request: createTargetedActionRpcRequestV1({ action, input }, { kind: 'machine', machineId }, { defaultSessionId: input.sessionId }),
         ...(caller?.signal ? { signal: caller.signal } : {}) });
     }
     caller?.signal?.throwIfAborted();
-    if (response !== null && typeof response === 'object' && 'ok' in response && response.ok === false) {
-      const code = 'errorCode' in response && typeof response.errorCode === 'string' ? response.errorCode : 'target_unavailable';
-      throw Object.assign(new Error(code), { code });
+    if (isActionExecuteFailure(response)) {
+      throw Object.assign(new Error(response.errorCode), { code: response.errorCode, details: response.details });
     }
     const parsed = SessionPullRequestBindingResultV1Schema.safeParse(response);
-    if (!parsed.success) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+    if (!parsed.success) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable', details: createActionRefusalDetailsV1('target_unavailable', 'channels_result_invalid') });
     if (parsed.data.kind === 'links' && parsed.data.sessionId !== input.sessionId) {
-      throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+      throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable', details: createActionRefusalDetailsV1('target_unavailable', 'channels_session_mismatch') });
     }
     return parsed.data;
   };

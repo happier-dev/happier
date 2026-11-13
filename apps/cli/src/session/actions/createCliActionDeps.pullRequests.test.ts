@@ -23,9 +23,12 @@ import { createPluginInvocationServiceBinding, createUnavailablePluginServices }
 import { CHANNEL_STATE_COLLECTION, CHANNEL_STATE_FIELD, CHANNEL_STATE_FIXED_ROW_ID, CHANNEL_STATE_RECORD_KIND } from '../../../../../packages/plugins/channels/src/collections';
 import { MemoryCollection } from '../../../../../packages/plugins/channels/src/testkit/memoryCollection';
 
-const boundary = vi.hoisted(() => ({ get: vi.fn(), rpc: vi.fn() }));
+const boundary = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), rpc: vi.fn() }));
 // Only authenticated HTTP and Machine RPC are replaced; Session routing and Actions stay real.
-vi.mock('axios', () => ({ default: { get: boundary.get, isAxiosError: () => false } }));
+vi.mock('axios', async original => {
+  const actual = await original<typeof import('axios')>();
+  return { ...actual, default: { ...actual.default, get: boundary.get, post: boundary.post, isAxiosError: () => false } };
+});
 vi.mock('@/session/transport/rpc/machineRpc', async (original) => ({
   ...await original<typeof import('@/session/transport/rpc/machineRpc')>(), callMachineRpc: boundary.rpc, callExactMachineRpc: boundary.rpc,
 }));
@@ -34,9 +37,14 @@ const pullRequest = { provider: { id: 'github', kind: 'github', displayName: 'Gi
   number: 42, title: 'Fix', url: 'https://github.com/acme/widgets/pull/42', baseBranch: 'main', headBranch: 'fix', state: 'open' };
 describe('CLI session pull request binding', () => {
   beforeEach(() => {
-    boundary.get.mockReset(); boundary.rpc.mockReset();
+    boundary.get.mockReset(); boundary.post.mockReset(); boundary.rpc.mockReset();
+    boundary.post.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v3/automations/query')) return { status: 200, data: { automations: [], nextCursor: null } };
+      if (url.endsWith('/v2/sessions/lookup-by-tags')) return { status: 200, data: { sessions: [] } };
+      throw new Error(`unexpected_http:${url}`);
+    });
     boundary.get.mockImplementation(async (url: string) => {
-      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: { mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
       if (url.includes('/v3/automations?')) return { status: 200, data: { automations: [], nextCursor: null } };
       if (url.endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: { id: sessionId, seq: 0, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
         encryptionMode: 'plain', dataEncryptionKey: null, metadata: JSON.stringify({ machineId: 'session-machine', path: '/repo' }), metadataVersion: 1,
@@ -56,8 +64,34 @@ describe('CLI session pull request binding', () => {
     const result = await deps.workflowAction!({ actionId: 'session.trigger.list', input: { sessionId }, context: { surface: 'cli', actionCaller: { kind: 'host' } } });
     expect(result).toMatchObject(echoSessionId === sessionId
       ? { sessionId, pullRequestLinks: [{ provider: 'github', repository: 'acme/widgets', number: 42 }] }
-      : { sessionId, sets: [], pullRequestLinks: { status: 'unavailable', code: 'target_unavailable' } });
+      : { sessionId, sets: [], pullRequestLinks: { status: 'unavailable', code: 'target_unavailable', diagnostic: { reason: 'channels_session_mismatch' } } });
   });
+  it.each(['session_transport_absent', 'session_machine_absent', 'caller_fallback_unsupported', 'channels_result_invalid', 'channels_session_mismatch', 'channels_operation_mismatch', 'malformed_failure_envelope'] as const)(
+    'retains the binding refusal reason after native PR creation: %s', async scenario => {
+      const reason = scenario === 'malformed_failure_envelope' ? 'channels_result_invalid' : scenario;
+      const ordinaryRead = boundary.get.getMockImplementation()!;
+      if (reason === 'session_transport_absent') boundary.get.mockImplementation(async (url: string) =>
+        url.endsWith(`/v2/sessions/${sessionId}`) ? { status: 404, data: { error: 'Session not found' } }
+          : /\/v2\/sessions(?:\/archived)?\?/.test(url) ? { status: 200, data: { sessions: [], hasNext: false, nextCursor: null } } : ordinaryRead(url));
+      if (reason === 'session_machine_absent') boundary.get.mockImplementation(async (url: string) => !url.endsWith(`/v2/sessions/${sessionId}`) ? ordinaryRead(url) : ({ status: 200, data: { session: {
+        id: sessionId, seq: 0, createdAt: 1, updatedAt: 1, active: false, activeAt: 1, encryptionMode: 'plain',
+        dataEncryptionKey: null, metadata: '{}', metadataVersion: 1, agentState: null, agentStateVersion: 0,
+      } } }));
+      boundary.rpc.mockImplementation(async ({ method }: { method: string }) => method === 'scm.pullRequest.openOrReuse'
+        ? { success: true, pullRequest, result: 'created', nextAction: { kind: 'none' } }
+        : reason === 'channels_session_mismatch' ? { kind: 'links', sessionId: 'other-session', pullRequestLinks: [] }
+          : reason === 'channels_operation_mismatch' ? { kind: 'links', sessionId, pullRequestLinks: [] }
+            : scenario === 'malformed_failure_envelope' ? { ok: false } : { malformed: true });
+      const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null }, sessionId, mode: 'plain', ctx: null,
+      resolveServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated', features: FeaturesResponseSchema.parse({ features: { automations: { enabled: true }, workflows: { enabled: true } }, capabilities: {} }) }),
+    });
+      expect(await deps.scmActionExecute!({ actionId: 'scm.pullRequest.openOrReuse', input: { cwd: '/repo' },
+        context: { surface: reason === 'caller_fallback_unsupported' ? 'agent' : 'cli', defaultSessionId: sessionId,
+          externalActionTarget: { kind: 'machine', machineId: 'scm-machine' } },
+        executeCanonicalAction: async () => ({ ok: false, errorCode: 'unavailable', error: 'unavailable' }),
+      })).toMatchObject({ ok: false, errorCode: 'target_unavailable', details: { scmEffectCommitted: true,
+        code: 'target_unavailable', diagnostic: { reason } } });
+    });
   it('lists Session triggers with unavailable PR links when the Session Machine is offline', async () => {
     boundary.rpc.mockRejectedValue(new Error('Machine offline'));
     const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null }, sessionId, mode: 'plain', ctx: null,
@@ -76,7 +110,9 @@ describe('CLI session pull request binding', () => {
       if (request.method === 'action.invoke') { effects.push(request); return { kind: 'attached', bindingId: 'binding-one' }; }
       throw new Error(`unexpected_rpc:${request.method}`);
     });
-    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null }, sessionId, mode: 'plain', ctx: null });
+    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null }, sessionId, mode: 'plain', ctx: null,
+      resolveServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated', features: FeaturesResponseSchema.parse({ features: { automations: { enabled: true }, workflows: { enabled: true } }, capabilities: {} }) }),
+    });
     await expect(deps.scmActionExecute!({ actionId: 'scm.pullRequest.openOrReuse', input: { cwd: '/repo', base: { kind: 'branch', name: 'main' } },
       context: { surface: 'cli', actionCaller: { kind: 'host' }, defaultSessionId: sessionId,
         externalActionTarget: { kind: 'machine', machineId: 'scm-machine' } },
@@ -100,7 +136,9 @@ describe('CLI session pull request binding', () => {
       if (method !== 'scm.pullRequest.openOrReuse') throw new Error(`Uncommitted native result must not cause ${method}`);
       return nativeResponse;
     });
-    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null }, sessionId, mode: 'plain', ctx: null });
+    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null }, sessionId, mode: 'plain', ctx: null,
+      resolveServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated', features: FeaturesResponseSchema.parse({ features: { automations: { enabled: true }, workflows: { enabled: true } }, capabilities: {} }) }),
+    });
     await expect(deps.scmActionExecute!({ actionId: 'scm.pullRequest.openOrReuse', input: { cwd: '/repo', base: { kind: 'branch', name: 'main' } },
       context: { surface: 'cli', actionCaller: { kind: 'host' }, defaultSessionId: sessionId,
         externalActionTarget: { kind: 'machine', machineId: 'scm-machine' } },
@@ -111,7 +149,9 @@ describe('CLI session pull request binding', () => {
   });
   it('keeps an originless successful PR out of Session binding writes', async () => {
     boundary.rpc.mockResolvedValue({ success: true, pullRequest, result: 'created', nextAction: { kind: 'none' } });
-    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null }, sessionId, mode: 'plain', ctx: null });
+    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null }, sessionId, mode: 'plain', ctx: null,
+      resolveServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated', features: FeaturesResponseSchema.parse({ features: { automations: { enabled: true }, workflows: { enabled: true } }, capabilities: {} }) }),
+    });
     await expect(deps.scmActionExecute!({ actionId: 'scm.pullRequest.openOrReuse', input: { cwd: '/repo' },
       context: { externalActionTarget: { kind: 'machine', machineId: 'scm-machine' } },
       executeCanonicalAction: async () => ({ ok: false, errorCode: 'unavailable', error: 'unavailable' }),
@@ -122,7 +162,9 @@ describe('CLI session pull request binding', () => {
     boundary.rpc.mockImplementation(async ({ method }: { method: string }) => method === 'action.invoke'
       ? { ok: false, errorCode: 'denied', error: 'denied' }
       : { success: true, pullRequest, result: 'created', nextAction: { kind: 'none' } });
-    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null }, sessionId, mode: 'plain', ctx: null });
+    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null }, sessionId, mode: 'plain', ctx: null,
+      resolveServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated', features: FeaturesResponseSchema.parse({ features: { automations: { enabled: true }, workflows: { enabled: true } }, capabilities: {} }) }),
+    });
     await expect(deps.scmActionExecute!({ actionId: 'scm.pullRequest.openOrReuse', input: { cwd: '/repo' },
       context: { defaultSessionId: sessionId, externalActionTarget: { kind: 'machine', machineId: 'scm-machine' } },
       executeCanonicalAction: async () => ({ ok: false, errorCode: 'unavailable', error: 'unavailable' }),
@@ -189,7 +231,7 @@ describe('CLI session pull request binding', () => {
     const declarations = [CHANNELS_MANIFEST, TRIAGE_PLUGIN.manifest, GITHUB_PLUGIN.manifest].map(manifest => ({
       manifest: normalizePluginManifestV2(manifest), occurrenceId: createPluginRuntimeOccurrenceId(manifest.id), sourceCustody: createManagedPluginSourceCustody(manifest.id),
     }));
-    const targeted = createManifestTargetedContributionsService({ readCurrentDeclarations: () => declarations, subscribeToCatalogChanges: () => () => {} });
+    const targeted = createManifestTargetedContributionsService({ readCurrentDeclarations: () => ({ declarations }), subscribeToCatalogChanges: () => () => {} });
     const providerMaterialization = createPluginActionCallerMaterializationFixture(GITHUB_PLUGIN.manifest.id);
     const triageMaterialization = createPluginActionCallerMaterializationFixture(TRIAGE_PLUGIN.manifest.id);
     const provider = await createPluginTestkit({ manifest: GITHUB_PLUGIN.manifest, module: GITHUB_PLUGIN,
@@ -197,7 +239,7 @@ describe('CLI session pull request binding', () => {
     });
     const triage = await createPluginTestkit({ manifest: TRIAGE_PLUGIN.manifest, module: TRIAGE_PLUGIN });
     const actionsFor = (seed: PluginActionsServiceSeed) => createPluginInvocationActionsService({ seed: {
-      ...seed, readCurrentTargetedDeclarations: async () => declarations,
+      ...seed, readCurrentTargetedDeclarations: async () => ({ declarations }),
     }, actionExecutor: hostBoundary,
     // Only cross-process delivery is substituted. Manifest admission, opaque handles,
     // input selection, registered handlers and target-owned parsers remain real.
@@ -270,7 +312,9 @@ describe('CLI session pull request binding', () => {
       attaches++;
       return invokeCore('session-pull-request-binding-v1', input);
     });
-    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null }, sessionId, mode: 'plain', ctx: null });
+    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null }, sessionId, mode: 'plain', ctx: null,
+      resolveServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated', features: FeaturesResponseSchema.parse({ features: { automations: { enabled: true }, workflows: { enabled: true } }, capabilities: {} }) }),
+    });
     const open = () => deps.scmActionExecute!({ actionId: 'scm.pullRequest.openOrReuse', input: { cwd: '/repo', base: { kind: 'branch', name: 'main' } },
       context: { surface: 'cli', actionCaller: { kind: 'host' }, defaultSessionId: sessionId,
         externalActionTarget: { kind: 'machine', machineId: 'scm-machine' } },

@@ -1,3 +1,4 @@
+import { actionTargetUnavailable as sessionActionTargetUnavailable } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createHash, randomUUID } from 'node:crypto';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { SessionCreationKeyV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
@@ -26,19 +27,8 @@ type ActionExecutor = Readonly<{
   execute(actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult>;
 }>;
 
-type SessionActionTargetUnavailableReason =
-  | 'authority_path_absent' | 'turn_witness_absent' | 'execution_run_turn_mismatch'
-  | 'execution_run_not_current' | 'scm_workspace_invalid' | 'turn_witness_projection_invalid'
-  | 'runner_authority_refused' | 'native_realtime_caller_invalid';
+export { sessionActionTargetUnavailable };
 
-/** The refusing owner names its missing fact without exposing runner or input data. */
-export function sessionActionTargetUnavailable(reason: SessionActionTargetUnavailableReason):
-  Extract<ActionExecuteResult, { ok: false }> & Readonly<{
-    details: Readonly<{ code: 'target_unavailable'; diagnostic: Readonly<{ reason: SessionActionTargetUnavailableReason }> }>;
-  }> {
-  return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
-    details: { code: 'target_unavailable', diagnostic: { reason } } } as const satisfies ActionExecuteResult;
-}
 const uncertain = (): ActionExecuteResult => ({ ok: false, errorCode: 'outcome_uncertain', error: 'outcome_uncertain' });
 
 // These readers use the bound host's live Session RPC/catalog, including in a

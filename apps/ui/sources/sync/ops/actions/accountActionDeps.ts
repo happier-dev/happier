@@ -1,3 +1,4 @@
+import { actionTargetUnavailable } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storage';
 import { resolveVisibleMachinesForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
@@ -85,21 +86,22 @@ export function resolveUiAccountActionFallbackMachineId(account: Pick<ActionAcco
 
 /** Shared placement for whole Account Actions and declaration-backed options. */
 export async function resolveUiAccountActionReceiverMachineId(account: LazyActionAccountContext,
-    args: Parameters<UiAccountActionExecute>[0]): Promise<string | null> {
+    args: Parameters<UiAccountActionExecute>[0]): Promise<string | ReturnType<typeof actionTargetUnavailable>> {
     const action = args.actionId === 'action.invoke'
         ? (getActionSpec('action.invoke').inputSchema.parse(args.input) as PublicActionInputById['action.invoke']).action : undefined;
     const request = args.actionId === 'action.options.resolve'
         ? getActionSpec('action.options.resolve').inputSchema.parse(args.input) as PublicActionInputById['action.options.resolve'] : undefined;
     const type = request?.optionsSourceId && parseInputTypeOptionsSourceId(request.optionsSourceId);
     const optionsRequest = request && ((type && 'pluginId' in type) || parseQualifiedPluginActionId(request.actionId)) ? request : undefined;
-    if (!action && !optionsRequest) return resolveUiAccountActionFallbackMachineId(account);
+    if (!action && !optionsRequest) return resolveUiAccountActionFallbackMachineId(account) ?? actionTargetUnavailable('own_reachable_machine_absent');
     const relayOptions = { action, optionsRequest, accountLifetime: account.accountLifetime };
     const heldReceiver = resolveUiAccountActionFallbackMachineId(account, relayOptions);
     if (heldReceiver) return heldReceiver;
     // Reuse the registry owner's current answers and demand path. No liveness probe,
     // activation, operation attempt, polling or fallback execution is added.
     const sections = optionsRequest ? OPTIONS_RELAY_SECTIONS : ACTION_RELAY_SECTIONS;
-    for (const machine of ownMachines(account).filter(machine => isMachineReachable(account, machine))) {
+    const reachable = ownMachines(account).filter(machine => isMachineReachable(account, machine));
+    for (const machine of reachable) {
         const demand = { machineId: machine.id, serverId: account.serverId, accountLifetime: account.accountLifetime,
             sections, reuseFreshReady: true, signal: args.signal ?? args.context.signal };
         if (readObservedDaemonMergedProjectionCacheEntry(demand)?.kind === 'ready') continue;
@@ -107,7 +109,8 @@ export async function resolveUiAccountActionReceiverMachineId(account: LazyActio
         const projection = answer?.kind === 'ready' ? answer.inputs.pluginProjectionV2 : null;
         if (optionsRequest ? receiverDeclaresOptions(projection, optionsRequest) : receiverDeclaresAction(projection, action!)) return machine.id;
     }
-    return null;
+    return actionTargetUnavailable(reachable.length === 0 ? 'own_reachable_machine_absent'
+        : optionsRequest ? 'plugin_options_declaration_absent' : 'plugin_action_declaration_absent');
 }
 
 /** Compose the existing machine relay with the invocation's captured Account. */

@@ -1,3 +1,4 @@
+import { ActionRefusalDiagnosticV1Schema, createActionRefusalDetailsV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { CliActionDepsParams } from '@/session/actions/cliActionDeps/types';
 import type { CliMachineActionCall, CliMachineActionServerScopeCurrent } from '@/session/actions/cliActionDeps/machineTransport';
 import type { SessionPullRequestBindingResultV1 } from '@happier-dev/channels-protocol/v1';
@@ -79,6 +80,7 @@ export function createSessionBoundScmAction(
     input,
     context,
     executeCanonicalAction,
+    executeHostingProviderAction,
   }) => {
     const localReviewHomeCurrent = async () => {
       const { isServerProfileHomeIdentity } = await import("@/server/serverProfiles");
@@ -114,12 +116,15 @@ export function createSessionBoundScmAction(
       try {
         const result = await invokeSessionPullRequestBinding({ kind: 'attach', sessionId,
           pullRequest: { repository: pr.provider.nameWithOwner, number: pr.number } }, context);
-        if (result.kind !== 'attached') throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+        if (result.kind !== 'attached') throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable', details: createActionRefusalDetailsV1('target_unavailable', 'channels_operation_mismatch') });
         return response;
       } catch (error) {
         const code = error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
           ? error.code : 'target_unavailable';
-        return { ok: false, errorCode: code, error: code, details: { pullRequest: pr, scmEffectCommitted: true } };
+        const details = error && typeof error === 'object' ? Reflect.get(error, 'details') : undefined;
+        const diagnostic = ActionRefusalDiagnosticV1Schema.safeParse(details && typeof details === 'object' ? Reflect.get(details, 'diagnostic') : undefined);
+        return { ok: false, errorCode: code, error: code, details: { pullRequest: pr, scmEffectCommitted: true,
+          ...(diagnostic.success ? { code, diagnostic: diagnostic.data } : {}) } };
       }
     };
     const inputRecord = input && typeof input === 'object' && !Array.isArray(input)
@@ -262,7 +267,7 @@ export function createSessionBoundScmAction(
               : params.scmFilesystemAccessPolicy ?? resolveFilesystemAccessPolicy(),
             ...(readComparisonTranscriptPage ? { readComparisonTranscriptPage } : {}), readPullRequestComparisonPage,
             authorizeSession: authorizeReviewSession,
-            executeCanonicalAction, actionContext: localReviewContext, ...accountMarksDeps, ...(context.signal ? { signal: context.signal } : {}),
+            executeCanonicalAction, executeHostingProviderAction, actionContext: localReviewContext, ...accountMarksDeps, ...(context.signal ? { signal: context.signal } : {}),
             executeDiffSummary: async ({ request }) => {
               const summary = request as ScmDiffSummaryGenerateInput;
               const parent = summary.sessionId ? await resolveTransportForSession(summary.sessionId, context.signal) : null;
@@ -377,6 +382,7 @@ export function createSessionBoundScmAction(
         actionId,
         input: inputRecord,
         workingDirectory: selectedRoot,
+        executeHostingProviderAction,
         emitFileReviewNote,
         accessPolicy: { kind: 'restrictedRoots', roots: [selectedRoot] },
         ...(context.signal ? { signal: context.signal } : {}),
@@ -480,6 +486,7 @@ export function createSessionBoundScmAction(
       sessionId: transport.sessionId,
       authorizeSession: authorizeReviewSession,
       executeCanonicalAction,
+      executeHostingProviderAction,
       actionContext: localReviewContext,
       ...accountMarksDeps,
       ...(context.signal ? { signal: context.signal } : {}),

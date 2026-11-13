@@ -6,6 +6,7 @@ import { SessionCapabilitySelectionAuthoringV1Schema } from '../../reach/session
 import { DetectedMcpPreviewEntryV1Schema, ManagedMcpPreviewEntryV1Schema } from '../../mcp/servers/previewV1.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { SessionSkillPlanV1Schema } from '../../prompts/library/skills/resolveSessionSkillPlanV1.js';
+import { ActionRefusalDiagnosticV1Schema } from '../actionRefusalDiagnostic.js';
 
 const identity = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 export const CapabilityItemStateV1Schema = lazyZodSchema(() => z.strictObject({
@@ -63,7 +64,8 @@ export const SessionCapabilitiesSetOutputV1Schema = lazyZodSchema(() => z.union(
     applyTiming: z.union([CapabilityApplyTimingV1Schema._zod.def.options[0], CapabilityApplyTimingV1Schema._zod.def.options[1],
       CapabilityApplyTimingV1Schema._zod.def.options[3], CapabilityApplyTimingV1Schema._zod.def.options[4]]),
   }),
-  z.strictObject({ ok: z.literal(false), code: z.enum(['applies_to_new_sessions_only', 'not_found', 'session_unavailable', 'conflict']) }),
+  z.strictObject({ ok: z.literal(false), code: z.enum(['applies_to_new_sessions_only', 'not_found', 'session_unavailable', 'conflict']),
+    diagnostic: z.optional(ActionRefusalDiagnosticV1Schema) }),
 ]));
 export type SessionCapabilitiesSetOutputV1 = z.infer<typeof SessionCapabilitiesSetOutputV1Schema>;
 

@@ -138,7 +138,7 @@ function fixture(savedDefinition = definition) {
       get: async (id) => rows.get(id) ?? null,
       create: async (input) => {
         const row: AutomationDefinitionDetail = { id: input.automationId, name: input.name, description: input.description ?? null,
-          enabled: input.enabled, targetType: null, existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
+          enabled: input.enabled, targetType: null, existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1, scheduleOccurrences: [],
           workflowDefinitionId: input.workflowDefinitionId ?? null, scopeSessionId: input.scopeSessionId ?? null,
           ...(input.observationOnly ? { observationOnly: input.observationOnly } : {}),
           assignments: (input.assignments ?? []).map((value) => ({ machineId: value.machineId, enabled: value.enabled ?? true, priority: value.priority ?? 0, updatedAt: 1 })),
@@ -459,6 +459,9 @@ describe('trigger source display provenance', () => {
     const f = fixture(loop);
     const saved = await f.actions.add({ workflow, project, inputs: { targets }, trigger });
     const executor = f.executor(f.actions);
+    expect(await executor.execute('workflow.trigger.list', { backupFreshness: { automationId: saved.set.automationId } }, ownCaller))
+      .toMatchObject({ ok: true, result: { sets: [{ automationId: saved.set.automationId }],
+        backupEnvironments: [{ serverId: 'home', environmentId: 'env' }] } });
     for (const deploymentId of ['deployment', 'second']) {
       expect(await executor.execute('workflow.trigger.list', { deploymentBackup: { ...target, deploymentId } }, ownCaller))
         .toMatchObject({ ok: true, result: { sets: [{ automationId: saved.set.automationId }] } });
@@ -510,6 +513,9 @@ describe('trigger source display provenance', () => {
     f.rows.set(row.id, { ...row, triggers: row.triggers.map(item => ({ ...item, enabled: false })) });
     expect(await executor.execute('workflow.trigger.list', { deploymentBackupEnvironment: backupEnvironment }, ownCaller))
       .toMatchObject({ ok: true, result: { sets: [] } });
+    f.rows.set(row.id, { ...row, scheduleOccurrences: undefined });
+    expect(await executor.execute('workflow.trigger.list', { deploymentBackupEnvironment: backupEnvironment }, ownCaller))
+      .toMatchObject({ ok: false, errorCode: 'source_unavailable' });
   });
 
   it('finds active backup Automations for an Environment across captures and excludes paused definitions and triggers', async () => {
@@ -535,35 +541,46 @@ describe('trigger source display provenance', () => {
       .toMatchObject({ ok: true, result: { sets: [] } });
   });
 
-  it('reads missed schedules from the saved due cursor and actual last started Run through the Action executor', async () => {
+  it('uses exact trigger occurrences for missed backups, keeping other starts and approval holds separate', async () => {
     const f = fixture();
     const added = await f.actions.add({ target: { kind: 'inline', definition }, project, trigger });
     const row = f.rows.get(added.set.automationId)!;
     const schedule = row.triggers.find(item => item.kind === 'schedule')!;
     if (schedule.kind !== 'schedule') throw new Error('Expected a saved schedule');
     const dueAt = Date.now() - 60_000;
-    f.rows.set(row.id, { ...row, lastRunAt: dueAt - 1,
-      triggers: [{ ...schedule, nextRunAt: dueAt }] });
     const executor = f.executor(f.actions);
     const read = () => executor.execute('workflow.trigger.list', { scope: 'account_inline' }, ownCaller);
-    expect(await read()).toMatchObject({ ok: true, result: { sets: [{ missedSchedules: [{
-      triggerId: schedule.id, dueAt, lastRunAt: dueAt - 1,
-    }] }] } });
-    f.rows.set(row.id, { ...f.rows.get(row.id)!, lastRunAt: dueAt });
-    expect(await read()).toMatchObject({ ok: true, result: { sets: [{ missedSchedules: [] }] } });
-    f.rows.set(row.id, { ...f.rows.get(row.id)!, lastRunAt: null,
-      triggers: [{ ...schedule, nextRunAt: dueAt, enabled: false }] });
-    expect(await read()).toMatchObject({ ok: true, result: { sets: [{ missedSchedules: [] }] } });
-    f.rows.set(row.id, { ...f.rows.get(row.id)!,
-      triggers: [{ ...schedule, nextRunAt: Date.now() + 86_400_000 }] });
-    expect(await read()).toMatchObject({ ok: true, result: { sets: [{ missedSchedules: [] }] } });
-    f.rows.set(row.id, { ...f.rows.get(row.id)!,
-      triggers: [{ ...schedule, nextRunAt: dueAt }] });
+    const set = (occurrences: readonly object[], changes = {}) => f.rows.set(row.id, Object.assign({}, row,
+      { lastRunAt: dueAt + 1, triggers: [{ ...schedule, nextRunAt: dueAt }], scheduleOccurrences: occurrences }, changes));
+    // Another trigger's newer start cannot hide this due occurrence.
+    set([]);
     expect(await read()).toMatchObject({ ok: true, result: { sets: [{ missedSchedules: [{
       triggerId: schedule.id, dueAt, lastRunAt: null,
     }] }] } });
-    f.rows.set(row.id, { ...f.rows.get(row.id)!, enabled: false });
+    const exactReader = createWorkflowTriggerActions({ ...f.deps, automations: { ...f.deps.automations,
+      listDetails: async () => { throw new Error('Exact freshness must not read the Account census'); } } });
+    expect(await f.executor(exactReader).execute('workflow.trigger.list', { backupFreshness: { automationId: row.id } }, ownCaller))
+      .toMatchObject({ ok: true, result: { sets: [{ automationId: row.id }], backupEnvironments: [] } });
+    const occurrence = { triggerId: schedule.id, triggerRevision: schedule.revision, scheduledFor: dueAt, startedAt: null, held: false };
+    set([{ ...occurrence, held: true }]);
     expect(await read()).toMatchObject({ ok: true, result: { sets: [{ missedSchedules: [] }] } });
+    set([{ ...occurrence, startedAt: dueAt + 2 }]);
+    expect(await read()).toMatchObject({ ok: true, result: { sets: [{ missedSchedules: [] }] } });
+    // A one-shot/scoped cursor may already be advanced by admission, before actual start.
+    set([occurrence], { triggers: [{ ...schedule, nextRunAt: null }] });
+    expect(await read()).toMatchObject({ ok: true, result: { sets: [{ missedSchedules: [{ triggerId: schedule.id, dueAt }] }] } });
+    set([occurrence], { enabled: false });
+    expect(await read()).toMatchObject({ ok: true, result: { sets: [{ missedSchedules: [] }] } });
+    set([occurrence], { triggers: [{ ...schedule, enabled: false, nextRunAt: dueAt }] });
+    expect(await read()).toMatchObject({ ok: true, result: { sets: [{ missedSchedules: [] }] } });
+    // An older server has no exact fact; absence cannot become a never-started assertion.
+    f.rows.set(row.id, { ...row, scheduleOccurrences: undefined, lastRunAt: null, triggers: [{ ...schedule, nextRunAt: dueAt }] });
+    const incomplete = await read();
+    expect(incomplete).toMatchObject({ ok: true });
+    if (!incomplete.ok) throw new Error('Expected the readable incomplete Workflow');
+    expect(WorkflowTriggerListResultV1Schema.parse(incomplete.result).sets[0]).not.toHaveProperty('missedSchedules');
+    expect(await f.executor(exactReader).execute('workflow.trigger.list', { backupFreshness: { automationId: row.id } }, ownCaller))
+      .toMatchObject({ ok: false, errorCode: 'source_unavailable' });
   });
   it('carries the Account Workflow name and ordering fact from the admitted record', async () => {
     const f = fixture();
@@ -1730,13 +1747,17 @@ describe('workflow trigger Automation composition', () => {
     const actions = createWorkflowTriggerActions({ ...deps,
       resolveSession: async () => ({ project, nativeGoalOwner: false }),
       ...(failure === 'not-configured' ? {} : { pullRequests: {
-        listLinks: async () => { throw Object.assign(new Error(failure), { code: failure === 'rejected' ? 'denied' : 'target_unavailable' }); },
+        listLinks: async () => { throw Object.assign(new Error(failure), { code: failure === 'rejected' ? 'denied' : 'target_unavailable',
+          ...(failure === 'unavailable' ? { details: { code: 'target_unavailable', diagnostic: { reason: 'channels_session_mismatch' } } } : {}),
+        }); },
         attach: async () => undefined, removeTrigger: async () => undefined,
       } }),
     });
     const added = await actions.sessionAdd({ sessionId: 'session-one', target: { kind: 'workflow', ref: workflow }, trigger });
-    await expect(actions.sessionList({ sessionId: 'session-one' })).resolves.toMatchObject({
-      sessionId: 'session-one', sets: [added.set], pullRequestLinks: { status: 'unavailable', code: 'target_unavailable' },
+    expect(SessionTriggerListResultV1Schema.parse(await actions.sessionList({ sessionId: 'session-one' }))).toMatchObject({
+      sessionId: 'session-one', sets: [added.set], pullRequestLinks: { status: 'unavailable', code: 'target_unavailable',
+        ...(failure === 'unavailable' ? { diagnostic: { reason: 'channels_session_mismatch' } } : {}),
+      },
     });
   });
 

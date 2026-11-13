@@ -1,5 +1,6 @@
 import * as zMini from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { ActionRefusalDiagnosticV1Schema } from '../../actions/actionRefusalDiagnostic.js';
 import { DeploymentBackupRunInputV1Schema } from '../../deployments/deploymentBackupActionsV1.js';
 import { WorkflowDefinitionSavedByV1Schema } from '../workflowDefinitionV1.js';
 import { z } from '../../zodRuntimePolicy.js';
@@ -310,7 +311,8 @@ export type SessionPullRequestLinkV1 = z.infer<typeof SessionPullRequestLinkV1Sc
 /** Unavailable is not evidence that the Session has no linked pull requests. */
 export const SessionTriggerPullRequestLinksV1Schema = lazyZodSchema(() => z.union([
   z.array(SessionPullRequestLinkV1Schema),
-  z.strictObject({ status: z.literal('unavailable'), code: z.literal('target_unavailable') }),
+  z.strictObject({ status: z.literal('unavailable'), code: z.literal('target_unavailable'),
+    diagnostic: z.optional(ActionRefusalDiagnosticV1Schema) }),
 ]));
 export type SessionTriggerPullRequestLinksV1 = z.infer<typeof SessionTriggerPullRequestLinksV1Schema>;
 export const SessionTriggerListResultV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(WorkflowTriggerListResultV1Schema, {

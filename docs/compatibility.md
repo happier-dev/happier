@@ -1,5 +1,36 @@
 # Compatibility and version skew
 
+## Provider broker refusal causes (unreleased 0.3)
+
+Broker admission and finite Action refusals accept optional `failureCause` using
+`ActionFailureCauseV1`. Broker producers retain their original closed refusal
+code and source-open reason; consumers project the sanitized cause through the
+existing Provider error owner. Replies without a cause remain valid. Matching
+Protocol and CLI broker peers reload together under the unpublished 0.3 direct
+cut because older strict development readers reject the added field. The scoped
+`../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no
+`packages/protocol/src/providers/brokerRouteGrantV1.ts` seam. No persisted format,
+new capability, retry, or released compatibility adapter is added.
+
+The existing Session runtime cause also accepts optional `actionCause`, using
+that same Action carrier. Its reader translates Provider and broker causes at
+the phase supplied by the launch or turn owner while preserving the full
+sanitized original, including an uncoded error class. Native recovery fields
+and older causes without `actionCause` remain valid. The synchronized 0.3 reload
+also covers Session runtime issue producers and readers; earlier strict
+development cause readers reject the added field.
+
+## Runner endpoint-read causes (unreleased 0.3)
+
+The existing unavailable results for Runner managed-service endpoint open and
+body reads accept optional `failureCause`, reusing `ActionFailureCauseV1`.
+Captured endpoint/environment failures retain their sanitized cause through the
+daemon and exact-handle Runner consumers. Status, no-result guards, cancellation
+and replies without a cause are unchanged. Runner and daemon readers reload
+together under the unpublished 0.3 direct cut; older strict development readers
+reject the added field. This is the current CLI process seam, with no separate
+released predecessor or persisted representation to migrate.
+
 ## Triage source caller diagnostics (unreleased 0.3)
 
 The source-administration `invalidCaller` result accepts optional `admission`
@@ -8422,6 +8453,16 @@ The scoped-clean `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf`
 has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
+
+Unreleased 0.3 Session capability writes and Session-trigger PR-link availability
+add optional `diagnostic: { reason }` to their closed failure outputs. They use
+Protocol's shared Action refusal vocabulary; omitted diagnostics remain valid.
+Matching Protocol, CLI, UI and SDK source reload together under the unpublished
+0.3 direct cut (owner approval, 2026-11-13 18:16Z, and the 2026-11-07 no-compatibility
+for unshipped data ruling). Older strict development readers reject the added
+field. The inspected 0.2 frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf`
+has no Session capability spec counterpart. This adds no adapter, gate, epoch
+or persisted format.
 
 Unreleased 0.3 `ComposerReadResultV1` adds optional `requestId` to its closed
 `unavailable` result. The Composer host copies the existing request envelope id;

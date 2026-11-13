@@ -4170,6 +4170,18 @@ owner's code-only reason in `details: { code: 'target_unavailable', diagnostic:
 or turn witness, invalid Run binding or workspace, invalid witness projection,
 and refused runner authority; the MCP realtime caller guard uses the same result
 owner. These reasons contain no paths, identities, credentials or input content.
+The shared constructor and closed reason vocabulary live in Protocol's
+`actions/actionRefusalDiagnostic.ts`, re-exported by
+`actions/actionExecutionResult.ts`; the Session executor retains its existing
+export as an alias. UI Account placement uses the same result for absent own
+reachable Machines versus absent eligible plugin Action/options declarations.
+The CLI Channels binding distinguishes missing Session transport/Machine,
+unsupported caller fallback, malformed results and mismatched Sessions; the SCM
+receipt retains that diagnostic alongside its already-committed PR fact.
+Session-trigger list availability retains the same diagnostic. Session capability
+writes distinguish `session_absent` from `capability_identity_unresolved` under
+their existing `not_found` code. Both closed output schemas accept the optional
+shared diagnostic under the unpublished 0.3 matching-source reload contract.
 
 Installed Workflow Session leaves continue definition/trigger child Actions through
 the existing signed Workflow-origin admission. FIN passes its captured

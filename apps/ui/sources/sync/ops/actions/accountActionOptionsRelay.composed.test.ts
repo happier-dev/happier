@@ -16,7 +16,7 @@ const { captureLazyActionAccountContext } = await import('./actionAccountContext
 const { createUiAccountAction } = await import('./accountActionDeps');
 const { clearDaemonMergedProjectionCacheForTests, loadDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
-const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/machinePresence');
+const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
 afterAll(() => network.dispose());
 
 it.each([
@@ -45,7 +45,7 @@ it.each([
     const machines = ['stale', 'current'].map((id, index) => createMachineFixture({ id, access, activeAt: Date.now(), createdAt: 2 - index }));
     storage.setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
         machineListByServerId: { [home.id]: machines }, machineListStatusByServerId: { [home.id]: 'idle' } });
-    observeMachinePresenceForTest(account, machines.map(machine => machine.id));
+    await publishMachineInventoryForTest(account, machines);
     network.setRpcAckResponder(async request => {
         expect(request.method).toBe(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
         return { ok: true, result: { protocolVersion: 1, projection: projection(selectedDeclares
@@ -70,10 +70,28 @@ it.each([
         expect(network.requests).toHaveLength(reads);
         selectedDeclares = false;
         publishMachineContributionRegistryProjectionInvalidation({ serverId: home.id, machineId: selected }, 'authority');
-        expect(await call()).toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
+        expect(await call()).toMatchObject({ ok: false, errorCode: 'target_unavailable', details: { code: 'target_unavailable', diagnostic: { reason: 'plugin_options_declaration_absent' } } });
+        expect(await execute({ actionId: 'action.invoke', input: { action: { pluginId: 'acme.options', localId: 'missing' } },
+            context: { serverId: home.id, runtimeAccountId: account.accountId, surface: 'ui', actionCaller: { kind: 'host' } } }))
+            .toMatchObject({ ok: false, details: { diagnostic: { reason: 'plugin_action_declaration_absent' } } });
+        storage.setState({ machineListByServerId: { [home.id]: [] }, machines: {} });
+        expect(await call()).toMatchObject({ ok: false, details: { diagnostic: { reason: 'own_reachable_machine_absent' } } });
         expect(dispatched).toEqual([selected, selected]);
         expect(network.requests).toHaveLength(reads + (firstDeclares || heldCurrent ? 2 : 1));
     } finally {
         account.dispose(); clearDaemonMergedProjectionCacheForTests(); storage.setState(initial, true);
     }
+});
+
+it('names the missing own reachable Machine without attempting declaration reads', async () => {
+    const home = await network.addHome('https://no-options-machine.test', 'owner', { serverIdentityId: 'srv_no_options_machine' });
+    const account = await captureLazyActionAccountContext(home.id);
+    const initial = storage.getState();
+    try {
+        storage.setState({ machineListByServerId: { [home.id]: [] }, machines: {} });
+        const execute = createUiAccountAction({ account, transport: async () => { throw new Error('Must not dispatch'); } });
+        expect(await execute({ actionId: 'action.options.resolve', input: { optionsSourceId: 'plugin-input:acme.options/account' },
+            context: { serverId: home.id, runtimeAccountId: account.accountId, surface: 'ui', actionCaller: { kind: 'host' } } }))
+            .toMatchObject({ ok: false, details: { code: 'target_unavailable', diagnostic: { reason: 'own_reachable_machine_absent' } } });
+    } finally { account.dispose(); storage.setState(initial, true); }
 });

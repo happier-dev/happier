@@ -17,6 +17,7 @@ import {
 import { readTriggerTargetV1, type TriggerTargetV1 } from '../../workflows/triggers/triggerTargetV1.js';
 import { parseWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionRefV1.js';
 import { resolveInheritedApprovalProfileIdV1 } from '../approvalProfiles.js';
+import { ActionRefusalDiagnosticV1Schema } from '../actionRefusalDiagnostic.js';
 import { resolveWorkflowRunVisibleTeamV1 } from '../../workflows/workflowRunVisibilityV1.js';
 import {
   WorkflowTriggerAddRequestV1Schema, WorkflowTriggerListRequestV1Schema,
@@ -32,7 +33,7 @@ import {
   SessionTriggerUpdateRequestV1Schema, SessionTriggerRemoveRequestV1Schema,
   type SessionTriggerListRequestV1, type SessionTriggerAddRequestV1,
   type SessionTriggerUpdateRequestV1, type SessionTriggerRemoveRequestV1,
-  type SessionPullRequestLinkV1, type SessionTriggerDefinitionV1,
+  type SessionPullRequestLinkV1, type SessionTriggerDefinitionV1, type SessionTriggerPullRequestLinksV1,
   type WorkflowTriggerSummaryInputV1,
   type WorkflowTriggerHealthSourceV1,
   WorkflowDeploymentBackupTargetV1Schema,
@@ -508,10 +509,17 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     // such a Workflow by what it runs. A 0.2 Automation or a named observation keeps its own name.
     const name = workflowTriggerDisplayNameV1({ name: row.name });
     const now = Date.now();
-    const missedSchedules = row.enabled ? triggers.flatMap(trigger => trigger.kind === 'schedule' && trigger.enabled
-      && trigger.nextRunAt !== null && trigger.nextRunAt < now && (row.lastRunAt === null || row.lastRunAt < trigger.nextRunAt)
-      ? [{ triggerId: trigger.id, dueAt: trigger.nextRunAt, lastRunAt: row.lastRunAt }] : []) : [];
-    const base = { automationId: row.id, ...(name === undefined ? {} : { name }), updatedAt: row.updatedAt, missedSchedules,
+    const missedSchedules = row.enabled && row.scheduleOccurrences !== undefined ? triggers.flatMap(trigger => {
+      if (trigger.kind !== 'schedule' || !trigger.enabled) return [];
+      const occurrence = row.scheduleOccurrences!.find(item => item.triggerId === trigger.id && item.triggerRevision === trigger.revision);
+      const dueAt = trigger.nextRunAt !== null && trigger.nextRunAt < now
+        ? Math.max(trigger.nextRunAt, occurrence?.scheduledFor ?? 0) : occurrence?.scheduledFor;
+      if (dueAt === undefined || dueAt >= now) return [];
+      if (occurrence?.scheduledFor === dueAt && (occurrence.startedAt !== null || occurrence.held)) return [];
+      return [{ triggerId: trigger.id, dueAt, lastRunAt: null }];
+    }) : [];
+    const base = { automationId: row.id, ...(name === undefined ? {} : { name }), updatedAt: row.updatedAt,
+      ...(row.scheduleOccurrences === undefined ? {} : { missedSchedules }),
       revision: row.templateVersion, enabled: row.enabled, triggers, scopeSessionId: row.scopeSessionId ?? null,
       ...(row.templateCiphertext !== undefined && !row.observationOnly ? { legacy: { editable: false as const, reason: 'created_in_0_2' as const } } : {}) };
     if (row.observationOnly) return { set: { ...base, observationOnly: row.observationOnly, health: 'available' } };
@@ -548,6 +556,48 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         && !(base.legacy && (code === 'target_unavailable' || code === 'legacy_conversion_unsupported'))) throw error;
       return { set: { ...base, health: 'source_unavailable' } };
     }
+  };
+  const backupTargets = (value: Awaited<ReturnType<typeof projectedDefinition>>) => {
+    const { set, definition, children } = value;
+    const environments = new Map<string, { serverId: string; environmentId: string }>();
+    const captures: z.infer<typeof WorkflowDeploymentBackupTargetV1Schema>[] = [];
+    if (!definition || !set.context) return { environments: [], captures };
+    const pending = [{ definition, inputs: resolveWorkflowRunStartInputsV1(definition, set.context.inputs), refs: new Set<string>() }];
+    while (pending.length) {
+      const frame = pending.pop()!;
+      for (const leaf of collectWorkflowLeavesV1(frame.definition)) {
+        if (leaf.kind !== 'action' && leaf.kind !== 'workflow') continue;
+        const occurrence = leaf.kind === 'action'
+          ? readDeploymentBackupOccurrenceV1(frame.definition, leaf) : null;
+        if (occurrence) {
+          for (const bound of bindWorkflowLeafInputsV1(frame.definition, occurrence.producer, { inputs: frame.inputs,
+            origin: { kind: 'direct', ...(set.scopeSessionId ? { originSessionId: set.scopeSessionId } : {}) } }, 'definition')) {
+            const selected = DeploymentEnvironmentGetInputV1Schema.safeParse(bound);
+            if (selected.success) {
+              const environment = { serverId: selected.data.serverId, environmentId: selected.data.environmentId };
+              environments.set(JSON.stringify(environment), environment);
+            }
+          }
+        }
+        for (const bound of bindWorkflowLeafInputsV1(frame.definition, leaf, { inputs: frame.inputs,
+          origin: { kind: 'direct', ...(set.scopeSessionId ? { originSessionId: set.scopeSessionId } : {}) } }, 'definition')) {
+          if (leaf.kind === 'action' && leaf.actionId === DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1) {
+            const target = WorkflowDeploymentBackupTargetV1Schema.safeParse(Object.fromEntries(
+              Object.keys(WorkflowDeploymentBackupTargetV1Schema.shape).map(key => [key, bound[key]])));
+            if (target.success) {
+              captures.push(target.data);
+              const environment = { serverId: target.data.serverId, environmentId: target.data.environmentId };
+              environments.set(JSON.stringify(environment), environment);
+            }
+          } else if (leaf.kind === 'workflow' && !frame.refs.has(leaf.workflowRef)) {
+            const child = children?.get(leaf.workflowRef);
+            if (child) pending.push({ definition: child, inputs: resolveWorkflowRunStartInputsV1(child, bound),
+              refs: new Set([...frame.refs, leaf.workflowRef]) });
+          }
+        }
+      }
+    }
+    return { environments: [...environments.values()], captures };
   };
   const projection = async (row: AutomationDefinitionDetail, reviewed?: Readonly<{ target: TriggerTargetV1; context: WorkflowTriggerContextV1;
     project?: WorkflowProjectTargetV1 }>, prepared?: PreparedTriggerProjection) => (await projectedDefinition(row, reviewed, prepared)).set;
@@ -648,6 +698,13 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     },
     list: async (raw: WorkflowTriggerListRequestV1, caller?: Caller) => {
       const input = WorkflowTriggerListRequestV1Schema.parse(raw);
+      if ('backupFreshness' in input) {
+        const row = await read(input.backupFreshness.automationId);
+        if (row.scheduleOccurrences === undefined) refuse('source_unavailable');
+        const value = await projectedDefinition(row);
+        if (value.set.health !== 'available') refuse('source_unavailable');
+        return { sets: [value.set], backupEnvironments: backupTargets(value).environments };
+      }
       if ('healthSource' in input) {
         const healthSources = await readSavedHealthCheckSourcesV1(input.healthSource.sourceInstanceIds, deps);
         return { sets: [], healthSources };
@@ -683,38 +740,12 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
           const { set, definition, children } = await projectedDefinition(row);
           if (set.health !== 'available') refuse('source_unavailable');
           if (!definition || !set.context) return null;
-          const pending = [{ definition, inputs: resolveWorkflowRunStartInputsV1(definition, set.context.inputs), refs: new Set<string>() }];
-          while (pending.length) {
-            const frame = pending.pop()!;
-            for (const leaf of collectWorkflowLeavesV1(frame.definition)) {
-              if (leaf.kind !== 'action' && leaf.kind !== 'workflow') continue;
-              const occurrence = deploymentBackupEnvironment && leaf.kind === 'action'
-                ? readDeploymentBackupOccurrenceV1(frame.definition, leaf) : null;
-              if (occurrence) {
-                for (const bound of bindWorkflowLeafInputsV1(frame.definition, occurrence.producer, { inputs: frame.inputs,
-                  origin: { kind: 'direct', ...(set.scopeSessionId ? { originSessionId: set.scopeSessionId } : {}) } }, 'definition')) {
-                  const selected = DeploymentEnvironmentGetInputV1Schema.safeParse(bound);
-                  if (selected.success && selected.data.serverId === deploymentBackupEnvironment!.serverId
-                    && selected.data.environmentId === deploymentBackupEnvironment!.environmentId) return set;
-                }
-              }
-              for (const bound of bindWorkflowLeafInputsV1(frame.definition, leaf, { inputs: frame.inputs,
-                origin: { kind: 'direct', ...(set.scopeSessionId ? { originSessionId: set.scopeSessionId } : {}) } }, 'definition')) {
-                if (leaf.kind === 'action' && leaf.actionId === DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1) {
-                  const target = WorkflowDeploymentBackupTargetV1Schema.safeParse(Object.fromEntries(
-                    Object.keys(WorkflowDeploymentBackupTargetV1Schema.shape).map(key => [key, bound[key]])));
-                  if (target.success && (deploymentBackupEnvironment
-                    ? target.data.serverId === deploymentBackupEnvironment.serverId
-                      && target.data.environmentId === deploymentBackupEnvironment.environmentId
-                    : sameStrictJsonValue(target.data, deploymentBackup))) return set;
-                } else if (leaf.kind === 'workflow' && !frame.refs.has(leaf.workflowRef)) {
-                  const child = children?.get(leaf.workflowRef);
-                  if (child) pending.push({ definition: child, inputs: resolveWorkflowRunStartInputsV1(child, bound),
-                    refs: new Set([...frame.refs, leaf.workflowRef]) });
-                }
-              }
-            }
-          }
+          const targets = backupTargets({ set, definition, children });
+          const matches = deploymentBackupEnvironment
+            ? targets.environments.some(value => value.serverId === deploymentBackupEnvironment.serverId
+              && value.environmentId === deploymentBackupEnvironment.environmentId)
+            : targets.captures.some(value => sameStrictJsonValue(value, deploymentBackup));
+          if (matches) return set;
           return null;
         } else if (managedTarget) {
           const set = await projection(row);
@@ -1104,12 +1135,16 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         if (row.scopeSessionId === input.sessionId) sets.push(await projection(row));
       }
       const unavailable = { status: 'unavailable', code: 'target_unavailable' } as const;
-      let pullRequestLinks: SessionPullRequestLinkV1[] | typeof unavailable = unavailable;
+      let pullRequestLinks: SessionTriggerPullRequestLinksV1 = unavailable;
       if (deps.pullRequests) {
         try {
           pullRequestLinks = await deps.pullRequests.listLinks(input.sessionId, caller);
-        } catch {
+        } catch (error) {
           caller?.signal?.throwIfAborted();
+          const details = error && typeof error === 'object' ? Reflect.get(error, 'details') : undefined;
+          const diagnostic = ActionRefusalDiagnosticV1Schema.safeParse(details && typeof details === 'object'
+            ? Reflect.get(details, 'diagnostic') : undefined);
+          if (diagnostic.success) pullRequestLinks = { ...unavailable, diagnostic: diagnostic.data };
         }
       }
       caller?.signal?.throwIfAborted();

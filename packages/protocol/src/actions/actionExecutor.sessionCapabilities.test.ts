@@ -12,13 +12,14 @@ import { resolveSessionCapabilitiesV1 } from '../reach/resolveSessionCapabilitie
 import { SessionSkillPlanV1Schema } from '../prompts/library/skills/resolveSessionSkillPlanV1.js';
 
 const presentUser = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
-function fixture(options: { vendorResume?: 'supported' | 'unsupported'; liveReload?: 'supported' | 'unsupported'; stopped?: boolean; conflict?: boolean; readFailure?: boolean; launchRestart?: CapabilityLaunchRestartV1 } = {}) {
+function fixture(options: { vendorResume?: 'supported' | 'unsupported'; liveReload?: 'supported' | 'unsupported'; stopped?: boolean; conflict?: boolean; readFailure?: boolean; absent?: boolean; launchRestart?: CapabilityLaunchRestartV1 } = {}) {
   let metadata: object = { unrelated: 'kept' };
   let writes = 0;
   const approvals: ApprovalRequest[] = [];
   const port = {
     readSession: async () => {
       if (options.readFailure) throw new Error('Home unavailable');
+      if (options.absent) return null;
       return { metadata, sessionRunning: !options.stopped,
         agent: { vendorResume: options.vendorResume ?? 'supported', skillsLiveReload: options.liveReload ?? 'supported' }, launchRestart: options.launchRestart ?? 'automatic' };
     },
@@ -112,8 +113,14 @@ describe('session capability Actions at the metadata CAS owner', () => {
     const f = fixture({ conflict: true });
     for (const [id, code] of [['missing', 'not_found'], ['linear', 'conflict']]) {
       expect(await f.executor.execute('session.capabilities.set', { sessionId: 's', kind: 'mcp_server', id, state: 'on' }, presentUser))
-        .toEqual({ ok: true, result: { ok: false, code } });
+        .toEqual({ ok: true, result: { ok: false, code, ...(code === 'not_found' ? { diagnostic: { reason: 'capability_identity_unresolved' } } : {}) } });
     }
+    expect(f.writes()).toBe(0);
+  });
+  it('distinguishes an absent Session from an unresolved capability identity', async () => {
+    const f = fixture({ absent: true });
+    expect(await f.executor.execute('session.capabilities.set', { sessionId: 's', kind: 'skill', id: 'lint', state: 'on' }, presentUser))
+      .toEqual({ ok: true, result: { ok: false, code: 'not_found', diagnostic: { reason: 'session_absent' } } });
     expect(f.writes()).toBe(0);
   });
   it('reports unavailable read authority as a typed refusal before a write', async () => {
