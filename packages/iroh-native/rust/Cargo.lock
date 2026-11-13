@@ -1173,6 +1173,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "happier-session-holder"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "serde_json",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

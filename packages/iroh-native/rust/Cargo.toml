@@ -1,6 +1,11 @@
 [workspace]
-members = ["happier-iroh-core", "happier-iroh-native", "happier-iroh-node", "happier-iroh-wasm"]
+members = ["happier-iroh-core", "happier-iroh-native", "happier-iroh-node", "happier-iroh-wasm", "happier-session-holder"]
 resolver = "2"
 
 [profile.release]
 panic = "unwind"
+
+# The holder runs once per Session: keep the shipped executable small.
+[profile.release.package.happier-session-holder]
+opt-level = "s"
+strip = "symbols"
