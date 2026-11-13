@@ -2,7 +2,7 @@ import { SDK_PUBLICATION_SPEC_GRAPH, loadSdkPublicationSpec } from './sdk-public
 import { SCHEMA_SYNC_GRAPH, TRACKED_MIGRATIONS_GRAPH, loadSchemaSync, loadTrackedMigrations } from './schema-migration-probes.mjs';
 import { BUNDLED_MANIFEST_GRAPH, loadBundledManifestContracts } from './contract-manifests.mjs';
 import { WEB_BUNDLE_GRAPH, loadWebBundle } from './web-bundle.mjs';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ENTRY_GRAPHS, loadEntryGraph } from './entry-load.mjs';
