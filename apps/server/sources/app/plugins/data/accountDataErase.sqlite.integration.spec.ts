@@ -451,6 +451,36 @@ describe("plugin Account data erasure", () => {
             .toEqual([{ accountId: 'grant-custodian' }, { accountId: 'grant-recipient' }]);
     });
 
+    it('erases a non-owner Session admin who authored Team and Group grants and keeps those grants under the Session owner', async () => {
+        const { deleteAccountForErasure } = await import('./accountDataErase');
+        const [ownerId, adminId, recipientId] = ['session-grant-owner', 'session-grant-admin', 'session-grant-recipient'];
+        for (const id of [ownerId, adminId, recipientId]) await createPlainAccount(id);
+        const session = await db.session.create({ data: { accountId: ownerId, tag: crypto.randomUUID(), metadata: '{}' } });
+        const team = await db.team.create({ data: { name: 'Admin-authored Session grant' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: ownerId, role: 'owner' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Authored', nameKey: 'authored' } });
+        const effectiveAt = new Date();
+        await db.sessionGrant.createMany({ data: [
+            { principalKind: 'account', sessionId: session.id, accountId: adminId, accessLevel: 'admin', createdByAccountId: ownerId },
+            { principalKind: 'account', sessionId: session.id, accountId: recipientId, accessLevel: 'view', createdByAccountId: adminId },
+            { principalKind: 'team', sessionId: session.id, teamId: team.id, accessLevel: 'view', createdByAccountId: adminId, effectiveAt },
+            { principalKind: 'group', sessionId: session.id, teamGroupId: group.id, accessLevel: 'edit', createdByAccountId: adminId, effectiveAt },
+        ] });
+
+        expect(await deleteAccountForErasure({ accountId: adminId })).toEqual({ status: 'deleted' });
+
+        expect(await db.account.findUnique({ where: { id: adminId } })).toBeNull();
+        // Every retained authored grant, whatever its principal, moves to the Session owner.
+        expect(await db.sessionGrant.findMany({ where: { sessionId: session.id },
+            select: { principalKind: true, accountId: true, teamId: true, teamGroupId: true, accessLevel: true, createdByAccountId: true },
+            orderBy: { principalKind: 'asc' } })).toEqual([
+            { principalKind: 'account', accountId: recipientId, teamId: null, teamGroupId: null, accessLevel: 'view', createdByAccountId: ownerId },
+            { principalKind: 'group', accountId: null, teamId: null, teamGroupId: group.id, accessLevel: 'edit', createdByAccountId: ownerId },
+            { principalKind: 'team', accountId: null, teamId: team.id, teamGroupId: null, accessLevel: 'view', createdByAccountId: ownerId },
+        ]);
+        await db.team.deleteMany({ where: { id: team.id } });
+    });
+
     it('erases owned archived Discussion bytes privately and preserves foreign bytes when a recipient is erased', async () => {
         const { deleteAccountForErasure } = await import('./accountDataErase');
         await createPlainAccount('attachment-owner');
@@ -462,7 +492,7 @@ describe("plugin Account data erasure", () => {
             messages: { create: { localId: 'erasure-message', seq: 1, authorAccountId: 'attachment-owner',
                 content: { t: 'plain', v: { v: 1, parts: [{ t: 'text', text: 'File' }] } },
                 requestEqualityEvidenceV1: { kind: 'plainDigest', digest: 'B'.repeat(43) } } },
-            accountGrants: { create: { accountId: 'attachment-recipient', accessLevel: 'view', createdByAccountId: 'attachment-owner' } },
+            grants: { create: { principalKind: 'account', accountId: 'attachment-recipient', accessLevel: 'view', createdByAccountId: 'attachment-owner' } },
         }, include: { messages: true } });
         const blobId = 'a70dc166-a682-42cf-a1bf-09cc07dadcaa';
         const storageKey = `discussions/${blobId}/retained`;
@@ -656,7 +686,7 @@ describe("plugin Account data erasure", () => {
         const contract = await materializeFixtureContract();
         const erased = await seedAccountCollectionData({ accountId: erasedAccountId, contract });
         const retained = await seedAccountCollectionData({ accountId: retainedAccountId, contract });
-        await db.pluginCollectionAccountGrant.create({ data: { rowDbId: erased.first.id, accountId: retainedAccountId,
+        await db.pluginCollectionGrant.create({ data: { principalKind: 'account', rowDbId: erased.first.id, accountId: retainedAccountId,
             accessLevel: 'view', createdByAccountId: erasedAccountId } });
         for (const accountId of [erasedAccountId, retainedAccountId]) {
             await inTx(tx => backfillPluginCollectionUsageTotalsInTx({ tx, accountId }));
@@ -754,7 +784,7 @@ describe("plugin Account data erasure", () => {
         await assertPluginCollectionUsageTotalsMatchRows(erasedAccountId);
         await assertPluginCollectionUsageTotalsMatchRows(retainedAccountId);
 
-        expect(await db.pluginCollectionAccountGrant.count({ where: { rowDbId: erased.first.id } })).toBe(0);
+        expect(await db.pluginCollectionGrant.count({ where: { principalKind: 'account', rowDbId: erased.first.id } })).toBe(0);
         expect(await db.pluginCollectionKeyEnvelope.count({ where: { rowDbId: erased.first.id } })).toBe(0);
         expect(await db.accountChange.findMany({ where: { accountId: retainedAccountId, kind: 'pluginDomain' } })).toEqual(expect.arrayContaining([
             expect.objectContaining({ hint: expect.objectContaining({ pluginDomain: 'dataCollection', rowIds: ['task-1'] }) }),

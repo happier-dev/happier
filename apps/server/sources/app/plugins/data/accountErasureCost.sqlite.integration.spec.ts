@@ -48,15 +48,15 @@ describe("Account erasure resource census cost", () => {
             for (let recipient = 0; recipient < 10; recipient++) {
                 await db.machineGrant.createMany({ data: (Array.from({ length: size }, (_, i) => ({ machineId: `erase-machine-${i}`,
                     accountId: `erase-cost-${recipient}`, createdByAccountId: `erase-cost-${i % 100}`, accessLevel: "view" }))).map(grant => ({ ...grant, principalKind: 'account' as const })) });
-                await db.discussionAccountGrant.createMany({ data: Array.from({ length: size }, (_, i) => ({ discussionId: `erase-discussion-${i}`,
+                await db.discussionGrant.createMany({ data: Array.from({ length: size }, (_, i) => ({ principalKind: 'account', discussionId: `erase-discussion-${i}`,
                     accountId: `erase-cost-${recipient}`, createdByAccountId: `erase-cost-${i % 100}`, accessLevel: "view" })) });
                 await db.machineGrant.createMany({ data: (Array.from({ length: size }, (_, i) => ({ machineId: `erase-machine-${i}`,
                     teamId: `erase-team-${recipient}`, createdByAccountId: `erase-cost-${i % 100}`, accessLevel: "view" }))).map(grant => ({ ...grant, principalKind: 'team' as const })) });
-                await db.discussionTeamGrant.createMany({ data: Array.from({ length: size }, (_, i) => ({ discussionId: `erase-discussion-${i}`,
+                await db.discussionGrant.createMany({ data: Array.from({ length: size }, (_, i) => ({ principalKind: 'team', discussionId: `erase-discussion-${i}`,
                     teamId: `erase-team-${recipient}`, createdByAccountId: `erase-cost-${i % 100}`, accessLevel: "view" })) });
                 await db.machineGrant.createMany({ data: (Array.from({ length: size }, (_, i) => ({ machineId: `erase-machine-${i}`,
                     teamGroupId: `erase-group-${recipient}`, createdByAccountId: `erase-cost-${i % 100}`, accessLevel: "view" }))).map(grant => ({ ...grant, principalKind: 'group' as const })) });
-                await db.discussionGroupGrant.createMany({ data: Array.from({ length: size }, (_, i) => ({ discussionId: `erase-discussion-${i}`,
+                await db.discussionGrant.createMany({ data: Array.from({ length: size }, (_, i) => ({ principalKind: 'group', discussionId: `erase-discussion-${i}`,
                     teamGroupId: `erase-group-${recipient}`, createdByAccountId: `erase-cost-${i % 100}`, accessLevel: "view" })) });
             }
             const owner = "erasure-cost-target";
@@ -70,7 +70,7 @@ describe("Account erasure resource census cost", () => {
             console.info(`erasure elapsedMs=${Math.round(performance.now() - started)} size=${size} statements=${statements.length}`);
             expect(await db.account.findUnique({ where: { id: owner } })).toBeNull();
             expect(await db.session.count()).toBe(size);
-            const creatorReads = statements.filter(({ query }) => /^SELECT /.test(query) && /FROM ["`]?(?:(?:main|public)["`]?\.)?["`]?(Machine|Discussion)(Account|Team|Group)Grant["`]? /.test(query) && /WHERE .*createdByAccountId/.test(query));
+            const creatorReads = statements.filter(({ query }) => /^SELECT /.test(query) && /FROM ["`]?(?:(?:main|public)["`]?\.)?["`]?(Machine|Discussion)Grant["`]? /.test(query) && /WHERE .*createdByAccountId/.test(query));
             console.info(`creator queries=${creatorReads.length}`);
             if (postgres && size > 0) {
                 let removed = 0;
@@ -84,7 +84,7 @@ describe("Account erasure resource census cost", () => {
                 }
                 console.info(`creator rowsVisited=${removed} executionMs=${executionMs.toFixed(3)}`);
             }
-            const census = statements.filter(({ query }) => /^SELECT .* FROM [`"]?(?:(?:main|public)["`]?\.)?[`"]?(Session|Machine|Discussion)[`"]? /i.test(query));
+            const census = statements.filter(({ query }) => /^SELECT .* FROM [`"]?(?:(?:main|public)["`]?\.)?[`"]?(Session|SessionShare|Machine|Discussion)[`"]? /i.test(query));
             const scans: string[] = [];
             let resourceRowsVisited = 0;
             for (const statement of census) {

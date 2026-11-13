@@ -1179,15 +1179,19 @@ export async function setSessionAccessContextInTx(
     return { ok: true, changed: true, primaryTeamId: params.primaryTeamId };
 }
 
-/** Entry discovery and cleanup share the authored-or-received retained-share predicate. */
+/**
+ * Entry discovery and cleanup share the retained-share predicate: direct grants
+ * this Account received, and grants of every principal kind it authored.
+ */
 export async function readSessionAccessGrantsForAccountErasureInTx(tx: Tx, accountId: string) {
     const shares = await tx.sessionGrant.findMany({
-        where: { principalKind: 'account',
-            OR: [{ createdByAccountId: accountId }, { accountId: accountId }],
+        where: {
+            OR: [{ createdByAccountId: accountId }, { principalKind: 'account', accountId: accountId }],
         },
         select: {
             id: true,
             sessionId: true,
+            principalKind: true,
             accountId: true,
             session: { select: { accountId: true } },
         },
@@ -1195,7 +1199,7 @@ export async function readSessionAccessGrantsForAccountErasureInTx(tx: Tx, accou
     });
     // Filter only this Account's grant results: a relational owner inequality
     // lets PostgreSQL drive the join from unrelated Home Sessions instead.
-    return shares.filter(share => share.session.accountId !== accountId).map(share => ({ ...share, sharedWithUserId: share.accountId! }));
+    return shares.filter(share => share.session.accountId !== accountId);
 }
 
 /**
@@ -1203,8 +1207,9 @@ export async function readSessionAccessGrantsForAccountErasureInTx(tx: Tx, accou
  * authored on surviving Sessions. The physical Account-erasure owner supplies the
  * admission and transaction; this is not a manager-authorized grant API.
  *
- * `sharedByUserId` remains non-null compatibility provenance, so each retained
- * grant moves to its own Session owner without changing access or key material.
+ * The creator column is provenance with a RESTRICT Account FK, so each retained
+ * grant (direct, Team or Group) moves to its own Session owner without changing
+ * access or key material.
  * Owned Sessions retain their grants until the Session-deletion lifecycle gathers
  * its recipients and cascades them. Access logs keep their existing cascade and
  * Account-erasure policies.
@@ -1224,12 +1229,21 @@ export async function eraseSessionAccessGrantsForAccountInTx(
         [...new Set(capturedShares.map(share => share.sessionId))], [params.accountId]);
     const shares = await readShares();
     for (const share of shares) {
-        const accountIds = [share.sharedWithUserId];
+        if (share.principalKind !== 'account') {
+            // Reassigning a Team or Group grant's creator changes no one's access.
+            await tx.sessionGrant.update({
+                where: { id: share.id },
+                data: { createdByAccountId: share.session.accountId },
+            });
+            continue;
+        }
+        const sharedWithUserId = share.accountId!;
+        const accountIds = [sharedWithUserId];
         const before = await resolveStructuralSessionAccessForAccountsInTx(tx, {
             sessionId: share.sessionId,
             accountIds,
         });
-        if (share.sharedWithUserId === params.accountId) {
+        if (sharedWithUserId === params.accountId) {
             await tx.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
         } else {
             await tx.sessionGrant.update({
@@ -1247,7 +1261,7 @@ export async function eraseSessionAccessGrantsForAccountInTx(
             sessionOwnerAccountId: share.session.accountId,
             before,
             after,
-            directGrantChangedAccountId: share.sharedWithUserId,
+            directGrantChangedAccountId: sharedWithUserId,
         });
     }
 }
