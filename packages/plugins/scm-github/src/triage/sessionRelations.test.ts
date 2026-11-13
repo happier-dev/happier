@@ -5,6 +5,8 @@ import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testin
 import { encodeGithubTriageConfiguration } from './configuration.js';
 import { GITHUB_REPOSITORY_RESPONSE } from './__fixtures__/githubResponses.js';
 import { GITHUB_TEST_ACCOUNT, createStubGithubTransport } from './testkit/githubTriage.test-support.js';
+import { createGithubSessionRelationTestkit } from '../../testkit/sessionRelations.test-support.js';
+import { GITHUB_TRIAGE_ACTION_IDS_V1 } from './contribution.js';
 import { linkGithubTriageSession, readGithubTriageSessionLinks } from './sessionRelations.js';
 import * as sessionRelations from './sessionRelations.js';
 
@@ -33,15 +35,16 @@ function fixture(respond: (input: unknown) => unknown) {
 
 describe('GitHub PR source relationship adapter', () => {
   it('retains the repository HTTP refusal and request identity before any binding write', async () => {
-    const state = fixture(() => { throw new Error('No binding write after a refused repository read'); });
-    const transport = createStubGithubTransport({ respond: () => ({ status: 403,
-      headers: { 'x-github-request-id': 'github-repository-read-403' }, body: { message: 'Forbidden' } }) });
-    const context = { ...transport.context, requestId: 'relation-write-request-403',
-      services: { ...transport.context.services, actions: state.context.services.actions } };
-    await expect(linkGithubTriageSession({ v: 1, instance: state.instance, localRef: state.localRef,
-      sessionId: 'session-1', linked: true }, context)).rejects.toMatchObject({ code: 'github_forbidden',
-        details: { phase: 'repository_read', requestId: 'relation-write-request-403' } });
-    expect(state.calls).toEqual([]);
+    const journey = await createGithubSessionRelationTestkit({ refuseRepositoryRead: true });
+    try {
+      await expect(journey.source.invokeAction(GITHUB_TRIAGE_ACTION_IDS_V1.linkSession, {
+        v: 1, instance: journey.instance, localRef: journey.localRef, sessionId: 'session-1', linked: true,
+      }, { surface: 'plugin', requestId: 'relation-write-request-403' })).rejects.toMatchObject({ code: 'github_forbidden',
+          details: { phase: 'repository_read', requestId: 'relation-write-request-403' } });
+      expect(await journey.invokeBinding('session-pull-request-binding-v1', { kind: 'readRelations',
+        credentialRef: GITHUB_TEST_ACCOUNT, sessionId: 'session-1',
+      })).toEqual({ kind: 'relations', links: [] });
+    } finally { await journey.dispose(); }
   });
   it('names a non-applied binding result instead of erasing it', async () => {
     const state = fixture(() => ({ kind: 'removed' }));
@@ -152,14 +155,29 @@ describe('GitHub PR source relationship adapter', () => {
     expect(state.transport.materializeCount()).toBe(0);
   });
 
-  it('attaches using immutable repository proof and exact configured credentials without mandatory readback', async () => {
-    const state = fixture(() => ({ kind: 'attached', bindingId: 'binding-1' }));
-    expect(await linkGithubTriageSession({ v: 1, instance: state.instance, localRef: state.localRef,
-      sessionId: 'session-1', linked: true }, state.context)).toEqual({ status: 'linked' });
-    expect(state.calls).toEqual([{ kind: 'attach', credentialRef: GITHUB_TEST_ACCOUNT, sessionId: 'session-1',
-      pullRequest: { repository: 'octo-org/example-app', number: 12 }, expectedRepositoryId: '4210' }]);
-    expect(state.transport.requests.map(request => [request.method, new URL(request.url).pathname])).toEqual([['GET', '/repositories/4210']]);
-    expect(state.transport.materializations.map(request => request.account)).toEqual([GITHUB_TEST_ACCOUNT]);
+  it('attaches through registered GitHub and Channels writers and reads the persisted exact relationship', async () => {
+    const journey = await createGithubSessionRelationTestkit();
+    const input = { v: 1, instance: journey.instance, localRef: journey.localRef, sessionId: 'session-1' };
+    try {
+      expect(await journey.source.invokeAction(GITHUB_TRIAGE_ACTION_IDS_V1.linkSession, { ...input, linked: true }, { surface: 'plugin' }))
+        .toEqual({ status: 'linked' });
+      const result = await journey.invokeBinding('session-pull-request-binding-v1', {
+        kind: 'readRelations', credentialRef: GITHUB_TEST_ACCOUNT, sessionId: input.sessionId,
+        pullRequest: { repositoryId: '4210', number: 1284 },
+      });
+      expect(result).toMatchObject({ kind: 'relations', links: [{ sessionId: input.sessionId, repositoryId: '4210',
+        pullRequest: { repository: 'octo-org/example-app', number: 1284 }, linkedAtMs: expect.any(Number) }] });
+      expect(result !== null && typeof result === 'object' && 'links' in result && result.links).toHaveLength(1);
+      expect([...journey.state.rows.values()].filter(row => !row.deleted && row.value['record-kind'] === 'binding'))
+        .toHaveLength(1);
+      expect(journey.transport.requests.some(request => new URL(request.url).pathname === '/repositories/4210')).toBe(true);
+      expect(journey.transport.materializations.every(request => request.account.accountId === GITHUB_TEST_ACCOUNT.accountId)).toBe(true);
+      // Replayed dispatches acknowledge the same persisted relation and retain its original clock.
+      await journey.source.invokeAction(GITHUB_TRIAGE_ACTION_IDS_V1.linkSession, { ...input, linked: true }, { surface: 'plugin' });
+      expect(await journey.invokeBinding('session-pull-request-binding-v1', {
+        kind: 'readRelations', credentialRef: GITHUB_TEST_ACCOUNT, sessionId: input.sessionId,
+      })).toEqual(result);
+    } finally { await journey.dispose(); }
   });
 
   it('keeps a native read at the source’s admitted placement and refuses a missing placement', async () => {

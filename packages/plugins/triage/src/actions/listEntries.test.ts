@@ -57,13 +57,15 @@ const INSTANCE_ID = '11111111-1111-4111-8111-111111111111';
 const INTERNAL_INSTANCE_ID = INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId;
 
 describe('the aggregate list Action handler', () => {
-    it.each(['plugin_source_missing', 'plugin_manifest_invalid', 'plugin_disabled'])(
-        'retains upstream %s for a cold unavailable source without a Request ID', async (code) => {
+    // Actual disabled admission is covered through the runtime and Machine RPC
+    // in daemonSourceDeclarations.disabled.composed.test.ts. These other causes
+    // exercise retention of a host-supplied failure, not its production.
+    it.each(['plugin_source_missing', 'plugin_manifest_invalid'])(
+        'retains supplied upstream %s for a cold unavailable source without a Request ID', async (code) => {
             const { collections, control } = createTestkitCorpusCollections();
             control.sourceInstances.seed(toCorpusStoredValue(configuredRow({
                 instanceTag: paddedInstanceTag('a'), sourceInstanceId: INSTANCE_ID, configuredAtMs: 1,
             })));
-            // The host snapshot is the genuine admission boundary. No plugin inventory is reconstructed here.
             const context = {
                 signal: new AbortController().signal,
                 services: {

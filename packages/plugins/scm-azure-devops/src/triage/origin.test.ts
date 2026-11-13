@@ -36,7 +36,7 @@ describe('normalizeAzureDevOpsBaseUrl', () => {
 
   it('drops an explicit default port so one deployment does not key as two', () => {
     expect(requireOrigin('https://dev.azure.com:443/acme').baseUrl)
-      .toBe(requireOrigin('https://dev.azure.com/acme').baseUrl);
+      .toBe('https://dev.azure.com/acme');
   });
 
   it.each([
