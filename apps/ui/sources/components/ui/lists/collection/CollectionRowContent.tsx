@@ -94,7 +94,7 @@ type RowTextProps = AppTextProps &
     textScale?: number;
   }>;
 
-/** A row's title at its density: one line, two while text is scaled up so a long name stays readable. */
+/** A row's title at its density: one line, two while text is scaled up so a long name stays readable (or as the row asks). */
 export function CollectionRowTitle({
   density,
   touchCompact,
@@ -102,13 +102,14 @@ export function CollectionRowTitle({
   emphasis,
   color,
   style,
+  numberOfLines,
   ...props
 }: RowTextProps &
   Readonly<{ emphasis?: 'medium' | 'semiBold'; color?: string }>): React.ReactElement {
   return (
     <Text
       {...props}
-      numberOfLines={textScale && textScale > 1.1 ? 2 : 1}
+      numberOfLines={numberOfLines ?? (textScale && textScale > 1.1 ? 2 : 1)}
       style={[
         styles.title,
         resolveHappierCollectionRowTitleMetrics(
@@ -130,12 +131,13 @@ export function CollectionRowLine({
   touchCompact,
   textScale,
   style,
+  numberOfLines,
   ...props
 }: RowTextProps): React.ReactElement {
   return (
     <Text
       {...props}
-      numberOfLines={textScale && textScale > 1.1 ? 2 : 1}
+      numberOfLines={numberOfLines ?? (textScale && textScale > 1.1 ? 2 : 1)}
       style={[
         styles.line,
         resolveHappierCollectionRowLineMetrics(density, Platform.OS, touchCompact === true),

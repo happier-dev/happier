@@ -34,13 +34,14 @@ import type { WorkflowRunRow } from '@/sync/store/domains/workflowRuns';
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { Item } from '@/components/ui/lists/Item';
-import { useBareSectionRowEdge } from '@/components/ui/lists/listPresentation';
+import { useBareSectionRowEdge, useListPresentation } from '@/components/ui/lists/listPresentation';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { WORKER_KIND_GLYPHS } from '@/components/sessions/work/workerKindGlyphs';
 import { resolveSessionRowTitleColorRole, sessionRowTitleInk, type SessionListActiveColorModeV1 } from './sessionRowTitleColorRole';
 
 import { resolveCollectionRowDensity, type SessionListRowDensity } from '../resolveSessionListDensityViewState';
-import { resolveHappierCollectionTreeChildIndentPx } from '@happier-dev/plugin-ui/presentation';
+import { isHappierPageRowAccessoryStacked, resolveHappierCollectionTreeChildIndentPx } from '@happier-dev/plugin-ui/presentation';
+import { readHappierVisibleLayoutWidth } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { SESSION_LIST_SHEET_INSET_PX } from '../sessionListStyles';
 import { CollectionRowContent, CollectionRowLine, CollectionRowTitle, useTouchCompactRow } from '@/components/ui/lists/collection/CollectionRowContent';
 
@@ -142,6 +143,19 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
     const { theme } = useUnistyles();
     const { fontScale } = useWindowDimensions();
     const bareSectionRow = useBareSectionRowEdge();
+    const pageRow = useListPresentation() === 'page';
+    // A page row's status follows the page row rule: it stays beside the name while the name keeps its label
+    // column, and moves beneath it on a narrow row (a phone at a large text size). Only page rows measure.
+    const [rowWidthPx, setRowWidthPx] = React.useState<number | null>(null);
+    const [statusWidthPx, setStatusWidthPx] = React.useState<number | null>(null);
+    const onRowLayout = React.useCallback((event: { nativeEvent: { layout: { width: number } } }) => {
+        const width = readHappierVisibleLayoutWidth(event.nativeEvent.layout.width);
+        if (width !== null) setRowWidthPx(current => current === width ? current : width);
+    }, []);
+    const onStatusLayout = React.useCallback((event: { nativeEvent: { layout: { width: number } } }) => {
+        const width = readHappierVisibleLayoutWidth(event.nativeEvent.layout.width);
+        if (width !== null) setStatusWidthPx(current => current === width ? current : width);
+    }, []);
     const activeScope = getStorage()((state) => props.accountLifetime === undefined ? state.profileScope : null);
     const scope = props.accountLifetime === undefined ? activeScope : props.accountLifetime?.scope ?? null;
     const scopeKey = scope ? serverAccountScopeKeySuffix(scope) : null;
@@ -206,6 +220,11 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
     // Session rows follow. Progress, origin, the word and an unreadable title stay in the spoken label and the
     // Run's page.
     const oneLine = rowDensity === 'compact';
+    const statusBeneath = pageRow && !oneLine
+        && isHappierPageRowAccessoryStacked({ kind: 'operation', rowWidthPx, accessoryWidthPx: statusWidthPx });
+    // Above its status, a narrow row's name and its context wrap rather than ellipsize, so they read whole.
+    const narrowTitleLines = statusBeneath ? 3 : undefined;
+    const narrowContextLines = statusBeneath ? 4 : undefined;
     const showWord = !oneLine || props.statusWords === true;
     const rowMark = resolveWorkStatusRowMark(status);
     // Who edited the occurrence is its own fact: a detailed row has room for a third line, so attribution takes
@@ -240,16 +259,20 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
         <View style={depth > 0 ? styles.guide : null}>
             <CollectionRowContent density={rowDensity} touchCompact={readablePhone} textScale={fontScale}
                 selected={props.selected} hovered={hovered} style={bareSectionRow ? styles.bareSectionRow : undefined}
+                trailingBeneath={statusBeneath} onLayout={pageRow && !oneLine ? onRowLayout : undefined}
                 identity={props.kindMark === true ? <Icon name={WORKER_KIND_GLYPHS.workflow_run} size={ICON_SIZE.md} color={theme.colors.text.secondary} /> : undefined}
                 // A Run's title takes the ink a Session row in the same state takes: primary while it runs or
                 // asks, quiet once it has stopped.
                 title={<CollectionRowTitle density={rowDensity} touchCompact={readablePhone} textScale={fontScale}
+                    numberOfLines={narrowTitleLines}
                     emphasis={props.selected ? 'semiBold' : undefined} color={sessionRowTitleInk(theme.colors, resolveSessionRowTitleColorRole({
                         mode: props.activeColorMode ?? 'activityAndAttention', selected: props.selected === true,
                         isSessionActive: !isTerminalWorkflowRunState(summary.state), status,
                         titleTone: status.tone !== 'neutral' ? 'emphasized' : isTerminalWorkflowRunState(summary.state) ? 'quiet' : 'normal',
                     }))}>{name}</CollectionRowTitle>}
-                trailingProps={{ testID: `workflow-run-row:${props.runId}:status` }}
+                // Only the inline status reports its natural width; beneath, it keeps the last one.
+                trailingProps={{ testID: `workflow-run-row:${props.runId}:status`,
+                    onLayout: pageRow && !oneLine && !statusBeneath ? onStatusLayout : undefined }}
                 trailing={!requestRef && rowMark === 'none' && (summary.state === 'succeeded' || !(showWord && word)) ? <WorkflowRunRowAge
                     runId={props.runId} timestamp={Date.parse(summary.finishedAt ?? summary.updatedAt)}
                     dataActive={dataActive} density={density} readablePhone={readablePhone} textScale={fontScale} /> : statusControl}
@@ -264,7 +287,8 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
                     {!oneLine && (summary.startedBy === 'trigger' || summary.startedBy === 'agent')
                         ? <Icon name={summary.startedBy === 'trigger' ? 'lightning' : 'robot'} size={ICON_SIZE.xs}
                             color={theme.colors.text.tertiary} /> : null}
-                    {contextLine !== null ? <CollectionRowLine density={rowDensity} touchCompact={readablePhone} textScale={fontScale} style={styles.contextText}>
+                    {contextLine !== null ? <CollectionRowLine density={rowDensity} touchCompact={readablePhone} textScale={fontScale} style={styles.contextText}
+                        numberOfLines={narrowContextLines}>
                         {contextLine}</CollectionRowLine> : null}
                     {resultEnabled && result.status === 'failed' ? <ToolbarButton
                         testID={`workflow-run-result:${props.runId}:retry`} label={t('workflows.retry')}

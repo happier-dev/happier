@@ -6,7 +6,6 @@ import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/se
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { savedSecretAudienceSummary, savedSecretEntryKindLabel, sharedSecretProvenanceSegments } from '@/components/secrets/savedSecretRowCopy';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -61,15 +60,14 @@ export const CredentialsSecretsGroup = React.memo(function CredentialsSecretsGro
       )}
     >
       {state === 'loading' || state === 'failed' ? (
-        <SectionContentRow>
-          <SurfaceStateCard
-            testID="credentials-secrets:pending"
-            kind={state === 'failed' ? 'warning' : 'loading'}
-            size="line"
-            title={state === 'failed' ? resolveActionExecutionErrorMessage(errorCause, t('secretsSettings.staleTitle'), { safeToRetry: true }) : t('common.loading')}
-            action={state === 'failed' ? { label: t('common.retry'), onPress: retry } : undefined}
-          />
-        </SectionContentRow>
+        // A line in this bare section stands on the rows' edge by itself (`BareSectionLineEdge`); no row inset around it.
+        <SurfaceStateCard
+          testID="credentials-secrets:pending"
+          kind={state === 'failed' ? 'warning' : 'loading'}
+          size="line"
+          title={state === 'failed' ? resolveActionExecutionErrorMessage(errorCause, t('secretsSettings.staleTitle'), { safeToRetry: true }) : t('common.loading')}
+          action={state === 'failed' ? { label: t('common.retry'), onPress: retry } : undefined}
+        />
       ) : state === 'empty' ? (
         <EmptyState
           testID="credentials-secrets:empty"

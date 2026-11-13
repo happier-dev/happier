@@ -191,6 +191,12 @@ export type HappierCollectionRowContentProps = Readonly<{
   children?: ReactNode;
   /** The status slot and any independent controls at the row's end; never a child of the press target. */
   trailing?: ReactNode;
+  /**
+   * The trailing slot moves beneath the text, onto the title's edge, and the row grows to hold it: a narrow page row
+   * whose status would otherwise squeeze the title below its label column (the page row rule,
+   * `isHappierPageRowAccessoryStacked`, which the row's owner measures and decides).
+   */
+  trailingBeneath?: boolean;
   trailingProps?: Pick<HappierTextHostProps,
     | 'accessible' | 'accessibilityLabel' | 'accessibilityHint'
     | 'accessibilityElementsHidden' | 'accessibilityLiveRegion'
@@ -253,6 +259,16 @@ const trailingBase: ViewStyle = {
   // The row's height, so the engaged actions centre on the row wherever the resting content sits.
   alignSelf: 'stretch',
 };
+/** Beneath the text: its own line on the title's edge, as wide as it needs. */
+const trailingBeneathBase: ViewStyle = {
+  flexDirection: 'row',
+  alignItems: 'center',
+  alignSelf: 'flex-start',
+  maxWidth: '100%',
+  minWidth: 0,
+  marginTop: M.titleGap,
+};
+const beneathLine: ViewStyle = { flexDirection: 'row', alignItems: 'center', minWidth: 0 };
 const restingTrailing: ViewStyle = {
   flexDirection: 'row',
   alignItems: 'center',
@@ -378,7 +394,8 @@ export function HappierCollectionRowContent(
     typeof props.textScale === 'number' && Number.isFinite(props.textScale)
       ? Math.max(1, props.textScale)
       : 1;
-  const grows = textScale > 1.1;
+  const beneath = props.trailingBeneath === true;
+  const grows = textScale > 1.1 || beneath;
   // Fills resolve through the plane's material, so a glass sidebar keeps its coat under the row's chip.
   const paintColor = useHappierMaterialColorResolver();
   const fill =
@@ -393,6 +410,9 @@ export function HappierCollectionRowContent(
     grows
       ? { minHeight: Math.ceil(height * Math.min(textScale, 2.5)) }
       : { height },
+    beneath
+      ? { flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', paddingVertical: M.padding[props.density] } as const
+      : null,
     fill ? { backgroundColor: paintColor(fill) } : null,
     props.separator
       ? { borderBottomWidth: 1, borderBottomColor: props.separator.color }
@@ -410,15 +430,19 @@ export function HappierCollectionRowContent(
     </HappierCollectionRowMain>
   );
   const engaged = props.engagedTrailing ?? null;
-  const containerStyle = engaged && Platform.OS === 'web' ? engagedPressTargetStyle(engaged.actionCount) : pressTarget;
+  const containerStyle = engaged && !beneath && Platform.OS === 'web' ? engagedPressTargetStyle(engaged.actionCount) : pressTarget;
   const restingTestID = props.trailingProps?.testID ? `${props.trailingProps.testID}:rest` : undefined;
+  const main = props.renderContainer
+    ? props.renderContainer(content, containerStyle)
+    : content;
+  // Beneath, the slot starts where the title does: past the identity column, when there is one.
+  const titleEdge = props.identity != null
+    ? resolveHappierCollectionRowIdentityMetrics(props.density, touchCompact).slotSize + M.contentGap[props.density]
+    : 0;
   return (
     <View style={rowStyle} onLayout={props.onLayout}>
-      {props.leading}
-      {props.renderContainer
-        ? props.renderContainer(content, containerStyle)
-        : content}
-      <View {...props.trailingProps} style={trailingBase}>
+      {beneath ? <View style={beneathLine}>{props.leading}{main}</View> : <>{props.leading}{main}</>}
+      <View {...props.trailingProps} style={beneath ? [trailingBeneathBase, { marginLeft: titleEdge }] : trailingBase}>
         <View
           testID={restingTestID}
           style={engaged ? restingTrailingHidden : restingTrailing}
