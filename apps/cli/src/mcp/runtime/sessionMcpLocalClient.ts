@@ -2,11 +2,11 @@ import { readFile } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { Agent, fetch as fetchWithDispatcher } from 'undici';
 import { fetchWithCredentialRedirectRefusal, CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
 import { z } from 'zod/mini';
-import { SessionMcpLocalContextSchema, SessionMcpUnavailableError, SESSION_MCP_CONTEXT_FILE_ENV,
-    type SessionMcpLocalContext } from './sessionMcpLocalContext';
+import { loadUndici } from '@/utils/loadUndici';
+import { SessionMcpAgentContextSchema, SessionMcpUnavailableError, SESSION_MCP_CONTEXT_FILE_ENV,
+    type SessionMcpAgentContext } from './sessionMcpLocalContext';
 
 // Client side of the Session MCP socket (bridges and `happier tools`). Kept apart from the
 // listener in `sessionMcpLocalTransport.ts` so a runner hosting the server does not load the
@@ -14,26 +14,29 @@ import { SessionMcpLocalContextSchema, SessionMcpUnavailableError, SESSION_MCP_C
 
 export async function readSessionMcpContextFromEnvironment(
     env: Readonly<Record<string, string | undefined>> = process.env,
-): Promise<SessionMcpLocalContext> {
+): Promise<SessionMcpAgentContext> {
     try {
         const file = env[SESSION_MCP_CONTEXT_FILE_ENV];
         if (!file || !isAbsolute(file)) throw new SessionMcpUnavailableError();
-        return z.parse(SessionMcpLocalContextSchema, JSON.parse(await readFile(file, 'utf8')));
+        return z.parse(SessionMcpAgentContextSchema, JSON.parse(await readFile(file, 'utf8')));
     } catch {
         throw new SessionMcpUnavailableError('mcp_socket_access_unavailable', { phase: 'context_read' });
     }
 }
 
 /** The SDK owns MCP framing; Undici directs every HTTP/SSE request to the Session's socket (or loopback endpoint). */
-export async function connectSessionMcpClient(context: SessionMcpLocalContext, signal?: AbortSignal): Promise<Readonly<{
+export async function connectSessionMcpClient(context: SessionMcpAgentContext, signal?: AbortSignal): Promise<Readonly<{
     client: Client;
     close: () => Promise<void>;
 }>> {
     signal?.throwIfAborted();
+    const { Agent, fetch: fetchWithDispatcher } = await loadUndici();
+    signal?.throwIfAborted();
     const dispatcher = 'socketPath' in context ? new Agent({ connect: { socketPath: context.socketPath } }) : new Agent();
     const client = new Client({ name: 'happier-session-bridge', version: '1' });
     const transport = new StreamableHTTPClientTransport(new URL('socketPath' in context ? 'http://localhost/mcp' : context.url), {
-        requestInit: { headers: { authorization: `Bearer ${context.bearerToken}` } },
+        // An Agent-tree client has no bearer: the Unix socket admits it by kernel peer proof.
+        ...(context.bearerToken ? { requestInit: { headers: { authorization: `Bearer ${context.bearerToken}` } } } : {}),
         fetch: (url, init) => fetchWithCredentialRedirectRefusal(String(url), init, async (url, init) => {
             // Pair the dispatcher with its own Undici version: Node's bundled
             // fetch can use a different dispatch ABI. The SDK sends JSON strings.

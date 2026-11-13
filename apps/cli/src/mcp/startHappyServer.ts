@@ -45,9 +45,9 @@ import { prepareSessionMcpLocalTransport, prepareSessionMcpLoopbackTransport, ty
     type SessionMcpLocalTransportOptions } from './runtime/sessionMcpLocalTransport';
 import type { SessionMcpCustomToolsBridge } from './runtime/sessionMcpToolsBridge';
 import { createMcpWatchSession, type McpWatchSession } from './resources/watchSubscriptions';
-import { serveSessionMcpRelayUpgrade } from './runtime/sessionMcpRelayEndpoint';
+import { serveSessionMcpRelayConnection, serveSessionMcpRelayUpgrade } from './runtime/sessionMcpRelayEndpoint';
 import { createSessionMcpAgentPeerAdmission } from './runtime/sessionMcpAgentPeer';
-import { currentSessionHolderScope } from '@/subprocess/supervision/sessionHolder';
+import { currentSessionHolderScope, registerSessionMcpRelayAcceptor } from '@/subprocess/supervision/sessionHolder';
 
 const NativeAgentToolCallRequestV1Schema = z.strictObject({
     toolName: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
@@ -395,8 +395,23 @@ export async function startHappyServer(
         return createRequestServer({ watchSession: request.watchSession, pluginToolCatalog,
             ...(toolExecutionSignal ? { toolExecutionSignal } : {}), toolInventory: readToolInventory(pluginToolCatalog) });
     };
-    const admitRelayPeer = opts?.localTransport
+    const admitAgentPeer = opts?.localTransport
         ? createSessionMcpAgentPeerAdmission({ holderScope, agentUid: opts.localTransport.agentUid }) : undefined;
+    // One admission per connection for HTTP requests and relay upgrades: the bearer (out-of-tree
+    // consumers such as plugin services) or, on the Unix socket, a kernel-proven peer in this
+    // Session's Agent tree, which receives no bearer. The peer proof runs once per connection.
+    const peerAdmissions = new WeakMap<Socket, Promise<boolean>>();
+    const admitConnection = async (socket: Socket, authorization: string | undefined): Promise<boolean> => {
+        if (bridgeSignal.aborted) return false;
+        if (localTransport.authenticate(authorization)) return true;
+        if (!admitAgentPeer) return false;
+        let admitted = peerAdmissions.get(socket);
+        if (!admitted) {
+            admitted = admitAgentPeer(socket).catch(() => false);
+            peerAdmissions.set(socket, admitted);
+        }
+        return await admitted && !bridgeSignal.aborted;
+    };
     const closeNotificationSession = async (id: string) => {
         const session = notificationSessions.get(id);
         if (!session) return;
@@ -405,7 +420,7 @@ export async function startHappyServer(
         await session.watch.close();
     };
     const server = createServer(async (req, res) => {
-        if (!localTransport.authenticate(req.headers.authorization)) {
+        if (!await admitConnection(req.socket, req.headers.authorization)) {
             res.writeHead(401, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'unauthorized' }));
             return;
         }
@@ -501,9 +516,8 @@ export async function startHappyServer(
 
         if (notificationSession && req.method === 'GET') {
             notificationSession.stream = res;
-            const authorization = req.headers.authorization;
             notificationSession.watch.attachNotificationStream(async uri => {
-                if (!bridgeSignal.aborted && localTransport.authenticate(authorization)) {
+                if (!bridgeSignal.aborted) {
                     await mcp.server.sendResourceUpdated({ uri });
                 }
             });
@@ -562,8 +576,7 @@ export async function startHappyServer(
     // served here; every other request stays Streamable HTTP.
     server.on('upgrade', (request, socket: Socket, head: Buffer) => {
         void serveSessionMcpRelayUpgrade(request, socket, head, {
-            authenticate: localTransport.authenticate,
-            ...(admitRelayPeer ? { admitPeer: admitRelayPeer } : {}),
+            admit: admitConnection,
             createRequestServer: createRelayRequestServer,
             lifetimeSignal: bridgeSignal,
         }).catch(error => {
@@ -571,10 +584,25 @@ export async function startHappyServer(
             socket.destroy();
         });
     });
+    // Relays of this Session's Agents in a target arrive on its holder channel, already admitted there
+    // (the holder's Agent-tree proof); they are served exactly like an upgrade on this endpoint.
+    const unregisterHeldRelays = registerSessionMcpRelayAcceptor(holderScope, (relay, relayOptions) => {
+        let closed = false;
+        relay.once('exit', () => { closed = true; });
+        relay.stdin.on('error', () => undefined);
+        void serveSessionMcpRelayConnection({ input: relay.stdout, output: relay.stdin,
+            close: () => { if (!closed) { closed = true; relay.stdin.end(); } }, isClosed: () => closed,
+            onClose: listener => relay.once('exit', listener) }, relayOptions,
+        { createRequestServer: createRelayRequestServer, lifetimeSignal: bridgeSignal }).catch(error => {
+            logger.debug('[happierMCP] Session MCP held relay failed', { error: error instanceof Error ? error.message : String(error) });
+            relay.stdin.end();
+        });
+    });
     let stopPromise: Promise<void> | undefined;
     const stop = (): Promise<void> => {
         if (stopPromise) return stopPromise;
         stopPromise = Promise.resolve().then(async () => {
+            unregisterHeldRelays();
             bridgeSignal.removeEventListener('abort', onOwnerAbort);
             bridgeLifetime.abort();
             readToolInventory.dispose();

@@ -28,9 +28,10 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { McpRequestAuthPort } from '@/mcp/runtime/mcpRequestAuth';
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
+import { sessionMcpAgentTransport } from '@/mcp/runtime/sessionMcpClient.testkit';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { SESSION_MCP_CONTEXT_FILE_ENV } from '@/mcp/runtime/sessionMcpLocalTransport';
-import { connectSessionMcpClient, readSessionMcpContextFromEnvironment } from '@/mcp/runtime/sessionMcpLocalClient';
+import { readSessionMcpContextFromEnvironment } from '@/mcp/runtime/sessionMcpLocalClient';
 // The source harness transforms this lazily imported server graph on its first
 // use. Load its definitions with the fixture; every server still starts through
 // the real Run binding below, inside the test's unchanged lifecycle deadline.
@@ -64,6 +65,15 @@ vi.mock('@/daemon/controlClient', async importOriginal => ({
 }));
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); reloadConfiguration(); resetActiveAccountSettingsSnapshotForTests(); });
+
+
+/** The native Agent's MCP client: the Session relay launched inside the Agent tree. */
+async function connectAgentRelay(config: Readonly<{ command?: string; args?: readonly string[]; env?: Readonly<Record<string, string>> }> | undefined) {
+  if (!config?.command) throw new Error('Missing Session MCP relay config');
+  const client = new Client({ name: 'voice-native-agent', version: '1' });
+  await client.connect(sessionMcpAgentTransport({ command: config.command, args: config.args, env: config.env }));
+  return { client, close: async () => { await client.close(); } };
+}
 
 describe('Voice Run MCP provisioning occurrence', () => {
   it.each(([
@@ -146,13 +156,14 @@ describe('Voice Run MCP provisioning occurrence', () => {
         const environment = request.launchEnvironment?.values ?? {};
         expect(environment[SESSION_MCP_CONTEXT_FILE_ENV]).toEqual(expect.any(String));
         expect(request.launchEnvironment?.unset).not.toContain(SESSION_MCP_CONTEXT_FILE_ENV);
-        const sessionMcp = await readSessionMcpContextFromEnvironment(environment);
+        // The Agent-visible context names the socket only; the Agent tree is admitted by peer proof.
+        expect(await readSessionMcpContextFromEnvironment(environment)).not.toHaveProperty('bearerToken');
         contextFiles.push(environment[SESSION_MCP_CONTEXT_FILE_ENV]!);
         // Native MCP consumes this catalog; extension/shell delivery consumes
         // the native bridge below. Resume separately proves its new context
         // and occurrence custody without listing an unchanged catalog again.
         if (delivery === 'native_mcp' && opened.length === 1) {
-          const { client, close } = await connectSessionMcpClient(sessionMcp);
+          const { client, close } = await connectAgentRelay(request.mcpServers?.happier);
           try {
             const catalog = await client.listTools();
             for (const tool of catalog.tools) deliveredToolNames.add(tool.name);
@@ -225,7 +236,7 @@ describe('Voice Run MCP provisioning occurrence', () => {
               await client.connect(new StreamableHTTPClientTransport(new URL(url)));
               return { client, close: async () => { await client.close(); } };
             })()
-            : await connectSessionMcpClient(await readSessionMcpContextFromEnvironment(request.launchEnvironment?.values ?? {}));
+            : await connectAgentRelay(request.mcpServers?.happier);
           try {
             for (const tool of [
               { name: 'action_spec_search', arguments: { query: 'settings.list' } },

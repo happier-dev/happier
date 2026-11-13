@@ -5,7 +5,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
 import { createSessionHolderSocketPath, requireSessionHolderExecutablePath, spawnSessionHolderChild,
-    type SessionHolderChild } from '@/subprocess/supervision/sessionHolder';
+    type SessionHolderChild, type SessionHolderRole, type SessionHolderTarget } from '@/subprocess/supervision/sessionHolder';
 
 import type { SessionMcpLocalContext } from './sessionMcpLocalContext';
 
@@ -44,12 +44,15 @@ export function sessionMcpTestTransport(server: BearerGatedSessionMcpServer, hea
 /**
  * Launch a Session MCP launch config (`mcpServers.happier`) the way an Agent's tree does: under
  * a Session holder in the current Session, so the endpoint's Agent-tree peer check admits it.
- * Returns an SDK client transport over the launched relay's stdio.
+ * Returns an SDK client transport over the launched relay's stdio. With `held`, the relay is the
+ * Agent of a holder in that target (its environment comes from the target's launch preparation).
  */
-export function sessionMcpAgentTransport(config: Readonly<{ command: string; args?: readonly string[]; env?: Readonly<Record<string, string>> }>): Transport & {
+export function sessionMcpAgentTransport(config: Readonly<{ command: string; args?: readonly string[]; env?: Readonly<Record<string, string>> }>,
+    held?: Readonly<{ target: SessionHolderTarget; socketPath: string; role: SessionHolderRole }>): Transport & {
     readonly child: SessionHolderChild;
 } {
-    const child = spawnSessionHolderChild({ executablePath: requireSessionHolderExecutablePath(), socketPath: createSessionHolderSocketPath(),
+    const child = spawnSessionHolderChild({ executablePath: held?.target.holderPath ?? requireSessionHolderExecutablePath(),
+        socketPath: held?.socketPath ?? createSessionHolderSocketPath(), ...(held ? { target: held.target, role: held.role } : {}),
         command: config.command, args: [...(config.args ?? [])], env: { ...process.env, ...config.env } });
     const readBuffer = new ReadBuffer();
     let exited = false;

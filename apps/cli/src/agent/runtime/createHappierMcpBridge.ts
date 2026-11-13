@@ -1,79 +1,40 @@
 import { isSessionHappierToolsEnabled } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1'
 import type { HappyMcpSessionClient } from '@/mcp/startHappyServer'
-import { resolveNodeBackedMcpServerCommand } from '@/mcp/runtime/resolveNodeBackedMcpServerCommand'
+import { resolveAgentSessionHolderExecutablePath } from '@/subprocess/supervision/sessionHolder'
+import { readSessionTargetPlacement, resolveSessionAgentMcpContextFile } from '@/subprocess/supervision/sessionTargetRelay'
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope'
 import type { McpServerConfig } from '@/agent'
 import type { StoredCredentials } from '@/persistence'
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider'
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller'
-import { SESSION_MCP_CONTEXT_FILE_ENV, supportsSessionMcpLocalTransport, type SessionMcpLocalContext, type SessionMcpLocalTransportOptions } from '@/mcp/runtime/sessionMcpLocalTransport'
+import { SESSION_MCP_CONTEXT_FILE_ENV, SessionMcpUnavailableError, supportsSessionMcpLocalTransport, type SessionMcpLocalContext, type SessionMcpLocalTransportOptions } from '@/mcp/runtime/sessionMcpLocalTransport'
+import { SESSION_MCP_BEARER_ENV } from '@/mcp/runtime/sessionMcpLocalContext'
 import type { SessionMcpCustomToolsBridge } from '@/mcp/runtime/sessionMcpToolsBridge'
-import { selectToolIdleTimeoutEnvironment } from '@/processes/toolIdleTimeouts'
 import type {
   AccountSettings,
   ActionId,
   ActionExecutorDeps,
-  ActionsSettingsV1,
   SessionRunPromptReadActionIdV1,
 } from '@happier-dev/protocol'
 
-function serializeActionSettingsForEnv(
-  accountSettings: AccountSettings | null | undefined,
-  scopedActionSettings?: ActionsSettingsV1,
-): string | null {
-  const actionSettings = scopedActionSettings
-    ?? (accountSettings?.actionsSettingsV1 as ActionsSettingsV1 | undefined)
-  if (actionSettings) {
-    try {
-      return JSON.stringify(actionSettings)
-    } catch {
-      return null
-    }
-  }
-
-  const actionSettingsEnv = process.env.HAPPIER_ACTIONS_SETTINGS_V1
-  return typeof actionSettingsEnv === 'string' && actionSettingsEnv.length > 0 ? actionSettingsEnv : null
-}
-
-function withActionSettingsEnv(
-  config: McpServerConfig,
-  accountSettings?: AccountSettings | null,
-  scopedActionSettings?: ActionsSettingsV1,
-): McpServerConfig {
-  const actionSettings = serializeActionSettingsForEnv(accountSettings, scopedActionSettings)
-  if (typeof actionSettings !== 'string' || actionSettings.length === 0) {
-    return config
-  }
-
-  return {
-    ...config,
-    env: {
-      ...(config.env ?? {}),
-      HAPPIER_ACTIONS_SETTINGS_V1: actionSettings,
-    },
-  }
-}
-
-async function resolveHappierMcpServerConfig(
-  url: string,
-  _commandMode: 'direct-script' | 'current-process',
-  accountSettings?: AccountSettings | null,
-  scopedActionSettings?: ActionsSettingsV1,
-  sessionLocal?: Readonly<{ contextFilePath?: string }>,
-): Promise<McpServerConfig> {
-  const config = await resolveNodeBackedMcpServerCommand({
-    distEntrypointSegments: ['mcp', 'bridges', 'happierMcpStdioBridge.mjs'],
-    sourceEntrypointSegments: ['mcp', 'bridges', 'happierMcpStdioBridge.ts'],
-    args: sessionLocal ? ['--session-local'] : ['--url', url],
-  })
-  // Native MCP clients filter ambient variables; carry the Session's captured
-  // documented tool values explicitly without re-reading Machine policy.
-  const toolEnvironment = selectToolIdleTimeoutEnvironment(process.env)
-  const bridgeConfig = Object.keys(toolEnvironment).length > 0
-    ? { ...config, env: { ...toolEnvironment, ...config.env } }
-    : config
-  return withActionSettingsEnv(sessionLocal?.contextFilePath ? {
-    ...bridgeConfig, env: { ...bridgeConfig.env, [SESSION_MCP_CONTEXT_FILE_ENV]: sessionLocal.contextFilePath },
-  } : bridgeConfig, accountSettings, scopedActionSettings)
+/**
+ * Every Session MCP listener has a private context (socket or Windows loopback + bearer). Agents
+ * launch the native relay mode of the shipped holder, which pipes MCP stdio to the Session's
+ * endpoint; this host serves every tool in-process (no per-Session bridge process). The relay
+ * reads only the context file path; it starts no tools and reads no settings.
+ */
+function resolveHappierMcpServerConfig(server: Readonly<{ localContext?: SessionMcpLocalContext; contextFilePath?: string }>): McpServerConfig {
+  if (!server.localContext) throw new SessionMcpUnavailableError()
+  // An isolated Agent's context file is placed by its launch materialization (`resolveRunnerMcpServers`).
+  // The Unix socket admits the relay by kernel peer proof. The Windows loopback relay needs its
+  // bearer, which rides only this MCP client config (never the context file or the Agent env).
+  // In a placed Session the relay reads its primary holder's context in the target, which admits
+  // by the holder's own Agent-tree proof; this Machine's bearer never crosses.
+  const contextFilePath = resolveSessionAgentMcpContextFile(server.contextFilePath)
+  const placed = readSessionTargetPlacement(sessionProcessEnvironment()) !== null
+  const loopbackBearer: Readonly<Record<string, string>> = !placed && 'url' in server.localContext ? { [SESSION_MCP_BEARER_ENV]: server.localContext.bearerToken } : {}
+  return { command: resolveAgentSessionHolderExecutablePath(), args: ['mcp-relay'],
+    ...(contextFilePath ? { env: { [SESSION_MCP_CONTEXT_FILE_ENV]: contextFilePath, ...loopbackBearer } } : {}) }
 }
 
 export async function createHappierMcpBridge(
@@ -168,17 +129,9 @@ export async function createHappierMcpBridgeWithOptions(
       ? { pluginRuntimeRegistryLease: opts.pluginRuntimeRegistryLease }
       : {}),
   })
-  const commandMode = opts.commandMode ?? 'direct-script'
-  const scopedActionSettings = opts.actionsSettingsProvider?.getActionsSettings()
   let mcpServers: Record<string, McpServerConfig>
   try {
-    mcpServers = happierToolsEnabled ? { happier: await resolveHappierMcpServerConfig(
-      happierMcpServer.url,
-      commandMode,
-      opts.accountSettings ?? null,
-      scopedActionSettings,
-      happierMcpServer.localContext ? { contextFilePath: happierMcpServer.contextFilePath } : undefined,
-    ) } : {}
+    mcpServers = happierToolsEnabled ? { happier: resolveHappierMcpServerConfig(happierMcpServer) } : {}
   } catch (error) {
     await happierMcpServer.stop()
     throw error

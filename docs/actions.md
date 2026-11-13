@@ -9229,8 +9229,10 @@ carry that resolution so a caller can explain the stricter fallback.
 In 0.3 development, CLI Action invocations with
 `HAPPIER_SESSION_MCP_CONTEXT_FILE` use the Session's existing local MCP bridge,
 including generated Action commands. The native agent MCP client and CLI use
-the same context, socket, bearer and permission handlers. The CLI supplies no
-caller authority: the Session bridge admits the call as its agent and the
+the same context, socket and permission handlers. The context the Agent can read
+names the socket only and carries no bearer; the socket admits the CLI, like the
+relay, by kernel peer proof that it runs in this Session's Agent tree. The CLI
+supplies no caller authority: the Session bridge admits the call as its agent and the
 ordinary Action routing owner resolves its approval profile once. Pending
 approval returns `approval_request_created` with its `artifactId` and creates
 the ordinary Inbox approval; `--wait` also returns this pending result.

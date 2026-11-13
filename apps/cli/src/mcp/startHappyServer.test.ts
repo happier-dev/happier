@@ -125,22 +125,31 @@ describe('startHappyServer notification stream', () => {
             await session.close();
         }
     });
-    it('keeps the existing non-isolated Windows loopback MCP path without Unix context', async () => {
+    it('admits only the bearer holder on the non-isolated (Windows) loopback MCP endpoint', async () => {
         daemonCatalogBoundary.read.mockReset();
         daemonCatalogBoundary.read.mockResolvedValue({ kind: 'available', plugins: [], tools: [] });
         const session = createMutableApiSessionClientFixture({ sessionId: 'non-isolated-windows-path' });
         const server = await startHappyServer(session);
-        const client = new Client({ name: 'windows-native-control', version: '1' });
-        const transport = new StreamableHTTPClientTransport(new URL(server.url));
+        const initialize = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
+            protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'intruder', version: '1' } } });
+        const post = (headers: Record<string, string>) => fetch(server.url, { method: 'POST', body: initialize,
+            headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...headers } });
         try {
             expect(new URL(server.url).hostname).toBe('127.0.0.1');
-            expect(server.localContext).toBeUndefined();
-            expect(server.contextFilePath).toBeUndefined();
-            await client.connect(transport);
-            expect(transport.sessionId).toBeUndefined();
-            expect((await client.listTools()).tools.map(tool => tool.name)).toContain('action_spec_get');
-            expect((await client.listResources()).resources.length).toBeGreaterThan(0);
-        } finally { await client.close(); await server.stop(); await session.close(); }
+            expect([(await post({})).status, (await post({ authorization: 'Bearer wrong' })).status]).toEqual([401, 401]);
+            // The context file the Agent can read names the endpoint only; the relay's bearer rides
+            // its MCP client config, so a bearer-less client is refused.
+            const context = await readSessionMcpContextFromEnvironment({ [SESSION_MCP_CONTEXT_FILE_ENV]: server.contextFilePath });
+            if (!server.localContext || !('url' in server.localContext)) throw new Error('missing loopback context');
+            expect(context).toEqual({ v: 1, url: server.localContext.url });
+            await expect(connectSessionMcpClient(context)).rejects.toMatchObject({ code: 'not_authenticated' });
+            const { client, close } = await connectSessionMcpClient(server.localContext);
+            try {
+                expect((await client.listTools()).tools.map(tool => tool.name)).toContain('action_spec_get');
+                expect((await client.listResources()).resources.length).toBeGreaterThan(0);
+            } finally { await close(); }
+        } finally { await server.stop(); await session.close(); }
+        expect(server.localContext).toBeUndefined();
     });
 
     it.skipIf(process.platform === 'win32')('keeps headerless reinitializing request/response clients working', async () => {
@@ -268,9 +277,12 @@ describe('startHappyServer notification stream', () => {
             const context = await readSessionMcpContextFromEnvironment({
                 [SESSION_MCP_CONTEXT_FILE_ENV]: server.contextFilePath,
             });
-            expect(context).toEqual(server.localContext);
+            if (!server.localContext || !('socketPath' in server.localContext)) throw new Error('missing socket context');
+            // The Agent-visible file names the socket only (the Agent tree is admitted by peer proof);
+            // an out-of-tree consumer holding the in-memory bearer connects.
+            expect(context).toEqual({ v: 1, socketPath: server.localContext.socketPath });
             expect((await stat(server.contextFilePath!)).mode & 0o777).toBe(0o600);
-            connection = await connectSessionMcpClient(context);
+            connection = await connectSessionMcpClient(server.localContext);
             expect((await connection.client.listTools()).tools.map(tool => tool.name)).toContain('action_spec_get');
             expect((await connection.client.listResources()).resources.length).toBeGreaterThan(0);
         } finally {

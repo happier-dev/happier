@@ -35,15 +35,22 @@ describe.skipIf(!supportsSessionMcpLocalTransport())('Agent shell Session MCP ca
     const session = createActiveSession('shell-capability');
     const server = await startHappyServer(session, { localTransport: { agentUid: process.getuid!() },
       sessionCredentials: { token: 'shell-session-fixture', encryption: null }, accountSettings: accountSettingsParse({}) });
+    const directory = await mkdtemp(join(tmpdir(), 'shell-capability-mcp-'));
     try {
-      vi.stubEnv(SESSION_MCP_CONTEXT_FILE_ENV, server.contextFilePath!);
-      const context = await readSessionMcpContextFromEnvironment();
+      const context = await readSessionMcpContextFromEnvironment({ [SESSION_MCP_CONTEXT_FILE_ENV]: server.contextFilePath });
+      if (!server.localContext) throw new Error('Missing Session MCP context');
       const launchMaterial = withSessionMcpAgentLaunchMaterial({ runtimeHome: '/agent/runtime',
-        environment: {}, selectedMaterials: [] }, context);
+        environment: {}, selectedMaterials: [] }, server.localContext);
       const material = launchMaterial.selectedMaterials[0];
       if (!material) throw new Error('Missing Agent Session MCP material');
+      // Same-UID file and isolated material both name the socket only.
       expect(JSON.parse(Buffer.from(material.contentBase64, 'base64').toString('utf8'))).toEqual(context);
-      expect(context).toEqual(server.localContext);
+      expect(context).not.toHaveProperty('bearerToken');
+      // This test process is outside any Agent tree, so it calls as a bearer holder; the
+      // bearer-less Agent-tree path is proved through a real holder in sessionMcpRelay.composed.test.ts.
+      const holderContext = join(directory, 'context.json');
+      await writeFile(holderContext, JSON.stringify(server.localContext), { mode: 0o600 });
+      vi.stubEnv(SESSION_MCP_CONTEXT_FILE_ENV, holderContext);
 
       const allowed = await callSessionMcpTool({ source: 'happier', toolName: 'action_execute',
         args: { actionId: 'action.spec.get', input: { id: 'session.title.set' } } });
@@ -60,6 +67,7 @@ describe.skipIf(!supportsSessionMcpLocalTransport())('Agent shell Session MCP ca
     } finally {
       await server.stop();
       await session.close();
+      await rm(directory, { recursive: true, force: true });
     }
   });
 
@@ -69,7 +77,7 @@ describe.skipIf(!supportsSessionMcpLocalTransport())('Agent shell Session MCP ca
     const server = await startHappyServer(session, { localTransport: { agentUid: process.getuid!() },
       sessionCredentials: { token: 'shell-session-fixture', encryption: null }, accountSettings: accountSettingsParse({}) });
     try {
-      const context = await readSessionMcpContextFromEnvironment({ [SESSION_MCP_CONTEXT_FILE_ENV]: server.contextFilePath });
+      const context = server.localContext;
       const captured = join(directory, 'context.json');
       await writeFile(captured, JSON.stringify(context), { mode: 0o600 });
       vi.stubEnv(SESSION_MCP_CONTEXT_FILE_ENV, captured);

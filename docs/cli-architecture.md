@@ -7005,9 +7005,12 @@ channels and exits when the holder closes that connection.
     the spawn (the Home owns share roles).
   - Lifetime: `prepareSessionTargetPlacement` (`daemon/spawn/`) registers the
     placement on the spawn's launch resource scope: a refused spawn ends it at once;
-    a launched Session's placement ends when its runner process has exited, also when
-    a Stop retired the launch resources before signalling the runner (the runner
-    stops its target Agents through their holders over the relay). Its end runs the
+    a launched Session's placement ends when its runner has exited, also when a Stop
+    retired the launch resources before signalling the runner (the runner stops its
+    target Agents through their holders over the relay). "Runner exited" is decided by
+    `observeSessionTargetRunnerExit`: a Session in the daemon's session host ends when
+    the host ended that Session (`hostedSession.observed`; it has no process of its
+    own), a runner process at its `exit`. Its end runs the
     placement's Session-end steps (`onSessionEnd`), then the authority and relay end.
     Each call of the authority is its own provider operation (the Agents' held
     channels stay open next to finite calls).
@@ -7018,9 +7021,23 @@ channels and exits when the holder closes that connection.
     `resolveSessionAgentPath` (`sessionTargetRelay.ts`), so protocol `cwd` /
     `workspaceRoot` name the target workspace for every provider. Exec admission on
     this Machine resolves an Agent-facing target cwd to the Session path
-    (`resolveSessionHostCwd`) and the holder launch maps it back. The Session MCP relay
-    command is the holder placed in the target; its endpoint is still a socket on this
-    Machine, so Session MCP tools are not reachable from a target yet.
+    (`resolveSessionHostCwd`) and the holder launch maps it back. A fork source's `cwd`
+    goes through the same mapping. A skill delivery (`resolveSessionAgentSkills`) is
+    passed with target paths only when every path is inside the workspace; otherwise it
+    is withheld (skill folders are materialized on this Machine and not delivered into
+    targets).
+  - Session MCP: the endpoint is a socket on this Machine, which nothing in a target
+    can reach. The primary Agent's holder starts with `serve --session-mcp`: it binds
+    `<socket>.mcp` (0600) and writes the relay context `<socket>.mcp.json`, which the
+    Agent's MCP config names (`resolveSessionAgentMcpContextFile`; this Machine's
+    socket and bearer never cross). The Agent's `mcp-relay` connects there; the holder
+    admits only its own Agent tree (SO_PEERCRED uid, then the Agent's process group or
+    `/proc` ancestry), answers the upgrade, and carries the connection on its existing
+    client channel as a numbered stream (`M` opens it, then `O`/`X` and `I`/`C`, under
+    the channel's sequence and replay). The runner hands that stream to the Session's
+    MCP endpoint (`registerSessionMcpRelayAcceptor`, `serveSessionMcpRelayConnection`),
+    which serves it exactly like a relay upgrade on the local socket. No listener but
+    that socket exists in the target, and no second relay process.
   - The runner holds no custody. The daemon serves a relay
     (`subprocess/supervision/sessionTargetRelay.ts`: one `exec` per connection, or a
     piped channel) on the owner-only local endpoint (`ownerOnlyLocalEndpoint`, pipe

@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import { SESSION_MCP_CONTEXT_FILE_ENV, SessionMcpUnavailableError,
+import { agentVisibleSessionMcpContext, SESSION_MCP_CONTEXT_FILE_ENV, SessionMcpUnavailableError,
   type SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalContext';
 import type { AgentLaunchPayload } from './agentLaunchFrame';
 import type { AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
@@ -64,7 +64,7 @@ export function withSessionMcpAgentLaunchMaterial(
     selectedMaterials: Object.freeze([
       ...materialization.selectedMaterials.filter(file => file.relativePath !== SESSION_MCP_CONTEXT_RELATIVE_PATH),
       Object.freeze({ relativePath: SESSION_MCP_CONTEXT_RELATIVE_PATH,
-        contentBase64: Buffer.from(JSON.stringify(context), 'utf8').toString('base64') }),
+        contentBase64: Buffer.from(JSON.stringify(agentVisibleSessionMcpContext(context)), 'utf8').toString('base64') }),
     ]),
   });
 }

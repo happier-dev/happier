@@ -4,7 +4,8 @@ import type { AddressInfo, Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { createSessionNativeDirectory, grantExactUidPathAccess } from '@/utils/fs/unixPathAccess';
-import { SessionMcpUnavailableError, SESSION_MCP_CONTEXT_FILE_ENV,
+import { registerTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
+import { agentVisibleSessionMcpContext, SessionMcpUnavailableError, SESSION_MCP_CONTEXT_FILE_ENV,
     type SessionMcpLocalContext } from './sessionMcpLocalContext';
 export { SessionMcpLocalContextSchema, SessionMcpUnavailableError, SESSION_MCP_CONTEXT_FILE_ENV,
     type SessionMcpLocalContext } from './sessionMcpLocalContext';
@@ -67,9 +68,11 @@ export async function prepareSessionMcpLocalTransport(options: SessionMcpLocalTr
                             access: 'rw-', directory: false, kind: 'socket' });
                     } else {
                         // Isolated launches publish through the single Agent-launch frame.
-                        // A same-UID Session uses this owner's private transient directory.
+                        // A same-UID Session uses this owner's private transient directory. The
+                        // Agent can read this file, so it names the socket only: the endpoint
+                        // admits the Agent tree by kernel peer proof.
                         contextFilePath = join(directory.path, 'session-mcp.json');
-                        await writeFile(contextFilePath, JSON.stringify(localContext), { mode: 0o600, flag: 'wx' });
+                        await writeFile(contextFilePath, JSON.stringify(agentVisibleSessionMcpContext(localContext)), { mode: 0o600, flag: 'wx' });
                     }
                 } catch {
                     await new Promise<void>(resolve => server.close(() => resolve()));
@@ -87,17 +90,20 @@ export async function prepareSessionMcpLocalTransport(options: SessionMcpLocalTr
 
 /**
  * Where no Unix socket transport exists (Windows), the Session MCP listens on 127.0.0.1, which
- * every local process and OS user can reach. The bearer is the admission; it reaches the
- * Happier-launched bridge through the same private context file (never argv or MCP config).
+ * every local process and OS user can reach. The bearer is the admission. The context file the
+ * Agent reads names the endpoint only; the bearer reaches the relay through its MCP client config
+ * env (`SESSION_MCP_BEARER_ENV`), and the transcript writer redacts it while it is live.
  */
 export async function prepareSessionMcpLoopbackTransport(): Promise<SessionMcpLocalTransport> {
     const directory = await mkdtemp(join(tmpdir(), 'happier-mcp-')).catch(() => { throw new SessionMcpUnavailableError(); });
     const bearer = createLocalMcpBearer();
+    const unregisterTranscriptSecret = registerTranscriptSecret(bearer.token);
     let localContext: SessionMcpLocalContext | undefined;
     let retired = false;
     let contextFilePath: string | undefined;
     const retire = async () => {
         retired = true;
+        unregisterTranscriptSecret();
         bearer.retire();
         await rm(directory, { recursive: true, force: true });
     };
@@ -118,7 +124,7 @@ export async function prepareSessionMcpLoopbackTransport(): Promise<SessionMcpLo
                 });
                 localContext = Object.freeze({ v: 1, url: `http://127.0.0.1:${port}`, bearerToken: bearer.token });
                 contextFilePath = join(directory, 'session-mcp.json');
-                await writeFile(contextFilePath, JSON.stringify(localContext), { mode: 0o600, flag: 'wx' });
+                await writeFile(contextFilePath, JSON.stringify(agentVisibleSessionMcpContext(localContext)), { mode: 0o600, flag: 'wx' });
             } catch {
                 await new Promise<void>(resolve => server.close(() => resolve()));
                 await retire();

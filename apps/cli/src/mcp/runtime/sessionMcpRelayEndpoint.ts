@@ -1,5 +1,6 @@
 import type { IncomingMessage } from 'node:http';
 import type { Socket } from 'node:net';
+import type { Readable, Writable } from 'node:stream';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
@@ -14,8 +15,8 @@ import type { ForwardingMcpUpstreamKind } from '@/mcp/bridges/forwardingMcpServe
  * tool-name budget). After `101` the connection carries MCP stdio framing (newline-delimited
  * JSON-RPC) and is one MCP session served here in the host: no per-Session bridge process.
  *
- * A relay is admitted only with the bearer and, on Unix, only when the kernel-proven peer process
- * belongs to this Session's Agent tree (`admitPeer`).
+ * A relay is admitted by the host's one connection admission: on Unix, a kernel-proven peer in this
+ * Session's Agent tree (the Agent-visible context carries no bearer); otherwise the bearer.
  */
 export const SESSION_MCP_RELAY_UPGRADE = 'happier-mcp-relay';
 const TOOL_NAME_MAX_LENGTH_HEADER = 'x-happier-tool-name-max-length';
@@ -28,9 +29,8 @@ function readToolNameMaxLength(request: IncomingMessage): number | undefined | n
 }
 
 export type SessionMcpRelayHost = Readonly<{
-    authenticate: (authorization: string | undefined) => boolean;
-    /** Unix: kernel peer identity inside this Session's Agent tree. Absent = bearer only (Windows loopback). */
-    admitPeer?: (socket: Socket) => Promise<boolean>;
+    /** The endpoint's connection admission (bearer, or on Unix the Agent-tree peer proof). */
+    admit: (socket: Socket, authorization: string | undefined) => Promise<boolean>;
     /** One fresh request server for the current admitted catalog (the same owner HTTP requests use). */
     createRequestServer: (input: Readonly<{ kind: ForwardingMcpUpstreamKind; watchSession: McpWatchSession }>) => Promise<McpServer>;
     lifetimeSignal: AbortSignal;
@@ -46,13 +46,41 @@ export async function serveSessionMcpRelayUpgrade(
     socket.on('error', () => undefined);
     const toolNameMaxLength = readToolNameMaxLength(request);
     if (String(request.headers.upgrade ?? '').toLowerCase() !== SESSION_MCP_RELAY_UPGRADE || toolNameMaxLength === null
-        || host.lifetimeSignal.aborted || !host.authenticate(request.headers.authorization)
-        || (host.admitPeer && !(await host.admitPeer(socket)))) {
+        || host.lifetimeSignal.aborted || !(await host.admit(socket, request.headers.authorization))) {
         logger.debug('[happierMCP] Session MCP relay refused');
         socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
         socket.destroySoon();
         return;
     }
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: ${SESSION_MCP_RELAY_UPGRADE}\r\nConnection: Upgrade\r\n\r\n`);
+    if (head.byteLength > 0) socket.unshift(head);
+    await serveSessionMcpRelayConnection({ input: socket, output: socket, close: () => socket.destroy(),
+        isClosed: () => socket.destroyed, onClose: listener => socket.once('close', listener) },
+        toolNameMaxLength === undefined ? {} : { toolNameMaxLength }, host);
+    socket.resume();
+}
+
+/** One relay connection after its upgrade: the MCP stdio bytes both ways. */
+export type SessionMcpRelayConnection = Readonly<{
+    input: Readable;
+    output: Writable;
+    close(): void;
+    isClosed(): boolean;
+    onClose(listener: () => void): void;
+}>;
+
+/**
+ * Serves one admitted relay connection as an MCP session in this process: a relay upgrade on this
+ * endpoint, or a relay an Agent in a target started, which its holder admitted from its own Agent
+ * tree and carries on the Session's holder channel (`registerSessionMcpRelayAcceptor`).
+ */
+export async function serveSessionMcpRelayConnection(
+    connection: SessionMcpRelayConnection,
+    options: Readonly<{ toolNameMaxLength?: number }>,
+    host: Pick<SessionMcpRelayHost, 'createRequestServer' | 'lifetimeSignal'>,
+): Promise<void> {
+    const { toolNameMaxLength } = options;
+    if (host.lifetimeSignal.aborted) { connection.close(); return; }
     const [{ Client }, { InMemoryTransport }, { StdioServerTransport }, { createForwardingMcpServer }] = await Promise.all([
         import('@modelcontextprotocol/sdk/client/index.js'),
         import('@modelcontextprotocol/sdk/inMemory.js'),
@@ -79,21 +107,18 @@ export async function serveSessionMcpRelayUpgrade(
         forwardResources: true,
     });
     watchSession.attachNotificationStream(async uri => {
-        if (!host.lifetimeSignal.aborted && !socket.destroyed) await server.server.sendResourceUpdated({ uri });
+        if (!host.lifetimeSignal.aborted && !connection.isClosed()) await server.server.sendResourceUpdated({ uri });
     });
     let closed = false;
     const close = () => {
         if (closed) return;
         closed = true;
         host.lifetimeSignal.removeEventListener('abort', close);
-        socket.destroy();
+        connection.close();
         void server.close().catch(() => undefined);
         void watchSession.close().catch(() => undefined);
     };
-    socket.once('close', close);
+    connection.onClose(close);
     host.lifetimeSignal.addEventListener('abort', close, { once: true });
-    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: ${SESSION_MCP_RELAY_UPGRADE}\r\nConnection: Upgrade\r\n\r\n`);
-    if (head.byteLength > 0) socket.unshift(head);
-    await server.connect(new StdioServerTransport(socket, socket));
-    socket.resume();
+    await server.connect(new StdioServerTransport(connection.input, connection.output));
 }

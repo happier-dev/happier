@@ -14,7 +14,7 @@ describe('Unix Agent identity launch', () => {
     try {
       await transport.listen(server);
       const sessionMcpContext = transport.localContext;
-      if (!sessionMcpContext) throw new Error('Current Session context unavailable');
+      if (!sessionMcpContext || !('socketPath' in sessionMcpContext)) throw new Error('Current Session context unavailable');
       const input = {
         managedHappierBinaryPath: '/opt/happier/current/bin/happier',
         executable: '/opt/happier/tools/agent', args: [], cwd: '/srv/happier/project',
@@ -28,8 +28,10 @@ describe('Unix Agent identity launch', () => {
       const frame = await readAgentLaunchFrame(Readable.from([launch.stdinPreamble], { objectMode: false }));
       expect(frame.selectedMaterials).toEqual([
         ...input.selectedMaterials,
-        { relativePath: '.happier/session-mcp.json', contentBase64: Buffer.from(JSON.stringify(sessionMcpContext)).toString('base64') },
+        // The isolated Agent's material names the socket only; its relay is admitted by peer proof.
+        { relativePath: '.happier/session-mcp.json', contentBase64: Buffer.from(JSON.stringify({ v: 1, socketPath: sessionMcpContext.socketPath })).toString('base64') },
       ]);
+      expect(JSON.stringify(frame).includes(sessionMcpContext.bearerToken)).toBe(false);
       expect(frame.environment).toEqual({ PATH: '/usr/bin',
         HAPPIER_SESSION_MCP_CONTEXT_FILE: `${input.runtimeHome}/.happier/session-mcp.json` });
       expect(JSON.stringify({ args: launch.args, env: launch.env })).not.toContain(sessionMcpContext.bearerToken);
