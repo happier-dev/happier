@@ -11,6 +11,7 @@ import { workspacePackageSourcesPlugin as cliWorkspacePackageSourcesPlugin } fro
 import { createWorkspaceHostSourceAlias } from '../../scripts/testing/vitestWorkspacePackageResolution';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const providerExcludeGlob = process.env.HAPPIER_DB_PROVIDER === 'mysql' ? '**/*.postgres.*' : '**/*.mysql.*';
 
 export default defineConfig({
     test: {
@@ -20,7 +21,8 @@ export default defineConfig({
         setupFiles: [resolve(__dirname, '../../packages/tests/scripts/dbContractDatabase.mjs'), resolve(__dirname, '../../scripts/testing/vitestHomeSetup.mjs'), "./sources/configureZodLocale.ts"],
         sequence: { setupFiles: 'list' },
         include: [
-            "**/*.dbcontract.spec.ts",
+            "sources/**/*.dbcontract.spec.ts",
+            "scripts/**/*.dbcontract.spec.ts",
             "sources/app/api/routes/session/sessionRoutes.sessionTurns.recent.integration.spec.ts",
             "sources/app/deployments/environmentSecretGrantRepository.db.contract.test.ts",
             "sources/app/deployments/deploymentPromotion.sqlite.integration.spec.ts",
@@ -36,7 +38,11 @@ export default defineConfig({
                 'sources/app/automations/automationReplyHandoffWorker.integration.spec.ts',
             ] : []),
         ],
-        exclude: [...resolveVitestFeatureTestExcludeGlobs()],
+        exclude: [
+            ...resolveVitestFeatureTestExcludeGlobs(),
+            providerExcludeGlob,
+            resolve(__dirname, '../../packages/tests/suites/db-contract', providerExcludeGlob),
+        ],
         isolate: true,
         testTimeout: 60_000,
         hookTimeout: 60_000,

@@ -19,7 +19,11 @@ describe('Follow policy PostgreSQL migration', () => {
         target.searchParams.set('schema', schema);
         const database = new PrismaClient({ datasourceUrl: target.toString() });
         const execute = async (sql: string) => {
-            for (const statement of splitMigrationStatements(sql)) await database.$executeRawUnsafe(statement);
+            // Match the migration owner's per-file transaction, including
+            // transaction-scoped locks in the retained merge migration.
+            await database.$transaction(async tx => {
+                for (const statement of splitMigrationStatements(sql)) await tx.$executeRawUnsafe(statement);
+            });
         };
         const migrations = resolve(import.meta.dirname, '../../prisma/migrations');
         const apply = async (name: string) => execute(await readFile(resolve(migrations, name, 'migration.sql'), 'utf8'));

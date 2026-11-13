@@ -69,7 +69,7 @@ async function proveMigration(provider: TeamCredentialMigrationProvider, stage: 
     // migration can land only after this tolerant read boundary is available.
     for (const row of await db.query(`SELECT ${['id','disclosureCeiling','allMembersDeliveryMode'].map(q).join(',')} FROM ${q('TeamCredentialResource')}`)) {
         expect(readTeamCredentialDeliveryConfiguration(String(row.disclosureCeiling))).toEqual({
-            success: true, data: { policy: { preferredAllowedModes: row.id === 'broker-only' ? ['brokered'] : ['brokered','direct'] }, experimentalBindingConfirmations: [] },
+            success: true, data: { policy: { preferredAllowedModes: row.id === 'broker-only' ? ['brokered'] : ['brokered','direct'] } },
         });
         if (row.allMembersDeliveryMode !== null) {
             expect(readTeamCredentialAllowedRoutes(String(row.allMembersDeliveryMode))).toEqual({ success: true,
@@ -90,8 +90,8 @@ async function proveMigration(provider: TeamCredentialMigrationProvider, stage: 
     expect(await db.query(`SELECT ${[...bindingColumns,'nativeManagedId','nativeDeliveryJson'].map(q).join(',')} FROM ${q('SessionTeamCredentialBinding')}`)).toEqual(bindings.map(row => ({ ...row, nativeManagedId: null, nativeDeliveryJson: null })));
     for (const row of await db.query(`SELECT ${['id','disclosureCeiling','allMembersDeliveryMode'].map(q).join(',')} FROM ${q('TeamCredentialResource')}`)) {
         const expectedModes = row.id === 'broker-only' ? ['brokered'] : ['brokered', 'direct'];
-        const normalized = { policy: { preferredAllowedModes: expectedModes }, experimentalBindingConfirmations: [] };
-        expect(JSON.parse(String(row.disclosureCeiling))).toEqual(normalized);
+        const normalized = { policy: { preferredAllowedModes: expectedModes } };
+        expect(JSON.parse(String(row.disclosureCeiling))).toEqual({ ...normalized, experimentalBindingConfirmations: [] });
         expect(readTeamCredentialDeliveryConfiguration(String(row.disclosureCeiling))).toEqual({ success: true, data: normalized });
         const audience = row.id === 'disabled' || row.id === 'empty' ? null : row.id === 'both' ? ['brokered','direct'] : row.id === 'direct-only' ? ['direct'] : ['brokered'];
         expect(row.allMembersDeliveryMode === null ? null : JSON.parse(String(row.allMembersDeliveryMode))).toEqual(audience);

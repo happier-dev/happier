@@ -5,6 +5,7 @@ import { ExternalSessionOperationSocketCommandV1Schema, makeExternalSessionHisto
 import { ExternalSessionMaterializationPublicationV1Schema, type ExternalSessionMaterializationPublicationV1, type ExternalSessionPriorStableStorageV1 } from '@happier-dev/protocol/sessions/external/operationV1';
 
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+import { prepareSessionAccountCursorLocks } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
 import { initializeExternalLinkedSessionStorage } from "@/app/session/externalLinkedSessionStorageInitialization";
 import { notifySessionHumanPresenceAccessChanged } from "@/app/session/humanPresence/sessionHumanPresenceService";
 import { fenceExactCurrentPublisherAuthorityInTx } from "@/app/session/pending/hasExactCurrentPublisherAuthorityInTx";
@@ -19,6 +20,7 @@ import {
     writeExternalSessionHistoricalImportRecordInTx,
 } from "@/app/session/systemRecords/sessionSystemRecordService";
 import { afterTx, inTx, type Tx } from "@/storage/inTx";
+import { getDbProviderFromEnv } from "@/storage/prisma";
 import type { Prisma } from "@prisma/client";
 import { notifySessionTranscriptMutationAfterCommit } from './sessionTranscriptMutationObserver';
 
@@ -1728,7 +1730,15 @@ async function executeExternalSessionHistoricalImportCommandWithCreateRaceRetry(
         }
 
         return errorResponse("invalid_state", "Historical import command is invalid.");
-        }, { isolationLevel: "Serializable" /* Historical import job custody and Session transition decisions depend on prior job and lifecycle reads. */ });
+        }, {
+            // Serializable reads take shared locks on MySQL. Admit the complete
+            // Account audience and Session before those reads can precede the
+            // transcript writer's exclusive locks in a concurrent command.
+            prepare: command.kind !== "inspect" && getDbProviderFromEnv(process.env, "postgres") === "mysql"
+                ? () => prepareSessionAccountCursorLocks([command.claim.sessionId], [params.actorUserId])
+                : undefined,
+            isolationLevel: "Serializable", // Job custody and lifecycle decisions depend on prior reads.
+        });
     } catch (error) {
         if (error instanceof HistoricalImportStorageStateTransitionConflictError) {
             return errorResponse("storage_mode_conflict", error.message);

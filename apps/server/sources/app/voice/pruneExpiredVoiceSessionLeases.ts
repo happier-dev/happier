@@ -85,7 +85,10 @@ export async function pruneExpiredVoiceSessionLeases(
         const result = await tx.voiceSessionLease.deleteMany({
             where: {
                 id: { in: leaseIds },
-                ...where,
+                // The selected cohort already passed quota-source admission.
+                // Do not read VoiceConversation in this DELETE: MySQL's legacy
+                // provenance trigger updates that table before detaching it.
+                expiresAt: { lt: params.cutoff },
             },
         });
         return result.count;

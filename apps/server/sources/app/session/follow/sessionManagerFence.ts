@@ -12,14 +12,15 @@ export async function acquireSessionManagerHomeFenceInTx(tx: Tx): Promise<void> 
         return;
     }
     if (provider === 'mysql') {
-        await tx.$executeRawUnsafe('INSERT IGNORE INTO `HomeSettings` (`id`, `revision`, `updatedAt`) VALUES (?, 1, CURRENT_TIMESTAMP(3))', HOME_SETTINGS_ID);
-    } else {
-        await tx.$executeRawUnsafe('INSERT INTO "HomeSettings" ("id", "revision", "updatedAt") VALUES ($1, 1, CURRENT_TIMESTAMP) ON CONFLICT ("id") DO NOTHING', HOME_SETTINGS_ID);
+        // A duplicate INSERT IGNORE holds a shared record lock. Concurrent
+        // callers would then deadlock upgrading it. The no-op upsert acquires
+        // the exclusive fence directly, whether the singleton exists or not.
+        await tx.$executeRawUnsafe('INSERT INTO `HomeSettings` (`id`, `revision`, `updatedAt`) VALUES (?, 1, CURRENT_TIMESTAMP(3)) ON DUPLICATE KEY UPDATE `id` = `id`', HOME_SETTINGS_ID);
+        return;
     }
+    await tx.$executeRawUnsafe('INSERT INTO "HomeSettings" ("id", "revision", "updatedAt") VALUES ($1, 1, CURRENT_TIMESTAMP) ON CONFLICT ("id") DO NOTHING', HOME_SETTINGS_ID);
     const rows = await tx.$queryRawUnsafe<Array<{ id: string }>>(
-        provider === 'mysql'
-            ? 'SELECT `id` FROM `HomeSettings` WHERE `id` = ? FOR UPDATE'
-            : 'SELECT "id" FROM "HomeSettings" WHERE "id" = $1 FOR UPDATE',
+        'SELECT "id" FROM "HomeSettings" WHERE "id" = $1 FOR UPDATE',
         HOME_SETTINGS_ID,
     );
     if (rows.length !== 1) throw new Error('Manager Home fence requires the HomeSettings singleton');

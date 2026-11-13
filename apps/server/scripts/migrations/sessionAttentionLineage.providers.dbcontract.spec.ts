@@ -599,7 +599,7 @@ describe.each(predecessorCases)("$frontier migration lineage before Account Dire
                     );
                 } else {
                     await expect(database.$queryRawUnsafe(
-                        `SELECT INDEX_NAME FROM information_schema.STATISTICS
+                        `SELECT DISTINCT INDEX_NAME FROM information_schema.STATISTICS
                          WHERE TABLE_SCHEMA = DATABASE()
                            AND TABLE_NAME = 'Session'
                            AND INDEX_NAME = 'Session_accountId_needsAttention_meaningfulActivityAt_id_idx'`,
@@ -644,7 +644,7 @@ describe.each(predecessorCases)("$frontier migration lineage before Account Dire
                 );
                 expect(quotaRows).toEqual([]);
                 await expect(database.$queryRawUnsafe(
-                    `SELECT INDEX_NAME FROM information_schema.STATISTICS
+                    `SELECT DISTINCT INDEX_NAME FROM information_schema.STATISTICS
                      WHERE TABLE_SCHEMA = DATABASE()
                        AND TABLE_NAME = 'Session'
                        AND INDEX_NAME = 'Session_accountId_needsAttention_meaningfulActivityAt_id_idx'`,

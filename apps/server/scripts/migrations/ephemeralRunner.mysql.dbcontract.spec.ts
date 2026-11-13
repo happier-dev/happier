@@ -58,13 +58,13 @@ describe("ephemeral Runner MySQL persistence", () => {
             await db.$executeRawUnsafe(`
                 INSERT INTO \`EphemeralRunnerActivation\` (
                     \`id\`,\`creatorAccountId\`,\`creatorTokenEpoch\`,\`draftId\`,\`sessionId\`,\`machineId\`,\`state\`,
-                    \`progressPhase\`,
+                    \`progressPhase\`,\`workspacePolicy\`,
                     \`homeServerIdentityId\`,\`activationSigningPublicKey\`,\`authoringCommitment\`,\`artifact\`,
                     \`endpointFactsRecipient\`,\`authenticationEvidence\`,\`claim\`,\`endpointFacts\`,\`credentialSelection\`,\`review\`,\`consent\`,\`readiness\`,
                     \`sealedBootstrap\`,\`updatedAt\`
                 ) VALUES (
                     'activation','activation-account',7,'draft','reserved-session','reserved-machine','materialized',
-                    'creating_session',
+                    'creating_session','choose_on_endpoint',
                     'home','public-key','commitment',JSON_OBJECT('v',1),JSON_OBJECT('v',1),JSON_OBJECT('v',1),JSON_OBJECT('v',1),
                     JSON_OBJECT('v',1),JSON_OBJECT('v',1),JSON_OBJECT('v',1),JSON_OBJECT('v',1),JSON_OBJECT('v',1),JSON_OBJECT('v',1),CURRENT_TIMESTAMP(3)
                 )
@@ -76,9 +76,9 @@ describe("ephemeral Runner MySQL persistence", () => {
                 INSERT INTO \`EphemeralRunnerActivation\` (
                     \`id\`,\`creatorAccountId\`,\`creatorTokenEpoch\`,\`draftId\`,\`sessionId\`,\`machineId\`,\`state\`,
                     \`homeServerIdentityId\`,\`activationSigningPublicKey\`,\`authoringCommitment\`,\`artifact\`,
-                    \`endpointFactsRecipient\`,\`updatedAt\`
-                ) VALUES ('duplicate','activation-account',7,'draft-2','reserved-session','other-machine','pending','home','key','commitment',JSON_OBJECT(),JSON_OBJECT(),CURRENT_TIMESTAMP(3))
-            `)).rejects.toThrow();
+                    \`endpointFactsRecipient\`,\`workspacePolicy\`,\`updatedAt\`
+                ) VALUES ('duplicate','activation-account',7,'draft-2','reserved-session','other-machine','pending','home','key','commitment',JSON_OBJECT(),JSON_OBJECT(),'choose_on_endpoint',CURRENT_TIMESTAMP(3))
+            `)).rejects.toMatchObject({ code: "P2010", meta: { code: "1062" } });
 
             const jsonColumns = await db.$queryRawUnsafe<Array<{ COLUMN_NAME: string; IS_NULLABLE: string; DATA_TYPE: string }>>(`
                 SELECT COLUMN_NAME, IS_NULLABLE, DATA_TYPE

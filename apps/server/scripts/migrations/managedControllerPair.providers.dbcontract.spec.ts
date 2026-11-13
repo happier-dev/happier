@@ -31,7 +31,9 @@ async function stageMigrations(provider: Provider, stage: string, includeFinal: 
     await copyFile(join(root, "schema.prisma"), join(stage, "schema.prisma"));
     await copyFile(join(root, "migrations/migration_lock.toml"), join(stage, "migrations/migration_lock.toml"));
     for (const entry of await readdir(join(root, "migrations"), { withFileTypes: true })) {
-        if (entry.isDirectory() && (includeFinal || entry.name < finalMigration)) {
+        // This contract isolates the controller cut; later migrations have
+        // their own schema and retention contracts.
+        if (entry.isDirectory() && (entry.name < finalMigration || (includeFinal && entry.name === finalMigration))) {
             await cp(join(root, "migrations", entry.name), join(stage, "migrations", entry.name), { recursive: true });
         }
     }

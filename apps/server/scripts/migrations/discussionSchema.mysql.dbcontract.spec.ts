@@ -102,10 +102,13 @@ describe('Discussion MySQL migration', () => {
             const messages = await database.$queryRawUnsafe<Array<Record<string, unknown>>>(
                 'SELECT * FROM DiscussionMessage ORDER BY id',
             );
+            // A new projection avoids reusing MySQL's prepared SELECT * metadata
+            // from before the external schema change.
+            const messageColumns = Object.keys(messages[0]!).map(column => `\`${column}\``).join(', ');
             await execute(await readFile(resolve(migrationRoot,
                 '20261019020000_discussion_doc_edit_proposal_disposition/migration.sql'), 'utf8'));
             const upgraded = await database.$queryRawUnsafe<Array<Record<string, unknown>>>(
-                'SELECT * FROM DiscussionMessage ORDER BY id',
+                `SELECT ${messageColumns}, docEditProposalDispositionV1 FROM DiscussionMessage ORDER BY id`,
             );
             expect(upgraded.map(({ docEditProposalDispositionV1, ...message }) => {
                 expect(docEditProposalDispositionV1).toBeNull();

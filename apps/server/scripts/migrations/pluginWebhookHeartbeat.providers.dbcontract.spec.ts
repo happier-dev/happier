@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { applyPostgresMigrations, applySqliteMigrations } from '../prismaMigrations';
 import { runPrismaCli } from '../prismaCli';
 import { readPostgresSemanticSchema } from './postgresSchema.testkit';
+import { createPluginWebhookCheckIdDigestV1 } from '../../sources/app/plugins/webhooks/checkIdDigest';
 
 const serverRoot = join(import.meta.dirname, '../..');
 const heartbeatMigration = '20261031131500_plugin_webhook_heartbeat_ingress';
@@ -93,7 +94,7 @@ async function proveUpgrade(provider: Provider, stage: string, db: Database, dep
 
     await db.execute(`INSERT INTO "PluginWebhookRoute" ("id","opaqueRouteId","verifierKind","routingKind","updatedAt") VALUES ('heartbeat-route','heartbeat-opaque','capabilityUrl_v1','accountEndpoint',CURRENT_TIMESTAMP)`);
     await expect(db.execute(`INSERT INTO "PluginWebhookRoute" ("id","opaqueRouteId","verifierKind","routingKind","updatedAt") VALUES ('invalid-route','invalid-opaque','unknown-verifier','accountEndpoint',CURRENT_TIMESTAMP)`)).rejects.toThrow();
-    const insertEndpoint = (id: string, checkId?: string) => db.execute(`INSERT INTO "PluginWebhookEndpoint" ("id","accountId","pluginId","webhookContributionId","sourceInstanceId","routeId","routingKind","updatedAt"${checkId === undefined ? '' : ',"checkId"'}) VALUES ('${id}','webhook-owner','machine-services','heartbeat','source','heartbeat-route','accountEndpoint',CURRENT_TIMESTAMP${checkId === undefined ? '' : `,'${checkId}'`})`);
+    const insertEndpoint = (id: string, checkId?: string) => db.execute(`INSERT INTO "PluginWebhookEndpoint" ("id","accountId","pluginId","webhookContributionId","sourceInstanceId","routeId","routingKind","updatedAt","checkIdDigest"${checkId === undefined ? '' : ',"checkId"'}) VALUES ('${id}','webhook-owner','machine-services','heartbeat','source','heartbeat-route','accountEndpoint',CURRENT_TIMESTAMP,'${createPluginWebhookCheckIdDigestV1(checkId ?? '')}'${checkId === undefined ? '' : `,'${checkId}'`})`);
     await insertEndpoint('heartbeat-a', 'check-a');
     await insertEndpoint('heartbeat-b', 'check-b');
     await expect(insertEndpoint('duplicate-check', 'check-a')).rejects.toThrow();

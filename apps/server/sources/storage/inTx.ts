@@ -261,7 +261,22 @@ async function prepareTransactionAttempt(
     return prepare();
 }
 
-async function applyPostgresStatementBudget(tx: Tx, timeoutMs: number, startedAtMs: number): Promise<void> {
+/**
+ * The operator's PostgreSQL `statement_timeout` in ms (0 = none), read by the
+ * first transaction of this process. Operators configure it (postgresql.conf,
+ * ALTER ROLE/DATABASE, connection options); the server never sets it at session
+ * level, so re-reading it in every transaction was a round trip for a constant.
+ * A change takes effect for transactions after a server restart.
+ */
+let operatorStatementTimeoutMs: number | undefined;
+
+/** Test seam: a suite that changes the session setting re-discovers it. */
+export function forgetPostgresOperatorStatementTimeoutForTests(): void {
+    operatorStatementTimeoutMs = undefined;
+}
+
+async function readOperatorStatementTimeoutMs(tx: Tx): Promise<number> {
+    if (operatorStatementTimeoutMs !== undefined) return operatorStatementTimeoutMs;
     // Utility commands leave the caller's first Serializable snapshot/fence
     // ordering intact. A SELECT set_config here would establish it too early.
     const [setting] = await tx.$queryRaw<Array<{ statement_timeout: string }>>`SHOW statement_timeout`;
@@ -269,16 +284,23 @@ async function applyPostgresStatementBudget(tx: Tx, timeoutMs: number, startedAt
     if (!match) throw new Error("Invalid PostgreSQL statement_timeout setting");
     const multiplier = match[2] === "d" ? 86_400_000 : match[2] === "h" ? 3_600_000
         : match[2] === "min" ? 60_000 : match[2] === "s" ? 1_000 : 1;
-    const configuredMs = Number(match[1]) * multiplier;
+    operatorStatementTimeoutMs = Number(match[1]) * multiplier;
+    return operatorStatementTimeoutMs;
+}
+
+async function applyPostgresStatementBudget(tx: Tx, timeoutMs: number, startedAtMs: number): Promise<void> {
+    const configuredMs = await readOperatorStatementTimeoutMs(tx);
     const remainingMs = Math.floor(timeoutMs - (Date.now() - startedAtMs));
     if (remainingMs < 1) throw new TransactionAttemptDeadlineExceededError();
-    // Reuse a stricter operator limit; otherwise set the attempt's SQL budget
-    // once, before the prepared fence and domain callback. Prisma continues to
-    // own the interactive transaction deadline, including between statements.
-    if (configuredMs !== 0 && configuredMs <= remainingMs) return;
+    // Set the attempt's SQL budget once, before the prepared fence and domain
+    // callback, keeping a stricter operator limit. The value is always set
+    // explicitly, so a limit the operator later loosens never leaves a
+    // transaction unbounded. Prisma continues to own the interactive
+    // transaction deadline, including between statements.
+    const budgetMs = configuredMs !== 0 && configuredMs < remainingMs ? configuredMs : remainingMs;
     // PostgreSQL SET accepts no bound parameter. This integer comes only from
-    // the existing transaction budget, after charging transaction setup.
-    await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${remainingMs}`);
+    // the operator setting or the existing transaction budget.
+    await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${budgetMs}`);
 }
 
 export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions): Promise<ResolvedTransactionResult<T>> {

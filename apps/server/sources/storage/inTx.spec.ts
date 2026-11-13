@@ -46,6 +46,7 @@ describe("inTx", () => {
     afterEach(() => {
         vi.restoreAllMocks();
         restoreEnv(envSnapshot);
+        inTxModule.forgetPostgresOperatorStatementTimeoutForTests();
         transaction.mockReset();
         transaction.mockImplementation(async (fn: any, _opts?: any) => fn(transactionBoundary()));
         delayMock.mockClear();
@@ -283,13 +284,33 @@ describe("inTx", () => {
             },
         }));
         await expect(inTx(async tx => {
-            // The existing stricter SQL limit needs no SET at transaction start.
-            expect(budgets).toEqual([]);
+            // The stricter operator limit is the one budget set at transaction start.
+            expect(budgets).toEqual([50]);
             clock += callbackWorkMs;
             return await tx.$queryRawUnsafe("SELECT 1 AS value");
         }, { timeoutMs: 100, readOnly: true })).resolves.toEqual([{ value: 1 }]);
-        expect(budgets).toEqual([]);
+        expect(budgets).toEqual([50]);
         expect(queryBudget).toBe(50);
+    });
+
+    it("discovers the operator SQL limit once, then frames each transaction with a single budget statement", async () => {
+        applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres" });
+        vi.spyOn(Date, "now").mockReturnValue(1_000);
+        const statements: string[] = [];
+        transaction.mockImplementation(async fn => fn({
+            ...transactionBoundary(),
+            async $queryRaw(query: TemplateStringsArray) {
+                statements.push(query.join("?"));
+                return [{ statement_timeout: "0" }];
+            },
+            async $executeRawUnsafe(query: string) { statements.push(query); return 0; },
+        }));
+        for (let index = 0; index < 3; index++) await inTx(async () => index, { timeoutMs: 1234 });
+        expect(statements).toEqual([
+            "SHOW statement_timeout", "SET LOCAL statement_timeout = 1234",
+            "SET LOCAL statement_timeout = 1234",
+            "SET LOCAL statement_timeout = 1234",
+        ]);
     });
 
     it("refuses an attempt that expires during budget discovery before invoking its callback", async () => {
