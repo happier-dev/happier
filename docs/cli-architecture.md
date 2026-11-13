@@ -5717,6 +5717,11 @@ which accepts object or boolean `items`. References into tuple entries and their
 additional-item schema follow the projected locations; literal data is unchanged.
 The original parser retains positional and length validation. This projection
 applies at the shared discovery owner, without a provider-specific sanitizer.
+For Gemini function declarations, discovery omits non-string `enum` and `const`
+constraints while retaining the original JSON types; Gemini's schema represents
+[enum values as strings](https://googleapis.github.io/js-genai/release_docs/interfaces/types.Schema.html).
+String choices remain advertised, and the original validator still enforces
+boolean and numeric literals at call time.
 
 The development definition family delegates to Protocol's
 `createWorkflowDefinitionActions`; CLI Artifact transport is a host adapter,

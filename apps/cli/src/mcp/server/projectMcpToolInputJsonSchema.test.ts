@@ -11,6 +11,18 @@ import { resolveSessionNativeToolDescriptors } from '@/agent/tools/happierTools/
 import { toMcpToolObjectSchema } from './toolSchemas';
 import { projectMcpToolInputJsonSchema } from './projectMcpToolInputJsonSchema';
 
+function unsupportedProviderLiterals(value: unknown, path = '#'): string[] {
+    if (!value || typeof value !== 'object') return [];
+    if (Array.isArray(value)) return value.flatMap((child, index) => unsupportedProviderLiterals(child, `${path}/${index}`));
+    const schema = value as Record<string, unknown>;
+    return [
+        ...(Array.isArray(schema.enum) && schema.enum.some(item => typeof item !== 'string') ? [`${path}/enum`] : []),
+        ...(Object.hasOwn(schema, 'const') && typeof schema.const !== 'string' ? [`${path}/const`] : []),
+        ...Object.entries(schema).filter(([key]) => !['enum', 'const', 'default', 'examples'].includes(key))
+            .flatMap(([key, child]) => unsupportedProviderLiterals(child, `${path}/${key}`)),
+    ];
+}
+
 function oversizedEnums(value: unknown, path = '#'): string[] {
     if (!value || typeof value !== 'object') return [];
     if (Array.isArray(value)) return value.flatMap((child, index) => oversizedEnums(child, `${path}/${index}`));
@@ -79,6 +91,30 @@ function recursiveReferences(document: unknown): string[] {
 }
 
 describe('MCP provider input projection', () => {
+    it('advertises non-string literals by their original type while retaining strict call validation', () => {
+        const parser = z.object({ approved: z.literal(true), version: z.literal(1), mode: z.literal('exact') });
+        const source = zodSchemaToJsonSchemaObject(parser, { target: 'draft-7' });
+        const schema = { ...source, properties: { ...source.properties as Record<string, unknown>,
+            flags: { type: 'array', items: { type: 'boolean', enum: [true, false] } },
+            count: { type: 'integer', enum: [1, 2] },
+            choice: { type: ['string', 'number'], enum: ['auto', 1] },
+            color: { type: 'string', enum: ['red', 'blue'] },
+        }, default: { enum: [true, 1], const: false } };
+        const advertised = zodSchemaToJsonSchemaObject(toMcpToolObjectSchema(schema, 'inputSchema'));
+        expect(unsupportedProviderLiterals(advertised)).toEqual([]);
+        expect(advertised).toMatchObject({ properties: {
+            approved: { type: 'boolean' }, version: { type: 'number' }, mode: { type: 'string', const: 'exact' },
+            flags: { items: { type: 'boolean' } }, count: { type: 'integer' },
+            color: { enum: ['red', 'blue'] },
+        }, default: schema.default });
+        const validate = new Ajv({ strict: false }).compile(advertised);
+        expect(validate({ approved: true, version: 1, mode: 'exact', flags: [false], count: 2 })).toBe(true);
+        expect(validate({ approved: 'true', version: '1', mode: 'exact' })).toBe(false);
+        expect(parser.safeParse({ approved: false, version: 2, mode: 'exact' }).success).toBe(false);
+        expect((schema.properties as Record<string, unknown>).approved).toMatchObject({ type: 'boolean', const: true });
+        expect(schema.properties.count.enum).toEqual([1, 2]);
+    });
+
     it('advertises draft-7 tuples as homogeneous items while retaining references and server tuple validation', () => {
         const parser = z.object({ executionRunContext: z.object({ versions: z.tuple([z.literal(1)]) }) });
         const source = zodSchemaToJsonSchemaObject(parser, { target: 'draft-7' });
@@ -89,7 +125,7 @@ describe('MCP provider input projection', () => {
             default: { items: [{ const: 'literal data' }] } };
         const projected = projectMcpToolInputJsonSchema(schema);
         expect(projected).toMatchObject({ properties: {
-            executionRunContext: { properties: { versions: { items: { anyOf: [{ type: 'number', const: 1 }, false] } } } },
+            executionRunContext: { properties: { versions: { items: { anyOf: [{ type: 'number' }, false] } } } },
             label: { $ref: '#/definitions/pair/items/anyOf/0' },
             count: { $ref: '#/properties/open/items/anyOf/1' },
             open: { items: { anyOf: [{ type: 'string' }, { $ref: '#/definitions/pair/items/anyOf/1' }] } },
@@ -103,14 +139,14 @@ describe('MCP provider input projection', () => {
     it('keeps every exported MCP tool input non-recursive and within provider enum and depth thresholds', () => {
         const offenders = HAPPIER_BUILT_IN_TOOLS.flatMap(tool => {
             const schema = zodSchemaToJsonSchemaObject(toMcpToolObjectSchema(tool.inputSchema, 'inputSchema'));
-            return [...oversizedEnums(schema), ...recursiveReferences(schema),
+            return [...oversizedEnums(schema), ...unsupportedProviderLiterals(schema), ...recursiveReferences(schema),
                 ...(schemaDepth(schema) > 10 ? ['depth=' + schemaDepth(schema)] : [])].map(offender => `${tool.name} ${offender}`);
         });
         const native = resolveSessionNativeToolDescriptors({ accountSettings: {}, sessionId: 'enum-session',
             happierToolsEnabled: true, memoryRecallGuidanceEnabled: true, sessionMemoryEnabled: true,
             isServerFeatureEnabled: () => true });
         expect(native.length).toBeGreaterThan(0);
-        offenders.push(...native.flatMap(tool => [...oversizedEnums(tool.inputSchema), ...recursiveReferences(tool.inputSchema),
+        offenders.push(...native.flatMap(tool => [...oversizedEnums(tool.inputSchema), ...unsupportedProviderLiterals(tool.inputSchema), ...recursiveReferences(tool.inputSchema),
             ...(schemaDepth(tool.inputSchema) > 10 ? ['depth=' + schemaDepth(tool.inputSchema)] : [])].map(offender => `native:${tool.name} ${offender}`)));
         expect(offenders).toEqual([]);
     });

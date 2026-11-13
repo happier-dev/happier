@@ -117,6 +117,18 @@ function projectProviderTupleItems(document: JsonSchemaObject): JsonSchemaObject
 }
 
 function projectProviderEnum(schema: JsonSchemaObject): JsonSchemaObject {
+    // Gemini function declarations accept only string enum values. Adapters
+    // also turn const into enum, so omit non-string constraints in discovery
+    // while retaining their types and the original validator at dispatch.
+    // https://googleapis.github.io/js-genai/release_docs/interfaces/types.Schema.html
+    if (Object.hasOwn(schema, 'const') && typeof schema.const !== 'string') {
+        const { const: _const, ...rest } = schema;
+        schema = rest;
+    }
+    if (Array.isArray(schema.enum) && schema.enum.some(value => typeof value !== 'string')) {
+        const { enum: _enum, ...rest } = schema;
+        return rest;
+    }
     const values = schema.enum;
     if (!Array.isArray(values) || !values.every(value => typeof value === 'string')) return schema;
     // OpenAI/Meta strict tool schemas constrain large string enums at 250
