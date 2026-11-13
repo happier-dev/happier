@@ -1,6 +1,7 @@
-import { healthResultProjectionSchema, healthResultProjectionIdentity, HEALTH_RESULT_CHECKPOINT_PREFIX,
+import { healthResultProjectionSchema, healthResultProjectionIdentity, healthResultProjectionAt, HEALTH_RESULT_CHECKPOINT_PREFIX,
     type HealthResultProjection } from '@happier-dev/plugins-machine-services/health-results';
 import type { AccountKvService } from '@happier-dev/plugin-sdk/storage';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 
 export type ConfiguredHealthResultsState = Readonly<{ kind: 'loading' }> | Readonly<{ kind: 'neverObserved' }>
     | Readonly<{ kind: 'notLoaded' }> | Readonly<{ kind: 'unavailable'; code: string }>
@@ -13,7 +14,7 @@ export type ConfiguredHealthResultsPage = Readonly<{ results: ConfiguredHealthRe
 export type ConfiguredHealthResultsRead = ConfiguredHealthResultsPage | Readonly<{ kind: 'unavailable'; code: string }>;
 export const configuredHealthResultKey = (automationId: string, triggerId: string) => JSON.stringify([automationId, triggerId]);
 
-/** observedAt is the actual probe time of this retained publication; equal later probes do not republish it. */
+/** observedAt is the actual probe time retained with the current sample history. */
 export function configuredHealthResultsForTrigger(page: ConfiguredHealthResultsPage, automationId: string,
     trigger: Readonly<{ id: string; revision: number; sourceSelectorId: string }>): ConfiguredHealthResultsState {
     const result = page.results.get(configuredHealthResultKey(automationId, trigger.id));
@@ -28,10 +29,10 @@ export async function readConfiguredHealthResults(kv: Pick<AccountKvService, 'li
     signal.throwIfAborted();
     const next = new Map<string, Readonly<{ revision: number; selector: string; state: ConfiguredHealthResultsState }>>();
     for (const row of page.items) {
-        if ('deleted' in row || !row.value || typeof row.value !== 'object' || Array.isArray(row.value)) continue;
+        if ('deleted' in row || !isJsonObject(row.value)) continue;
         const parsed = healthResultProjectionSchema.safeParse(row.value.current);
         if (!parsed.success) continue;
-        const projection = parsed.data;
+        const projection = healthResultProjectionAt(parsed.data, Date.now());
         for (const member of projection.members) {
             const key = configuredHealthResultKey(member.automationId, member.triggerId);
             const prior = previous.results.get(key);

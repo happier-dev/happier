@@ -67,6 +67,32 @@ a fresh Start. There is no new wire field, persisted format or migration. The
 inspected `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf`
 has no Team broker admission or route-grant contract at the corresponding paths.
 
+## Machine-service usage history (unreleased 0.3)
+
+The existing `machines.vitals.history.get` accepts optional `serviceId` from a
+Machine Services row. A selected read includes `service: { serviceId, points }`;
+each point carries `t`, `cpuPercent`, `cpuMaxPercent`, `memoryBytes`, and
+`memoryMaxBytes`. Missing buckets and unavailable counters remain null. CPU uses
+the native accounting scale and may exceed 100% across cores. The series uses
+the existing 1h/24h/7d minute, five-minute, and thirty-minute buckets.
+
+The daemon samples already-admitted service handles at the vitals owner's
+existing minute boundary and persists optional service samples in the same
+seven-day local journal. History reads never sample or discover services; visibility joins the existing
+Services projection, including its first-use restoration.
+Older minutes without samples remain readable as gaps. Ordinary Machine history
+never includes the journal's service samples. A filtered read requires a current
+service visible through the Machine Services disclosure owner; removed services
+are unavailable through this read, even while their samples remain retained.
+Monitoring Off and on-demand monitoring retain the vitals owner's behavior.
+
+Protocol, daemon and consumers refresh together under the unpublished 0.3 direct
+cut; old strict development readers reject new operands rather than ignore the
+filter. All request, response, point and service envelopes remain closed.
+There is no new wire epoch, database table, migration, sampler or polling path.
+The inspected scoped-clean `../0.2` frontier
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no scoped Machine vitals contract.
+
 ## Machine-service advisory selection (unreleased 0.3)
 
 The closed `machines.services.list` input accepts optional `preflight` selectors
@@ -94,6 +120,9 @@ that projection and report never observed; results are joined only to the same
 Automation trigger revision and source selector. This is an unreleased 0.3 direct
 cut: the observer and UI reader load together. Earlier strict development
 checkpoint readers are not a supported rollback target for newly written rows.
+The optional `current.checks[].history` daily sample projection follows the same
+0.3 direct cut: observer and UI reader reload together. New readers accept
+existing current results without history; no migration or backfill is required.
 
 ## SessionMessage content codec (unreleased 0.3)
 

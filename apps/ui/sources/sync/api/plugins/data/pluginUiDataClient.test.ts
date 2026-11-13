@@ -1232,9 +1232,9 @@ describe('Plugin UI Data client', () => {
 
 
 it('pushes configured health result batches without per-row reads or equal-result publications', async () => {
-    const current = (id: string, status = 'up', observedAt = 1) => ({ v: 1,
+    const current = (id: string, status = 'up', observedAt = 1, history?: import('@happier-dev/plugins-machine-services/health-results').HealthResultProjection['checks'][number]['history']) => ({ v: 1,
         members: [{ automationId: id, triggerId: id, triggerRevision: 1, sourceSelectorId: 'selector-' + id }],
-        checks: [{ checkId: 'http', result: { status, observedAt, evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'http' }, author: { kind: 'process' }, text: 'result' }] } } }] });
+        checks: [{ checkId: 'http', ...(history ? { history } : {}), result: { status, observedAt, evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'http' }, author: { kind: 'process' }, text: 'result' }] } } }] });
     let values = { 'health:a': { version: 1, value: { current: current('a') } },
         'health:b': { version: 1, value: { current: current('b') } } };
     const harness = await loadClient({ accountKvRead: () => Response.json({ status: 'present', revision: 1,
@@ -1276,9 +1276,23 @@ it('pushes configured health result batches without per-row reads or equal-resul
         if ('kind' in second) throw Error('Expected health result page');
         expect(second.results.get(configuredHealthResultKey('a', 'a'))?.state).toMatchObject({ kind: 'available', checks: [{ result: { status: 'down' } }] });
         expect(second.results.get(configuredHealthResultKey('b', 'b'))).toBe(first.results.get(configuredHealthResultKey('b', 'b')));
+        const { retainHealthResult, healthResultProjectionSchema } = await import('@happier-dev/plugins-machine-services/health-results');
+        const sample = healthResultProjectionSchema.parse(current('a', 'down', Date.now())).checks[0]!;
+        const retained = retainHealthResult(undefined, sample.checkId, sample.result);
+        values = { ...values, 'health:a': { version: 4, value: { current: current('a', 'down', sample.result.observedAt, retained.history) } } };
+        hint(13, 'health:a');
+        await vi.waitFor(() => expect(published).toHaveLength(3));
+        const third = published[2]!;
+        if ('kind' in third) throw Error('Expected health result page');
+        expect(third.results.get(configuredHealthResultKey('a', 'a'))?.state).toMatchObject({ kind: 'available',
+            checks: [{ history: { uptimePercent: 0, days: [{ down: 1 }] } }] });
+        hint(14, 'health:a');
+        await vi.waitFor(() => expect(reads()).toBe(5));
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(published).toHaveLength(3);
         harness.retire();
-        hint(13, 'health:a'); await Promise.resolve();
-        expect(reads()).toBe(3);
+        hint(15, 'health:a'); await Promise.resolve();
+        expect(reads()).toBe(5);
     } finally { controller.abort(); dispose.dispose(); }
 });
 

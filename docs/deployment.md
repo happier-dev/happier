@@ -4856,3 +4856,46 @@ protects secret build arguments; escaped `$$` remains literal in both consumers.
 Reference address changes are compared with the serving receipt by the existing materialization
 owner at deploy review. The review carries the binding name, phase and observed route when
 available. A running release keeps its recorded address until a person deploys again.
+
+### Retained check uptime (unreleased 0.3)
+
+The machine-services health observer stores compact daily sample counts in each
+check's existing encrypted Account KV checkpoint. `healthResultProjectionSchema`
+adds optional `checks[].history`: `lastObservedAt`, `uptimePercent`, and `days[]`
+with `dayStartAt` (UTC), `up`, `down`, `degraded`, `unknown` and `uptimePercent`.
+The window is today plus the preceding 29 UTC calendar days. Percentages are
+`100 × up / (up + down + degraded)`; unknown-only or empty windows return null.
+This is sampled availability, not inferred wall-clock availability. Missing days
+remain unobserved. Older checkpoints have no history until a new sample arrives;
+there is no backfill or fabricated pre-install history.
+
+`readConfiguredHealthResults` / `useConfiguredHealthResults` carry this projection
+through the existing Account KV push subscription. The shared
+`healthResultProjectionAt` owner expires buckets at read time even while the
+observer is disconnected. Existing probes append samples and prune storage;
+re-adopting the same observed timestamp does not append it again. No new probe,
+timer, table, poll or alert transition is introduced. A held view crossing UTC
+midnight refreshes on its next existing read or push.
+
+## Database size observations (0.3 development)
+
+`acquireDataServicePage` exposes `items[].databaseSizes`, keyed by the declared
+service. `readDeploymentDatabaseSizesV1` owns the fixed read-only statements and
+result projection. It reuses `deployments.data.query` and its existing dedicated
+read-role admission and native client: PostgreSQL uses `pg_database_size` for the
+connected database; MySQL sums the engine-reported table data and index lengths.
+The available size carries `measurement: database_bytes | table_bytes_estimate`.
+MySQL table statistics are [approximate for InnoDB](https://dev.mysql.com/doc/refman/8.0/en/information-schema-tables-table.html).
+These are engine measurements, not backup archive sizes. Unsupported engines,
+missing role setup and failed/incomplete reads carry explicit unavailable reasons.
+
+A demanded page reads placement headers once per Environment containing supported
+databases and executes one query per supported service. Non-database and unsupported
+rows cause no placement or native reads. No Artifact detail fanout, timer, new
+credential scope, history store or server-readable database content is added.
+The existing page controller retains the prior sample in its Account lifetime.
+Growth reports signed bytes between two observations of the same service and
+active deployment, with both timestamps; the first sample or a replaced deployment
+reports `previous_sample_required`. This is not daily growth or durable history.
+Database and Services composition consume these facts; UI composition remains
+separate from this data contract. No existing Action wire format changes.

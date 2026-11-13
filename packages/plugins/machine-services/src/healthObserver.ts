@@ -10,7 +10,7 @@ import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceAdapterV1 } from '@happier-dev/plugin-sdk/background-services';
 
 import { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT, MACHINE_SERVICES_PLUGIN_ID } from './healthSetup.js';
-import { HEALTH_RESULT_CHECKPOINT_PREFIX, healthResultProjectionSchema, healthResultProjectionIdentity } from './healthResultProjection.js';
+import { HEALTH_RESULT_CHECKPOINT_PREFIX, healthResultProjectionSchema, healthResultProjectionIdentity, retainHealthResult } from './healthResultProjection.js';
 import { isMonitorCheck, monitorDefinitions, monitorKinds, monitorObserved } from './monitorDefinitions.js';
 export { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT } from './healthSetup.js';
 const status = defineProtocolUnion([defineProtocolLiteral('up'), defineProtocolLiteral('down'), defineProtocolLiteral('degraded')]);
@@ -73,7 +73,8 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
             }, { signal: context.signal }) : [];
             // Current results settle independently of transition admission and alert thresholds.
             const currentChecks = new Map((previous.current?.checks ?? []).map(value => [value.checkId, value]));
-            for (const observation of results) currentChecks.set(observation.checkId, { checkId: observation.checkId, result: observation.result });
+            for (const observation of results) currentChecks.set(observation.checkId,
+                retainHealthResult(currentChecks.get(observation.checkId), observation.checkId, observation.result));
             const current = healthResultProjectionSchema.parse({ v: 1,
                 members: definitions.map(member => ({ automationId: member.automationId, triggerId: member.triggerId,
                     triggerRevision: member.triggerRevision, sourceSelectorId: member.sourceSelectorId })),

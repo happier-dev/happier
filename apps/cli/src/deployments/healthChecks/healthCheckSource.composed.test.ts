@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { HealthCheckResultV1Schema } from '@happier-dev/deployment-protocol/v1';
 import { plugin } from '../../../../../packages/plugins/machine-services/src/manifest';
+import { healthResultProjectionSchema, healthResultProjectionAt } from '../../../../../packages/plugins/machine-services/src/healthResultProjection';
 import { createHealthCheckSourceAdapter } from '../../../../../packages/plugins/machine-services/src/healthObserver';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceDefinitionV1 } from '@happier-dev/plugin-sdk/background-services';
@@ -245,6 +246,48 @@ describe('saved health source registration and finite cycles', () => {
             expect(f.admissions[1]?.payload).toMatchObject({ transition: 'recovered', observedAt: 3000 });
         } finally { subscription?.dispose(); }
     });
+    it('retains thirty UTC days of sample uptime through equal results, missing days and restart without extra probes', async () => {
+        const day = 86_400_000;
+        const f = fixture();
+        const current = () => {
+            const row = f.writes.at(-1);
+            if (!row || typeof row !== 'object' || Array.isArray(row)) throw Error('Expected checkpoint');
+            return healthResultProjectionSchema.parse(row.current).checks[0]!;
+        };
+        f.clock(day); await f.cycle();
+        expect(current()).toMatchObject({ history: { uptimePercent: 0,
+            days: [{ dayStartAt: day, up: 0, down: 1, degraded: 0, unknown: 0 }] } });
+        const writes = f.writes.length;
+        await f.cycle();
+        expect(f.writes).toHaveLength(writes);
+        expect(f.read).toHaveBeenCalledTimes(1);
+        f.tick('up'); await f.cycle();
+        f.tick('degraded'); await f.cycle();
+        f.tick('unknown'); await f.cycle();
+        expect(current()).toMatchObject({ history: { uptimePercent: 100 / 3,
+            days: [{ up: 1, down: 1, degraded: 1, unknown: 1 }] } });
+        // Gaps remain unobserved; no invented up/down duration. Re-adoption of
+        // the same result must not count the sample again.
+        const priorWrites = f.writes.length;
+        await f.cycle(createHealthCheckSourceAdapter(f.now));
+        expect(f.writes).toHaveLength(priorWrites);
+        for (let date = 2; date <= 31; date++) {
+            f.clock(date * day); f.tick('up');
+            await f.cycle(createHealthCheckSourceAdapter(f.now));
+        }
+        expect(current().history?.days).toHaveLength(30);
+        expect(current().history?.days[0]?.dayStartAt).toBe(2 * day);
+        expect(current().history?.uptimePercent).toBe(100);
+        expect(healthResultProjectionAt({ v: 1, members: [], checks: [current()] }, 65 * day).checks[0]?.history)
+            .toMatchObject({ days: [], uptimePercent: null });
+        f.clock(65 * day); f.tick('unknown'); await f.cycle();
+        expect(current().history).toMatchObject({ uptimePercent: null,
+            days: [{ dayStartAt: 65 * day, unknown: 1 }] });
+        expect(current().history?.days).toHaveLength(1);
+        expect(f.read).toHaveBeenCalledTimes(36);
+        expect(f.errors).toEqual([]);
+    });
+
     it('selects failed and recovered Events from one saved observer without evidence or duplicate failure runs', async () => {
         const f = fixture(source, ['health-check-failed', 'health-check-recovered']);
         await f.cycle(); f.tick('down'); await f.cycle();
@@ -294,7 +337,7 @@ describe('saved health source registration and finite cycles', () => {
         const written = f.writes.length;
         for (let index = 0; index < 10; index++) { f.tick('down'); await f.cycle(); }
         expect(f.admissions).toHaveLength(1);
-        expect(f.writes).toHaveLength(written);
+        expect(f.writes).toHaveLength(written + 10);
         f.tick('up'); await f.cycle();
         expect(f.admissions).toHaveLength(2);
         expect(f.admissions[1]?.payload).toMatchObject({ transition: 'recovered' });
@@ -478,14 +521,14 @@ it('retains current results before alert admission and only publishes semantic c
         checks: [{ checkId: 'http', result: { status: 'down', observedAt: 1000 } }] } });
     const afterFirst = f.writes.length;
     f.tick('down'); await f.cycle();
-    // A second failing observation crosses the alert threshold, so the incumbent
-    // transition may write; once it is settled, equal probes stay silent.
+    // A second failure crosses the alert threshold. Each new sample also
+    // advances the retained uptime counts (owner decision 3, 2026-11-13).
     const afterAdmission = f.writes.length;
     expect(afterAdmission).toBeGreaterThanOrEqual(afterFirst);
     f.tick('down'); await f.cycle();
-    expect(f.writes).toHaveLength(afterAdmission);
-    f.tick('unknown'); await f.cycle();
     expect(f.writes).toHaveLength(afterAdmission + 1);
+    f.tick('unknown'); await f.cycle();
+    expect(f.writes).toHaveLength(afterAdmission + 2);
     expect(f.writes.at(-1)).toMatchObject({ current: { checks: [{ checkId: 'http', result: { status: 'unknown' } }] } });
 });
 
