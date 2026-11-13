@@ -1,3 +1,4 @@
+export { BackupOutcomeEventV1ProtocolSchema } from './machineServices.js';
 export { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1 } from './deploymentReceipts.js';
 export { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from './deploymentReceipts.js';
 export { DeploymentFailedEventV1ProtocolSchema } from './deploymentReceipts.js';
@@ -17,7 +18,10 @@ export type { HostEventScope } from '../events.js';
 export type { HostEventScopeById } from '../events.js';
 export type { HostEventTarget } from '../events.js';
 export type { HostEvents } from '../events.js';
+export { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 } from './machineServices.js';
 export { MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 } from './accountFacts.js';
+export { MachinePressureEventV1ProtocolSchema } from './machineServices.js';
+export type { MachineServiceObservationV1 } from './machineServices.js';
 export type { PluginEventAutomationHistoryGapResetActionInputV1 } from '../events.js';
 export { PluginEventAutomationHistoryGapResetActionInputV1JsonSchema } from '../events.js';
 export { PluginEventAutomationHistoryGapResetActionInputV1Schema } from '../events.js';
@@ -35,6 +39,7 @@ export type { PluginEventSourceConnectionStatusProjectionV1 } from '../eventAuto
 export type { PluginEventSourceConnectionStatusV1 } from '../eventAutomation.js';
 export type { PluginEvents } from '../events.js';
 export { admitCheckpointedPluginEventObservationV1 } from '../eventAutomation.js';
+export { admitDurablePushPluginEventObservationV1 } from '../eventAutomation.js';
 export { admitSessionSocketPluginEventObservationV1 } from '../eventAutomation.js';
 export { createPluginEventAutomationSetupResultV1JsonSchema } from '../events.js';
 export { deploymentInProgressStates } from './deploymentReceipts.js';
@@ -43,8 +48,3 @@ export { projectPluginEventAdmissionSourceStatusV1 } from '../eventAutomation.js
 export { projectPluginEventSourceConnectionStatusV1 } from '../eventAutomation.js';
 export { readDeploymentAccountChangeV1 } from './deploymentReceipts.js';
 export { readDeploymentReceiptEventFailureV1 } from './deploymentReceipts.js';
-
-export { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, BackupOutcomeEventV1ProtocolSchema, MachinePressureEventV1ProtocolSchema } from './machineServices.js';
-export type { MachineServiceObservationV1 } from './machineServices.js';
-
-export { admitDurablePushPluginEventObservationV1 } from '../eventAutomation.js';

@@ -648,6 +648,7 @@ export type InventoryActionResultById = {
             }[];
             agentId: string;
             title: string;
+            preparation?: 'member_not_prepared' | undefined;
             managed?: boolean | undefined;
             fit?: undefined | {
                 kind: 'can_run';

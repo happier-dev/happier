@@ -2696,6 +2696,7 @@ export type ScmRepositoryActionResultById = {
         success: false;
         kind: 'failed';
         code: 'repository_unavailable';
+        failureCause?: ActionFailureCauseV1 | undefined;
     } | {
         success: true;
         kind: 'private';

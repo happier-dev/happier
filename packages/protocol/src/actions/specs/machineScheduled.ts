@@ -1,8 +1,19 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { MachineScheduledInputV1Schema, MachineScheduledResultV1Schema } from '../../machines/scheduled/scheduledV1.js';
 import { MACHINE_SCHEDULED_ACTION_IDS } from '../../machines/scheduled/actionIdsV1.js';
+import type { MachineScheduledActionId } from '../../machines/scheduled/actionIdsV1.js';
 import { actionInputServerId } from './definition.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
+
+export const MACHINE_SCHEDULED_ACTION_INPUT_SCHEMAS = {
+  'machines.scheduled.list': MachineScheduledInputV1Schema,
+  'machines.scheduled.watch': MachineScheduledInputV1Schema,
+} satisfies Readonly<Record<MachineScheduledActionId, typeof MachineScheduledInputV1Schema>>;
+
+export const MACHINE_SCHEDULED_ACTION_OUTPUT_SCHEMAS = {
+  'machines.scheduled.list': MachineScheduledResultV1Schema,
+  'machines.scheduled.watch': MachineScheduledResultV1Schema,
+} satisfies Readonly<Record<MachineScheduledActionId, typeof MachineScheduledResultV1Schema>>;
 
 function specs() {
   return MACHINE_SCHEDULED_ACTION_IDS.map(id => ({
@@ -12,8 +23,8 @@ function specs() {
     toolExposure: { agent: 'discoverable_only' },
     surfaces: { ui: true, cli: true, agent: true, mcp: true, rpc: true, voice: false },
     bindings: { rpcMethod: id, mcpToolName: id.replaceAll('.', '_') },
-    inputSchema: MachineScheduledInputV1Schema, outputSchema: MachineScheduledResultV1Schema,
-    invocationServerIdForInput: actionInputServerId(MachineScheduledInputV1Schema, input => input.serverId),
+    inputSchema: MACHINE_SCHEDULED_ACTION_INPUT_SCHEMAS[id], outputSchema: MACHINE_SCHEDULED_ACTION_OUTPUT_SCHEMAS[id],
+    invocationServerIdForInput: actionInputServerId(MACHINE_SCHEDULED_ACTION_INPUT_SCHEMAS[id], input => input.serverId),
     cli: { acceptsServerId: true, commands: [{ path: ['machines', 'scheduled', id === 'machines.scheduled.list' ? 'list' : 'watch'], visibility: 'canonical' }] },
     inputHints: { fields: [
       { path: 'serverId', title: 'Home ID', widget: 'text', required: true },

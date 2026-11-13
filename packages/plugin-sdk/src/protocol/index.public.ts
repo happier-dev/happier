@@ -76,6 +76,7 @@ export { ProtocolLaunchProfileIdV2Schema } from './launchProfileId.js';
 export { ProtocolLaunchProfilePlacementPreferenceV1Schema, ProtocolLaunchProfileCheckoutPreferenceV1Schema, resolveLaunchProfilePlacementDirectoryIntentV1, type LaunchProfilePlacementPreferenceV1, type LaunchProfileCheckoutPreferenceV1, type SessionDirectoryIntentV1 } from './launchProfilePreferences.js';
 /** Canonical policy deferral for feature protocols forwarding host Action results. */
 export { ProtocolActionApprovalRequestCreatedResultSchema } from './actionApproval.js';
+export { ProtocolAutomationTriggerRevisionV1Schema } from './automationTriggerIdentity.js';
 /** Declared environment requirements contain names and policy, never secret values. */
 export { ProtocolEnvVarRequirementV1Schema } from './environmentVariables.js';
 /** Project admission and preference values remain owned by the host's existing Actions. */

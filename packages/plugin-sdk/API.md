@@ -58,6 +58,10 @@
 | `.` | `DefinedPluginActionContracts` | type | any |
 | `.` | `DefinedPluginContributes` | type | any |
 | `.` | `DefinedPluginManifest` | type | any |
+| `.` | `DeploymentDomainDnsRecordInputV1` | type | any |
+| `.` | `DeploymentDomainDnsRecordInputV1ProtocolSchema` | value | any |
+| `.` | `DeploymentDomainDnsRecordResultV1` | type | any |
+| `.` | `DeploymentDomainDnsRecordResultV1ProtocolSchema` | value | any |
 | `.` | `DeploymentSourceMaterializationPortV1` | type | daemon |
 | `.` | `DeploymentSourceMaterializationRequestV1` | type | daemon |
 | `.` | `DeploymentSourceMaterializationV1` | type | daemon |
@@ -591,6 +595,8 @@
 | `./actions` | `MachineResourcesActionResultById` | type | any |
 | `./actions` | `MachineRolesActionInputById` | type | any |
 | `./actions` | `MachineRolesActionResultById` | type | any |
+| `./actions` | `MachineScheduledActionInputById` | type | any |
+| `./actions` | `MachineScheduledActionResultById` | type | any |
 | `./actions` | `MachineSetupSourceEntryV1` | type | any |
 | `./actions` | `MachineSetupSourceV1` | type | any |
 | `./actions` | `MachineStorageActionInputById` | type | any |
@@ -1622,7 +1628,10 @@
 | `./errors` | `ActionFailureCauseV1Schema` | value | any |
 | `./errors` | `PluginError` | value | any |
 | `./errors` | `isPluginError` | value | any |
+| `./errors` | `readActionOutputDiagnostic` | value | any |
 | `./errors` | `readUnexpectedActionErrorDiagnosticV1` | value | any |
+| `./errors` | `withActionFailureDiagnostic` | value | any |
+| `./events` | `BackupOutcomeEventV1ProtocolSchema` | value | any |
 | `./events` | `DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1` | value | any |
 | `./events` | `DEPLOYMENT_RECEIPT_EVENT_REFS_V1` | value | any |
 | `./events` | `DeploymentFailedEventV1ProtocolSchema` | value | any |
@@ -1642,7 +1651,10 @@
 | `./events` | `HostEventScopeById` | type | any |
 | `./events` | `HostEventTarget` | type | any |
 | `./events` | `HostEvents` | type | any |
+| `./events` | `MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1` | value | any |
 | `./events` | `MCP_SERVER_CATALOG_ACCOUNT_KEY_V1` | value | any |
+| `./events` | `MachinePressureEventV1ProtocolSchema` | value | any |
+| `./events` | `MachineServiceObservationV1` | type | any |
 | `./events` | `PluginEventAutomationHistoryGapResetActionInputV1` | type | any |
 | `./events` | `PluginEventAutomationHistoryGapResetActionInputV1JsonSchema` | value | any |
 | `./events` | `PluginEventAutomationHistoryGapResetActionInputV1Schema` | value | any |
@@ -1661,6 +1673,7 @@
 | `./events` | `PluginEventSourceConnectionStatusV1` | type | any |
 | `./events` | `PluginEvents` | type | any |
 | `./events` | `admitCheckpointedPluginEventObservationV1` | value | any |
+| `./events` | `admitDurablePushPluginEventObservationV1` | value | any |
 | `./events` | `admitSessionSocketPluginEventObservationV1` | value | any |
 | `./events` | `createPluginEventAutomationSetupResultV1JsonSchema` | value | any |
 | `./events` | `deploymentInProgressStates` | value | any |
@@ -1869,6 +1882,8 @@
 | `./machine-provisioners` | `MachineProvisionerNativeIntentV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerNativeOptionFactsV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerNativeReadOutcomeV1` | type | any |
+| `./machine-provisioners` | `MachineProvisionerNativeStreamResultV1` | type | any |
+| `./machine-provisioners` | `MachineProvisionerNativeStreamResultV1Schema` | value | any |
 | `./machine-provisioners` | `MachineProvisionerObservationV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerObservationV1Schema` | value | any |
 | `./machine-provisioners` | `MachineProvisionerOptionConstraintV1` | type | any |
@@ -1928,6 +1943,7 @@
 | `./machine-provisioners/lima` | `inspectLimaInstance` | value | daemon |
 | `./machine-provisioners/lima` | `limaInstanceField` | value | daemon |
 | `./machine-provisioners/lima` | `limaVersionAtLeast` | value | daemon |
+| `./machine-provisioners/lima` | `openLimaGuestChannel` | value | daemon |
 | `./machine-provisioners/lima` | `parseLimaVersion` | value | daemon |
 | `./machine-provisioners/lima` | `putLimaGuestFile` | value | daemon |
 | `./machine-provisioners/lima` | `runLimaCommand` | value | daemon |
@@ -2140,6 +2156,7 @@
 | `./protocol` | `ProtocolActionApprovalRequestCreatedResultSchema` | value | any |
 | `./protocol` | `ProtocolArrayOptions` | type | any |
 | `./protocol` | `ProtocolArtifactGetOutputV1Schema` | value | any |
+| `./protocol` | `ProtocolAutomationTriggerRevisionV1Schema` | value | any |
 | `./protocol` | `ProtocolCollectionOpaqueCursorV1` | type | any |
 | `./protocol` | `ProtocolCollectionOpaqueCursorV1Schema` | value | any |
 | `./protocol` | `ProtocolComposableSchema` | type | any |
@@ -2646,6 +2663,7 @@
 | `./scm` | `encodeCompareRef` | value | any |
 | `./scm` | `evaluateScmRemoteMutationPolicy` | value | any |
 | `./scm` | `evaluateScmRemoteMutationPreconditions` | value | daemon |
+| `./scm` | `gitlabRepositoryEventSourceInstanceId` | value | any |
 | `./scm` | `hasForbiddenGitRefName` | value | any |
 | `./scm` | `isScmPatchBoundToPath` | value | any |
 | `./scm` | `normalizeScmBranchSourceRef` | value | any |
@@ -3296,7 +3314,7 @@
 | `./testing` | `createPluginActionHandlerUnavailableFixture` | value | any |
 | `./testing` | `createPluginClientTestkit` | value | daemon |
 | `./testing` | `createPluginHttpFixture` | value | daemon |
-| `./testing` | `createPluginTestkit` | value | daemon |
+| `./testing` | `createPluginTestkit` | value | any |
 | `./testing` | `createPluginUiActionControlTestHost` | value | any |
 | `./testing` | `createPluginUiTestkit` | value | daemon |
 | `./testing` | `createSurfaceContextFixture` | value | any |

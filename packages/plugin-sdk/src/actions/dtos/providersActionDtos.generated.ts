@@ -1652,6 +1652,7 @@ export type ProvidersActionInputById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            nativeModelIdPrefix?: string | undefined;
                             managedProviderEndpoint?: undefined | {
                                 provider: {
                                     pluginId: string;

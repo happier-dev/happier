@@ -618,6 +618,28 @@
       "availabilityDisposition": "available"
     },
     {
+      "manifestFamily": "machineRoles",
+      "pluginApiRegistrationFamily": null,
+      "registrationHost": null,
+      "definePluginAuthorKey": "machineRoles",
+      "definePluginInputShape": "descriptor",
+      "definePluginClassification": "descriptor-only",
+      "authorEntrypoint": ".",
+      "realm": "any",
+      "lifecycle": [
+        "declared",
+        "normalized",
+        "projected",
+        "bound",
+        "active",
+        "unavailable",
+        "invalid"
+      ],
+      "catalogDisposition": "retained",
+      "producer": "packages/protocol/src/plugins/contributions/catalog.ts#machineRoles",
+      "availabilityDisposition": "available"
+    },
+    {
       "manifestFamily": "machineSetupPresets",
       "pluginApiRegistrationFamily": null,
       "registrationHost": null,
@@ -2270,8 +2292,16 @@
     {
       "specifier": "./scm/hosting",
       "sourceModule": "src/scm/hosting/index.ts",
-      "realm": "daemon",
+      "realm": "any",
       "producer": "src/scm/hosting/index.ts",
+      "lifecycle": "published",
+      "availabilityDisposition": "available"
+    },
+    {
+      "specifier": "./scm/hosting/runtime",
+      "sourceModule": "src/scm/hosting/runtime/index.ts",
+      "realm": "daemon",
+      "producer": "src/scm/hosting/runtime/index.ts",
       "lifecycle": "published",
       "availabilityDisposition": "available"
     },

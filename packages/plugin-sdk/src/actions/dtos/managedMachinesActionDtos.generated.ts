@@ -14906,6 +14906,8 @@ export type ManagedMachinesActionResultById = {
         } | {
             status: 'unavailable';
             code: string;
+            phase?: string | undefined;
+            requestId?: string | undefined;
             exitCode?: number | undefined;
         };
     };
