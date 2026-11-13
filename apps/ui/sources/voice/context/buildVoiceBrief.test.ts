@@ -89,6 +89,30 @@ function buildBriefFromInboxFixture(input: Parameters<typeof buildVoiceBrief>[0]
 }
 
 describe('Voice brief from the mounted Inbox', () => {
+    it('names explicitly requested Brief work independently of automatic updates at Account scale', () => {
+        const base = source();
+        const original = base.sessionPresentation.readySessions[0]!.session;
+        const candidates = Array.from({ length: 1000 }, (_, index) => buildSessionActivityAttention({
+            session: createSessionFixture({ ...original, id: `brief-${index}`,
+                pendingBlockedCount: index < 8 ? 1 : 0,
+                metadata: { path: '/private/project', summary: { text: index === 0 ? 'Amber' : index === 1 ? 'Silver' : `Work ${index}`, updatedAt: 1 } },
+                viewer: { ...original.viewer!, follow: { follows: false, notificationLevel: null, includeInVoice: false },
+                    attention: { needsAttention: true, reasons: [index < 8 ? 'pending_blocked' : 'failed'],
+                        primary: index < 8 ? 'pending_blocked' : 'failed', presentation: 'full' } },
+            }), nowMs: 1000,
+        }));
+        const inbox = { ...base, sessionPresentation: buildInboxSessionPresentation({ overview: buildActivityOverviewFromCandidates(candidates) }) };
+        const brief = buildBriefFromInboxFixture({ inbox, settings: { voice: { privacy: { shareSessionSummary: true },
+            ui: { updates: { activeSession: 'summaries', otherSessions: 'activity' } } } } });
+        const context = JSON.parse(brief.context);
+        expect(context.counts).toEqual({ needs_you: 8, failed: 992, ready: 0 });
+        expect(context.items.filter((item: { category: string }) => item.category === 'needs_you').map((item: { title: string }) => item.title))
+            .toEqual(['Amber', 'Silver', ...Array.from({ length: 6 }, (_, index) => `Work ${index + 2}`)]);
+        expect(context.remaining).toEqual({ needs_you: 0, failed: 0, ready: 0 });
+        const withheld = JSON.parse(buildBriefFromInboxFixture({ inbox, settings: { voice: { privacy: { shareSessionSummary: false } } } }).context);
+        expect(withheld.items).toEqual([]);
+        expect(withheld.remaining).toEqual(context.counts);
+    });
     it('uses the displayed sidebar membership and total instead of the larger Account Inbox', () => {
         // The sidebar filters three admitted Session requests out of the larger
         // Account Inbox; both projections use their real producers.

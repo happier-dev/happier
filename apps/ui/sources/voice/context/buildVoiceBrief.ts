@@ -1,7 +1,6 @@
 import type { InboxModel } from '@/hooks/inbox/useInboxModel';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
-import { areSessionAddressesEqual } from '@/sync/domains/session/sessionAddress';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { getVoiceContextFormatterPrefs } from './voiceContextPrefs';
 import { formatVoiceApprovalGuidance, summarizeAgentRequestForVoiceHuman } from './contextFormatters';
@@ -11,7 +10,6 @@ import { resolveWorkflowRunDisplayName } from '@/components/workflows/presentati
 import type { WorkflowAttentionSource } from '@/hooks/inbox/useWorkflowAttentionSource';
 import type { AutomationInboxItem } from '@/hooks/inbox/useInboxModel';
 import { buildAgentRequestSemanticSummary, type AgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
-import { resolveVoiceSessionUpdatePolicyV1 } from '@happier-dev/protocol/voice/sourceDisclosureV1';
 import { buildInboxSessionReasonLine } from '@/components/inbox/workGroups/inboxSessionContextLine';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { t } from '@/text';
@@ -50,7 +48,7 @@ function freshnessFacts(source: WorkflowAttentionSource) {
 }
 
 /** Presentation of already-authorized Inbox membership, bounded by its existing source windows. */
-export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; settings: unknown; currentTarget?: SessionAddress | null }>) {
+export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; settings: unknown }>) {
     const { inbox } = input;
     const items: VoiceBriefItem[] = [];
     const shelf = inbox.needsYouShelf;
@@ -62,6 +60,9 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
         needsYouKeys.has(JSON.stringify([kind, serverId, id]));
     const speechByKey = new Map<string, Readonly<{ title?: string; requests?: readonly string[] }>>();
     const privacy = readVoicePrivacySettings(input.settings);
+    // Brief is an explicit request, not an automatic Follow update. The Account
+    // sharing switches still bound disclosure; update frequency does not hide names.
+    const prefs = getVoiceContextFormatterPrefs({ settings: input.settings });
     const safeTitle = (title: string) => privacy.shareFilePaths ? title : redactVoicePathLikeString(title);
     const sessionTitle = (candidate: VoiceBriefSource['sessionPresentation']['readySessions'][number]) => {
         if (!isSessionAwarenessContentReadableV1(candidate.awareness.encryption)) return null;
@@ -96,11 +97,6 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
     const projectSessionSpeech = (candidate: VoiceBriefSource['sessionPresentation']['readySessions'][number], requests: readonly (readonly [AgentRequestKind, string, string, unknown])[] = []) => {
         const address = normalizeSessionAddress(candidate.address?.serverId ?? candidate.serverId, candidate.sessionId);
         if (!address) return;
-        const includeInVoice = candidate.session.viewer?.follow?.includeInVoice === true;
-        const isCurrentAttemptTarget = areSessionAddressesEqual(input.currentTarget, address);
-        if (resolveVoiceSessionUpdatePolicyV1({ accountSettings: input.settings, includeInVoice, isCurrentAttemptTarget }).level === 'none') return;
-        const prefs = getVoiceContextFormatterPrefs({ settings: input.settings, sessionId: address.sessionId, sessionAddress: address,
-            includeInVoice, isCurrentAttemptTarget });
         // The sidebar and Activity already use the Session display-label owner,
         // including first-message and untitled fallbacks. Speech shares that
         // label only within the same Session-summary disclosure policy.
@@ -168,7 +164,7 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
     const freshness = { sessionHomes: inbox.source.sessionListHomeObservationByServerId ?? {}, workflow: freshnessFacts(inbox.workflowAttention), automation: freshnessFacts(inbox.automationAttention) };
     // Provider context is not the navigation model: never serialize route/identity,
     // callbacks or private records from Inbox. Decisions stay with canonical request tools/UI.
-    const approval = formatVoiceApprovalGuidance(getVoiceContextFormatterPrefs({ settings: input.settings }).voiceCanApproveRequests);
+    const approval = formatVoiceApprovalGuidance(prefs.voiceCanApproveRequests);
     const counts = { needs_you: shelf?.count ?? null, failed: 0, ready: 0 };
     let projectedNeedsYou = 0;
     const spokenCounts = { needs_you: 0, failed: 0, ready: 0 };

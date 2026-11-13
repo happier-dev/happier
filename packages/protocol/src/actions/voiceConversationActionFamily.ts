@@ -279,6 +279,7 @@ function createVoiceConversationActionSpecs() {
   bindings: { mcpToolName: id.replaceAll('.', '_'),
     ...(id === VOICE_BRIEF_REQUEST_ACTION_ID_V1 ? { voiceClientToolName: 'requestVoiceBrief' } : {}),
   },
+  ...(id === VOICE_BRIEF_REQUEST_ACTION_ID_V1 ? { prompting: { voiceHotPath: true } } : {}),
   surfaces: { ui: true, voice: id === VOICE_BRIEF_REQUEST_ACTION_ID_V1 || id === 'ui.voice_global.new_conversation' || id === 'ui.voice_global.continue_conversation'
     || id.startsWith('ui.voice_global.conversations.'), agent: true, mcp: true, cli: false, rpc: false },
   inputSchema: VoiceConversationActionInputSchemas[id], outputSchema: VoiceConversationActionOutputSchemas[id],

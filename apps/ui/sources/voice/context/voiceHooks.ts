@@ -355,8 +355,7 @@ export const voiceHooks = {
     if (!sink || !sinkAcceptsHostAuthoredContext(sink, 'session_context')) return false;
     // Re-project at the explicit gesture, so a privacy change since rendering
     // cannot disclose a stale, previously authorized Brief context.
-    const brief = buildVoiceBrief({ inbox, settings: storage.getState().settings,
-      currentTarget: useVoiceTargetStore.getState().primaryActionSessionAddress });
+    const brief = buildVoiceBrief({ inbox, settings: storage.getState().settings });
     // The explicit request owns the visible user turn; its privacy-projected
     // snapshot is provider context, never the person's words or a Follow update.
     sink.sendTextMessage(controlSessionId, t('voiceMoments.briefMe'), `INBOX BRIEF\n\n${brief.context}\n\nBrief me on the current sidebar's needs-you work, then known Inbox failures and ready work, regardless of the bound Session. Answer directly from this snapshot without discovery or more reads. counts.needs_you is the displayed sidebar's total; null means that shelf is unavailable, never zero. Grouped entries use the Session labels shown in the app, within the sharing policy. For each category, remaining is the exact number not represented in those groups: use the plain remainder phrase "and N more". Do not describe those Sessions as unnamed or invent titles, requests or reasons. Failure and ready counts cover the known projected Inbox entries. Use the supplied totals even when individual details are unavailable. Lead with the known outcome and briefly mention incomplete coverage. Do not claim caught up unless caughtUp is true. Follow the approval guidance in this Brief.`);

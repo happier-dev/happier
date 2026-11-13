@@ -7041,7 +7041,8 @@ dismissal and reads are direct by default. The current attempt read
 reports captured destinations and actual availability, rather than promising
 that an unsupported host can start Voice. Brief delivery remains demand-mounted
 on the ready Home/Inbox surface; missing owners return typed unavailability.
-The native Voice tool `requestVoiceBrief` exposes the existing
+For a spoken briefing, Voice guidance selects `requestVoiceBrief` rather than
+the broader Account `inbox_get` read. The native Voice tool exposes the existing
 `ui.voice_global.brief.request` Action with its catalog-owned input schema. It
 uses that same approval, mounted Home/Inbox and delivery path; `invokeAction`
 remains for contributed plugin Actions. A malformed native or legacy text Action
@@ -7051,8 +7052,10 @@ In 0.3 development, Brief needs-you membership and totals come from the current
 sidebar's retained Needs-you shelf, including its scope and filters, rather than
 the Account Inbox's attention history. An unavailable shelf is unknown, never
 zero. Missing individual details are reported as incomplete coverage rather
-than reducing that total. Spoken groups contain only disclosed, authored names;
-the snapshot supplies the exact remaining count for “and N more” instead of
+than reducing that total. Spoken groups use the app's disclosed Session labels,
+including its fallback labels. An explicit Brief uses the Account content-sharing
+switches; automatic Follow update levels do not suppress its requested names.
+The snapshot supplies the exact remaining count for “and N more” instead of
 inventing unnamed requests or reasons. Failures and ready work remain known
 projected Inbox entries. An admitted Brief request leaves its spoken answer with the
 mounted Brief delivery owner, including while Home demand-mounts Inbox, so the

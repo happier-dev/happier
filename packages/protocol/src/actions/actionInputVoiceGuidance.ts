@@ -1,6 +1,7 @@
 import type { ActionInputFieldHint, ActionSpec } from './actionSpecs.js';
 import type { ActionInputPredicate } from './actionInputPredicates.js';
 import { APPROVAL_REQUEST_LIST_ACTION_ID_V1, INBOX_GET_ACTION_ID_V1 } from './actionIds.js';
+import { VOICE_BRIEF_REQUEST_ACTION_ID_V1 } from './voiceConversationActionIdsV1.js';
 
 type VoiceGuidanceNote = Readonly<{
   text: string;
@@ -174,8 +175,12 @@ const WORKFLOW_NOTES_BY_ACTION_ID: Readonly<Record<string, readonly VoiceGuidanc
     text: 'For Happier preferences, use settings_list to discover the displayed setting and its exact anchor, then settings_get to read it. Use settings_set for a writable value or settings_invoke for a declared operation. Perform these through Happier tools rather than forwarding the request to a coding session',
     requiresActionIds: ['settings.list', 'settings.get', 'settings.set', 'settings.invoke'],
   }],
+  [VOICE_BRIEF_REQUEST_ACTION_ID_V1]: [{
+    text: 'For a briefing about what needs attention, use requestVoiceBrief. Its mounted Brief owner supplies the current sidebar names, total and exact remainder and delivers the spoken answer. Do not substitute Account Inbox totals or speak a second summary',
+    requiresActionIds: [VOICE_BRIEF_REQUEST_ACTION_ID_V1],
+  }],
   'inbox.get': [{
-    text: 'For a briefing or a broad question about what needs attention, use inbox_get to read the canonical Account Inbox. Summarize its returned work and coverage',
+    text: 'For an Account Inbox read, use inbox_get. Its Account-wide work and coverage are broader than the current sidebar Needs-you shelf; do not present its item or approval counts as that shelf total',
     requiresActionIds: [INBOX_GET_ACTION_ID_V1],
   }, {
     text: 'approval_request_list covers Account approval requests only, not the whole Inbox',

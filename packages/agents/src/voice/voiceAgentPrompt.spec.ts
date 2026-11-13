@@ -47,6 +47,7 @@ describe('voiceAgentPrompt', () => {
       expect(prompt).toContain('acknowledge the actual outcome in one short sentence');
       expect(prompt).toContain('Do not perform the requested coding task in the Voice carrier');
       expect(prompt).toContain('Do not inspect files, run shell commands, or read environment variables to discover Inbox work');
+      expect(prompt).toContain('For a spoken "brief me", use the canonical sidebar Brief Action');
     }
     expect(buildLocalVoiceAgentSystemPrompt()).toContain('Do not look them up with native ToolSearch.');
   });
@@ -154,14 +155,14 @@ describe('voiceAgentPrompt', () => {
       digest: createHash('sha256').update(rendered, 'utf8').digest('hex'),
     }).toEqual({
       id: 'happier.global_voice_agent',
-      revision: 9,
+      revision: 10,
       blockIds: [
         'voice.global_agent.identity',
         'voice.global_agent.authority',
         'voice.global_agent.custody',
         'voice.global_agent.results',
       ],
-      digest: '51bd683842288edf6270fd8650f5bbc81deeaea91ee39c66237adbc4456129c5',
+      digest: '6a0784073f6d6aa7efb0c4bcc4704a316cab15a26607cb2be5245799180bfb40',
     });
 
     expect(rendered).toContain("Happier's global Voice agent");

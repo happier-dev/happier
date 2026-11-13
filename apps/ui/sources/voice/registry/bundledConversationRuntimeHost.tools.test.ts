@@ -238,7 +238,9 @@ describe('bundled Conversation runtime host tool projection', () => {
         welcome: { enabled: false, mode: 'immediate' },
       });
       expect(policy.instructions).toMatch(/^- inbox_get: /m);
-      expect(policy.instructions).toContain('For a briefing or a broad question about what needs attention, use inbox_get');
+      expect(tools.some(tool => tool.name === 'requestVoiceBrief')).toBe(true);
+      expect(policy.instructions).toContain('For a briefing about what needs attention, use requestVoiceBrief');
+      expect(policy.instructions).not.toContain('For a briefing or a broad question about what needs attention, use inbox_get');
       expect(policy.instructions).toContain('approval_request_list covers Account approval requests only');
     } finally {
       lease.revoke();
