@@ -103,6 +103,52 @@ For the surrounding launch flow, see [Start a new session](/sessions/start-a-ses
 When starting from a project or an existing Session, also see [New session
 shortcuts](/sessions/new-session-shortcuts).
 
+## Machine roles
+
+<Callout type="info">
+  **Development only:** Machine roles are unreleased 0.3 source. Stable and
+  preview Machines run every role, as they always have.
+</Callout>
+
+Each Machine runs a set of roles. You choose them under **Security → Roles** on
+the Machine page, or with `happier machines roles list|get|set`:
+
+| Role | What it runs |
+| --- | --- |
+| Sessions | Starts and hosts sessions, workflows and delegated runs |
+| Credential broker | Lends connected provider accounts to your other machines |
+| Work intake | Channels, webhooks and triggers that start work |
+| Deployments | Deployments, local services and backups |
+| Workspaces | Workspace sync and project jobs |
+| Relay | Peer connections, service exports and SSH tunnels |
+| Memory | Indexing sessions for memory search |
+| Voice | Local voice models |
+| Local tools | Browser, computer use, simulators and process tools |
+
+- A Machine with no saved roles runs all of them. Existing Machines need no change.
+- New managed Machines start with a set that fits them: a server runs Sessions,
+  Credential broker, Workspaces and Relay; a deploy target runs Deployments and
+  Sessions; a sandbox runs Sessions. You can turn any role on later.
+- Work for a role that is off is refused by that Machine with
+  `machine_role_inactive`, and Happier does not pick that Machine for it. A Machine
+  with Sessions off is never the default for a new session.
+- Turning Sessions off lets running sessions finish; new ones are refused.
+- Turning Local tools off stops the managed browser, simulator preview and computer
+  use on that Machine right away, and deletes the browser profiles that belonged to
+  sessions or were temporary; they start again when you turn the role back on.
+- Turning Credential broker off stops lending that Machine's accounts right away,
+  and Happier stops sending brokered requests to it.
+- Turning Work intake off stops channel intake on that Machine right away: the
+  Channels, Discord and Slack supervisors stop receiving and delivering conversation
+  messages there. Alerts and channel actions still work. Turning it back on starts
+  them again without restarting the daemon. Plugins list the parts they add to a
+  role under that role.
+- Only the Machine's owner or an administrator can change roles. Agents need your
+  approval.
+- Plugins can add roles, or add their work to a built-in role. Channels run as part
+  of Work intake, Machine services as part of Deployments, and the CLIProxyAPI
+  gateway as part of Credential broker.
+
 ## Embedded terminal support
 
 The in-app embedded terminal also depends on the background service.

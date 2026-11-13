@@ -25,6 +25,8 @@ import {
   type PluginRuntimeMachineAdmissionTransport,
 } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { getResolvedContributionRegistry, readCurrentBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/snapshot';
+import { applyMachineRoleAdmission } from '@/plugins/projection/registry/builtIn/machineRoles';
+import { arePluginEnablementsEqual } from '@/plugins/projection/registry/builtIn/enablement';
 import {
   createPluginRegistryStateStore,
   type PluginRegistryAvailabilityInventory,
@@ -105,6 +107,8 @@ export type DaemonPluginRuntimeOwner = Readonly<{
   initialize: () => Promise<void>;
   /** Replays the exact current install-registry snapshot after transport recovery. */
   reportCurrentAvailability: () => Promise<void>;
+  /** Republishes only the plugins whose Machine-role admission changed (no restart). */
+  refreshMachineRoleAdmission: () => Promise<void>;
   readCatalog: () => ReturnType<typeof readCurrentDaemonPluginCatalog>;
   hardRevokeRunningSessionsForGenerationIntegrityFailure: (
     input: Readonly<{
@@ -1090,6 +1094,18 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       await developmentRoots.initialize();
     },
     reportCurrentAvailability,
+    /**
+     * The Machine role set changed: republish only the plugins whose role admission changed,
+     * through the same admission refresh an Account enablement change uses (no restart).
+     */
+    async refreshMachineRoleAdmission() {
+      const contributes = params.reloadController.getState().activeRegistry?.contributes;
+      const current = contributes?.pluginEnablementById;
+      if (!current) return;
+      const next = applyMachineRoleAdmission({ pluginEnablementById: current, machineRoles: contributes.machineRoles ?? [] });
+      const changedPluginIds = Object.keys(next).filter(pluginId => !arePluginEnablementsEqual(current[pluginId], next[pluginId]));
+      if (changedPluginIds.length > 0) await stateStore.refreshRuntime(changedPluginIds);
+    },
     readCatalog: async () => await readCurrentDaemonPluginCatalog({
       happyHomeDir: params.happyHomeDir,
       reloadController: params.reloadController,

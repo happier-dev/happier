@@ -160,6 +160,7 @@ import {
 import {
     collectActivationTargets,
     deriveActivationTargetRegistrationRights,
+    isAutomaticActivationSuppressedByMachineRoles,
     type ActivationTarget,
 } from './lifecycle/activation/targets';
 import {
@@ -8113,7 +8114,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
         if (params?.accountExecution || !declaredEventSubscriptionsPublished || !consumerAssembly.isOccurrenceCurrent()) return;
         configurationActivationStart ??= (async () => {
             configurationActivationObserver = await observePluginConfigurationActivation({
-                targets: activationTargets,
+                // A plugin whose continuous work all belongs to Machine roles that are off is not
+                // activated by configuration; demand (Actions, notifications) still activates it.
+                targets: activationTargets.filter(target => !isAutomaticActivationSuppressedByMachineRoles(target)),
                 accountStorage: accountStorageHost,
                 readAutomationEventSourceDemand: readConfiguredAutomationEventSourceDemand,
                 subscribeAutomationEventSources(listener) {

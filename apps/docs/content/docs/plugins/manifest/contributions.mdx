@@ -17,6 +17,7 @@ description: Contribution families that a plugin can declare for projection and 
 | `providers` | Model-provider declarations, catalogs, connection facts, and an optional cold managed-runtime facet | ordinary Providers are descriptor-only; a managed Provider uses `providers.<id>.runtime` |
 | `connectedAccountDescriptors` | A plugin-produced account service and authentication modes | `connectedAccountDescriptors.<id>.runtime` |
 | `backgroundServices` | Daemon-occurrence background work | `backgroundServices[].runner` |
+| `machineRoles` | A Machine role this plugin adds, or (`partOf`) the built-in role its daemon work belongs to, with the background services that run only while that role is on (0.3 development source) | descriptor-only: `machineRoles.<id>` with `title`, `description`, optional `partOf`, `requires`, `backgroundServices`, `defaultActive` |
 | `secretSources` | Live external Saved Secret acquisition, metadata listing and vault storage (0.3 development source) | `secretSources.<id>.declaration` and `.runtime.acquire(input, context)`, with optional `.list` and `.store`; see [Secrets service](/plugins/services/secrets#external-secret-sources-03-development). |
 | `projectNativeAdapters` | Native project detection, commands, environments and existing-service lifecycle | `projectNativeAdapters.<id>.runtime`; declare the matching roles. Development `nativeServiceLifecycle` provides inspect, stop and [bounded log reads and watch callbacks](/plugins/guides/background-services#read-bounded-native-logs-in-development), plus optional [discovery, Start/Restart and accounting callbacks](/plugins/guides/background-services#control-an-existing-native-service-in-development). Their Machine consumers are still under integration. |
 | `scmHostingProviders` | Remote forge and hosting-service integration | `scmHostingProviders.<id>.runtime` |
@@ -77,6 +78,38 @@ Do not infer availability from this shape catalog. Consult the generated matrix
 for each family's source availability, optional maintained consumer evidence,
 unblock condition, loaded-platform evidence, and release availability. This keeps
 mutable support status in one generated owner rather than duplicating it here.
+
+## Machine roles (0.3 development source)
+
+A Machine owner chooses which roles each Machine runs (see [Machine roles](/apps/daemon#machine-roles)).
+Declare `machineRoles` when your plugin's daemon work belongs to a role, so it runs only where the
+owner wants it:
+
+```ts
+definePlugin({
+  // ...
+  machineRoles: {
+    intake: {
+      title: 'Discord Channels',
+      description: 'Discord gateway ingress on this Machine.',
+      partOf: 'intake',
+      backgroundServices: ['gateway-supervisor'],
+    },
+  },
+  backgroundServices: [{ declaration: { id: 'gateway-supervisor', title: 'Gateway supervisor' }, runner }],
+});
+```
+
+- `partOf` names a built-in role (`sessions`, `broker`, `intake`, `deployments`, `workspaces`,
+  `relay`, `memory`, `voice`, `devices`). Your entry follows that role's switch and gets none of
+  its own. Without `partOf`, the entry is a new role `<pluginId>/<id>` with its own switch, off
+  unless `defaultActive: true`, and on only while its `requires` roles are on.
+- While a role is off on a Machine, the background services it lists never start there, and they
+  no longer make Happier load your daemon entry at startup or on configuration. Everything else
+  keeps working: an Action, a notification send or another demand still loads your entry and runs.
+- List only the services that belong to the role. Work that must run everywhere stays outside it.
+- Turning the role on or off applies on the running daemon. Off stops the listed services through
+  their normal abort signal; on starts them again through your usual activation trigger.
 
 ## Bot templates (0.3 development source)
 

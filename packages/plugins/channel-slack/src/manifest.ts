@@ -140,6 +140,9 @@ function createSlackPlugin() {
       'connections-invalidated-v1': { declaration: { kind: 'subscription', target: { kind: 'plugin',
         event: { pluginId: 'happier.channels', localId: 'connections-invalidated-v1' } } }, handler: () => supervisor?.invalidateConnections() },
     },
+    // Machine roles (P03-MACHINE-ROLES §4.4): the Socket Mode supervisor is part of Work intake.
+    machineRoles: { intake: { title: 'Slack Channels', description: 'Slack Socket Mode ingress on this Machine.', partOf: 'intake',
+      backgroundServices: [SLACK_SOCKET_BACKGROUND_SERVICE_ID] } },
     backgroundServices: [{ declaration: { id: SLACK_SOCKET_BACKGROUND_SERVICE_ID, title: 'Slack Socket Mode supervisor' }, runner: context => current().run(context) }],
     contributesTo: { 'happier.channels': { providers: { [SLACK_CHANNEL_PROVIDER_CONTRIBUTION_ID]: protocol.contribute({ descriptor: { v: 1, displayName: 'Slack' }, operations: {
       setup: roles.setup.bind(SLACK_CHANNEL_ACTION_IDS.setup), notificationDestinationSetup: roles.notificationDestinationSetup.bind(SLACK_CHANNEL_ACTION_IDS.notificationSetup),

@@ -3,6 +3,7 @@ import { createResolvedContributionRegistry } from '../createResolvedContributio
 import { resolveBuiltInContributions } from '../resolveBuiltInContributions';
 import type { ResolvedContributionRegistry, ResolvedPluginEnablement, UnavailableAgentPlugin } from '../types';
 import { resolveBundledPluginEnablement } from './enablement';
+import { applyMachineRoleAdmission } from './machineRoles';
 import { BUNDLED_FIRST_PARTY_PLUGIN_METADATA } from '../sources/generatedBundledPluginManifests';
 import type { AccountPluginDataStorageHostDependencies } from '@/plugins/runtime/context/accountPluginDataStorage';
 import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from '../sources/generatedBundledPlugins';
@@ -79,6 +80,9 @@ export function getResolvedContributionRegistry(params?: Readonly<{
     });
   }
   const declarations = createResolvedContributionRegistry(resolveBuiltInContributions(params));
+  // Machine roles need the admitted declarations, so they join the fact after admission.
+  const pluginEnablementById = applyMachineRoleAdmission({ pluginEnablementById: params.pluginEnablementById,
+    machineRoles: declarations.machineRoles ?? [] });
   const unavailableAgentPluginsByBackendId: Record<string, UnavailableAgentPlugin> = {};
   const definitions = new Map(getAllAgentDefinitionContracts().map(definition => [definition.id, definition]));
   for (const binding of BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS) {
@@ -91,7 +95,7 @@ export function getResolvedContributionRegistry(params?: Readonly<{
       unavailableAgentPluginsByBackendId[backendId] = unavailable;
     }
   }
-  return Object.freeze({ ...declarations, pluginEnablementById: params.pluginEnablementById,
+  return Object.freeze({ ...declarations, pluginEnablementById,
     unavailableAgentPluginsByBackendId: Object.freeze(unavailableAgentPluginsByBackendId) });
 }
 

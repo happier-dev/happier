@@ -804,6 +804,13 @@ export type ResolvedPluginEnablement = Readonly<{
     unavailableCode?: 'plugin_account_execution_unavailable' | 'plugin_account_census_failed';
     unavailableCause?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionFailureCauseV1;
     unavailableRequestId?: string;
+    /**
+     * The plugin's qualified `machineRoles` ids that are off on this Machine. The plugin
+     * stays admitted and serves demanded work (Actions, notifications); the activation
+     * owner never starts those roles' background services and does not activate the
+     * plugin automatically (startup or configuration) for them.
+     */
+    inactiveMachineRoleIds?: readonly string[];
 }>;
 
 export type UnavailableAgentPlugin = ResolvedPluginEnablement & Readonly<{

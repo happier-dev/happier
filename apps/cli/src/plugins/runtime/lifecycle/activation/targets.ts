@@ -65,7 +65,25 @@ const PRODUCT_DEMAND_READY_REGISTRATION_FAMILIES = new Set([
 export type ActivationTarget = ResolvedActivationTarget & Readonly<{
     /** Static declaration rights admitted with this exact daemon/Account artifact target. */
     registrationRights: ReturnType<typeof deriveActivationTargetRegistrationRights>;
+    /**
+     * Background services listed by this plugin's `machineRoles` entries whose role is off on this
+     * Machine (from the admission fact `inactiveMachineRoleIds`). They never start, and they are no
+     * reason to activate the target automatically; Actions and other demanded work still activate it.
+     */
+    inactiveRoleBackgroundServiceIds: ReadonlySet<string>;
 }>;
+
+function readInactiveRoleBackgroundServiceIds(
+    target: Pick<ResolvedActivationTarget, 'pluginId' | 'manifest'>,
+    inactiveMachineRoleIds: readonly string[] | undefined,
+): ReadonlySet<string> {
+    if (!inactiveMachineRoleIds?.length) return EMPTY_SERVICE_IDS;
+    const inactive = new Set(inactiveMachineRoleIds);
+    return new Set((target.manifest.contributes.machineRoles ?? [])
+        .filter(role => inactive.has(`${target.pluginId}/${role.id}`))
+        .flatMap(role => role.backgroundServices ?? []));
+}
+const EMPTY_SERVICE_IDS: ReadonlySet<string> = new Set();
 
 export function addActivationTarget(targets: Map<string, ActivationTarget>, raw: Readonly<{
     provenance?: ResolvedContributionProvenance;
@@ -79,7 +97,7 @@ export function addActivationTarget(targets: Map<string, ActivationTarget>, raw:
     manifest?: ActivationTarget['manifest'];
     account?: ActivationTarget['account'];
     pluginRootPath?: string;
-}>): void {
+}>, inactiveMachineRoleIds?: readonly string[]): void {
     if (!raw.pluginId || !raw.manifestPath
         || (!raw.daemonEntryPath && !raw.devDaemonEntryPath && !raw.account) || !raw.sourceSpec || !raw.manifest) {
         return;
@@ -103,10 +121,19 @@ export function addActivationTarget(targets: Map<string, ActivationTarget>, raw:
         ...(raw.pluginRootPath ? { pluginRootPath: raw.pluginRootPath } : {}),
         ...(raw.activationEvents ? { activationEvents: raw.activationEvents } : {}),
     };
-    targets.set(key, Object.freeze({
+    targets.set(key, projectActivationTarget(target, inactiveMachineRoleIds));
+}
+
+/** The one projection from a resolved target to its admitted activation facts. */
+export function projectActivationTarget(
+    target: ResolvedActivationTarget,
+    inactiveMachineRoleIds?: readonly string[],
+): ActivationTarget {
+    return Object.freeze({
         ...target,
         registrationRights: deriveActivationTargetRegistrationRights(target),
-    }));
+        inactiveRoleBackgroundServiceIds: readInactiveRoleBackgroundServiceIds(target, inactiveMachineRoleIds),
+    });
 }
 
 export function collectActivationTargets(contributes: ResolvedContributionRegistry, realm?: 'account'): readonly ActivationTarget[] {
@@ -124,14 +151,15 @@ export function collectActivationTargets(contributes: ResolvedContributionRegist
         }
         return Object.freeze([...targets.values()]);
     }
+    const roles = (pluginId: string | undefined) => pluginId ? contributes.pluginEnablementById?.[pluginId]?.inactiveMachineRoleIds : undefined;
     for (const target of contributes.activationTargets) {
-        addActivationTarget(targets, target);
+        addActivationTarget(targets, target, roles(target.pluginId));
     }
     for (const agent of contributes.agents) {
-        addActivationTarget(targets, agent);
+        addActivationTarget(targets, agent, roles(agent.pluginId));
     }
     for (const action of contributes.actions) {
-        addActivationTarget(targets, action);
+        addActivationTarget(targets, action, roles(action.pluginId));
     }
     return Object.freeze([...targets.values()]);
 }
@@ -142,6 +170,7 @@ export function shouldActivateTargetAtStartup(target: ActivationTarget): boolean
     // The canonical configuration consumer checks admitted Account presence
     // and subscribes to its existing push owner before demanding this target.
     if (target.manifest.activation?.configuration) return false;
+    const inactiveServices = target.inactiveRoleBackgroundServiceIds;
     const registrationRights = target.registrationRights;
     if (registrationRights.length === 0) return false;
 
@@ -151,9 +180,23 @@ export function shouldActivateTargetAtStartup(target: ActivationTarget): boolean
     // still read synchronously today.
     return registrationRights.some((right) => (
         right.family === 'backgroundServices'
-            ? target.manifest.contributes.backgroundServices.some((service) => service.id === right.localId && service.activation !== 'demand')
+            ? target.manifest.contributes.backgroundServices.some((service) => service.id === right.localId && service.activation !== 'demand'
+                && !inactiveServices.has(service.id))
             : !PRODUCT_DEMAND_READY_REGISTRATION_FAMILIES.has(right.family)
     ));
+}
+
+/**
+ * Machine roles (P03-MACHINE-ROLES §4.2): a target whose automatic activation exists only for
+ * background services of roles that are off is not activated automatically (startup, reload of a
+ * changed plugin, configuration demand). Demanded work (Actions, notifications) still activates it.
+ */
+export function isAutomaticActivationSuppressedByMachineRoles(target: ActivationTarget): boolean {
+    const inactive = target.inactiveRoleBackgroundServiceIds;
+    if (inactive.size === 0) return false;
+    if (!target.manifest.activation?.configuration) return !shouldActivateTargetAtStartup(target);
+    const services = target.manifest.contributes.backgroundServices;
+    return services.length > 0 && services.every(service => inactive.has(service.id));
 }
 
 export function deriveActivationTargetRegistrationRights(target: Pick<ResolvedActivationTarget, 'manifest' | 'account'>) {

@@ -1,4 +1,4 @@
-import { projectMachineRolesListV1, readMachineRolesSnapshotFromMetadataV1, type MachineRolesGetResultV1, type MachineRolesListResultV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
+import { projectMachineRolesListV1, readMachineRolesSnapshotFromMetadataV1, readPublishedPluginMachineRolesV1, type MachineRolesGetResultV1, type MachineRolesListResultV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { MachineContentKeyUnavailableError } from './machineDataEncryptionKey';
 import type { Machine } from '../types';
 
@@ -16,5 +16,7 @@ export async function readMachineRolesSnapshot(dependencies: Readonly<{
   }
   if (!machine || machine.id !== dependencies.machineId || !await dependencies.isCurrent()) return { status: 'unavailable' };
   const snapshot = { metadata: machine.metadata, metadataVersion: machine.metadataVersion };
-  return dependencies.actionId === 'machines.roles.list' ? projectMachineRolesListV1(snapshot) : readMachineRolesSnapshotFromMetadataV1(snapshot);
+  return dependencies.actionId === 'machines.roles.list'
+    ? projectMachineRolesListV1({ ...snapshot, plugins: readPublishedPluginMachineRolesV1(machine.daemonState) })
+    : readMachineRolesSnapshotFromMetadataV1(snapshot);
 }

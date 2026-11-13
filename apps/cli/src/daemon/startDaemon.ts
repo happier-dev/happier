@@ -1168,7 +1168,7 @@ export async function startDaemon(
     const releaseManagedActivityRegistryEdges = pluginReloadController.subscribe(() => serviceActivity.notifyChanged());
     // The Roles catalog: plugin role declarations this Machine admitted, published once per real
     // change (and once per Machine connection) for the Account-side `machines.roles.list`.
-    let publishedPluginMachineRoles: Readonly<{ target: NonNullable<typeof apiMachine>; key: string }> | null = null;
+    let publishedPluginMachineRoles: Readonly<{ target: ApiMachineClient; key: string }> | null = null;
     const publishPluginMachineRoles = (): void => {
       const target = apiMachine;
       if (!target || admissionDrain.isPublicationQuiescing()) return;

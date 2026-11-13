@@ -14,6 +14,11 @@ import { logger } from '@/ui/logger';
 export type MachineRolesRuntime = Readonly<{
   read: () => MachineRolesGetResultV1;
   activeRoles: () => ReadonlySet<string>;
+  /**
+   * The applied set as the metadata shape `resolveActiveMachineRolesV1` reads (no field = the
+   * default). Plugin admission resolves its own `machineRoles` against it with the same function.
+   */
+  appliedMetadata: () => Readonly<{ rolesV1?: unknown }>;
   isActive: (roleId: string) => boolean;
   subscribe: (listener: () => void) => () => void;
   reload: () => Promise<void>;
@@ -71,6 +76,7 @@ export function createMachineRolesRuntime(dependencies: Readonly<{
   return {
     read: () => snapshot,
     activeRoles: () => active,
+    appliedMetadata: () => applied,
     isActive: roleId => active.has(roleId),
     subscribe(listener) {
       if (!stopped) listeners.add(listener);

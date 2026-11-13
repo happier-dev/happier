@@ -433,6 +433,9 @@ function createDiscordPlugin() {
       },
     },
   },
+  // Machine roles (P03-MACHINE-ROLES §4.4): the gateway supervisor is part of Work intake.
+  machineRoles: { intake: { title: 'Discord Channels', description: 'Discord gateway ingress on this Machine.', partOf: 'intake',
+    backgroundServices: [DISCORD_GATEWAY_BACKGROUND_SERVICE_ID] } },
   backgroundServices: [{
     declaration: {
       id: DISCORD_GATEWAY_BACKGROUND_SERVICE_ID,

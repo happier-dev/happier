@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { resolveBundledPluginEnablement } from './enablement';
 import { getResolvedContributionRegistry } from './snapshot';
+import { bindMachineRoleAdmission } from './machineRoles';
 
 describe('bundled plugin admission enablement', () => {
     it('defaults on, combines Account and Machine intent once, and restores declarations on re-enable', () => {
@@ -35,6 +36,29 @@ describe('bundled plugin admission enablement', () => {
         for (const pluginId of ids) expect(restored.pluginDeclarations?.some(plugin => plugin.pluginId === pluginId)).toBe(true);
         expect(restored.unavailableAgentPluginsByBackendId).toEqual({});
         expect(resolveBundledPluginEnablement({ pluginIds: ['default'] }).default).toEqual({ accountEnabled: true, machineEnabled: true, enabled: true });
+    });
+
+    it('keeps a role-gated plugin admitted but marks its roles inactive while its Machine role is off', () => {
+        const ids = ['happier.channels', 'happier.agent.codex'];
+        let applied: unknown = {};
+        const release = bindMachineRoleAdmission(() => applied);
+        try {
+            const admitted = () => getResolvedContributionRegistry({ pluginEnablementById: resolveBundledPluginEnablement({ pluginIds: ids }) });
+            // Missing field = every core role, so the Channels part of Work intake is on.
+            expect(admitted().pluginEnablementById?.['happier.channels']?.inactiveMachineRoleIds).toBeUndefined();
+            applied = { rolesV1: { active: ['sessions', 'broker'] } };
+            const off = admitted();
+            expect(off.pluginEnablementById?.['happier.channels']).toEqual({ accountEnabled: true, machineEnabled: true, enabled: true,
+                inactiveMachineRoleIds: ['happier.channels/intake'] });
+            // The summary declaration still shows the role; only activation is refused.
+            expect(off.machineRoles?.some(role => role.pluginId === 'happier.channels' && role.definition.partOf === 'intake')).toBe(true);
+            expect(off.pluginDeclarations?.some(plugin => plugin.pluginId === 'happier.channels')).toBe(true);
+            expect(off.pluginEnablementById?.['happier.agent.codex']?.inactiveMachineRoleIds).toBeUndefined();
+            applied = { rolesV1: { active: ['intake'] } };
+            expect(admitted().pluginEnablementById?.['happier.channels']?.inactiveMachineRoleIds).toBeUndefined();
+        } finally {
+            release();
+        }
     });
 
     it('reads each scope once per admission and shares the result across consumers', () => {

@@ -52,6 +52,7 @@ import {
     type PluginContributionActivationDemand,
     collectActivationTargets,
     shouldActivateTargetAtStartup,
+    isAutomaticActivationSuppressedByMachineRoles,
     activationTargetMatchesContributionDemand,
 } from './activation/targets';
 import { resolveActivationSource } from './activation/source';
@@ -299,14 +300,17 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         }
     }
     if (params.adoptActivationComponent && !params.activationComponentMode) {
+        const startupTargets = collectActivationTargets(params.contributes, params.executionRealm);
         const requestedPluginIds = params.pluginIds === undefined
             ? [
-                ...collectActivationTargets(params.contributes, params.executionRealm)
+                ...startupTargets
                     .filter(shouldActivateTargetAtStartup)
                     .map((target) => target.pluginId),
                 ...(params.activationAdmissionFailuresByPluginId?.keys() ?? []),
             ]
-            : params.pluginIds;
+            // A changed plugin is re-activated on reload unless its only automatic work is off.
+            : params.pluginIds.filter(pluginId => !startupTargets.some(target => (
+                target.pluginId === pluginId && isAutomaticActivationSuppressedByMachineRoles(target))));
         const componentRegistries: ActivatedPluginRuntimeRegistry[] = [];
         for (const pluginId of [...new Set(requestedPluginIds)].sort()) {
             if (retainedOccurrencePluginIds.has(pluginId)) continue;
@@ -643,6 +647,9 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             );
         }
         const target = activationTargets.find((candidate) => candidate.pluginId === entry.pluginId);
+        // Machine roles (P03-MACHINE-ROLES §4.2): a service of a role that is off on this Machine
+        // never runs; the rest of the plugin (Actions, notifications) keeps serving.
+        if (target?.inactiveRoleBackgroundServiceIds.has(entry.registration.localId)) return [];
         const declaration = target?.manifest.contributes.backgroundServices.find((service) => (
             service.id === entry.registration.localId
         ));
