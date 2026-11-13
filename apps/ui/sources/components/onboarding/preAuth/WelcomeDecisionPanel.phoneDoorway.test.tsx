@@ -40,8 +40,10 @@ await import('./WelcomeDecisionPanel');
 
 function renderPanel() {
     const onOpenRestore = vi.fn();
+    const onConnectHomeDirectly = vi.fn();
     return {
         onOpenRestore,
+        onConnectHomeDirectly,
         screenPromise: (async () => {
             const { WelcomeDecisionPanel } = await import('./WelcomeDecisionPanel');
             return await renderScreen(
@@ -50,6 +52,7 @@ function renderPanel() {
                     canScanQr
                     onOpenRestore={onOpenRestore}
                     onChangeRelay={() => {}}
+                    onConnectHomeDirectly={onConnectHomeDirectly}
                 />,
             );
         })(),
@@ -75,16 +78,16 @@ describe('WelcomeDecisionPanel on a phone (the Homes doorway)', () => {
         await screen.unmount();
     });
 
-    it('opens each way in as its own sheet', async () => {
-        const { screenPromise } = renderPanel();
+    it('continues to a Home directly as a welcome step, and opens the service ways as sheets', async () => {
+        const { screenPromise, onConnectHomeDirectly } = renderPanel();
         const screen = await screenPromise;
+        // Owner 11-13: connecting to a Home directly is a step of the welcome, not a sheet over it.
         await screen.pressByTestIdAsync('welcome-doorway-direct');
-        expect(spies.show).toHaveBeenCalledWith(expect.objectContaining({
-            props: { initialPath: 'direct' },
-            chrome: expect.objectContaining({ testID: 'already-use-happier-sheet' }),
-        }));
+        expect(onConnectHomeDirectly).toHaveBeenCalledOnce();
+        expect(spies.show).not.toHaveBeenCalled();
         await screen.pressByTestIdAsync('welcome-doorway-change-service');
-        expect(spies.show).toHaveBeenLastCalledWith(expect.objectContaining({ props: { initialPath: 'other_service' } }));
+        expect(spies.show).toHaveBeenLastCalledWith(expect.objectContaining({ props: { initialPath: 'other_service' },
+            chrome: expect.objectContaining({ testID: 'already-use-happier-sheet' }) }));
         await screen.unmount();
     });
 

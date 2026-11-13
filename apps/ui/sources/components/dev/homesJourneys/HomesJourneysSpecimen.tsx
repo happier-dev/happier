@@ -106,7 +106,7 @@ function FrameBody(props: Readonly<{ frame: Frame }>) {
             return (
                 <View style={styles.phoneDoorway}>
                     <WelcomeActionList admission={IMMEDIATE_ADMISSION}>
-                        <PhoneWelcomeDoorway canScanQr onScan={noop} />
+                        <PhoneWelcomeDoorway canScanQr onScan={noop} onConnectDirectly={noop} />
                     </WelcomeActionList>
                 </View>
             );

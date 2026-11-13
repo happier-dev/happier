@@ -30,6 +30,29 @@ export type UnauthenticatedStepProps = Readonly<{
  * terminal and Team routes — composes through this so a step changes what sits in the pane and
  * never where it starts or how its heading reads.
  */
+/**
+ * A signed-out step's heading block: the one look of a step's title and purpose. A step body that
+ * titles itself (its heading changes with its own sub-views) draws its heading through this too.
+ */
+export function UnauthenticatedStepHeading(props: Readonly<{
+  title: React.ReactNode;
+  subtitle?: React.ReactNode;
+  context?: React.ReactNode;
+  testID?: string;
+}>) {
+  useUnistyles();
+  const styles = stylesheet;
+  return (
+    <View style={styles.header}>
+      {props.context ? <View style={styles.context}>{props.context}</View> : null}
+      <Text testID={props.testID} accessibilityRole="header" style={styles.title}>
+        {props.title}
+      </Text>
+      {props.subtitle ? <Text style={styles.subtitle}>{props.subtitle}</Text> : null}
+    </View>
+  );
+}
+
 export function UnauthenticatedStep(props: UnauthenticatedStepProps) {
   useUnistyles();
   const styles = stylesheet;
@@ -40,17 +63,12 @@ export function UnauthenticatedStep(props: UnauthenticatedStepProps) {
     <View testID={props.testID} style={styles.root}>
       <View style={styles.content}>
         {hasHeader ? (
-          <View style={styles.header}>
-            {props.context ? <View style={styles.context}>{props.context}</View> : null}
-            <Text
-              testID={props.testID ? `${props.testID}-title` : undefined}
-              accessibilityRole="header"
-              style={styles.title}
-            >
-              {props.title}
-            </Text>
-            {props.subtitle ? <Text style={styles.subtitle}>{props.subtitle}</Text> : null}
-          </View>
+          <UnauthenticatedStepHeading
+            title={props.title}
+            subtitle={props.subtitle}
+            context={props.context}
+            testID={props.testID ? `${props.testID}-title` : undefined}
+          />
         ) : null}
         {body && props.bodyTransitionKey != null ? (
           <StepTransitionFrame

@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import type * as ExpoBlur from 'expo-blur';
+import type { GlassSurfaceGroup } from '@happier-dev/protocol/actions/settings/glassPreferenceMutations';
 
 /**
  * Boundary seam around `expo-blur` (the translucent blur fallback material).
@@ -21,6 +22,16 @@ let cachedModule: BlurModule | null | undefined;
  */
 export function isNativeBlurAvailable(): boolean {
     return Platform.OS === 'ios';
+}
+
+/**
+ * Where native blur is unavailable (Android), a surface standing on the app's own page or picture (chrome,
+ * sidebar, content planes, in-flow cards) keeps its authored tint. A floating surface (dialog, sheet, menu,
+ * popover) can have anything behind it, so it follows the capability instead: opaque, unless its material
+ * is an explicitly unblurred tint (owner 11-13: the Welcome hero read through an Android sheet).
+ */
+export function drawsTintWithoutBlur(group: GlassSurfaceGroup): boolean {
+    return Platform.OS === 'android' && group !== 'floating';
 }
 
 function loadBlurModule(): BlurModule | null {

@@ -23,6 +23,7 @@ export type WizardStepId =
     | 'auth_service_select'
     | 'auth_lost_access'
     | 'auth_email_password'
+    | 'connect_home'
     | 'confirm_switch_relay';
 
 export type WizardRelayChoiceId = 'cloud' | 'thisComputer' | 'remoteComputer' | 'customUrl';

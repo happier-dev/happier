@@ -23,7 +23,7 @@ vi.mock('expo-linear-gradient', () => ({
 }));
 
 describe('Android material fallback', () => {
-    it('shares translucent field ink with the native containing plane but keeps disabled and accessibility-solid fields unchanged', async () => {
+    it('shares translucent field ink with an in-flow card plane but keeps disabled and accessibility-solid fields unchanged', async () => {
         const { GlassSurface } = await import('./GlassSurface');
         const { CompactSearchField } = await import('@/components/ui/forms/CompactSearchField');
         const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
@@ -31,9 +31,10 @@ describe('Android material fallback', () => {
         const { glassPresetMaterials } = await import('./glassMaterial');
         const { lightTheme } = await import('@/theme');
         for (const solid of ['glass', 'disabled', 'reduceTransparency'] as const) {
-            const screen = await renderScreen(<GlassRuntimeEnvironmentProvider value={{ reduceTransparency: solid === 'reduceTransparency' }}>
+            // A card is translucent only with a picture behind it; over the plain page it is solid.
+            const screen = await renderScreen(<GlassRuntimeEnvironmentProvider value={{ reduceTransparency: solid === 'reduceTransparency', atmosphereBehind: 'wallpaper' }}>
                 <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('everywhere') }}>
-                    <GlassSurface surfaceGroup="floating" enabled={solid !== 'disabled'}>
+                    <GlassSurface surfaceGroup="card" enabled={solid !== 'disabled'}>
                         <CompactSearchField testID="native-field" value="keep draft" onChangeText={() => {}} placeholder="Search" />
                     </GlassSurface>
                 </GlassMaterialSettingsProvider>
@@ -44,16 +45,16 @@ describe('Android material fallback', () => {
             standardCleanup();
         }
     });
-    it('keeps menu edges at the same alpha as its Android tint, including synced transparency and OS recovery', async () => {
+    it('keeps menu edges at the alpha of its Android paint: an unblurred Custom tint as set, an opaque fill where blur was asked for', async () => {
         const { storage } = await import('@/sync/domains/state/storage');
         const { glassPresetMaterials } = await import('./glassMaterial');
         const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
         const { FloatingOverlay } = await import('@/components/ui/overlays/FloatingOverlay');
         const before = storage.getState();
         try {
-            for (const opacity of [0, 0.2]) {
+            for (const [blur, opacity] of [['off', 0], ['off', 0.2], ['strong', 0.2]] as const) {
                 act(() => storage.setState({ settings: { ...before.settings, glassBlurEnabled: true,
-                    glassSurfaceMaterials: { ...glassPresetMaterials('everywhere'), floating: { blur: 'strong', opacity } },
+                    glassSurfaceMaterials: { ...glassPresetMaterials('everywhere'), floating: { blur, opacity } },
                 } }));
                 for (const reduceTransparency of [false, true]) {
                     const screen = await renderScreen(<GlassRuntimeEnvironmentProvider value={{ reduceTransparency }}>
@@ -61,7 +62,8 @@ describe('Android material fallback', () => {
                     </GlassRuntimeEnvironmentProvider>);
                     const gradients = screen.findAllByType('LinearGradient');
                     expect(gradients).toHaveLength(2);
-                    const effective = reduceTransparency ? 1 : opacity;
+                    // Android has no blur target: a material that asks for blur paints its opaque fill.
+                    const effective = reduceTransparency || blur !== 'off' ? 1 : opacity;
                     expect(Color(gradients[0]!.props.colors[0]).alpha()).toBeCloseTo(effective, 2);
                     expect(Color(gradients[1]!.props.colors[1]).alpha()).toBeCloseTo(effective, 2);
                     // Finish stays one low-alpha ink coat through tint and the
@@ -81,14 +83,26 @@ describe('Android material fallback', () => {
         } finally { standardCleanup(); act(() => storage.setState(before, true)); }
     });
 
-    it('keeps floating glass translucent as a tint when there is no blur target', async () => {
+    it('paints dialogs, sheets and menus opaque when there is no blur target; in-flow cards keep their tint', async () => {
         const { GlassSurface } = await import('./GlassSurface');
         const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
-        // Native renderers intentionally retain the stored Medium coat, without web backdrop tone.
-        const screen = await renderScreen(<GlassRuntimeEnvironmentProvider value={{ nativeRenderer: true }}>
-            <GlassSurface testID="android-material" solidColor="#ffffff"><></></GlassSurface>
+        const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
+        const { glassPresetMaterials } = await import('./glassMaterial');
+        // Anything can stand behind a floating surface (owner 11-13: the Welcome hero showed through a sheet).
+        for (const floatingRole of ['panel', 'menu'] as const) {
+            const screen = await renderScreen(<GlassRuntimeEnvironmentProvider value={{ nativeRenderer: true }}>
+                <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('everywhere') }}>
+                    <GlassSurface testID="android-material" floatingRole={floatingRole} solidColor="#ffffff"><></></GlassSurface>
+                </GlassMaterialSettingsProvider>
+            </GlassRuntimeEnvironmentProvider>);
+            expect(Color(flattenTestStyle(screen.findByTestId('android-material')?.props.style).backgroundColor).alpha()).toBe(1);
+            standardCleanup();
+        }
+        const card = await renderScreen(<GlassRuntimeEnvironmentProvider value={{ nativeRenderer: true, atmosphereBehind: 'wallpaper' }}>
+            <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('everywhere') }}>
+                <GlassSurface testID="android-card" surfaceGroup="card" solidColor="#ffffff"><></></GlassSurface>
+            </GlassMaterialSettingsProvider>
         </GlassRuntimeEnvironmentProvider>);
-        expect(flattenTestStyle(screen.findByTestId('android-material')?.props.style).backgroundColor)
-            .toBe('rgba(255, 255, 255, 0.02)');
+        expect(Color(flattenTestStyle(card.findByTestId('android-card')?.props.style).backgroundColor).alpha()).toBeLessThan(1);
     });
 });

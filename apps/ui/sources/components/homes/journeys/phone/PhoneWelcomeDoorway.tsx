@@ -24,13 +24,16 @@ import { presentAlreadyUseHappierSheet } from './AlreadyUseHappierSheet';
  * The phone's doorway on its welcome screen (lab K1p): a phone never hosts a Home, so its first run
  * asks how to reach one. Scan the computer's code (primary), Sign in "with <service> · Change",
  * connect to a Home directly, and — only when the service is also a Home — "No computer yet? Use
- * <service> as your Home". Each opens its path as a sheet (`AlreadyUseHappierSheet`). Rendered inside
- * the welcome's own action list, so one action runs at a time.
+ * <service> as your Home". Connecting directly continues as the welcome's own step; the sign-in
+ * service ways open as sheets (`AlreadyUseHappierSheet`). Rendered inside the welcome's own action
+ * list, so one action runs at a time.
  */
 export function PhoneWelcomeDoorway(props: Readonly<{
     canScanQr: boolean;
     /** The welcome's existing scan / paste-a-Home-link entry. */
     onScan: () => void;
+    /** The welcome's own step for a Home reached directly (its link or address, then its sign-in). */
+    onConnectDirectly: () => void;
 }>) {
     const service = useJourneyAccountService();
     const servicePolicy = readOrganizationPolicyFieldState('accountService');
@@ -80,7 +83,7 @@ export function PhoneWelcomeDoorway(props: Readonly<{
                 subtitle={t('homesJourneys.pathDirectSubtitle')}
                 icon={<Icon name="hard-drives" size={20} color={theme.colors.text.secondary} />}
                 disabled={admission.pendingActionId !== null}
-                onPress={() => { void admission.run('welcome-doorway-direct', () => { presentAlreadyUseHappierSheet('direct'); }); }}
+                onPress={() => { void admission.run('welcome-doorway-direct', props.onConnectDirectly); }}
             />
             {service.hostsHome ? (
                 <Item

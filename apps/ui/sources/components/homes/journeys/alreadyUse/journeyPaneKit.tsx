@@ -2,6 +2,7 @@ import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { View, type StyleProp, type TextStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { UnauthenticatedStepHeading } from '@/components/onboarding/unauthShell/UnauthenticatedStep';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -11,7 +12,15 @@ import { t } from '@/text';
  * lead sentence, a small field label, help under a control, and the identity row of the service or
  * Home a pane is about. Local to the journeys: they are this panel's anatomy, not a new primitive.
  */
+/**
+ * `step`: the panes stand as a step of a signed-out page (the Welcome wizard), so a pane's title is
+ * that step's heading and takes the step heading's look.
+ */
+export const JourneyPanePresentationContext = React.createContext<'pane' | 'step'>('pane');
+
 export function PaneHeader(props: Readonly<{ title: string; lead: string; testID?: string }>) {
+    const presentation = React.useContext(JourneyPanePresentationContext);
+    if (presentation === 'step') return <UnauthenticatedStepHeading title={props.title} subtitle={props.lead} testID={props.testID} />;
     return (
         <View style={styles.header} testID={props.testID}>
             <Text accessibilityRole="header" style={styles.title}>{props.title}</Text>

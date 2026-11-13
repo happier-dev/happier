@@ -8,7 +8,7 @@ import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle'
 import { createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import { useReduceTransparency } from '@/hooks/ui/useReduceTransparency';
 
-import { getBlurViewComponent, isNativeBlurAvailable } from './blurMaterial';
+import { drawsTintWithoutBlur, getBlurViewComponent, isNativeBlurAvailable } from './blurMaterial';
 import { getGlassViewComponent, useLiquidGlassAvailable } from './liquidGlass';
 import { resolveGlassCapability } from './resolveGlassCapability';
 import { GLASS_BLUR_INTENSITY, GLASS_BLUR_RADIUS_PX, readGlassPreset, resolveGlassBackdropMap, resolveGlassPanelCoatOpacity, resolveGlassSurfaceMaterial, type FloatingSurfaceRole, type GlassFloatingCoat, type GlassSurfaceGroup } from './glassMaterial';
@@ -112,7 +112,8 @@ export type GlassSurfaceProps = Pick<ViewProps, 'accessibilityRole' | 'accessibi
  *
  * - iOS 26 with Liquid Glass → real `GlassView` (`expo-glass-effect`).
  * - Other iOS builds         → translucent `expo-blur` `BlurView`.
- * - Android                  → the authored tint, without a targetless SDK view.
+ * - Android                  → the authored tint on the page's own planes and cards; floating surfaces
+ *                              (no blur target behind them) are solid unless their material is an unblurred tint.
  * - Web                      → the group's live tint/blur projection.
  * - Reduce Transparency      → solid, without changing the stored choice.
  *
@@ -207,6 +208,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
             surfaceGroup: group,
         });
     const inheritsTranslucentMaterial = nested && containingSurface?.group === group && containingSurface?.translucent === true && material.opacity < 1 && enabled;
+    const tintsWithoutBlur = capability === 'tint' || drawsTintWithoutBlur(group);
 
     let nativeBackdrop: React.ReactNode = null;
     if (!inheritsTranslucentMaterial && capability === 'liquidGlass') {
@@ -240,7 +242,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
 
     // Inheritance follows the rendered tier, not a preference whose SDK may be unavailable.
     const translucent = material.opacity < 1 && enabled && (transparentPlane || (Platform.OS === 'web'
-        ? capability === 'webBlur' || group === 'card' : capability === 'tint' || Platform.OS === 'android' || Boolean(nativeBackdrop) || inheritsTranslucentMaterial));
+        ? capability === 'webBlur' || group === 'card' : tintsWithoutBlur || Boolean(nativeBackdrop) || inheritsTranslucentMaterial));
     const cleared = transparentPlane && enabled;
     const ownPlane = React.useMemo(() => ({ group, finish: Boolean(gradient) || Boolean(inheritsFinish), translucent, cleared }), [cleared, group, gradient, inheritsFinish, translucent]);
     const plane = props.noCoat ? containingSurface : ownPlane;
@@ -272,7 +274,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
         role: group,
         finish: plane?.finish,
         translucentColor: props.translucentColor ?? theme.colors.surface.selected,
-        resolveMaterialColor: !enabled || (Platform.OS !== 'web' && (material.opacity === 1 || (Platform.OS === 'ios' && capability !== 'tint' && !nativeBackdrop && !inheritsTranslucentMaterial && !transparentPlane)))
+        resolveMaterialColor: !enabled || (Platform.OS !== 'web' && (material.opacity === 1 || (!tintsWithoutBlur && !nativeBackdrop && !inheritsTranslucentMaterial && !transparentPlane)))
             ? retainSolidColor : resolveMaterialColor,
     };
 
@@ -286,7 +288,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
             : props.atmosphereCoat === 'reading' ? material.opacity
             : group === 'floating' ? resolveGlassPanelCoatOpacity(settings, theme.dark, panel, { nativeRenderer: true }) : undefined;
         const backgroundColor = transparentPlane && enabled ? 'transparent' : nativeBackdrop || inheritsTranslucentMaterial ? 'transparent'
-            : (capability === 'tint' || Platform.OS === 'android') && enabled
+            : tintsWithoutBlur && enabled
                 ? withMaterialOpacity(tintColor, material.opacity) : solidColor;
         // Only the SDK background changes tier. Input/scroll/selection state
         // must stay under the same native parent when a preset or OS choice changes.

@@ -9,7 +9,7 @@ import { useGlassMaterialSettings } from './useGlassMaterialSettings';
 import { useGlassRuntimeEnvironment } from './glassRuntimeEnvironment';
 import { glassSurfaceTintColor, resolveGlassSurfacePlaneMaterial } from './glassSurfacePaint';
 import { resolveGlassCapability } from './resolveGlassCapability';
-import { getBlurViewComponent, isNativeBlurAvailable } from './blurMaterial';
+import { drawsTintWithoutBlur, getBlurViewComponent, isNativeBlurAvailable } from './blurMaterial';
 import { getGlassViewComponent, useLiquidGlassAvailable } from './liquidGlass';
 
 /** Renderer SDKs need concrete colors rather than CSS material variables. */
@@ -36,7 +36,7 @@ export function useGlassSurfaceColor(color: string, group: GlassSurfaceGroup, ne
     // Outer arrows/fades/container paint follows the same capability and SDK loaders as GlassSurface.
     const capability = resolveGlassCapability({ ...environment, settings, surfaceGroup: group, liquidGlassAvailable,
         blurAvailable: isNativeBlurAvailable(), webBlurAvailable: Platform.OS === 'web', reduceTransparency: environment.reduceTransparency === true });
-    const available = tintAvailable ?? (Platform.OS === 'web' || Platform.OS === 'android' || capability === 'tint'
+    const available = tintAvailable ?? (Platform.OS === 'web' || drawsTintWithoutBlur(group) || capability === 'tint'
         || (capability === 'blur' && getBlurViewComponent() !== null)
         || (capability === 'liquidGlass' && getGlassViewComponent() !== null));
     const tint = nested || !available ? color : glassSurfaceTintColor({ color, ink: colors.text.primary, controlFill: colors.surface.selected, dark: theme.dark, settings, group, environment, page: colors.surface.base });

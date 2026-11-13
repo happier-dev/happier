@@ -49,6 +49,8 @@ export type WelcomeDecisionPanelProps = Readonly<{
     canScanQr?: boolean;
     canCreatePersonalHome?: boolean;
     onCreatePersonalHome?: () => void;
+    /** The phone doorway's "Connect to a Home directly": the wizard's own step for it. */
+    onConnectHomeDirectly?: () => void;
 }>;
 
 type WelcomeEntryModelAction = WelcomeEntryModel['actions'][number];
@@ -165,6 +167,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
     });
     // The phone doorway's paths all add a Home, so a Home fixed by policy keeps the ordinary list.
     const phoneDoorway = viewportClass === 'compact'
+        && props.onConnectHomeDirectly != null
         && !homePolicy.disabled
         && !isReturningUser
         && !(model.notice?.kind === 'service_unsupported' && model.notice.hasUsableHomeMethods)
@@ -349,7 +352,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
             ) : null}
             <WelcomeActionList admission={actionAdmission}>
                 {phoneDoorway
-                    ? <PhoneWelcomeDoorway canScanQr={props.canScanQr === true} onScan={handleLogin} />
+                    ? <PhoneWelcomeDoorway canScanQr={props.canScanQr === true} onScan={handleLogin} onConnectDirectly={props.onConnectHomeDirectly!} />
                     : renderActions()}
             </WelcomeActionList>
         </View>

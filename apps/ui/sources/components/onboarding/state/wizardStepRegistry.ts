@@ -148,6 +148,18 @@ const wizardStepRegistryEntries = [
         visibleWhen: () => false,
     },
     {
+        // A Home reached by its link or address, then that Home's own sign-in (owner 11-13: steps of the
+        // welcome, not a sheet over it). Each pane titles itself, so the host draws no heading.
+        id: 'connect_home',
+        titleKey: 'homesJourneys.pathDirectTitle',
+        bodyOwnsHeading: true,
+        kind: 'auth',
+        surface: 'onboarding',
+        canSkip: false,
+        // Opened from the welcome's own row, never reached by advancing the sequence.
+        visibleWhen: () => false,
+    },
+    {
         id: 'auth_service_select',
         titleKey: 'welcome.chooseSignInService',
         subtitleKey: 'welcome.signInServiceUrlPrompt',

@@ -21,7 +21,7 @@ import { HomeSignInPane } from '../journeys/alreadyUse/HomeSignInPane';
 import { OtherServicePathPane } from '../journeys/alreadyUse/OtherServicePathPane';
 import { ServicePathPane } from '../journeys/alreadyUse/ServicePathPane';
 import { UseServiceAsHomeBody } from '../journeys/serviceHome/UseServiceAsHomeSheet';
-import { PaneLink } from '../journeys/alreadyUse/journeyPaneKit';
+import { JourneyPanePresentationContext, PaneLink } from '../journeys/alreadyUse/journeyPaneKit';
 import { useJourneyAccountService, type JourneyAccountService } from '../journeys/useJourneyAccountService';
 import { addHomePathOfPane, type AddHomePath } from './addHomeFlowModel';
 import { ConnectedHomePane } from './ConnectedHomePane';
@@ -31,9 +31,10 @@ import { useAddHomeFlow } from './useAddHomeFlow';
 /**
  * `page`: Settings → Homes' draft (every path as a card). `panel`: Home's "Already use Happier?" block
  * (the three ways into Homes you already use, plus "have one hosted" as a quiet link). `sheet`: one path's
- * pane on its own, for the phone doorway whose buttons are the paths.
+ * pane on its own, for the phone doorway whose buttons are the paths. `step`: one path's pane as a step
+ * of a host page (the Welcome wizard), whose own back control steps back through the panes.
  */
-export type HomeAddFormLayout = 'page' | 'panel' | 'sheet';
+export type HomeAddFormLayout = 'page' | 'panel' | 'sheet' | 'step';
 
 /** The paths of "Already use Happier?": ways into Homes someone already has. */
 const ALREADY_USE_PATHS: ReadonlySet<AddHomePath> = new Set(['service', 'other_service', 'direct']);
@@ -95,6 +96,11 @@ export function HomeAddForm(props: Readonly<{
     onShowAllHomes?: () => void;
     /** The address typed into "Connect to a Home directly" (the Settings draft row shows it). */
     onAddressChange?: (address: string) => void;
+    /**
+     * `step`: the host's back control. A pane with a previous pane (a Home's sign-in) claims it to step
+     * back; null hands it back to the host (leaving the form).
+     */
+    onBackChange?: (next: Readonly<{ onPress: () => void }> | null) => void;
 }>) {
     const { theme } = useUnistyles();
     const homePolicy = readOrganizationPolicyFieldState('home');
@@ -107,7 +113,15 @@ export function HomeAddForm(props: Readonly<{
         initialPath: props.initialPath ?? (props.initialAddress ? 'direct' : undefined),
         initialAddress: props.initialAddress,
     });
-    const { onClose, onFocusedHome, onShowAllHomes } = props;
+    const { onClose, onFocusedHome, onShowAllHomes, onBackChange } = props;
+    const hostBack = props.layout === 'step';
+    const paneHasPrevious = flow.completion === null && flow.pane.pane === 'home_sign_in';
+    const { back } = flow;
+    React.useEffect(() => {
+        if (!hostBack || !paneHasPrevious) return;
+        onBackChange?.({ onPress: back });
+        return () => onBackChange?.(null);
+    }, [hostBack, paneHasPrevious, back, onBackChange]);
 
     const paths = React.useMemo(() => flow.paths.map((availability): SetupPath<AddHomePath> => ({
         id: availability.id,
@@ -171,7 +185,8 @@ export function HomeAddForm(props: Readonly<{
                 />;
                 break;
             case 'home_sign_in':
-                pane = <HomeSignInPane profile={flow.pane.profile} onBack={flow.back} onDone={() => { void signedIn(); }} />;
+                pane = <HomeSignInPane profile={flow.pane.profile} onBack={flow.back} onDone={() => { void signedIn(); }}
+                    backControl={hostBack ? 'host' : 'pane'} />;
                 break;
             case 'use_service_as_home':
                 pane = <UseServiceAsHomeBody shouldFocusNewHome={flow.shouldFocusNewHome} onDone={onClose} />;
@@ -184,6 +199,11 @@ export function HomeAddForm(props: Readonly<{
 
     if (props.layout === 'sheet') {
         return <View testID={`${props.testID}.${flow.pane.pane}`} style={styles.sheet}>{personalHomeNotice}{pane}</View>;
+    }
+    if (props.layout === 'step') {
+        return <JourneyPanePresentationContext.Provider value="step">
+            <View testID={`${props.testID}.${flow.pane.pane}`} style={styles.page}>{personalHomeNotice}{pane}</View>
+        </JourneyPanePresentationContext.Provider>;
     }
 
     if (props.layout === 'panel') {

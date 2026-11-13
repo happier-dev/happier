@@ -63,6 +63,8 @@ type HomeAuthenticationFlowProps = Readonly<{
     }>) => void | Promise<void>;
     onExternalAuthStarted?: () => void | Promise<void>;
     onBack: () => void;
+    /** `false`: the hosting step's own back control leaves the method list, so the list draws no Back card. */
+    showBackAction?: boolean;
 }>;
 
 export function HomeAuthenticationFlow(props: HomeAuthenticationFlowProps): React.ReactElement {
@@ -250,7 +252,7 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
                 subtitle={presentation.description} iconName={presentation.iconName} accentColor={method.presentation?.connectButtonColor}
                 onPress={() => runHomeAction(homeAction)} />;
         })}
-        {chosenAction ? null : (
+        {chosenAction || props.showBackAction === false ? null : (
             <WelcomeActionCard testID="home-auth-back" title={t('common.back')} iconName="arrow-left" escape
                 onPress={() => { abortRef.current.abort(); props.onBack(); }} />
         )}

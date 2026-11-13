@@ -271,13 +271,12 @@ export function GlassEffectiveStateLine(props: Readonly<{
     const reduceTransparency = reduced || environment.reduceTransparency === true;
     const preset = readGlassPreset(props.settings);
     const floating = resolveGlassCapability({ ...environment, reduceTransparency, liquidGlassAvailable, blurAvailable: isNativeBlurAvailable(), webBlurAvailable: Platform.OS === 'web', settings: props.settings });
-    const hasAndroidTint = Platform.OS === 'android' && resolveGlassSurfaceMaterial(props.settings, 'floating', { ...environment, reduceTransparency }).material.opacity < 1;
     const windowReason = resolveGlassSurfaceMaterial(props.settings, 'chrome', { ...environment, reduceTransparency }).reason;
     const state = reduceTransparency ? 'reduceTransparency' : preset === 'solid' ? Platform.OS === 'web' && !environment.desktopWindow ? 'effectiveBrowserSolid' : 'effectiveSolid'
         : environment.desktopWindow && windowReason === 'unavailable' ? 'effectiveUnavailable'
         : environment.desktopWindow ? preset === 'auto' ? 'effectiveLayered' : preset === 'everywhere' ? 'effectiveUniform' : 'effectiveCustom'
         : Platform.OS === 'web' ? preset === 'custom' && floating === 'solid' ? 'effectiveBrowserCustom' : 'effectiveBrowser'
-        : floating === 'tint' || (floating === 'solid' && hasAndroidTint) ? 'effectiveTint' : floating === 'solid' ? 'effectiveFloatingSolid' : 'effectivePhone';
+        : floating === 'tint' ? 'effectiveTint' : floating === 'solid' ? 'effectiveFloatingSolid' : 'effectivePhone';
     if (props.constraintsOnly && state !== 'reduceTransparency' && state !== 'effectiveBrowserSolid') return null;
     const openSettings = !reduceTransparency ? undefined : environment.desktopWindow ? () => openDesktopReduceTransparencySettings()
         : Platform.OS === 'android' ? () => Linking.sendIntent('android.settings.ACCESSIBILITY_SETTINGS')

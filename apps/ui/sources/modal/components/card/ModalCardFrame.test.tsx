@@ -192,7 +192,8 @@ describe('ModalCardFrame', () => {
         act(() => storage.setState({ settings: {
             ...previousState.settings,
             glassBlurEnabled: true,
-            glassSurfaceMaterials: { ...glassPresetMaterials('auto'), floating: { blur: 'strong', opacity: 0 } },
+            // Unblurred, so Android (no blur target) honors the Custom coat as set; a blurred material is solid there.
+            glassSurfaceMaterials: { ...glassPresetMaterials('auto'), floating: { blur: 'off', opacity: 0 } },
         } }));
         try {
             const { ModalCardFrame } = await import('./ModalCardFrame');

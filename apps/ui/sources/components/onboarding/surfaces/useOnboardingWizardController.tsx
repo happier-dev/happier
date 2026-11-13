@@ -874,6 +874,10 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         dispatch({ type: 'wizard/goToStep', stepId: 'welcome' });
     }, []);
 
+    const handleOpenConnectHome = React.useCallback(() => {
+        dispatch({ type: 'wizard/goToStep', stepId: 'connect_home' });
+    }, []);
+
     const handleOpenRelaySelectionFromWelcome = React.useCallback(() => {
         openAddHome(homeRouter, { onWelcomeHomeStep: () => {
             if (!setupPolicy.relay.allowRelaySelection) {
@@ -1008,7 +1012,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     // way: a footer summary in the card, one quiet line in the welcome pane's header.
     const homeContext = React.useMemo((): OnboardingWizardHomeContext | null => {
         // The email/password step names its Home in its own heading block.
-        if (stepId === 'scan_code' || stepId === 'auth_email_password') return null;
+        if (stepId === 'scan_code' || stepId === 'auth_email_password' || stepId === 'connect_home') return null;
         if (stepId === 'relay_select') {
             const resolvedRelayUrl = selectedRelayFooterUrl || lastKnownSnapshotRelayUrlRef.current;
             if (!resolvedRelayUrl) return null;
@@ -1571,6 +1575,8 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         },
         onScan: handleScan,
         onOpenRelaySelectionFromWelcome: handleOpenRelaySelectionFromWelcome,
+        onOpenConnectHome: handleOpenConnectHome,
+        onBackToWelcome: handleBackToWelcome,
         onOpenRelaySelectionFromAuth: handleOpenRelaySelectionPreservingSelection,
         onCreatePersonalHome: requestPersonalHomeBootstrap ?? undefined,
         onOpenRestore: handleOpenRestore,

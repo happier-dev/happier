@@ -26,17 +26,22 @@ export function HomeSignInPane(props: Readonly<{
     profile: ServerProfile;
     onBack: () => void;
     onDone: () => void;
+    /** `host`: the hosting page's back control returns to the previous pane, so the pane draws none. */
+    backControl?: 'pane' | 'host';
 }>) {
     const { theme } = useUnistyles();
     const { profile } = props;
     const catalog = useExactSavedHomeAuthenticationCatalog(profile);
     const label = resolveHomeDisplayLabel(profile, profile.id);
+    const paneBack = props.backControl !== 'host';
     return (
         <View style={styles.pane} testID="already-use-happier.pane.home-sign-in">
-            <HappierPressable testID="already-use-happier.another-way" accessibilityRole="button" onPress={props.onBack} style={styles.back}>
-                <Icon name="caret-left" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
-                <Text style={styles.backText}>{t('homesJourneys.anotherWay')}</Text>
-            </HappierPressable>
+            {paneBack ? (
+                <HappierPressable testID="already-use-happier.another-way" accessibilityRole="button" onPress={props.onBack} style={styles.back}>
+                    <Icon name="caret-left" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
+                    <Text style={styles.backText}>{t('homesJourneys.anotherWay')}</Text>
+                </HappierPressable>
+            ) : null}
             <PaneIdentityRow
                 testID="already-use-happier.home-identity"
                 mark={<HomeMark serverUrl={profile.canonicalServerUrl ?? profile.serverUrl} />}
@@ -55,6 +60,7 @@ export function HomeSignInPane(props: Readonly<{
                     returnTo="/"
                     onAuthenticated={props.onDone}
                     onBack={props.onBack}
+                    showBackAction={paneBack}
                 />
             ) : catalog.state === 'loading' ? (
                 <SurfaceStateCard testID="already-use-happier.home-methods-loading" kind="loading"

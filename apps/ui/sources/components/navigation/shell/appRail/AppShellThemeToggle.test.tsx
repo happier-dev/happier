@@ -150,6 +150,10 @@ describe('AppShellThemeToggle', () => {
                 expect(screen.findAllByProps({ title: `settingsAppearance.glassControls.${opacity === 1 ? 'effectiveFloatingSolid' : 'effectiveTint'}` }).length).toBeGreaterThan(0);
                 standardCleanup();
             }
+            // A named preset asks for blur, which Android lacks: its floating controls are solid there.
+            const named = await renderScreen(<GlassEffectiveStateLine settings={{ glassSurfaceMaterials: glassPresetMaterials('everywhere') }} />);
+            expect(named.findAllByProps({ title: 'settingsAppearance.glassControls.effectiveFloatingSolid' }).length).toBeGreaterThan(0);
+            standardCleanup();
         } finally {
             Platform.OS = previousOS;
         }

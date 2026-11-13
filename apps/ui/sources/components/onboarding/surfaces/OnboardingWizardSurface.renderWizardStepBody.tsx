@@ -29,6 +29,7 @@ import { RestoreIndexEmbedded } from '@/components/onboarding/restore/RestoreInd
 import { LostAccessEmbedded } from '@/components/onboarding/restore/LostAccessEmbedded';
 import { SecretKeyLoginEmbedded } from '@/components/onboarding/restore/SecretKeyLoginEmbedded';
 import { WelcomeDecisionPanel } from '../preAuth/WelcomeDecisionPanel';
+import { HomeAddForm } from '@/components/homes/add/HomeAddForm';
 import { SecretKeyLoginForm } from '@/components/account/restore/SecretKeyLoginForm';
 import { EmailPasswordAuthStep, type EmailPasswordAuthStepRequest } from '@/components/account/auth/emailPassword/EmailPasswordAuthStep';
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
@@ -144,6 +145,8 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     onScan: (payload: string) => void;
 
     onOpenRelaySelectionFromWelcome: () => void;
+    onOpenConnectHome: () => void;
+    onBackToWelcome: () => void;
     onOpenRelaySelectionFromAuth: () => void;
     onCreatePersonalHome?: () => void;
 
@@ -184,6 +187,21 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                 canScanQr={params.canScanQr}
                 canCreatePersonalHome={params.canCreatePersonalHome}
                 onCreatePersonalHome={params.canCreatePersonalHome ? params.onCreatePersonalHome : undefined}
+                onConnectHomeDirectly={params.onOpenConnectHome}
+            />
+        );
+    }
+
+    if (params.stepId === 'connect_home') {
+        // The add-a-Home owner, in page: its sign-in pane takes the wizard's back control to return to
+        // the address; from the address pane the wizard's own back returns to the welcome.
+        return (
+            <HomeAddForm
+                layout="step"
+                testID={`${params.testIDPrefix}-connect-home`}
+                initialPath="direct"
+                onClose={params.onBackToWelcome}
+                onBackChange={params.onWizardBackChange}
             />
         );
     }
@@ -410,6 +428,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                         canScanQr={params.canScanQr}
                         canCreatePersonalHome={params.canCreatePersonalHome}
                         onCreatePersonalHome={params.canCreatePersonalHome ? params.onCreatePersonalHome : undefined}
+                        onConnectHomeDirectly={params.onOpenConnectHome}
                     />
                 </View>
                 <View style={params.styles.scanCtaBlock}>
