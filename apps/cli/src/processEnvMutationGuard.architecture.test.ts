@@ -7,15 +7,11 @@ import { describe, expect, it } from 'vitest';
 const SOURCE_ROOT = fileURLToPath(new URL('.', import.meta.url));
 
 const BOOTSTRAP_MUTATION_ALLOWLIST: Readonly<Record<string, string>> = Object.freeze({
-  'agent/runtime/readSessionAttachMetadataIdentityPolicyFromEnv.ts': 'Consumes and clears a one-shot attach policy.',
-  'agent/runtime/sessionAttach.ts': 'Consumes and clears a one-shot session-attach file.',
-  'agent/runtime/session/loop/runHostSessionRuntime.ts': 'Owns its dedicated runner process tag and startup Machine tool-idle environment overlay.',
-  'capabilities/systemTasks/ssh/liveRemoteSshBootstrap.ts': 'Temporarily installs a verified remote bootstrap environment and restores it in a finally path.',
   'cli/commands/auth/login.ts': 'Sets process-wide flags before the login bootstrap owns the process.',
   'cli/commands/mcp/serve.ts': 'Isolates the dedicated MCP serve process before its runtime starts.',
   'cli/commands/relay/subcommands.ts': 'Selects a relay server for the dedicated command process and restores scoped overrides.',
   'cli/commands/self/maybeRunVersionGatedRuntimeMigration.ts': 'Scopes installer-migration bootstrap flags and restores them in a finally path.',
-  'cli/runBackendSessionCliCommand.ts': 'Binds the two foreground host authority files for its dedicated runner and restores their prior environment on cleanup.',
+  'daemon/computer/memberRuntimeInternal.ts': 'Initializes temporary roots in the private computer-effect child process.',
   'daemon/startDaemon.ts': 'Establishes the daemon process ownership tag at startup.',
   'ephemeralRunner/localState.ts': 'Binds activation-local storage before runtime imports and restores exact prior environment entries at exit.',
   'plugins/authoring/bundleDaemonRuntime.ts': 'Selects the verified native esbuild binary during synchronous module loading and restores the prior override in finally.',

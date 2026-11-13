@@ -5,6 +5,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { buildAgentRuntimeFirstInputAdmissionV1 } from '@/session/services/sessionInputAdmissionIdentity';
 import { resolveSessionUserMessageRequestedAction } from '@/session/services/resolveSessionUserMessageRequestedAction';
 
@@ -57,7 +58,7 @@ export function serializePendingFirstInputForEnv(input: PendingFirstInput): stri
 }
 
 export function readPendingFirstInputFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = sessionProcessEnvironment(),
 ): PendingFirstInput | null {
   const raw = env[HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY];
   if (raw === undefined) return null;
@@ -83,7 +84,7 @@ export function readPendingFirstInputFromEnv(
   });
 }
 
-export function clearPendingFirstInputFromEnv(env: NodeJS.ProcessEnv = process.env): void {
+export function clearPendingFirstInputFromEnv(env: NodeJS.ProcessEnv = sessionProcessEnvironment()): void {
   delete env[HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY];
 }
 
@@ -95,7 +96,7 @@ export type PendingFirstInputCommitter = Readonly<{
 export function createPendingFirstInputCommitter(
   params: Readonly<{ env?: NodeJS.ProcessEnv }> = {},
 ): PendingFirstInputCommitter {
-  const env = params.env ?? process.env;
+  const env = params.env ?? sessionProcessEnvironment();
   const pendingFirstInput = readPendingFirstInputFromEnv(env);
   let committed = pendingFirstInput === null;
   let inFlight: Promise<void> | null = null;

@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { SessionCreateOriginFieldsV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreateOriginV1';
 import type { SessionCreateOriginFieldsV1 } from '@happier-dev/protocol';
 
@@ -16,7 +17,7 @@ export function pickSessionCreateOriginFields(input: SessionCreateOriginFieldsV1
 }
 
 /** A malformed host carrier fails before create; it never becomes originless. */
-export function readSessionCreateOriginFromEnv(env: NodeJS.ProcessEnv = process.env): SessionCreateOriginFieldsV1 {
+export function readSessionCreateOriginFromEnv(env: NodeJS.ProcessEnv = sessionProcessEnvironment()): SessionCreateOriginFieldsV1 {
   const raw = env[HAPPIER_SESSION_CREATE_ORIGIN_ENV_KEY];
   return raw === undefined ? {} : SessionCreateOriginFieldsV1Schema.parse(JSON.parse(raw));
 }

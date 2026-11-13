@@ -1,5 +1,6 @@
 import { SessionInitialGoalRequestV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import type { SessionInitialGoalRequestV1 } from '@happier-dev/protocol';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 export const HAPPIER_DAEMON_INITIAL_GOAL_ENV_KEY = 'HAPPIER_DAEMON_INITIAL_GOAL';
 
@@ -8,7 +9,7 @@ export function serializeInitialGoalForEnv(goal: SessionInitialGoalRequestV1): s
 }
 
 export function readInitialGoalFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = sessionProcessEnvironment(),
 ): SessionInitialGoalRequestV1 | null {
   const raw = env[HAPPIER_DAEMON_INITIAL_GOAL_ENV_KEY];
   if (raw === undefined) return null;
@@ -19,6 +20,6 @@ export function readInitialGoalFromEnv(
   }
 }
 
-export function clearInitialGoalFromEnv(env: NodeJS.ProcessEnv = process.env): void {
+export function clearInitialGoalFromEnv(env: NodeJS.ProcessEnv = sessionProcessEnvironment()): void {
   delete env[HAPPIER_DAEMON_INITIAL_GOAL_ENV_KEY];
 }

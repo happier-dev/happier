@@ -8,6 +8,7 @@
  */
 
 import os from 'node:os';
+import { sessionProcessEnvironment } from './lifecycle/hostedSessionScope';
 import { resolve } from 'node:path';
 import { z } from 'zod/mini';
 
@@ -142,7 +143,7 @@ export function captureSessionLaunchControlMetadata(params: Readonly<{
     processEnvironment?: NodeJS.ProcessEnv;
 }> = {}): SessionLaunchControlMetadata {
     const explicitEnvironment = params.explicitEnvironment ?? null;
-    const processEnvironment = params.processEnvironment ?? process.env;
+    const processEnvironment = params.processEnvironment ?? sessionProcessEnvironment();
     const read = (name: LaunchControlEnvKey): string | undefined => {
         if (explicitEnvironment && Object.prototype.hasOwnProperty.call(explicitEnvironment, name)) {
             return explicitEnvironment[name];

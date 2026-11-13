@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { AgentState, Metadata, Session } from '@/api/types';
 import { initializeBackendRunSession } from './initializeBackendRunSession';
+import { runAddedHostedSession } from './lifecycle/hostedSessionScope';
+import { HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY, serializePendingFirstInputForEnv } from '@/daemon/spawn/pendingFirstInput';
 
 function createSessionResponse(id: string, metadata: Metadata, state: AgentState): Session {
   return {
@@ -21,6 +23,65 @@ function createSessionResponse(id: string, metadata: Metadata, state: AgentState
 describe('initializeBackendRunSession pending first input', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it('delivers and clears only the initializing hosted Session handoff after deferred readiness', async () => {
+    const hostInput = serializePendingFirstInputForEnv({
+      text: 'Host process input', localId: 'spawn-first-turn:host',
+    });
+    vi.stubEnv(HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY, hostInput);
+    const inputs = ['a', 'b'].map(id => ({
+      text: `Session ${id} first input`, localId: `spawn-first-turn:${id}`,
+    }));
+    const environments = inputs.map(input => ({
+      [HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY]: serializePendingFirstInputForEnv(input),
+    }));
+    const delivered: Parameters<ApiSessionClient['enqueueSessionUserMessage']>[0][][] = [[], []];
+    const initialized = await Promise.all(environments.map((environment, index) =>
+      runAddedHostedSession({ environment, workingDirectory: '/repo', end: () => undefined }, async () => {
+        await Promise.resolve();
+        const metadata = { startedBy: 'daemon' } as Metadata;
+        const state = { controlledByUser: false } as AgentState;
+        // Session persistence and daemon IPC are the external boundaries;
+        // initialization and first-input admission remain real.
+        const session = {
+          sessionId: `hosted-${index}`,
+          enqueueSessionUserMessage: async (message: Parameters<ApiSessionClient['enqueueSessionUserMessage']>[0]) => {
+            delivered[index].push(message);
+          },
+        } as unknown as ApiSessionClient;
+        return initializeBackendRunSession({
+          api: {
+            getOrCreateSession: async () => createSessionResponse(session.sessionId, metadata, state),
+            sessionSyncClient: () => session,
+          },
+          sessionTag: `hosted-first-input-${index}`,
+          metadata, state, uiLogPrefix: '[hosted first input]',
+          deferPendingFirstInputCommitUntilRuntimeReady: true,
+          startupMetadataOverrides: { permissionModeOverride: { mode: 'default', updatedAt: 1 } },
+        }, {
+          reportSessionToDaemonIfRunningFn: async () => undefined,
+          persistTerminalAttachmentInfoIfNeededFn: async () => undefined,
+          sendTerminalFallbackMessageIfNeededFn: () => undefined,
+        });
+      })));
+
+    expect(delivered).toEqual([[], []]);
+    const commitB = initialized[1].commitPendingFirstInputAfterRuntimeReady;
+    const commitA = initialized[0].commitPendingFirstInputAfterRuntimeReady;
+    if (!commitA || !commitB) throw new Error('Expected both retained first-input commits');
+    // Readiness may run after the initialization scope returns. The committer
+    // must keep the environment that supplied its input.
+    await commitB();
+    expect(delivered[1]).toEqual([expect.objectContaining(inputs[1])]);
+    expect(delivered[0]).toEqual([]);
+    expect(environments[1][HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY]).toBeUndefined();
+    expect(environments[0][HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY]).toBeDefined();
+    expect(process.env[HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY]).toBe(hostInput);
+    await commitA();
+    expect(delivered[0]).toEqual([expect.objectContaining(inputs[0])]);
+    expect(environments[0][HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY]).toBeUndefined();
+    expect(process.env[HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY]).toBe(hostInput);
   });
 
   it('preserves non-daemon first-input ordering', async () => {

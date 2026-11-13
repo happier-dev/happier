@@ -1,11 +1,13 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { SessionAttachMetadataIdentityPolicySchema } from '@happier-dev/protocol/sessions/attach/metadataIdentityPolicy';
 import type { SessionAttachMetadataIdentityPolicy } from '@happier-dev/protocol';
 
 export function readSessionAttachMetadataIdentityPolicyFromEnv(): SessionAttachMetadataIdentityPolicy | null {
-    const raw = typeof process.env.HAPPIER_SESSION_ATTACH_METADATA_IDENTITY_POLICY === 'string'
-        ? process.env.HAPPIER_SESSION_ATTACH_METADATA_IDENTITY_POLICY.trim()
+    const env = sessionProcessEnvironment();
+    const raw = typeof env.HAPPIER_SESSION_ATTACH_METADATA_IDENTITY_POLICY === 'string'
+        ? env.HAPPIER_SESSION_ATTACH_METADATA_IDENTITY_POLICY.trim()
         : '';
-    delete process.env.HAPPIER_SESSION_ATTACH_METADATA_IDENTITY_POLICY;
+    delete env.HAPPIER_SESSION_ATTACH_METADATA_IDENTITY_POLICY;
     if (!raw) {
         return null;
     }
