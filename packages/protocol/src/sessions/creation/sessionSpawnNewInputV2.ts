@@ -48,6 +48,17 @@ export const SessionSpawnNewInitialInputV1Schema = lazyZodSchema(() => z.strictO
 }).check(z.superRefine(requireSessionInputContent)));
 export type SessionSpawnNewInitialInputV1 = z.infer<typeof SessionSpawnNewInitialInputV1Schema>;
 
+/**
+ * Run this Session's Agent inside one of the person's managed targets (a container or
+ * sandbox row they hold). The spawn directory maps onto `workspaceRoot` inside the target.
+ * An Agent-originated placement asks the person first unless they waived it in Action settings.
+ */
+export const SessionManagedTargetPlacementV1Schema = lazyZodSchema(() => z.strictObject({
+  managedId: z.string().check(z.trim(), z.minLength(1)),
+  workspaceRoot: z.string().check(z.trim(), z.minLength(1)),
+}));
+export type SessionManagedTargetPlacementV1 = z.infer<typeof SessionManagedTargetPlacementV1Schema>;
+
 /** Ordinary spawn installs software; removal, app execution and updates have separate reviews. */
 export const SessionSpawnMachineSetupInputV1Schema = lazyZodSchema(() => {
   const { homeId, machineId, sources, exclusions } = MachineSetupPlanInputV1Schema.shape;
@@ -64,6 +75,8 @@ export const SessionSpawnNewInputV2BaseSchema = lazyZodSchema(() => z.strictObje
   creationKey: zMini.optional(SessionCreationKeyV1Schema),
   /** Reviewed software setup completes on the selected Machine before Agent startup. */
   machineSetupPlanInput: z.optional(SessionSpawnMachineSetupInputV1Schema),
+  /** Place the Session's Agent inside one of the person's managed targets. */
+  managedTargetPlacement: z.optional(SessionManagedTargetPlacementV1Schema),
   /** Create's consent for the chosen Agent's existing reviewed install Action. */
   agentInstallConsent: z.optional(AgentInstallJobConsentSchema),
   /** Transport observer preference; send only after negotiating Session-spawn epoch three. */

@@ -1705,6 +1705,51 @@ describe('session.spawn_new canonical execution', () => {
     expect(confirmations).toHaveLength(surface === 'ui' ? 1 : 0);
   });
 
+  // Owner decision 2026-11-12 (W7): an Agent placing a Session on one of the person's managed
+  // targets asks by default; the person can waive it for that surface in Action settings.
+  it.each([
+    { surface: 'agent', authority: 'account_automation', placed: true, waived: false, requiresApproval: true },
+    { surface: 'agent', authority: 'account_automation', placed: true, waived: true, requiresApproval: false },
+    { surface: 'mcp', authority: 'account_automation', placed: true, waived: false, requiresApproval: true },
+    { surface: 'agent', authority: 'account_automation', placed: false, waived: false, requiresApproval: false },
+    { surface: 'ui', authority: 'present_user', placed: true, waived: false, requiresApproval: false },
+  ] as const)('routes managed-target placement through Action policy for $surface (placed=$placed, waived=$waived)', async ({ surface, authority, placed, waived, requiresApproval }) => {
+    const managedTargetPlacement = { managedId: 'managed-1', workspaceRoot: '/workspace/project' };
+    const effects: Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0][] = [];
+    const requests: unknown[] = [];
+    const confirmations: unknown[] = [];
+    // Session creation, native consent and the Account Artifact store are system
+    // boundaries. The executor, declaration, policy and request codec stay real.
+    const deps = {
+      sessionSpawnNew: async (input) => {
+        effects.push(input);
+        return { type: 'pending' as const, retryWithSameCreationKey: true as const, outcome: 'accepted' as const };
+      },
+      approvalsCreate: async ({ request }) => { requests.push(request); return { artifactId: 'placement-approval' }; },
+      presentUserActionConfirmation: async request => { confirmations.push(request); return true; },
+      resolveAgentStartContext: async () => agentStartContext,
+    } satisfies Partial<ActionExecutorDeps>;
+    const executor = createActionExecutor(deps as ActionExecutorDeps, { confirmUiDefault: true });
+    const isAgent = surface === 'agent';
+    const result = await executor.execute('session.spawn_new', { ...canonicalInput, ...(placed ? { managedTargetPlacement } : {}) }, {
+      surface, authority, actionCaller: isAgent ? agentStartContext.caller : { kind: 'host' },
+      serverId: 'server-1', runtimeAccountId: 'account-1',
+      ...(isAgent ? { defaultSessionId: 'parent-session' } : {}),
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {},
+        ...(waived ? { approvalWaivedSurfaces: { 'session.spawn_new': [surface] } } : {}),
+      }),
+    });
+    expect(result, JSON.stringify(result)).toMatchObject(requiresApproval
+      ? { ok: true, result: { kind: 'approval_request_created', actionId: 'session.spawn_new' } }
+      : { ok: true, result: { type: 'pending', outcome: 'accepted' } });
+    expect(effects).toHaveLength(requiresApproval ? 0 : 1);
+    if (!requiresApproval && placed) expect(effects[0]).toMatchObject({ managedTargetPlacement });
+    expect(requests).toHaveLength(requiresApproval ? 1 : 0);
+    if (requiresApproval) expect(JSON.stringify(requests[0])).toContain('managed-1');
+    // The person's own UI placement is unaffected: no added confirmation.
+    expect(confirmations).toHaveLength(0);
+  });
+
   it('retains the inherited profile and exact target-owned directory approval through Session spawn replay', async () => {
     const directoryApproval = {
       v: 1 as const,
