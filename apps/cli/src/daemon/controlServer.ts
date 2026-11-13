@@ -1520,7 +1520,7 @@ export function createDaemonControlApp({
     registerDaemonPluginChangeRoutes(app, {
       service: pluginChangeService,
       requireAuth,
-      executeAction: async (request) => {
+      executeAction: async (request, signal) => {
         if (externalActionApi
           && (request.actionId === 'action.spec.search'
             || request.actionId === 'action.spec.get'
@@ -1530,6 +1530,7 @@ export function createDaemonControlApp({
             request.input,
             {
               surface: request.surface,
+              signal,
               authority: resolveInvocationAuthority({ credential: 'terminal', surface: request.surface }),
               actionCaller: { kind: 'host' },
               ...(request.requiredDangerLevel ? { requiredContributedActionDangerLevel: request.requiredDangerLevel } : {}),
@@ -1555,7 +1556,7 @@ export function createDaemonControlApp({
           };
         }
         return await executeAppliedDaemonPluginActionWithController(
-          request, pluginReloadController, pluginActionCurrentIntent,
+          request, pluginReloadController, pluginActionCurrentIntent, signal,
         );
       },
       ...(pluginActionCurrentIntent ? { requestCurrentIntent: pluginActionCurrentIntent } : {}),

@@ -547,7 +547,6 @@ export {
   pluginActionRequiresPresentUserIntent,
   projectPluginActionFailureCode,
   projectPluginActionFailureMessage,
-  projectPluginActionUnavailableOutcomeCode,
   PluginActionPresentUserAuthorizationFactsSchema,
   type PluginActionCurrentIntentRequest,
   type PluginActionCurrentIntentResult,

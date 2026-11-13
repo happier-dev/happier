@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import fastify from 'fastify';
+import * as undici from 'undici';
 import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createPurposeTargetResolver } from '@/daemon/connectedServices/purposeBindings/resolveTarget';
@@ -12,16 +13,21 @@ import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { registerAuthoredAccountActionRelease } from './accountPluginActions.testkit';
 import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 
+vi.mock('undici', async original => {
+    const runtime = await original<typeof import('undici')>();
+    return { ...runtime, fetch: vi.fn(runtime.fetch) };
+});
+
 const pluginId = 'acme.account-actions';
 const service = { pluginId, localId: 'platform' };
 const account = { service, accountId: 'recorded-linker' };
 const origin = 'https://purpose-provider.example';
 const sentinel = 'platform-http-private-sentinel';
-const nativeFetch = globalThis.fetch;
+const nativeFetch = (await vi.importActual<typeof import('undici')>('undici')).fetch;
 const authentication = { defaultModeId: 'token', modes: [{ id: 'token', kind: 'manual' as const,
     outcomeReconciliation: 'none' as const, fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: true }] }] };
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.mocked(undici.fetch).mockReset(); vi.unstubAllGlobals(); });
 
 async function fixture(options: Readonly<{ stream?: 'chunks' | 'held'; chunks?: number }> = {}) {
     let available = true;
@@ -80,16 +86,18 @@ async function fixture(options: Readonly<{ stream?: 'chunks' | 'held'; chunks?: 
     const address = provider.address();
     if (!address || typeof address === 'string') throw new Error('Missing loopback provider address');
     const closeProvider = async () => { provider.closeAllConnections(); await new Promise<void>((resolve, reject) => provider.close(error => error ? reject(error) : resolve())); };
-    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-        if (!String(url).startsWith(origin)) return Response.json({ features: {}, capabilities: {} });
+    const providerFetch: typeof undici.fetch = async (url, init) => {
+        if (!String(url).startsWith(origin)) return undici.Response.json({ features: {}, capabilities: {} });
         // The only substituted boundary is vendor location. Real native HTTP,
         // headers, body cancellation and deliberately split UTF-8 stay live.
         const response = await nativeFetch(`http://127.0.0.1:${address.port}${new URL(String(url)).pathname}`, init);
         const body = options.stream === 'chunks' && response.body ? response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
             transform(chunk, controller) { for (const byte of chunk) controller.enqueue(new Uint8Array([byte])); },
         })) : response.body;
-        return new Response(body, { status: response.status, headers: response.headers });
-    }));
+        return new undici.Response(body, { status: response.status, headers: response.headers });
+    };
+    vi.stubGlobal('fetch', providerFetch);
+    vi.mocked(undici.fetch).mockImplementation(providerFetch);
     const home = await mkdtemp(join(tmpdir(), 'account-purpose-http-'));
     const app = fastify();
     const homeOrigin = 'http://account-purpose-home.test';
@@ -118,13 +126,29 @@ async function fixture(options: Readonly<{ stream?: 'chunks' | 'held'; chunks?: 
         rename() { displayName = 'New display name'; for (const listener of invalidations) listener(); },
         rotate() { revision = 'csr_bcdefghijklmnopqrstuvw'; for (const listener of invalidations) listener(); },
         afterMaterialize(callback: () => void) { onMaterialize = callback; }, afterFetch(callback: () => void) { onFetch = callback; },
-        invoke(input: Readonly<Record<string, unknown>> = {}) { return registry.targetActionInvocations!.invoke({ pluginId,
-            localId: 'purpose-request', surface: 'cli', input: { link: { credentialRef: account }, key: 'inspect', ...input } }); },
+        invoke(input: Readonly<Record<string, unknown>> = {}, signal?: AbortSignal) { return registry.targetActionInvocations!.invoke({ pluginId,
+            localId: 'purpose-request', surface: 'cli', signal, input: { link: { credentialRef: account }, key: 'inspect', ...input } }); },
         async dispose() { try { await closeProvider(); await registry.dispose(); } finally { restore(); await app.close(); await rm(home, { recursive: true, force: true }); } },
     };
 }
 
 describe('V2 invocation purpose through registry HTTP custody', () => {
+    it('cancels an invocation while the native provider body is held', async () => {
+        const f = await fixture({ stream: 'held' });
+        const controller = new AbortController();
+        let outcome: unknown;
+        let providerClosed = false;
+        void f.closed.then(() => { providerClosed = true; });
+        try {
+            const result = f.invoke({ key: 'stream' }, controller.signal).then(value => { outcome = value; return value; });
+            await vi.waitFor(() => expect({ requests: f.requests.length, outcome }).toEqual({ requests: 1, outcome: undefined }), { timeout: 10_000 });
+            controller.abort();
+            await vi.waitFor(() => expect(outcome).toMatchObject({ status: 'unavailable', code: 'plugin_action_aborted' }), { timeout: 10_000 });
+            await result;
+            await vi.waitFor(() => expect(providerClosed).toBe(true));
+        } finally { await f.dispose(); }
+    });
+
     it('injects only the recorded dot-path credential and filters provider echoes', async () => {
         const f = await fixture();
         try {

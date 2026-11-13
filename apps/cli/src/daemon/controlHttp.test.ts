@@ -18,6 +18,32 @@ afterEach(() => {
 });
 
 describe('daemon control HTTP authentication', () => {
+  it('settles cancellation before a held daemon response is released', async () => {
+    const opened = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const server = createServer((request, response) => {
+      request.resume();
+      response.once('close', () => closed.resolve());
+      opened.resolve();
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing server address');
+    const controller = new AbortController();
+    try {
+      const pending = daemonPost('/held', {}, { timeoutMs: null, signal: controller.signal,
+        target: { pid: process.pid, httpPort: address.port, controlToken: 'control-token' } });
+      await opened.promise;
+      controller.abort(new Error('Command interrupted by SIGINT'));
+      expect(await pending).toMatchObject({ errorCode: 'cancelled' });
+      await closed.promise;
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
   it('delivers NDJSON progress before final completion on the same HTTP response', async () => {
     let release!: () => void;
     let observedAccept: string | undefined;

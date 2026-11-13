@@ -97,7 +97,7 @@ const plugin = definePlugin({
                 } finally { bytes.fill(0); }
             },
         },
-        'purpose-request': { title: 'Inspect the recorded platform target', surfaces: ['cli'], placementBindings: [],
+        'purpose-request': { title: 'Inspect the recorded platform target', surfaces: ['cli'], placementBindings: [], readOnly: true,
             execution, inputSchema: purposeInput, dangerLevel: 'safe', hostAccess: ['purpose-api', 'deploy-manage'],
             connectedAccountPurposeBindings: [{ path: 'link.credentialRef', purpose: 'deploy-manage' }],
             run: async ({ key }, context) => {

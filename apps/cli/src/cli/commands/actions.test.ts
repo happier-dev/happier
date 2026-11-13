@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 
 const credentialBoundary = vi.hoisted(() => ({ readStoredCredentials: vi.fn() }));
 const approvalTerminal = vi.hoisted(() => ({ promptInput: vi.fn(async () => 'yes') }));
@@ -55,6 +57,69 @@ it('preserves invitation token guidance at actions invoke dispatch', async () =>
 });
 
 describe('public Action failure evidence', () => {
+  it('returns cancelled with a Request ID and closes the held provider request', async () => {
+    const closed = Promise.withResolvers<void>();
+    let requestOpened = false;
+    const provider = createServer((_request, response) => {
+      requestOpened = true;
+      response.once('close', () => closed.resolve());
+      response.flushHeaders();
+      response.write('held');
+    });
+    provider.listen(0, '127.0.0.1');
+    await once(provider, 'listening');
+    const address = provider.address();
+    if (!address || typeof address === 'string') throw new Error('Missing provider address');
+    let output = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+      output += String(chunk);
+      const callback = args.find(argument => typeof argument === 'function');
+      if (typeof callback === 'function') callback();
+      return true;
+    });
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ controller: pluginReloadController, plugins: [{
+      manifest: createPluginManifestV2Fixture({ id: 'acme.cancel-read', contributes: { actions: [{
+        id: 'read', title: 'Read held provider', readOnly: true, dangerLevel: 'safe',
+        scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' },
+        inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      }] } }),
+      files: { 'daemon.mjs': `export function activate(api) {
+        api.actions.register('read', async (_input, context) => {
+          const response = await fetch('http://127.0.0.1:${address.port}', { signal: context.signal });
+          return await response.text();
+        });
+      }` },
+    }] });
+    const executor = createCliActionExecutor({ token: 'token', sessionId: 'cli-global', mode: 'plain', ctx: null,
+      pluginActionExecutionOwner: 'current_process',
+      listContributedActionDefinitions: createCommittedContributedActionDefinitionLister(),
+      invokeContributedAction: createCommittedContributedActionInvoker(),
+    });
+    const caller = new AbortController();
+    let settled = false;
+    const pending = handleActionsCommand(['invoke', 'action.invoke', '--input-json', JSON.stringify({
+      action: { pluginId: 'acme.cancel-read', localId: 'read' }, input: {},
+    }), '--json'], {
+      readCredentialsFn: async () => credentials('stored_session'),
+      createExecutorFn: () => ({ execute: executor.execute,
+        resolveSessionTarget: async () => { throw new Error('Unexpected Session lookup'); } }),
+    }, caller.signal).then(() => { settled = true; });
+    try {
+      await vi.waitFor(() => expect({ requestOpened, output }).toEqual({ requestOpened: true, output: '' }), { timeout: 10_000 });
+      caller.abort(new Error('Command interrupted by SIGINT'));
+      await vi.waitFor(() => expect(settled).toBe(true));
+      expect(JSON.parse(output)).toMatchObject({ ok: false, error: {
+        code: 'plugin_action_aborted', requestId: expect.any(String),
+      } });
+      await closed.promise;
+    } finally {
+      provider.closeAllConnections();
+      await pending;
+      await fixture.dispose();
+      await new Promise<void>((resolve, reject) => provider.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
   it.each([
     { json: false, phase: 'preview' }, { json: true, phase: 'preview' },
     { json: false, phase: 'set' }, { json: true, phase: 'set' },

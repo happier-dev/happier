@@ -4,7 +4,6 @@ import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionE
 import {
     PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE,
     PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE,
-    projectPluginActionUnavailableOutcomeCode,
     readPluginActionFailureAuthorPayload,
     readPluginActionFailureHandlerInvocation,
     pluginActionDeclarationIsReadOnlyForInput,
@@ -20,6 +19,7 @@ import {
     createPluginSurfaceHostApiPluginErrorData,
     readPluginSurfaceHostApiFailureMetadata,
 } from './createPluginSurfaceHostApi';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 
 export type PluginSurfaceActionDispatchOutcome =
     | Readonly<{ ok: true; result: PluginUiJsonValueV1 }>
@@ -94,10 +94,10 @@ export function projectPluginActionFailure(result: Readonly<{
         ...(result.failureCause === undefined ? {} : { failureCause: result.failureCause }),
         ...(result.remediation === undefined ? {} : { remediation: result.remediation }),
     });
-    const correlation = result.data && typeof result.data === 'object' && !Array.isArray(result.data) ? result.data : {};
+    const correlation = isJsonObject(result.data) ? result.data : {};
     const requestId = result.requestId ?? readPluginErrorRequestIdV1({ details: author.details })
         ?? (typeof correlation.requestId === 'string' ? correlation.requestId : undefined);
-    const detailsEffect = author.details && typeof author.details === 'object' && !Array.isArray(author.details) ? author.details.effectAttempted : undefined;
+    const detailsEffect = isJsonObject(author.details) ? author.details.effectAttempted : undefined;
     const effectAttempted = result.effectAttempted ?? (typeof correlation.effectAttempted === 'boolean' ? correlation.effectAttempted
         : typeof detailsEffect === 'boolean' ? detailsEffect : undefined);
     const actionHandlerInvocation = result.actionHandlerInvocation ?? readPluginActionFailureHandlerInvocation({ ...result, message: result.message ?? result.code });
@@ -175,7 +175,7 @@ export function projectClientActionInvocationFailure(
 ): Failure {
     if (result.status === 'invalid') return clientActionFailure(result.code);
     if (result.status === 'unavailable') {
-        const code = projectPluginActionUnavailableOutcomeCode(result.code, result.actionHandlerInvocation);
+        const code = result.code;
         const author = readPluginActionFailureAuthorPayload(result.data);
         if (author.failureCause) return projectPluginActionFailure({ ...result, code });
         const metadata: FailureMetadata = {

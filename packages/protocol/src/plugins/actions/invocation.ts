@@ -149,24 +149,6 @@ export const PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE = 'plugin_action_outcome_unknown
  */
 export const PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE = 'plugin_action_current_intent_rejected';
 
-/**
- * Projects only an unavailable cancellation/retirement outcome. A proved
- * non-start remains ordinary unavailable; absence of that proof after one of
- * these terminal signals means the handler may have effected before it settled.
- */
-export function projectPluginActionUnavailableOutcomeCode(
-  code: string,
-  actionHandlerInvocation: 'notStarted' | undefined,
-): string {
-  if (
-    actionHandlerInvocation === undefined
-    && (code === 'plugin_action_aborted' || code === 'plugin_action_generation_retired')
-  ) {
-    return PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE;
-  }
-  return code;
-}
-
 export type PluginActionInvocationHandlerInput = Readonly<{
   input: StrictJsonValue;
   qualifiedId: string;

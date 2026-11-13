@@ -1,3 +1,5 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readPluginModuleFailureCause } from '@/plugins/runtime/moduleFailure';
 import { ACTION_IDS } from '@happier-dev/protocol/actions/actionIds';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
@@ -9,7 +11,7 @@ import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/age
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
-import { projectPluginActionUnavailableOutcomeCode, pluginActionRequiresPresentUserIntent, pluginActionDeclarationRequiresConfirmationForInput } from '@happier-dev/protocol/plugins/actions/invocation';
+import { pluginActionRequiresPresentUserIntent, pluginActionDeclarationRequiresConfirmationForInput, readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { APPROVAL_REQUESTER_UNAVAILABLE_MESSAGE_V1, resolveApprovalRequesterConfirmationV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { projectTargetActionApprovalInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import type { ActionsSettingsV1, ApprovalExecutionOriginV1, JsonValue, MessageActionAvailableSnapshotV1, MessageActionReferenceV1, PluginMachineExecutionOriginV1, RehydratedPluginContributionPointOperationV1, TargetActionApprovalReplayPlacementV1, UiContributedActionExecuteRequestV1 } from '@happier-dev/protocol';
@@ -46,6 +48,7 @@ import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { isOriginalOwnAccountActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { parseActionSurfaceKey } from '@happier-dev/protocol/actions/executor/callerContext';
 import { checkManagedProviderOperationCustody, isAdmittedManagedProviderCustodyCurrent, type AdmittedManagedProviderOperationExecutionRequest,
   type AdmittedConnectedAccountPurposeBindingExecutionRequest } from './managedProviderCustody';
 export type { AdmittedManagedProviderOperationExecutionRequest, AdmittedConnectedAccountPurposeBindingExecutionRequest } from './managedProviderCustody';
@@ -221,11 +224,13 @@ async function isExpectedPluginCurrent(params: Readonly<{
 function actionHandlerNotStartedFailure(
   errorCode: string,
   error: string,
+  cause?: unknown,
 ): Extract<PluginActionExecutorResult, { ok: false }> {
   return {
     ok: false,
     errorCode,
     error,
+    ...(cause === undefined ? {} : { data: { failureCause: projectActionFailureCauseV1(cause, 'plugin.activation') } }),
     actionHandlerInvocation: 'notStarted',
   };
 }
@@ -304,9 +309,12 @@ async function activateOwningPluginForAction(params: Readonly<{
   if (!activationFailure) {
     return null;
   }
+  const diagnostic = readPluginActionFailureAuthorPayload(activationFailure.details);
+  const cause = readPluginModuleFailureCause(activationFailure.details);
   return actionHandlerNotStartedFailure(
     activationFailure.code,
     activationFailure.message,
+    diagnostic.failureCause ? { failureCause: diagnostic.failureCause } : cause ? { code: cause.code } : undefined,
   );
 }
 
@@ -656,6 +664,7 @@ export async function executeContributedAction(params: Readonly<{
         activationFailure = actionHandlerNotStartedFailure(
           'plugin_activation_failed',
           projectPluginFailureText(error),
+          error,
         );
       }
       if (activationFailure || !targetActionInvocations.has(pluginId, action.definition.id)) {
@@ -818,7 +827,7 @@ export async function executeContributedAction(params: Readonly<{
               });
             }
           }
-          const originSurface = deferredSurface ?? (requestedSurface === 'plugin' || placement ? requestedSurface : null);
+          const originSurface = deferredSurface ?? (requestedSurface === 'plugin' || placement ? parseActionSurfaceKey(requestedSurface) : null);
           let originContext = params.approvalContext;
           let resealedRequester = false;
           const retainedAuthorization = params.approvalExecutionOrigin?.externalActionExecutionAuthorization;
@@ -894,7 +903,7 @@ export async function executeContributedAction(params: Readonly<{
     const executeBrokeredAction = params.admittedManagedProviderOperation?.executeBrokeredAction
       ?? params.admittedConnectedAccountPurposeBinding?.executeBrokeredAction;
     const nativeCredentials = params.admittedManagedProviderOperation?.managedNativeCredentials;
-    const requestId = params.context.operationRequestId ?? params.approvalContext?.actionRequestId;
+    const requestId = params.context.operationRequestId ?? params.approvalContext?.actionRequestId ?? undefined;
     const requesterAccount = readRequesterAccountActionContext(
       params.approvalContext?.externalActionExecutionAuthorization
         ?? params.context.operationRpcContext?.externalActionExecutionAuthorization
@@ -1058,12 +1067,7 @@ export async function executeContributedAction(params: Readonly<{
         && targetResult.issues ? actionInputIssueFailure(...targetResult.issues) : null;
       return {
         ok: false,
-        errorCode: targetResult.status === 'unavailable'
-          ? projectPluginActionUnavailableOutcomeCode(
-            targetResult.code,
-            targetResult.actionHandlerInvocation,
-          )
-          : targetResult.code,
+        errorCode: targetResult.code,
         error: inputFailure ? targetResult.code : targetResult.code === 'approval_requester_unavailable'
           ? APPROVAL_REQUESTER_UNAVAILABLE_MESSAGE_V1 : targetResult.message,
         ...(inputFailure ? { details: inputFailure.details } : {}),
@@ -1089,8 +1093,7 @@ export async function executeContributedAction(params: Readonly<{
         failureResult: contributedActionFailureResult,
         ...(params.context.operationRpcContext ?? params.approvalContext
           ? { rpcContext: params.context.operationRpcContext ?? params.approvalContext } : {}),
-        ...(params.context.operationRequestId ?? params.approvalContext?.actionRequestId
-          ? { requestId: params.context.operationRequestId ?? params.approvalContext?.actionRequestId } : {}),
+        ...(requestId ? { requestId } : {}),
         ...(params.context.defaultSessionId ? { sessionId: params.context.defaultSessionId } : {}),
         execute: async ({ signal, operationProgress, operationAcceptance, operationOwnerUpdate }) => {
           // As with native host operations, early acceptance must not retire

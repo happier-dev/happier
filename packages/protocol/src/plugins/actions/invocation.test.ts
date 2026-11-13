@@ -3,11 +3,9 @@ import { createHostReviewedChildPortV1 } from '../../actions/executor/deployment
 import type { PluginActionContributionV2 } from './v2.js';
 
 import {
-  PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE,
   createPluginActionInvocation,
   createPluginActionPresentUserGate,
   fingerprintPluginActionCurrentIntent,
-  projectPluginActionUnavailableOutcomeCode,
   readPluginActionFailureHandlerInvocation,
   readPluginActionFailureAuthorPayload,
 } from './invocation.js';
@@ -266,29 +264,6 @@ describe('createPluginActionInvocation', () => {
     });
     await expect(gate.admit({ input: {}, surface: 'ui', invocationSurface: 'ui' }))
       .resolves.toMatchObject({ status: 'failed', code: data.code, retryable: false, data });
-  });
-
-  it('projects only an unproved unavailable cancellation or retirement to outcome unknown', () => {
-    expect(projectPluginActionUnavailableOutcomeCode(
-      'plugin_action_aborted',
-      undefined,
-    )).toBe(PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE);
-    expect(projectPluginActionUnavailableOutcomeCode(
-      'plugin_action_generation_retired',
-      undefined,
-    )).toBe(PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE);
-    expect(projectPluginActionUnavailableOutcomeCode(
-      'plugin_action_aborted',
-      'notStarted',
-    )).toBe('plugin_action_aborted');
-    expect(projectPluginActionUnavailableOutcomeCode(
-      'plugin_action_generation_retired',
-      'notStarted',
-    )).toBe('plugin_action_generation_retired');
-    expect(projectPluginActionUnavailableOutcomeCode(
-      'plugin_action_current_intent_rejected',
-      undefined,
-    )).toBe('plugin_action_current_intent_rejected');
   });
 
   it('resolves admission once and prompts once for a non-safe client Action', async () => {

@@ -21,6 +21,9 @@ import { MemoryCollection } from '../../../../../packages/plugins/channels/src/t
 import { createCurrentConversationConnectionFixture } from '../../../../../packages/plugins/channels/src/testkit/currentConnectionFixture';
 import { CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1 } from '@happier-dev/channels-protocol/v1';
 import type { PluginServices } from '@happier-dev/plugin-sdk';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { pluginReloadController } from './reload/singleton';
 
 const callerId = 'example.placefix-caller';
 const receiverId = 'example.placefix-receiver';
@@ -33,7 +36,8 @@ function response<T>(data: T): AxiosResponse<T> {
 
 afterEach(() => vi.restoreAllMocks());
 
-async function fixture(crossMachine = false, captureOrigin = false) {
+async function fixture(crossMachine = false, captureOrigin = false, providerUrl?: string) {
+    const nativeFetch = globalThis.fetch;
     let effects = 0;
     const callers: unknown[] = [];
     const accountReads: string[] = [];
@@ -69,12 +73,17 @@ async function fixture(crossMachine = false, captureOrigin = false) {
         } },
     });
     const receiver = definePlugin({ id: receiverId, version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
-        actions: { read: { title: 'Plugin-only read', surfaces: ['plugin'], dangerLevel: 'safe',
+        actions: { read: { title: 'Plugin-only read', surfaces: providerUrl ? ['plugin', 'cli'] : ['plugin'], dangerLevel: 'safe', readOnly: true,
             inputSchema: { type: 'object', additionalProperties: false },
-            run(_input, context) { effects++; callers.push(context.caller); return { received: true }; },
+            async run(_input, context) {
+                effects++; callers.push(context.caller);
+                if (providerUrl) return await (await nativeFetch(providerUrl, { signal: context.signal })).text();
+                return { received: true };
+            },
         } },
     });
     const runtime = await createAuthoredAdmittedPluginRuntimeFixture({
+        ...(providerUrl ? { controller: pluginReloadController } : {}),
         plugins: [caller, receiver].map(plugin => ({ manifest: plugin.manifest,
             files: { 'daemon.mjs': 'export function activate() {}' },
             instantiateCommittedModule: () => ({ activate: plugin.activate }) })),
@@ -122,6 +131,42 @@ async function fixture(crossMachine = false, captureOrigin = false) {
 }
 
 describe('daemon plugin caller execution placement', () => {
+    it.each(['action.invoke', `${receiverId}/read`])('aborts the provider request when a private daemon Action caller cancels (%s)', async actionId => {
+        let opened = false;
+        let closed = false;
+        const provider = createServer((_request, response) => {
+            opened = true;
+            response.once('close', () => { closed = true; });
+            response.flushHeaders();
+            response.write('held');
+        });
+        provider.listen(0, '127.0.0.1');
+        await once(provider, 'listening');
+        const address = provider.address();
+        if (!address || typeof address === 'string') throw new Error('Missing provider address');
+        const invoke = daemonControl.requestDaemonPluginActionExecution;
+        const f = await fixture(false, false, `http://127.0.0.1:${address.port}`);
+        const controller = new AbortController();
+        await f.app.listen({ port: 0, host: '127.0.0.1' });
+        const daemonAddress = f.app.server.address();
+        if (!daemonAddress || typeof daemonAddress === 'string') throw new Error('Missing daemon address');
+        const pending = invoke({ actionId, surface: 'cli', input: actionId === 'action.invoke' ? {
+            action: { pluginId: receiverId, localId: 'read' }, input: {},
+        } : {} }, { target: { pid: process.pid, httpPort: daemonAddress.port, controlToken: 'placefix-control' },
+            signal: controller.signal, timeoutMs: null });
+        try {
+            await vi.waitFor(() => expect(opened).toBe(true), { timeout: 10_000 });
+            controller.abort();
+            await pending;
+            await vi.waitFor(() => expect(closed).toBe(true));
+        } finally {
+            provider.closeAllConnections();
+            await pending;
+            await f.dispose();
+            await new Promise<void>((resolve, reject) => provider.close(error => error ? reject(error) : resolve()));
+        }
+    });
+
     it('reconciles a retained Discord background caller after Channels is admitted and invalidated', async () => {
         const state = new MemoryCollection();
         await state.put(createCurrentConversationConnectionFixture({ connectionId: 'discord-placement', enabled: false,

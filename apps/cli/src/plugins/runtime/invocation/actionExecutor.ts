@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { logExternalActionCurrentIntentMismatch } from '@/daemon/externalActions/externalActionPhase';
-import { createPluginActionPresentUserGate, projectPluginActionUnavailableOutcomeCode, readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
+import { createPluginActionPresentUserGate, readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
 import { readCurrentIntentMismatchFieldV1, type CurrentIntentMismatchV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import { projectPluginFailureMessage } from '@happier-dev/protocol/plugins/failureProjection';
 import { ActionOperationCredentialUseV1Schema, type ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -306,10 +306,7 @@ export function createTargetActionExecutor(deps: Readonly<{
         } catch { /* Diagnostics are failure-isolated from authorization and execution. */ }
         observingCredentialUse = false;
         if (settleExecution && approvalArtifactId && publicResult.status !== 'deferred') {
-          const errorCode = publicResult.status === 'executed' ? undefined
-            : publicResult.status === 'unavailable'
-              ? projectPluginActionUnavailableOutcomeCode(publicResult.code, publicResult.actionHandlerInvocation)
-              : publicResult.code;
+          const errorCode = publicResult.status === 'executed' ? undefined : publicResult.code;
           try {
             await settleExecution({ artifactId: approvalArtifactId, execution: {
               ok: publicResult.status === 'executed',

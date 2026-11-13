@@ -4,6 +4,14 @@ import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-commo
 import { triageTaskWriteInvocationFailureV1 } from '../../../../../../packages/plugins/triage/src/actions/taskWriteFailure';
 
 it.each([
+    { code: 'plugin_action_aborted', reason: 'plugin_action_aborted' },
+    { code: 'plugin_action_outcome_unknown', reason: 'plugin_ui_action_outcome_unknown' },
+])('preserves the invocation owner terminal result $code', ({ code, reason }) => {
+    const outcome = projectClientActionInvocationFailure({ status: 'unavailable', code, message: code }, { readOnly: true }, {});
+    expect(outcome).toMatchObject({ ok: false, reason });
+});
+
+it.each([
     { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' },
     { status: 'failed', code: 'plugin_action_current_intent_unavailable' },
     { status: 'unavailable', code: 'plugin_action_current_intent_rejected' },

@@ -497,7 +497,7 @@ describe('registerDaemonPluginChangeRoutes', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual(row.result);
-    expect(owners[row.owner]).toHaveBeenCalledWith(row.payload);
+    expect(owners[row.owner].mock.calls[0]?.[0]).toEqual(row.payload);
     expect(requireAuth).toHaveBeenCalledOnce();
   });
 
@@ -633,13 +633,13 @@ describe('registerDaemonPluginChangeRoutes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(appliedRuntimeMock.execute).toHaveBeenCalledWith({
+    expect(appliedRuntimeMock.execute).toHaveBeenCalledWith(expect.objectContaining({
       runtimeRegistry: appliedRegistry,
       actionId: 'acme.example/echo',
       input: { value: 'hello' },
       expectedContributorOccurrenceId: 'occurrence-g',
-      context: { surface: 'cli' },
-    });
+      context: expect.objectContaining({ surface: 'cli' }),
+    }));
     expect(appliedRuntimeMock.release).toHaveBeenCalledOnce();
   });
 });

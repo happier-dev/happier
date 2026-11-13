@@ -16,6 +16,7 @@ import type {
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import type { DaemonPluginChangeService } from './changeService';
 import type { DaemonPluginDevelopmentControlRequest } from './developmentRoots';
+import { createDaemonControlRequestLifetime } from '@/daemon/controlRequestLifetime';
 
 export const PLUGIN_CHANGE_REQUEST_PATH = '/plugins/change/request';
 export const PLUGIN_CHANGE_DECISION_PATH = '/plugins/change/decide';
@@ -148,6 +149,7 @@ export async function executeAppliedDaemonPluginActionWithController(
   requestCurrentIntent?: (
     request: TargetActionCurrentIntentRequest
   ) => Promise<TargetActionCurrentIntentResult>,
+  signal?: AbortSignal,
 ): Promise<PluginActionExecutionAttempt> {
   const { executeContributedAction } = await import('@/plugins/runtime/invocation/actions/executeContributedAction');
   const lease = reloadController.tryAcquireRuntimeRegistry();
@@ -177,6 +179,7 @@ export async function executeAppliedDaemonPluginActionWithController(
       ...(requestCurrentIntent ? { requestCurrentIntent } : {}),
       context: {
         surface: request.surface,
+        ...(signal ? { signal } : {}),
         ...(request.startedBy ? { startedBy: request.startedBy } : {}),
         ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
       },
@@ -191,12 +194,14 @@ async function executeAppliedDaemonPluginAction(
   requestCurrentIntent?: (
     request: TargetActionCurrentIntentRequest
   ) => Promise<TargetActionCurrentIntentResult>,
+  signal?: AbortSignal,
 ): Promise<PluginActionExecutionAttempt> {
   const { pluginReloadController } = await import('@/plugins/runtime/reload/singleton');
   return await executeAppliedDaemonPluginActionWithController(
     request,
     pluginReloadController,
     requestCurrentIntent,
+    signal,
   );
 }
 
@@ -210,7 +215,7 @@ export function registerDaemonPluginChangeRoutes(
   params: Readonly<{
     service: DaemonPluginChangeService;
     requireAuth: RequireDaemonControlAuth;
-    executeAction?: (request: PluginActionExecuteRequest) => Promise<PluginActionExecutionAttempt>;
+    executeAction?: (request: PluginActionExecuteRequest, signal: AbortSignal) => Promise<PluginActionExecutionAttempt>;
     requestCurrentIntent?: (
       request: TargetActionCurrentIntentRequest
     ) => Promise<TargetActionCurrentIntentResult>;
@@ -309,8 +314,13 @@ export function registerDaemonPluginChangeRoutes(
         },
       });
     }
-    return await (params.executeAction
-      ? params.executeAction(parsed.data)
-      : executeAppliedDaemonPluginAction(parsed.data, params.requestCurrentIntent));
+    const lifetime = createDaemonControlRequestLifetime(request, reply);
+    try {
+      return await (params.executeAction
+        ? params.executeAction(parsed.data, lifetime.signal)
+        : executeAppliedDaemonPluginAction(parsed.data, params.requestCurrentIntent, lifetime.signal));
+    } finally {
+      lifetime.dispose();
+    }
   });
 }
