@@ -1600,6 +1600,11 @@ adopts the newest capture whose producer run and post-capture load sentinel
 passed, without taking the producer build lease. Publication remains serialized
 by its existing lock. The consumer never compiles its own replacement.
 
+On the server host, producer preparation checks the consumer's shared-database
+migration catalog against the source ledger before requesting build admission.
+A missing migration refuses with `ESHAREDDBMIGRATIONSMISSING` without queuing
+compiler work. Completed captures still adopt without build admission.
+
 Use `--source-after=<ISO timestamp of the fix>` when a reload must include a
 particular fix. The coordinator forwards that boundary unchanged to every
 execution host and any explicit UI export. A compatible completed capture at or

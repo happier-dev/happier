@@ -144,7 +144,7 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
         admitted = await admitSourceRuntimeReload({ stackBaseDir, components, ui, pending,
           env: { ...serverEnv, HAPPIER_STACK_REPO_DIR: repoDir } });
       }
-      if (components.server) await preflightSourceRuntimeMigrations({ server: components.server,
+      if (components.server && !String(serverEnv.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ?? '').trim()) await preflightSourceRuntimeMigrations({ server: components.server,
         env: serverEnv, stackBaseDir, signal: pending.signal });
       const sourceCaptures = { ...remote?.sourceCaptures, ...Object.fromEntries(Object.entries(components)
         .map(([component, built]) => [component, built.sourceCapture ?? null])) };

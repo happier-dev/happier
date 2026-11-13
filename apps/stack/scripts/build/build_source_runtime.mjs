@@ -9,6 +9,7 @@ import { performance } from 'node:perf_hooks';
 import { tmpdir } from 'node:os';
 import { runSourceBuildCommand, sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { runWorkspaceBuildAdmission } from '../utils/proc/workspace_build_admission.mjs';
+import { assertSharedDatabaseMigrationsApplied, SharedDatabaseMigrationError } from '../utils/server/shared_database_migration_gate.mjs';
 import { isWorkspaceBundleLockActive, withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { isPidAlive, observePidLiveness } from '../utils/proc/pids.mjs';
 import { readWorkspaceBuildInputs, readSourceComponentBuildInputs, isSourceServerGeneratedInput } from '../utils/fs/workspaceBuildInputs.mjs';
@@ -831,6 +832,12 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
   };
   try {
     const completed = await adopt();
+    if (components.some(component => component.component === 'server')) {
+      // The server host has already projected its shared database environment.
+      // Refuse known migration gaps before queuing any compiler work, including
+      // when a compatible completed capture needs no build admission at all.
+      await assertSharedDatabaseMigrationsApplied({ serverDir: join(repoDir, 'apps/server'), env });
+    }
     if (completed) return report(completed);
     if (requireLastGreen) throw sourceRuntimeCaptureUnavailable();
     if (!existsSync(join(repoDir, 'package.json'))) throw Object.assign(new Error('producer checkout is unavailable'), { code: 'ENOENT' });
@@ -861,6 +868,7 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
     return report(response);
   } catch (cause) {
     if (signal?.aborted) throw cause;
+    if (cause instanceof SharedDatabaseMigrationError) throw cause;
     throw sourceRuntimeProducerUnavailable(cause, context);
   }
 }

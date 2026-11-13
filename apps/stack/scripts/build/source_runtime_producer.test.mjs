@@ -510,3 +510,46 @@ test('recovering dependency drift does not publish a refusal before the producer
   assert.doesNotMatch(diagnostics, /^HSTACK_SOURCE_RELOAD_REFUSAL=/m,
     'a worker with a trailing pass available cannot publish a terminal reload refusal');
 });
+
+
+test('shared database preflight refuses missing migrations before producer build admission', async t => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const childProcess = (await import('node:child_process')).default;
+  const { syncBuiltinESMExports } = await import('node:module');
+  const { prepareSourceRuntimeProducer } = await import('./build_source_runtime.mjs');
+  const files = await createTempFixture(t, { prefix: 'reload-shared-preflight-' });
+  const repoDir = files.path('repo');
+  const migration = '20261113180000_pending';
+  const catalog = join(repoDir, 'apps/server/prisma/sqlite/migrations', migration);
+  await mkdir(catalog, { recursive: true });
+  await writeFile(join(catalog, 'migration.sql'), 'SELECT 1;');
+  await writeFile(join(repoDir, 'package.json'), '{}');
+  const databasePath = files.path('source.sqlite');
+  const database = new DatabaseSync(databasePath);
+  database.exec('CREATE TABLE _prisma_migrations (migration_name TEXT, checksum TEXT, finished_at TEXT, rolled_back_at TEXT)');
+  database.close();
+  let admissions = 0;
+  for (const method of ['spawn', 'fork']) t.mock.method(childProcess, method, () => {
+    admissions += 1;
+    throw Object.assign(new Error('producer admission reached'), { code: 'EPROBEADMISSION' });
+  });
+  syncBuiltinESMExports();
+  try {
+    const request = { repoDir, stackBaseDir: files.path('stacks/qa'),
+      components: [{ component: 'server', dbProvider: 'sqlite' }],
+      env: { HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'repo-producer',
+        HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'source-owner', HAPPIER_DB_PROVIDER: 'sqlite',
+        DATABASE_URL: `file:${databasePath}` } };
+    await assert.rejects(prepareSourceRuntimeProducer(request), error =>
+      error.code === 'ESHAREDDBMIGRATIONSMISSING' && error.missingMigrations.includes(migration));
+    assert.equal(admissions, 0, 'a known missing migration queues no producer work');
+    const applied = new DatabaseSync(databasePath);
+    applied.prepare('INSERT INTO _prisma_migrations VALUES (?, ?, ?, ?)').run(migration, '', 'done', null);
+    applied.close();
+    await assert.rejects(prepareSourceRuntimeProducer(request), error => error.reason === 'EPROBEADMISSION');
+    assert.equal(admissions, 1, 'an applied catalog permits the real build admission');
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+});
