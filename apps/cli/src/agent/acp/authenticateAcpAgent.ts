@@ -1,3 +1,4 @@
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import spawn from 'cross-spawn';
 
 import { buildAcpSpawnSpec } from './acpSpawn';
@@ -86,7 +87,9 @@ export async function authenticateAcpAgent(params: Readonly<{
       await terminateProcessTree(child);
     } catch (cleanupError) {
       if (loginFailure) {
-        throw new AggregateError([loginFailure.error, cleanupError], 'ACP login and process cleanup failed');
+        throw Object.assign(new AggregateError([loginFailure.error, cleanupError], 'ACP login and process cleanup failed', { cause: loginFailure.error }), {
+          failureCause: classifyPrimarySessionRuntimeIssue({ cause: 'status_error', fallbackSource: 'agent_session_error', error: loginFailure.error, startupPhase: 'client_start' }).failureCause,
+        });
       }
       throw cleanupError;
     } finally {

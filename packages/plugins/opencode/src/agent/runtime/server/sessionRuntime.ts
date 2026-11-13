@@ -25,7 +25,7 @@ import {
 } from './promptParts.js';
 import { projectOpenCodeSessionConfiguration } from './promptConfig.js';
 import { OpenCodePromptIdentityUnresolvedError } from './promptSubmissionError.js';
-import { projectOpenCodeTurnCancellationCause, projectOpenCodeRuntimeIssueDiagnostic } from './openCodeRuntimeEvents.js';
+import { createOpenCodeRuntimeDiagnostic as diagnostic, projectOpenCodeTurnCancellationCause, projectOpenCodeRuntimeIssueDiagnostic } from './openCodeRuntimeEvents.js';
 import type { OpenCodeActiveSkillsReaderRegistrar } from '../controls.js';
 import { OPEN_CODE_TURN_COMPLETION_FALLBACK_INTERVAL_MS } from './timeoutPolicy.js';
 
@@ -41,13 +41,6 @@ type OpenCodeNativeSessionRuntime = AgentSessionRuntime & Readonly<{
   waitForTurnCompletion(): Promise<void>;
 }>;
 
-function diagnostic(code: string, message?: string | null) {
-  return {
-    code,
-    severity: 'error' as const,
-    ...(message ? { message } : {}),
-  };
-}
 
 function toRuntimeJson(value: unknown) {
   const parsed = AgentRuntimeJsonValueSchema.safeParse(value);
@@ -319,6 +312,7 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
     custody: 'accepted' | 'unknown' | 'rejected',
     code: string,
     message?: string | null,
+    error?: unknown,
   ): void => {
     if (pendingSend !== pending || pending.custody !== 'pending') return;
     pending.custody = custody;
@@ -339,14 +333,14 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
       publish({
         kind: 'input-custody-unknown',
         inputIds: pending.request.inputIds,
-        issue: diagnostic(code, message),
+        issue: diagnostic(code, message, error),
       });
       return;
     }
     publish({
       kind: 'input-rejected',
       inputIds: pending.request.inputIds,
-      diagnostic: diagnostic(code, message),
+      diagnostic: diagnostic(code, message, error),
       retryable: true,
     });
   };
@@ -394,6 +388,7 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
             'unknown',
             'opencode_input_custody_unknown',
             event.issue.sanitizedPreview,
+            event.issue,
           );
         }
       } else if (event.issue.code === 'opencode_runtime_startup_failed' || event.issue.code === 'opencode_prompt_rejected') {
@@ -403,6 +398,7 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
             'rejected',
             'opencode_input_rejected',
             event.issue.sanitizedPreview,
+            event.issue,
           );
         }
       }
@@ -622,6 +618,7 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
           identityUnproven ? 'unknown' : 'rejected',
           identityUnproven ? 'opencode_input_custody_unknown' : 'opencode_input_rejected',
           error instanceof Error ? error.message : String(error),
+          error,
         );
       }
       const custody = ownedPendingSend?.custody;
@@ -634,6 +631,7 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
               ? error.code
               : 'opencode_input_rejected',
           error instanceof Error ? error.message : String(error),
+          error,
         ),
         retryable: error instanceof OpenCodePromptProjectionError
           ? false

@@ -1,3 +1,4 @@
+import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { randomUUID } from 'node:crypto';
 import { createClaudePromptSettlementTracker, type ClaudeSdkPromptTransportOutcome } from './promptSettlement.js';
 export type { ClaudeSdkPromptTransportOutcome } from './promptSettlement.js';
@@ -36,6 +37,8 @@ export type ClaudeSdkJsonStreamWriteOutcome =
 
 export type ClaudeSdkJsonStreamClient = Readonly<{
     readonly closed: Promise<void>;
+    /** The host's `heldAgentTurn` for an adopting launch (see `PluginJsonStreamClient`). */
+    readonly heldAgentTurn?: Promise<'none' | 'idle' | 'turn' | 'unknown'>;
     subscribe(listener: (record: unknown) => void | Promise<void>): () => void;
     writeRecord(
         record: unknown,
@@ -416,6 +419,16 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
         return this.promptSettlement.shouldRetainForegroundForResult(message);
     }
 
+    /** What this query's launch attached to (`none` unless the host adopted a held Agent for it). */
+    async readHeldAgentTurn(): Promise<'none' | 'idle' | 'turn' | 'unknown'> {
+        try {
+            const handle = await this.handlePromise;
+            return await (handle.client.heldAgentTurn ?? 'none');
+        } catch {
+            return 'none';
+        }
+    }
+
     readExitResult(): ClaudeSdkExecResult | null {
         return this.exitResult;
     }
@@ -591,7 +604,9 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
             }
         } catch (error) {
             try { await materializedMcpConfig.cleanup(); } catch (cleanupError) {
-                throw new AggregateError([error, cleanupError], 'Claude startup preparation failed with incomplete cleanup', { cause: error });
+                throw Object.assign(new AggregateError([error, cleanupError], 'Claude startup preparation failed with incomplete cleanup', { cause: error }), {
+          failureCause: projectSessionRuntimeFailureCause(error, 'client_start', 'agent.launch'),
+        });
             }
             throw error;
         }
@@ -617,7 +632,9 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
             }, { signal: options.abort });
         } catch (error) {
             try { await cleanup(); } catch (cleanupError) {
-                throw new AggregateError([error, cleanupError], 'Claude startup failed with incomplete cleanup', { cause: error });
+                throw Object.assign(new AggregateError([error, cleanupError], 'Claude startup failed with incomplete cleanup', { cause: error }), {
+          failureCause: projectSessionRuntimeFailureCause(error, 'client_start', 'agent.launch'),
+        });
             }
             throw error;
         }

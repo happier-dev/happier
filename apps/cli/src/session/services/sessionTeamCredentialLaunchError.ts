@@ -1,7 +1,7 @@
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { TeamCredentialBrokerApplicationFailureCodeV1Schema, type TeamCredentialBrokerApplicationFailureCodeV1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import { ConnectedServiceUxDiagnosticCodeV1Schema, type ConnectedServiceUxDiagnosticCodeV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
-import { readSessionPreparationFailureCode, type SessionPreparationFailureCode, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectSessionRuntimeFailureCause, readSessionPreparationFailureCode, type SessionPreparationFailureCode, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { isActionOutcomeUnknownErrorCodeV1, UNEXPECTED_ACTION_FAILURE_CODES_V1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 export type TeamCredentialLaunchFailureCode = TeamCredentialBrokerApplicationFailureCodeV1
@@ -43,11 +43,12 @@ export class SessionTeamCredentialLaunchUnavailableError extends Error {
   // Binding/open guards without a lower-level reason retain the established selection code.
   // Launch and catalog decisions always supply their exact code and phase.
   constructor(readonly code: TeamCredentialLaunchFailureCode = 'team_credential_provider_selection_not_current',
-    readonly phase: TeamCredentialLaunchFailurePhase = 'binding') {
+    readonly phase: TeamCredentialLaunchFailurePhase = 'binding', cause?: unknown) {
     super(code);
     // The runner may fail before its webhook. Its existing stderr cause record
     // must retain this closed refusal independently of the process exit code.
-    this.failureCause = { code, phase: 'authentication', failureReason: 'unknown' };
+    this.failureCause = { code, phase: 'authentication', failureReason: 'unknown',
+      ...projectSessionRuntimeFailureCause(cause, 'authentication') };
     if (ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(code).success) {
       this.details = { v: 1, source: 'team_credential' };
     }
@@ -58,5 +59,5 @@ export function projectTeamCredentialLaunchFailure(error: unknown, phase: TeamCr
   fallback: TeamCredentialLaunchFailureCode): SessionTeamCredentialLaunchUnavailableError {
   if (error instanceof Error && error.name === 'AbortError') throw error;
   return error instanceof SessionTeamCredentialLaunchUnavailableError ? error
-    : new SessionTeamCredentialLaunchUnavailableError(readTeamCredentialLaunchFailureCode(error) ?? fallback, phase);
+    : new SessionTeamCredentialLaunchUnavailableError(readTeamCredentialLaunchFailureCode(error) ?? fallback, phase, error);
 }

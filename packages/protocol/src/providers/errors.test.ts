@@ -41,11 +41,11 @@ describe('provider stable errors and compatibility envelopes', () => {
   it('keeps a Machine RPC access refusal distinct from an Agent failure', () => {
     const context = { connectionId: 'pc_a', machineId: 'machine-a' };
     expect(providerErrorFromRpcFailure(new RpcError('private refusal text', RPC_ERROR_CODES.FORBIDDEN), context))
-      .toEqual(createProviderErrorV1('provider_machine_grant_stale', context));
+      .toMatchObject(createProviderErrorV1('provider_machine_grant_stale', context));
   });
   it('offers Retry when Machine transport discovery cannot reach a Provider read', () => {
     const failure = new RpcError('transport unavailable', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE);
-    expect(providerErrorFromRpcFailure(failure, { machineId: 'machine-a' })).toEqual(
+    expect(providerErrorFromRpcFailure(failure, { machineId: 'machine-a' })).toMatchObject(
       createProviderErrorV1('provider_machine_unavailable', { machineId: 'machine-a' }),
     );
   });
@@ -178,13 +178,13 @@ describe('provider stable errors and compatibility envelopes', () => {
   it('preserves uncertain Account catalogue writes as non-retryable current-state review', () => {
     const code = 'provider_catalog_outcome_unknown';
     expect(providerErrorFromRpcFailure(Object.assign(new Error(code), { code }), { connectionId: 'pc_a' }))
-      .toEqual(createProviderErrorV1('provider_rpc_mutation_outcome_unknown', { connectionId: 'pc_a' }));
+      .toMatchObject(createProviderErrorV1('provider_rpc_mutation_outcome_unknown', { connectionId: 'pc_a' }));
   });
 
   it('keeps an Account catalogue CAS conflict distinct from an Agent failure', () => {
     expect(providerErrorFromRpcFailure(Object.assign(new Error('provider_catalog_conflict'), {
       code: 'provider_catalog_conflict',
-    }), { connectionId: 'pc_a' })).toEqual(createProviderErrorV1('provider_connection_changed', { connectionId: 'pc_a' }));
+    }), { connectionId: 'pc_a' })).toMatchObject(createProviderErrorV1('provider_connection_changed', { connectionId: 'pc_a' }));
   });
 
   it('represents an Agent runtime prerequisite refusal without overloading binding continuity', () => {

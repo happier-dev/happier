@@ -271,3 +271,29 @@ describe('Agent managed Connected Account purpose launch', () => {
     });
   });
 });
+
+it('retains a real materialization transport cause through declared managed-purpose launch', async () => {
+  await withConfiguredDaemonTestHome({ prefix: 'purpose-cause-' }, async ({ homeDir }) => {
+    const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
+      physicalGateway: true, materializationUrl: 'http://127.0.0.1:0',
+      connectedAccountModels: [{ id: 'example', name: 'Example' }],
+      connectedAccounts: [{ purpose: 'inference', service, materializationKinds: ['httpHeaders'],
+        managedProviderEndpoint: { provider, purpose: 'upstream', modelIdPrefix: 'native/' } }] });
+    try {
+      const unexpected = async (): Promise<never> => { throw new Error('Persisted Provider connection path must not run'); };
+      const admitted = await prepareProviderLaunch({
+        selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: null, modelId: 'native/example' } },
+        backendTarget: { kind: 'agent', identity: { pluginId: 'acme.managed-run', localId: 'agent' } },
+        machineId: fixture.machineId, agentId: fixture.agentId, previousBinding: null, confirmation: null,
+        connectedServices: { v: 2, bindingsByServiceId: { 'acme.shared-registry/accounts': { source: 'connected', profileId: 'upstream-account' } } },
+        featureEnabled: true, resolvePrerequisites: unexpected, createAuthorizationAttempt: unexpected,
+        managedPurposeContext: { lease: fixture.lease, happyHomeDir: homeDir,
+          resolveManagedPurposeBindingIntentSelection: fixture.gateway!.purposeBindingOwner.resolveBindingIntentSelection },
+      });
+      expect(admitted).toMatchObject({ ok: true, kind: 'managedPurpose' });
+      if (!admitted.ok || admitted.kind !== 'managedPurpose') throw new Error('Expected managed-purpose admission');
+      expect(await admitted.materialize({ kind: 'session', sessionId: 'cause-session' })).toMatchObject({ ok: false,
+        error: { code: 'provider_materialization_failed', failureCause: { errorClass: 'TypeError', errorCode: 'ECONNREFUSED' } } });
+    } finally { await fixture.cleanup(); }
+  });
+});

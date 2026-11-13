@@ -1,4 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import { createSessionProviderInputConsumer } from '@/agent/runtime/session/input/sessionProviderInputConsumer';
+import { createAgentRuntimeDaemonServiceAuthorityFixture } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthority.testkit';
+import { publishAgentRuntimeDaemonServiceAuthority } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
+import { authorizeCurrentAgentRuntimeDaemonModelTransition } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient';
+import { AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 
 import {
   projectAgentSessionProviderBindingV1,
@@ -7,6 +18,7 @@ import {
   type ProviderBoundModelRef,
   type ProviderRuntimeBindingBasisV1,
   type SessionProviderBindingMetadataV1,
+  SessionProviderBindingMetadataV1Schema,
 } from '@happier-dev/protocol';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 import { SessionModelTransitionResultV1Schema } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
@@ -367,6 +379,136 @@ function createHarness(params?: Readonly<{
     },
   };
 }
+
+it('retains the external Agent source-read cause during native model authorization', async () => {
+  const failureCause = { phase: 'turn_start', failureReason: 'rate_limit' } as const;
+  let sourceReads = 0;
+  const initialTarget = { ...authorized(native('old')),
+    // The native Agent's opened-source reader is the system boundary.
+    readAppliedTeamCredentialModel: () => {
+      if (++sourceReads === 1) return null;
+      throw Object.assign(new Error('private native source detail'), { failureCause });
+    },
+  };
+  const authorize = createSessionModelTransitionAuthorizer({ sessionId: 'session-1', machineId: 'machine-1', agentId: 'claude',
+    agentTargetKey: initialTarget.selection.agentTargetKey, nativeModelApplyPolicy: 'live', readActiveTarget: () => initialTarget });
+  const unused = async (): Promise<never> => { throw new Error('Authorization failure must precede publication and runtime effects'); };
+  const coordinator = createSessionModelTransitionCoordinator({ runId: 'source-read-failure',
+    agentTargetKey: initialTarget.selection.agentTargetKey, initialActiveTarget: initialTarget, initialActiveTargetConfirmed: true,
+    readModelSelectionIntent: () => null, isCurrentRun: () => true,
+    // This is the admitted Home publisher transport response, not model authorization.
+    checkCurrentPublisherAuthority: async () => true, authorize,
+    publishIntent: unused, applyRuntime: unused, publishActive: unused, revokeActiveSelectionProof: unused,
+    fencePromptAdmission: unused, clearPromptAdmission: unused, transferPromptAdmission: unused,
+  });
+  try {
+    await expect(coordinator.submit(native('next'), { source: 'command' })).resolves.toMatchObject({
+      ok: false, status: 'unsupported', failureCause,
+    });
+  } finally { await coordinator.dispose(); }
+});
+
+it.each(['withdrawn', 'unavailable'] as const)('retains the Home publisher decision during a stable model effect: %s', async state => {
+  const initialTarget = authorized(native('old'));
+  const failureCause = { phase: 'turn_start', failureReason: 'rate_limit' } as const;
+  const authorize = createSessionModelTransitionAuthorizer({ sessionId: 'session-1', machineId: 'machine-1', agentId: 'claude',
+    agentTargetKey: initialTarget.selection.agentTargetKey, nativeModelApplyPolicy: 'live', readActiveTarget: () => initialTarget });
+  const unused = async (): Promise<never> => { throw new Error('Refused publisher must not perform effects'); };
+  const coordinator = createSessionModelTransitionCoordinator({ runId: 'publisher-unavailable',
+    agentTargetKey: initialTarget.selection.agentTargetKey, initialActiveTarget: initialTarget, initialActiveTargetConfirmed: true,
+    readModelSelectionIntent: () => null, isCurrentRun: () => true, authorize,
+    checkCurrentPublisherAuthority: async () => {
+      if (state === 'unavailable') throw Object.assign(new Error('private Home transport detail'), { failureCause });
+      return false;
+    },
+    publishIntent: unused, applyRuntime: unused, publishActive: unused, revokeActiveSelectionProof: unused,
+    fencePromptAdmission: unused, clearPromptAdmission: unused, transferPromptAdmission: unused,
+  });
+  try {
+    await expect(coordinator.runWithStableActiveTarget(unused)).resolves.toEqual({
+      status: 'blocked', ...(state === 'unavailable' ? { failureCause } : {}),
+    });
+  } finally { await coordinator.dispose(); }
+});
+
+it.each([
+  ['before', 'changed'], ['before', 'rejected'], ['after', 'changed'], ['after', 'rejected'],
+  ['readback', 'rejected'], ['readback_publication', 'rejected'],
+] as const)('retains Provider authority diagnostics %s the runtime effect: %s', async (phase, outcome) => {
+  const root = await mkdtemp(join(tmpdir(), 'model-transition-currentness-'));
+  const authority = await createAgentRuntimeDaemonServiceAuthorityFixture({ happyHomeDir: root,
+    runner: { pid: 1234, processStartTimeMs: 1, processCommandHash: 'a'.repeat(64), snapshotIdentity: 'snapshot:fixture' } });
+  const admitted = authorized(provider('pc_work', 'old'));
+  const metadata = SessionProviderBindingMetadataV1Schema.parse(admitted.sessionBindingMetadata);
+  const initial = { ...admitted, sessionBindingMetadata: metadata,
+    runtimeBindingBasis: metadata.runtimeBindingBasis ?? null,
+    providerBinding: projectAgentSessionProviderBindingV1({ metadata, materialization: { v: 1, kind: 'spawnEnv' } }),
+  };
+  const selection = provider('pc_work', 'next');
+  const failureCause = { phase: 'provider.model_projection', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+  let reads = 0;
+  // Only the daemon HTTP boundary is replaced. The strict decoder, authorizer,
+  // admission proof, transition coordinator and prompt-fence owner stay real.
+  const server = createServer((_request, reply) => {
+    const next = authorized(selection);
+    const unavailable = ++reads >= (phase === 'before' ? 2 : phase === 'readback_publication' ? 4 : 3);
+    const response = unavailable && outcome === 'rejected'
+      ? { ok: false, error: { code: 'provider_endpoint_unavailable', message: 'provider_endpoint_unavailable', failureCause } }
+      : { ok: true, result: { kind: 'model_transition', status: 'authorized', authorization: {
+        selection, policy: 'live', model: { id: selection.modelId, name: 'Next' },
+        sessionBindingMetadata: { ...next.sessionBindingMetadata,
+          ...(unavailable ? { bindingSecurityFingerprint: 'security:changed' } : {}) },
+        runtimeBindingBasis: next.runtimeBindingBasis,
+      } } };
+    AgentRuntimeDaemonServiceResponseV1Schema.parse(response);
+    reply.setHeader('content-type', 'application/json');
+    reply.end(JSON.stringify(response));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Expected loopback daemon port');
+  await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: address.port, capability: 'A'.repeat(43) });
+  const input = createSessionProviderInputConsumer({
+    messageQueue: new MessageQueue2<{ id: string }, string>(() => 'mode'),
+    session: { waitForMetadataUpdate: () => new Promise<boolean>(() => {}) },
+  });
+  let coordinator: ReturnType<typeof createSessionModelTransitionCoordinator> | undefined;
+  const authorize = createSessionModelTransitionAuthorizer({ sessionId: authority.sessionId, machineId: 'machine-1', agentId: 'claude',
+    agentTargetKey: initial.selection.agentTargetKey, nativeModelApplyPolicy: 'live',
+    readActiveTarget: () => coordinator?.readActiveTarget() ?? initial,
+    authorizeProviderTarget: (request, signal) => authorizeCurrentAgentRuntimeDaemonModelTransition({
+      authority, selection: request.selection, requestId: 'currentness', signal, timeoutMs: null,
+    }),
+  });
+  let runtimeModelId = initial.selection.modelId;
+  const unused = async (): Promise<never> => { throw new Error('Unexpected prompt custody transfer'); };
+  coordinator = createSessionModelTransitionCoordinator({ runId: 'currentness', agentTargetKey: initial.selection.agentTargetKey,
+    initialActiveTarget: initial, initialActiveTargetConfirmed: true, readModelSelectionIntent: () => null,
+    isCurrentRun: () => true, checkCurrentPublisherAuthority: async () => true, authorize,
+    publishIntent: async () => ({ accepted: true, updatedAt: 1 }),
+    applyRuntime: async target => { runtimeModelId = target.selection.modelId;
+      return phase.startsWith('readback') ? { status: 'unproven', readbackAfterCompletion: true } : { status: 'applied' }; },
+    readRuntimeModelId: () => runtimeModelId,
+    publishActive: async () => {}, revokeActiveSelectionProof: async () => {},
+    fencePromptAdmission: async epochId => { await input.enforceProviderInputAdmission({ kind: 'action_required',
+      reason: 'generation_pending', serviceId: 'host-runtime', groupId: 'model-transition', epochId }); },
+    clearPromptAdmission: async epochId => { await input.clearProviderInputAdmission({ serviceId: 'host-runtime', groupId: 'model-transition', epochId }); },
+    transferPromptAdmission: unused,
+  });
+  try {
+    const result = await coordinator.submit(selection, { source: 'command' });
+    expect(result).toMatchObject({ ok: false, status: phase === 'before' ? 'apply_failed' : 'reconciliation_required' });
+    if (outcome === 'rejected') expect(result).toMatchObject({ failureCause: { actionCause: failureCause } });
+    else expect(result).not.toMatchObject({ failureCause: { actionCause: { errorCode: 'ECONNRESET' } } });
+    expect(runtimeModelId).toBe(phase === 'before' ? 'old' : 'next');
+  } finally {
+    await coordinator.dispose();
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 describe('createSessionModelTransitionCoordinator', () => {
   it.each(['metadata', 'prompt'] as const)('retains an admitted Connected Account source when %s echoes its native model intent', async source => {

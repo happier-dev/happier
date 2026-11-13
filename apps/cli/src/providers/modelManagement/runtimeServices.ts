@@ -1,3 +1,4 @@
+import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import type { z } from 'zod/mini';
 import { randomUUID } from 'node:crypto';
 import { logProviderUnexpectedFailure } from '@/providers/diagnostics';
@@ -1250,7 +1251,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       const typed = ProviderErrorV1Schema.safeParse(error);
       if (typed.success) return { status: 'error', error: typed.data };
       logProviderUnexpectedFailure('model_projection', error);
-      return { status: 'error', error: createProviderErrorV1('agent_error', { machineId: request.machineId }) };
+      return { status: 'error', error: createProviderErrorV1('agent_error', { machineId: request.machineId }, error) };
     }
   };
 
@@ -1387,7 +1388,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       || !input.getAccountSettingsSnapshot && getActiveAccountSettingsSnapshotLifetimeToken() !== lifetimeToken)) {
       return { status: 'unavailable', reason: 'source_unavailable' };
     }
-    return DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema.parse(result);
+    return carryActionFailureDiagnostic(DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema.parse(result), result);
   };
 
   const resolveBrokerSourceSelection: RuntimeProviderModelManagementServices['resolveTeamCredentialBrokerSourceSelection'] = async (request) => {
@@ -1668,7 +1669,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
             if (error instanceof ProviderOperationAbandonedError) throw error;
             const parsed = ProviderErrorV1Schema.safeParse(error);
             return { status: 'incompatible', error: parsed.success ? parsed.data
-              : createProviderErrorV1('provider_endpoint_unavailable', errorContext) };
+              : createProviderErrorV1('provider_endpoint_unavailable', errorContext, error) };
           }
           const resolved = resolveProviderSpawnAuthorization({
             selection: request.selection,

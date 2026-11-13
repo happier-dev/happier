@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 import { raceWithAbort } from '@happier-dev/cli-common/plugins/http';
@@ -41,7 +42,8 @@ export function createAccountMachineSourceDeclarationReader(authority: Readonly<
                     // transport owner's cause instead of inventing origin loss.
                     const cause = readRpcErrorCode(error)
                         ?? (error && typeof error === 'object' && 'code' in error ? error.code : undefined);
-                    throw createPluginActionHandlerNotStartedError({ code: projectPluginActionFailureCode(cause) });
+                    throw createPluginActionHandlerNotStartedError({ code: projectPluginActionFailureCode(cause),
+                        failureCause: projectActionFailureCauseV1(error, 'plugin_action.source_declarations') });
                 }));
                 controller.signal.throwIfAborted();
                 if (result.status === 'sourceDeclarationsUnchanged' && result.pluginId === input.targetPluginId

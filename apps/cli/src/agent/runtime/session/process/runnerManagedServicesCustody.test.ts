@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createUnavailableManagedServices } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -545,6 +546,8 @@ describe('runner managed-services Provider custody', () => {
             'provider-p',
         );
         const nextCountByRequest = new Map<string, number>();
+        let failureAt: 'open' | 'next' | null = null;
+        const failureCause = projectActionFailureCauseV1({ code: 'EIO' }, 'managed_service.endpoint_read');
         const cancel = vi.fn(async () => undefined);
         const endpointReadRpc = Object.freeze({
             async call(input: Readonly<{
@@ -558,6 +561,9 @@ describe('runner managed-services Provider custody', () => {
                     pathAndQuery?: string;
                     interactive?: true;
                 };
+                if ((failureAt === 'open' && input.method === MANAGED_SERVICE_ENDPOINT_READ_RPC_METHODS.OPEN)
+                    || (failureAt === 'next' && input.method === MANAGED_SERVICE_ENDPOINT_READ_RPC_METHODS.NEXT))
+                    return { v: 1, requestId: request.requestId, status: 'unavailable', failureCause };
                 if (
                     input.method
                         === MANAGED_SERVICE_ENDPOINT_READ_RPC_METHODS.OPEN
@@ -650,6 +656,16 @@ describe('runner managed-services Provider custody', () => {
             endpointReadRpc,
         });
         const service = await client.adopt(spec.id);
+
+        failureAt = 'open';
+        const openFailure = await service.request({ pathAndQuery: '/failure' }).catch((error: unknown) => error);
+        expect(projectActionFailureCauseV1(openFailure)).toMatchObject({ errorCode: 'EIO' });
+        failureAt = 'next';
+        const failedStream = await service.request({ pathAndQuery: '/failure' });
+        const nextFailure = await failedStream.body!.getReader().read().catch((error: unknown) => error);
+        expect(projectActionFailureCauseV1(nextFailure)).toMatchObject({ errorCode: 'EIO' });
+        failureAt = null;
+        cancel.mockClear();
 
         await expect(service.request({ pathAndQuery: '/oversized', method: 'POST',
             body: new Uint8Array(16 * 1024 * 1024 + 1) }))
@@ -3235,9 +3251,10 @@ describe('runner managed-services Provider custody', () => {
             launchResourceScope: createProviderLaunchResourceScope(),
         });
 
-        expect(result).toEqual({
+        expect(result).toMatchObject({
             ok: false,
             code: 'managed_provider_custody_adoption_failed',
+            startupFailure: { failureCause: { errorCode: 'plugin_managed_service_unavailable' } },
         });
         expect(readAdoptedPublicOutcome).toHaveBeenCalledOnce();
         await expect(client.readAdoptedPublicOutcome()).resolves.toBeNull();

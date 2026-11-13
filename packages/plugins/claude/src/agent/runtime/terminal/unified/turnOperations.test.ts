@@ -279,7 +279,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       hostPreference: 'zellij', launchEnv: { HAPPIER_CLAUDE_CONFIG_DIR: configDir }, permissionMode: 'default',
     });
     try {
-      await expect(operations.startProviderSession()).rejects.toMatchObject({ code: 'claude_terminal_config_unavailable' });
+      await expect(operations.startProviderSession()).rejects.toMatchObject({ code: 'claude_terminal_config_unavailable', cause: expect.any(SyntaxError), details: { failureCause: { phase: 'client_start', actionCause: expect.objectContaining({ errorClass: 'SyntaxError' }) } } });
       expect(terminalHost.service.createOrAttachHost).not.toHaveBeenCalled();
       expect(await readFile(configPath, 'utf8')).toBe(original);
     } finally {

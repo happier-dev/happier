@@ -1,4 +1,5 @@
 import { updateSessionMarkerHeldAgents } from './sessionRegistry';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { parseSessionTrackingKey, type SessionTrackingKey, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 /**
@@ -3554,6 +3555,7 @@ export function createDaemonControlApp({
         && error instanceof SessionTeamCredentialLaunchUnavailableError) {
         return { ok: false as const, error: {
           code: error.code, message: error.code,
+          failureCause: projectActionFailureCauseV1(error),
         } };
       }
       if (request.body.operation.kind === 'model_transition.authorize') {
@@ -3561,7 +3563,9 @@ export function createDaemonControlApp({
         if (providerError.success) {
           return {
             ok: false as const,
-            error: { code: providerError.data.code, message: providerError.data.code },
+            error: { code: providerError.data.code, message: providerError.data.code,
+              ...(providerError.data.failureCause ? { failureCause: providerError.data.failureCause } : {}),
+            },
           };
         }
       }

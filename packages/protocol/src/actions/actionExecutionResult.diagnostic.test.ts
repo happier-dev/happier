@@ -40,6 +40,25 @@ describe('Action failure error adapter', () => {
 });
 
 describe('Action failure cause projection', () => {
+  it('retains the original Action cause after a Session wrapper crosses another Action boundary', () => {
+    const actionCause = { phase: 'providers.source_open', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: 503 } as const;
+    const failureCause = { phase: 'authentication', failureReason: 'unknown', actionCause };
+    const error = Object.assign(new Error('PRIVATE_SESSION_CONTEXT'), { code: 'resource_unavailable', failureCause });
+    expect(projectActionFailureCauseV1(error, 'providers.materialization')).toEqual(actionCause);
+    expect(JSON.stringify(projectActionFailureCauseV1(error))).not.toContain(error.message);
+  });
+
+  it('reads the canonical PluginError data carrier before reclassifying its wrapper', () => {
+    const failureCause = { phase: 'managed_service.establishment', errorClass: 'TypeError',
+      errorCode: 'ECONNRESET', httpStatus: 503 } as const;
+    const error = Object.assign(new Error('PRIVATE_WRAPPER'), { name: 'PluginError',
+      code: 'plugin_managed_service_establishment_failed', retryable: false,
+      data: { name: 'PluginError', code: 'plugin_managed_service_establishment_failed',
+        message: 'PRIVATE_WRAPPER', failureCause } });
+    expect(projectActionFailureCauseV1(error, 'providers.runtime_start')).toEqual(failureCause);
+    expect(JSON.stringify(projectActionFailureCauseV1(error))).not.toContain(error.message);
+  });
+
   it('retains producer-projected native reason codes independently of numeric codes and invalid sibling fields', () => {
     const cause = { phase: 'elevenlabs.disconnect.agent.close', errorClass: 'UnknownThrownValue',
       errorCode: null, httpStatus: null, nativeErrorCode: '1000', nativeErrorReason: 'agent_disconnected' } as const;

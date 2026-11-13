@@ -1,3 +1,4 @@
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createAcpProviderJournalFollower } from '@/plugins/runtime/context/transcripts/acpProviderJournal';
 import { createPublicProviderTurns } from './providerTurns';
@@ -2129,8 +2130,8 @@ async function createPublicAcpConversationFromAwaitableAdapter(
               input: sendRequest.input,
               content: promptContent.map((block) => AgentRuntimeJsonValueV1Schema.parse(block)),
             });
-          } catch {
-            return { status: 'rejected' as const, diagnostic: diagnostic('acp_steer_input_invalid'), retryable: false };
+          } catch (error) {
+            return { status: 'rejected' as const, diagnostic: diagnostic('acp_steer_input_invalid', undefined, error), retryable: false };
           }
           if (extensionParams === null) {
             return { status: 'unsupported' as const, diagnostic: diagnostic('acp_steer_input_unsupported'), retryable: false };
@@ -2159,6 +2160,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
             issue: diagnostic(
               'acp_steer_custody_unknown',
               error instanceof Error ? error.message : undefined,
+              error,
             ),
           });
           return { status: 'admitted' as const };
@@ -2592,6 +2594,9 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       publish({ kind: 'turn-start', turnId: turn.turnId, startedBy: 'provider' });
       observeTurnCompletion(turn);
     }
+    // Only now may the Agent output held while no runner was attached flow: it
+    // lands in the turn above instead of being dropped for want of a turn.
+    if (request.kind === 'resume' && backend.hasResumedHeldPrompt()) backend.releaseResumedHeldOutput();
     return session;
   } catch (error) {
     dependencies.signal.removeEventListener('abort', disposeOnAbort);
@@ -2599,7 +2604,9 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     try {
       await session.dispose();
     } catch (cleanupError) {
-      throw new AggregateError([error, cleanupError], 'ACP Session startup failed and cleanup is incomplete');
+      throw Object.assign(new AggregateError([error, cleanupError], 'ACP Session startup failed and cleanup is incomplete', { cause: error }), {
+          failureCause: classifyPrimarySessionRuntimeIssue({ cause: 'status_error', fallbackSource: 'agent_session_error', error: error, startupPhase: 'client_start' }).failureCause,
+        });
     }
     if (sessionStream) await sessionStream.dispose();
     if (error instanceof Error) {

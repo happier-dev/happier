@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { randomUUID } from 'node:crypto';
 import { fetchWithCredentialRedirectRefusal, CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
 import { toPluginHttpRedirectFailure } from '../../fetch/redirect';
@@ -2262,6 +2263,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                     ) {
                         throw new PluginError({ code: 'plugin_managed_server_port_unavailable',
                             message: 'The selected managed server port is unavailable',
+                            failureCause: projectActionFailureCauseV1(error, 'managed_service.port'),
                             ...(collision && preferredPort !== undefined ? { details: {
                                 establishmentFailure: await establishmentFailure(undefined, preferredPort),
                             } } : {}) });

@@ -122,7 +122,8 @@ describe('Runner broker readiness application', () => {
       initiator: { installationId: 'installation-1', endpointId: 'a'.repeat(64) }, target: { machineId: 'broker-machine', endpointId: 'b'.repeat(64) }, activationSignature: 'A'.repeat(86), installationSignature: 'A'.repeat(86),
     } });
     expect(response.statusCode).toBe(503);
-    expect(response.body).toBe('');
+    expect(response.json()).toEqual({ failureCause: { phase: 'runner.broker_readiness', errorClass: 'Error', errorCode: null, httpStatus: null } });
+    expect(response.body).not.toContain('private upstream');
     await app.close();
   });
 
@@ -141,7 +142,8 @@ describe('Runner broker readiness application', () => {
       initiator: { installationId: 'installation-1', endpointId: 'a'.repeat(64) }, target: { machineId: 'broker-machine', endpointId: 'b'.repeat(64) }, activationSignature: 'A'.repeat(86), installationSignature: 'A'.repeat(86),
     } });
     expect(response.statusCode).toBe(403);
-    expect(response.body).toBe('');
+    expect(response.json()).toEqual({ failureCause: { phase: 'runner.broker_readiness', errorClass: 'Error', errorCode: null, httpStatus: 403 } });
+    expect(response.body).not.toContain('private denial');
     await app.close();
   });
 

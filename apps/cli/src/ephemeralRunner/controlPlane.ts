@@ -1,3 +1,5 @@
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { randomBytes } from 'node:crypto';
 import { hostname } from 'node:os';
 
@@ -194,7 +196,7 @@ export type EphemeralRunnerDependencies<Manifest, Materialized, Preparation> = R
     homeDirectory: string;
     preparation: Preparation;
     signal: AbortSignal;
-  }>): Promise<Readonly<{ status: 'ready'; readiness: RunnerReadinessV1 }> | Readonly<{ status: 'denied' | 'unavailable'; reason: string }>>;
+  }>): Promise<Readonly<{ status: 'ready'; readiness: RunnerReadinessV1 }> | Readonly<{ status: 'denied' | 'unavailable'; reason: string; failureCause?: ActionFailureCauseV1 }>>;
   materialize(input: Readonly<{
     binding: RunnerActivationBindingV1;
     claim: RunnerClaimV1;
@@ -854,7 +856,12 @@ export function createEphemeralRunnerController<Manifest, Materialized, Preparat
             } finally {
               readinessInstallationKey.fill(0);
             }
-            if (readiness.status !== 'ready') throw new Error(`AI access is ${readiness.status}: ${readiness.reason}`);
+            if (readiness.status !== 'ready') {
+              const error = new Error(`AI access is ${readiness.status}: ${readiness.reason}`);
+              throw readiness.failureCause
+                ? withActionFailureCauseDiagnostic(error, readiness, 'runner.broker_readiness')
+                : error;
+            }
             await connection.submitReadiness({ readiness: readiness.readiness, signal: lifetime.signal });
             break;
           } catch (error) {

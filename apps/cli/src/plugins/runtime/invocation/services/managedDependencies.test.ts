@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -303,6 +304,24 @@ describe('stable plugin managed dependencies host', () => {
             sourceCustody: runnerCustody,
             manifestAuthority: 'bundled_first_party',
         }]);
+    });
+
+    it('retains the native install cause while ensuring an executable at launch', async () => {
+        // The adapter is the package-installer OS boundary; host source selection stays real.
+        const host = v2Host({ contributions: [v2Contribution('acme.plugin', 'tool', [{
+            kind: 'pinnedArchive', installId: 'dep.acme.tool', version: '1.0.0',
+            assetsByPlatform: { 'linux-x64': { archiveUrl: 'https://downloads.example.test/tool.zip',
+                sha256: 'a'.repeat(64), executableSubpath: 'tool' } },
+        }])],
+            resolveSourceAdapter: async () => adapter('tool', {
+                detectLaunchResolution: async () => ({ availability: { ok: false as const, errorMessage: 'missing' }, canAutoInstall: true, canBackgroundAutoUpdate: false }),
+                resolveLaunchCommand: async () => ({ ok: false as const, errorMessage: 'missing', canAutoInstall: true }),
+                installOrUpgrade: async () => { throw Object.assign(new Error('ambient installer'), { code: 'EACCES' }); },
+            }) });
+        const failure = await host.bind('acme.plugin').ensure('tool').catch((error: unknown) => error);
+        expect(failure).toMatchObject({ code: 'plugin_managed_dependency_install_failed' });
+        expect(projectActionFailureCauseV1(failure)).toMatchObject({ errorCode: 'EACCES' });
+        expect(JSON.stringify(failure)).not.toContain('ambient');
     });
 
     it('authoritatively ensures a missing managed executable at launch and coalesces concurrent launch ensures', async () => {
@@ -1193,6 +1212,19 @@ describe('stable plugin managed dependencies host', () => {
         const executable = await host.resolveExecutable({ kind: 'managedDependency', id: 'tool' }, 'acme.plugin');
         expect(executable.command).toBe('/managed/tool');
         executable.release();
+    });
+
+    it.each([true, false])('retains failed executable lookup causes with requireReady=%s', async requireReady => {
+        const host = v2Host({
+            contributions: [v2Contribution('acme.plugin', 'tool', [managedPypiSource('dep.acme.tool')])],
+            resolveSourceAdapter: async () => adapter('tool', {
+                resolveLaunchCommand: async () => { throw Object.assign(new Error('private lookup'), { code: 'EACCES' }); },
+            }),
+        });
+        const failure = await host.resolveExecutable({ kind: 'managedDependency', id: 'tool' }, 'acme.plugin', { requireReady })
+            .catch((error: unknown) => error);
+        expect(projectActionFailureCauseV1(failure)).toMatchObject({ errorCode: 'EACCES', errorClass: 'Error' });
+        expect(JSON.stringify(failure)).not.toContain('private');
     });
 
     it('retires the direct V2 model only after executable leases are released', async () => {

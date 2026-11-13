@@ -6,17 +6,10 @@ import type {
 
 import type { OpenCodeRuntimeTurnOperations } from './operations.js';
 import { asRecord, readNonBlankOpaqueIdentifier } from './openCodeParsing.js';
-import { projectOpenCodeTurnCancellationCause, projectOpenCodeRuntimeIssueDiagnostic } from './openCodeRuntimeEvents.js';
+import { createOpenCodeRuntimeDiagnostic as diagnostic, projectOpenCodeTurnCancellationCause, projectOpenCodeRuntimeIssueDiagnostic } from './openCodeRuntimeEvents.js';
 import { buildOpenCodePromptParts, OpenCodePromptProjectionError } from './promptParts.js';
 import { OpenCodePromptIdentityUnresolvedError } from './promptSubmissionError.js';
 
-function diagnostic(code: string, message?: string | null) {
-  return {
-    code,
-    severity: 'error' as const,
-    ...(message ? { message } : {}),
-  };
-}
 
 /** Scope-neutral projection of the one OpenCode provider conversation owner. */
 export function createOpenCodeExecutionRunConversation(params: Readonly<{
@@ -138,6 +131,7 @@ export function createOpenCodeExecutionRunConversation(params: Readonly<{
               ? error.code
               : 'opencode_input_rejected',
             error instanceof Error ? error.message : String(error),
+            error,
           ),
         };
       }

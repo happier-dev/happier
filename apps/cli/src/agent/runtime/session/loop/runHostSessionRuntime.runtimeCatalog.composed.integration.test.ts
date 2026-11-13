@@ -9413,6 +9413,29 @@ describe('runHostSessionRuntime', () => {
     expect(harness.session.confirmUserMessageLocallyConsumed).not.toHaveBeenCalled();
   });
 
+  it('retains the runtime failure cause when startup model intent reconciliation fails', async () => {
+    const harness = createHarness();
+    const before = { agentTargetKey: 'agent:happier.agent.qwen/qwen', providerConnectionId: null, modelId: 'old-model' };
+    const selection = before;
+    harness.opts.modelSelection = { v: 1, updatedAt: 10, ref: before };
+    let metadata: Record<string, unknown> = { ...harness.session.getMetadataSnapshot(), path: '/tmp/workspace', permissionMode: 'default',
+      modelSelectionIntentV1: { v: 1, updatedAt: 10, selection: before } };
+    harness.session.getMetadataSnapshot = () => metadata;
+    harness.session.updateMetadata.mockImplementation(async (update: unknown) => {
+      if (typeof update === 'function') metadata = update(metadata);
+    });
+    const failureCause = { phase: 'turn_start', failureReason: 'rate_limit' } as const;
+    let sourceReads = 0;
+    harness.runtime.readAppliedTeamCredentialModel = () => {
+      if (++sourceReads === 1) return null;
+      throw Object.assign(new Error('private native source detail'), { failureCause });
+    };
+    harness.queue.pushIsolate({ text: 'Original startup prompt', localId: 'startup-model-cause' }, { permissionMode: 'default' });
+    await expect(runHostSessionRuntime(harness.opts, harness.config, harness.deps)).rejects.toMatchObject({
+      code: 'agent_startup_model_reconciliation_failed', failureCause,
+    });
+  });
+
   it('keeps opened Team custody on the registered model RPC until restart, including an identical native model id', async () => {
     const harness = createHarness();
     const selection = { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'same-model' } as const;
@@ -10018,8 +10041,9 @@ describe('runHostSessionRuntime', () => {
   });
 
 
-  it('keeps the real model and visible failure when active publication is unavailable without reverting', async () => {
+  it.each(['runtime_apply', 'runtime_readback'] as const)('keeps the real model and typed failure when active publication is unavailable (%s)', async evidence => {
     const harness = createHarness();
+    const failureCause = { phase: 'turn_start', failureReason: 'rate_limit' } as const;
     const initial = { agentTargetKey: 'agent:happier.agent.qwen/qwen', providerConnectionId: null, modelId: 'old-model' } as const;
     const selection = { ...initial, modelId: 'next-model' };
     harness.opts.modelSelection = { v: 1, updatedAt: 1, ref: initial };
@@ -10042,18 +10066,19 @@ describe('runHostSessionRuntime', () => {
       const next = update(metadata);
       if (next.sessionModelsV1?.currentModelId === selection.modelId && failNextPublication) {
         failNextPublication = false;
-        throw new Error('metadata unavailable');
+        throw Object.assign(new Error('metadata unavailable'), { failureCause });
       }
       metadata = next;
     });
     harness.runtime.updateSessionRuntimeConfig.mockImplementation(async (config: RuntimeTurnConfigUpdate) => {
       currentModelId = config.modelId!;
-      return { status: 'applied', timing: 'current_window' };
+      return evidence === 'runtime_apply' ? { status: 'applied', timing: 'current_window' } : undefined;
     });
     harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
       const transition = harness.handlers.get(SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION)!;
       await expect(transition({ v: 1, selection })).resolves.toMatchObject({
-        ok: false, status: 'reconciliation_required', activeSelection: selection, reason: 'metadata unavailable',
+        ok: false, status: 'reconciliation_required', activeSelection: selection,
+        reason: evidence === 'runtime_apply' ? 'metadata unavailable' : 'runtime_readback_publication_failed', failureCause,
       });
       expect(currentModelId).toBe(selection.modelId);
       expect(harness.runtime.updateSessionRuntimeConfig).toHaveBeenCalledTimes(1);
@@ -10067,6 +10092,31 @@ describe('runHostSessionRuntime', () => {
       });
       expect(currentModelId).toBe(selection.modelId);
       expect(harness.runtime.updateSessionRuntimeConfig).toHaveBeenCalledTimes(1);
+    };
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('retains the Home transport cause when model intent publication fails before runtime effect', async () => {
+    const harness = createHarness();
+    const initial = { agentTargetKey: 'agent:happier.agent.qwen/qwen', providerConnectionId: null, modelId: 'old-model' } as const;
+    const selection = { ...initial, modelId: 'next-model' };
+    const failureCause = { phase: 'turn_start', failureReason: 'rate_limit' } as const;
+    harness.opts.modelSelection = { v: 1, updatedAt: 1, ref: initial };
+    let metadata = createTestMetadata({ ...harness.session.getMetadataSnapshot(), path: '/tmp/workspace', flavor: 'qwen', permissionMode: 'default',
+      modelSelectionIntentV1: { v: 1, updatedAt: 1, selection: initial } });
+    harness.session.getMetadataSnapshot = () => metadata;
+    // The Home acknowledgement is the boundary; model authorization and publication remain real.
+    harness.session.updateMetadata.mockImplementation(async (update: (current: Metadata) => Metadata) => {
+      const next = update(metadata);
+      if (next.modelSelectionIntentV1?.selection?.modelId === selection.modelId) {
+        throw Object.assign(new Error('private Home transport detail'), { failureCause });
+      }
+      metadata = next;
+    });
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      const transition = harness.handlers.get(SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION)!;
+      await expect(transition({ v: 1, selection })).resolves.toMatchObject({ ok: false, status: 'apply_failed', failureCause });
+      expect(metadata.modelSelectionIntentV1?.selection).toEqual(initial);
     };
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
   });
@@ -10235,8 +10285,9 @@ describe('runHostSessionRuntime', () => {
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
   });
 
-  it('does not start runtime apply when a successor claims before the immediate effect check', async () => {
+  it.each(['withdrawn', 'unavailable'] as const)('refuses runtime apply when the Home publisher check is %s', async authority => {
     const harness = createHarness();
+    const failureCause = { phase: 'turn_start', failureReason: 'rate_limit' } as const;
     harness.opts.modelSelection = {
       v: 1,
       updatedAt: 1,
@@ -10247,6 +10298,7 @@ describe('runHostSessionRuntime', () => {
       },
     };
     let metadata: any = {
+      ...harness.session.getMetadataSnapshot(),
       path: '/tmp/workspace',
       permissionMode: 'default',
       modelSelectionIntentV1: {
@@ -10279,7 +10331,8 @@ describe('runHostSessionRuntime', () => {
           : update;
       },
     );
-    harness.session.checkCurrentPublisherAuthority.mockResolvedValue(false);
+    if (authority === 'withdrawn') harness.session.checkCurrentPublisherAuthority.mockResolvedValue(false);
+    else harness.session.checkCurrentPublisherAuthority.mockRejectedValue(Object.assign(new Error('private Home transport detail'), { failureCause }));
     harness.runtime.updateSessionRuntimeConfig.mockResolvedValue({
       status: 'applied',
       timing: 'before_next_prompt',
@@ -10299,6 +10352,7 @@ describe('runHostSessionRuntime', () => {
       })).resolves.toMatchObject({
         ok: false,
         status: 'owner_unavailable',
+        ...(authority === 'unavailable' ? { failureCause } : {}),
       });
       expect(metadata.sessionModelsV1.currentModelId).toBe('old-model');
       expect(harness.session.checkCurrentPublisherAuthority)

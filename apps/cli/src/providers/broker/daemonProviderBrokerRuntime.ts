@@ -56,6 +56,7 @@ import {
 function brokerSourceAcquisitionFailure(failure: Extract<TeamCredentialBrokerSourceAcquireResult, { ok: false }>) {
   return { ok: false as const,
     reasonCode: failure.reasonCode === 'broker_machine_mismatch' ? 'broker_unavailable' as const : failure.reasonCode,
+    ...(failure.failureCause ? { failureCause: failure.failureCause } : {}),
     ...(failure.sourceOpenFailureReason ? { sourceOpenFailureReason: failure.sourceOpenFailureReason } : {}) };
 }
 

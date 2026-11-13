@@ -75,6 +75,25 @@ import {
 
 const temporaryPaths: string[] = [];
 
+it('retains a remote model projection transport cause during binding reconciliation', async () => {
+  const fixture = await createManagedRunLaunchFixture({ remote: true, probeCatalog: true });
+  const failureCause = { phase: 'provider.model_projection', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+  const services = createRuntimeProviderModelManagementServices({ machineId: 'worker', happyHomeDir: fixture.happyHomeDir,
+    featureGate: { isEnabled: () => true }, registry: fixture.contributes,
+    getAccountSettingsSnapshot: () => fixture.snapshot, acquireRuntimeLease: async () => fixture.lease,
+    resolveManagedPurposeBindingIntent: async () => { throw new Error('No declared purpose'); },
+    modelSettingsMutation: async () => { throw new Error('No model mutation'); },
+    // The owning hub's Machine RPC is the external boundary. Binding resolution remains real.
+    readModelProjection: async () => { throw Object.assign(new Error('private hub detail'), { failureCause }); },
+  });
+  try {
+    await expect(services.resolveBindingStatus({ machineId: 'worker', agentTargetKey: fixture.agentTargetKey,
+      selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: fixture.agentTargetKey,
+        providerConnectionId: ProviderConnectionIdSchema.parse('run-gateway'), modelId: 'model-a' } },
+    })).resolves.toMatchObject({ status: 'incompatible', error: { code: 'provider_endpoint_unavailable', failureCause } });
+  } finally { await fixture.cleanup(); }
+});
+
 it('projects private native source tickets through the real source catalog and refuses a foreign requester', async () => {
   const fixture = await createTeamCredentialNativeProviderSourceFixture();
   try {
@@ -133,15 +152,16 @@ afterEach(async () => {
 });
 
 it('returns a typed projection failure and content-free cause when the credential file boundary throws', async () => {
+  const failureCause = { phase: 'provider.credentials_read', errorClass: 'Error', errorCode: null, httpStatus: null } as const;
   setActiveAccountSettingsSnapshot({ ...providerSnapshot(DEFAULT_PROVIDER_SETTINGS_V1),
     scopeKey: resolveAccountSettingsScopeKeyForToken('projection-account'), providerConnectionsCatalog: undefined });
-  vi.spyOn(persistence, 'readStoredCredentials').mockRejectedValue(new ReferenceError('private-credential-value'));
+  vi.spyOn(persistence, 'readStoredCredentials').mockRejectedValue(Object.assign(new ReferenceError('private-credential-value'), { failureCause }));
   const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
   const services = createRuntimeProviderModelManagementServices({ machineId: 'machine-a',
     featureGate: { isEnabled: () => true },
     modelSettingsMutation: async (): Promise<never> => { throw new Error('No mutation during projection'); } });
   await expect(services.projectModels({ machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex' }))
-    .resolves.toMatchObject({ status: 'error', error: { code: 'agent_error', machineId: 'machine-a' } });
+    .resolves.toMatchObject({ status: 'error', error: { code: 'agent_error', machineId: 'machine-a', failureCause } });
   expect(diagnostic).toHaveBeenCalledWith('[PROVIDER] Unexpected failure', expect.objectContaining({
     operation: 'model_projection', errorType: 'ReferenceError', sourceLocations: expect.any(Array),
   }));

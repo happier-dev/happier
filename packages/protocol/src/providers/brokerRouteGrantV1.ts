@@ -1,4 +1,4 @@
-import { ActionExecuteResultSchema } from '../actions/actionExecutionResult.js';
+import { ActionExecuteResultSchema, ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '../connect/connectedServiceUxDiagnostics.js';
@@ -224,6 +224,7 @@ const ProviderBrokerAdmissionFailureV1Schema = lazyZodSchema(() => z.strictObjec
   ok: z.literal(false),
   reasonCode: ProviderBrokerAdmissionFailureCodeV1Schema,
   sourceOpenFailureReason: z.optional(ProviderBrokerSourceOpenFailureReasonV1Schema),
+  failureCause: z.optional(ActionFailureCauseV1Schema),
   /** Present only for an exhausted Team-resource ceiling. It intentionally
    * excludes limit, audience and member identities. */
   usageLimit: z.optional(TeamCredentialUsageLimitDenialV1Schema),

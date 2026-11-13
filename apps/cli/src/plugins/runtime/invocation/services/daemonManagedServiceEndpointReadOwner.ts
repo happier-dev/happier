@@ -1,8 +1,9 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
 
 import type { StoredCredentials } from '@/persistence';
-import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import { deferSessionRpcEncryption, SessionRpcTransportUnavailableError } from '@/session/services/resolveSessionTransportContext';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import {
   MANAGED_SERVICE_ENDPOINT_READ_RPC_METHODS,
@@ -31,11 +32,6 @@ type ResolveProjection = (
   query: ManagedServiceEndpointProjectionResolveQuery,
 ) => Promise<ManagedServiceEndpointProjectionV1 | null>;
 
-type SessionTransport = Extract<
-  Awaited<ReturnType<typeof resolveSessionTransportContext>>,
-  { ok: true }
->;
-
 type PendingClaim = {
   projection: ManagedServiceEndpointProjectionV1;
   claimed: boolean;
@@ -51,33 +47,39 @@ type RunnerEndpointReadRpc = Readonly<{
   }>): Promise<unknown>;
 }>;
 
-async function callResolvedSessionRpc(input: Readonly<{
+/**
+ * Runner endpoint-read RPC for one Session through the shared Session RPC router: the same-machine
+ * local channel needs no Session record read; the server path reads it once for this RPC scope.
+ */
+function createSessionEndpointReadRpc(input: Readonly<{
   credentials: StoredCredentials;
-  transport: SessionTransport;
-  method: string;
-  request: unknown;
-  timeoutMs: number | null;
-  signal?: AbortSignal;
-}>): Promise<unknown> {
-  const common = {
-    token: input.credentials.token,
-    sessionId: input.transport.sessionId,
-    method: `${input.transport.sessionId}:${input.method}`,
-    request: input.request,
-    timeoutMs: input.timeoutMs,
-    signal: input.signal,
-  };
-  return input.transport.mode === 'plain'
-    ? await callSessionRpc({
-        ...common,
-        mode: 'plain',
-        ctx: null,
-      })
-    : await callSessionRpc({
-        ...common,
-        mode: 'e2ee',
-        ctx: input.transport.ctx,
-      });
+  sessionId: string;
+  /** Endpoint client environments carry a raw child credential: never relay them in plain mode. */
+  refusePlainRelay?: true;
+  unavailable?: () => Error;
+}>): RunnerEndpointReadRpc {
+  const encryption = deferSessionRpcEncryption({ reason: 'session-query', credentials: input.credentials, idOrPrefix: input.sessionId,
+    ...(input.unavailable ? { unavailable: input.unavailable } : {}) });
+  const deferred = input.refusePlainRelay ? {
+    mode: 'deferred' as const,
+    resolveEncryption: async () => {
+      const resolved = await encryption.resolveEncryption();
+      if (resolved.mode === 'plain') throw new SessionRpcTransportUnavailableError('encryption_material_unavailable');
+      return resolved;
+    },
+  } : encryption;
+  return Object.freeze({
+    sessionId: input.sessionId,
+    call: async (rpcInput) => await callSessionRpc({
+      token: input.credentials.token,
+      sessionId: input.sessionId,
+      method: `${input.sessionId}:${rpcInput.method}`,
+      request: rpcInput.request,
+      timeoutMs: rpcInput.timeoutMs,
+      ...(rpcInput.signal ? { signal: rpcInput.signal } : {}),
+      ...deferred,
+    }),
+  });
 }
 
 export function createDaemonManagedServiceEndpointReadOwner(input: Readonly<{
@@ -132,29 +134,8 @@ export function createDaemonManagedServiceEndpointReadOwner(input: Readonly<{
           projection.sessionId,
         );
       } else {
-        const transport = await resolveSessionTransportContext({
-          reason: 'session-query',
-          credentials: input.credentials,
-          idOrPrefix: projection.sessionId,
-        });
-        rpc = (
-          transport.ok
-          && transport.sessionId === projection.sessionId
-            ? Object.freeze({
-                sessionId: transport.sessionId,
-                call: async (rpcInput: Readonly<{
-                  method: string;
-                  request: unknown;
-                  timeoutMs: number | null;
-                  signal?: AbortSignal;
-                }>) => await callResolvedSessionRpc({
-                  credentials: input.credentials,
-                  transport,
-                  ...rpcInput,
-                }),
-              })
-            : null
-        );
+        rpc = createSessionEndpointReadRpc({ credentials: input.credentials, sessionId: projection.sessionId,
+          unavailable: () => new Error('Managed server endpoint runner transport is unavailable') });
       }
       if (!rpc || rpc.sessionId !== projection.sessionId) {
         throw new Error('Managed server endpoint runner transport is unavailable');
@@ -245,9 +226,10 @@ export function createDaemonManagedServiceEndpointReadOwner(input: Readonly<{
           || pendingClaims.get(requestId) !== pending
           || !pending.claimed
         ) {
-          throw new Error(
-            'Managed server endpoint read was unavailable before effect',
-          );
+          throw new PluginError({ code: 'plugin_managed_service_unavailable',
+            message: 'Managed server endpoint read was unavailable before effect',
+            ...(opened.status === 'unavailable' && opened.failureCause ? { failureCause: opened.failureCause } : {}),
+          });
         }
         pendingClaims.delete(requestId);
         const headers: Record<string, string> = {};
@@ -298,9 +280,10 @@ export function createDaemonManagedServiceEndpointReadOwner(input: Readonly<{
                 controller.close();
                 return;
               }
-              throw new Error(
-                'Managed server endpoint read became unavailable',
-              );
+              throw new PluginError({ code: 'plugin_managed_service_unavailable',
+                message: 'Managed server endpoint read became unavailable',
+                ...(next.failureCause ? { failureCause: next.failureCause } : {}),
+              });
             } catch (error) {
               await cancelRemote();
               controller.error(error);
@@ -411,29 +394,9 @@ export function createDaemonManagedServiceEndpointReadOwner(input: Readonly<{
       if (input.resolveRunnerEndpointReadRpc) {
         rpc = await input.resolveRunnerEndpointReadRpc(projection.sessionId);
       } else {
-        const transport = await resolveSessionTransportContext({
-          reason: 'session-query',
-          credentials: input.credentials,
-          idOrPrefix: projection.sessionId,
-        });
-        // Unlike authenticated endpoint reads, this acknowledgement contains
-        // a raw child credential. Never expose it to the relay in plain mode.
-        if (transport.ok && transport.mode === 'plain') return null;
-        rpc = transport.ok && transport.sessionId === projection.sessionId
-          ? Object.freeze({
-              sessionId: transport.sessionId,
-              call: async (rpcInput: Readonly<{
-                method: string;
-                request: unknown;
-                timeoutMs: number | null;
-                signal?: AbortSignal;
-              }>) => await callResolvedSessionRpc({
-                credentials: input.credentials,
-                transport,
-                ...rpcInput,
-              }),
-            })
-          : null;
+        // Unlike authenticated endpoint reads, this acknowledgement contains a raw child
+        // credential: the server path refuses plain mode; the local channel never leaves the machine.
+        rpc = createSessionEndpointReadRpc({ credentials: input.credentials, sessionId: projection.sessionId, refusePlainRelay: true });
       }
       if (!rpc || rpc.sessionId !== projection.sessionId || disposed) return null;
       const requestId = randomUUID();
@@ -456,6 +419,10 @@ export function createDaemonManagedServiceEndpointReadOwner(input: Readonly<{
         });
         const materialized = ManagedServiceEndpointReadOpenResultV1Schema
           .parse(raw);
+        if (materialized.status === 'unavailable' && materialized.failureCause) {
+          throw new PluginError({ code: 'plugin_managed_service_unavailable',
+            message: 'Managed server client environment is unavailable', failureCause: materialized.failureCause });
+        }
         const environmentKeys = materialized.status === 'clientEnvironment'
           ? Object.keys(materialized.environment)
           : [];
@@ -498,6 +465,10 @@ export function createDaemonManagedServiceEndpointReadOwner(input: Readonly<{
             });
           },
         });
+      } catch (error) {
+        // Record unavailable, or a plain-mode Session on the server path: no claim.
+        if (error instanceof SessionRpcTransportUnavailableError) return null;
+        throw error;
       } finally {
         pendingClaims.delete(requestId);
       }

@@ -1,3 +1,4 @@
+import { ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
 import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { normalizeProviderOriginRelativePathSyntax } from '@happier-dev/protocol/providers/safety/url';
@@ -33,7 +34,9 @@ function selectProviderBrokerLocalCredentialTransport(protocol: ProviderWireProt
 
 /** Broker compatibility describes the local consumer credential, independently of upstream auth. */
 export function providerBrokerLocalCredentialRequirement(protocol: ProviderWireProtocol, agent: AgentProviderRequirementsV1): Readonly<{
-  kind: 'apiKey'; required: true; slotId: 'apiKey'; transports: readonly [ProviderCredentialTransportV1];
+  // A fresh value per call; a mutable one-tuple satisfies the canonical
+  // ProviderApiKeyCredentialRequirementV1 consumed by compatibility resolution.
+  kind: 'apiKey'; required: true; slotId: 'apiKey'; transports: [ProviderCredentialTransportV1];
 }> | null {
   const transport = selectProviderBrokerLocalCredentialTransport(protocol, agent);
   return transport ? { kind: 'apiKey', required: true, slotId: 'apiKey', transports: [transport] } : null;
@@ -71,7 +74,7 @@ export async function readProviderBrokerEndpointUrl(input: Readonly<{
   headers: Readonly<Record<string, string>>;
   signal: AbortSignal;
   fetchImpl?: typeof fetch;
-  onRefusal?: (code: TeamCredentialBrokerApplicationFailureCodeV1) => void;
+  onRefusal?: (code: TeamCredentialBrokerApplicationFailureCodeV1, failureCause?: ActionFailureCauseV1) => void;
 }>): Promise<string> {
   const response = await fetchWithCredentialRedirectRefusal(new URL(PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH, input.localOrigin).href, {
     method: 'GET', headers: input.headers, signal: input.signal,
@@ -80,13 +83,24 @@ export async function readProviderBrokerEndpointUrl(input: Readonly<{
   if (response.status !== 204 || declaredPath === null) {
     const code = response.headers.get(PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER);
     const brokerReason = TeamCredentialBrokerApplicationFailureCodeV1Schema.safeParse(code);
-    if (response.status !== 204 && brokerReason.success) input.onRefusal?.(brokerReason.data);
+    let failureCause: ActionFailureCauseV1 | undefined;
+    if (response.status !== 204) {
+      try {
+        const body: unknown = await response.json();
+        const error = body && typeof body === 'object' && 'error' in body ? body.error : undefined;
+        const cause = ActionFailureCauseV1Schema.safeParse(error && typeof error === 'object'
+          && 'failureCause' in error ? error.failureCause : undefined);
+        if (cause.success) failureCause = cause.data;
+      } catch { /* Optional diagnostics cannot replace the typed refusal. */ }
+      if (brokerReason.success) input.onRefusal?.(brokerReason.data, failureCause);
+    }
     logger.warnLocalFile('[ProviderBroker] Endpoint metadata refused', {
       httpStatus: response.status, hasEndpointPath: declaredPath !== null,
       brokerReasonCode: brokerReason.success ? brokerReason.data : null,
     });
     throw new SessionTeamCredentialLaunchUnavailableError(response.status === 204
-      ? 'provider_endpoint_unavailable' : brokerReason.success ? brokerReason.data : 'broker_unavailable');
+      ? 'provider_endpoint_unavailable' : brokerReason.success ? brokerReason.data : 'broker_unavailable',
+      'binding', failureCause ? { failureCause } : undefined);
   }
   const path = normalizeProviderOriginRelativePathSyntax(declaredPath);
   input.signal.throwIfAborted();

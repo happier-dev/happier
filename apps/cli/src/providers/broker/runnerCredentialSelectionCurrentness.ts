@@ -1,3 +1,4 @@
+import { carryActionFailureDiagnostic, withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema,
   type DaemonProviderTeamCredentialBrokerEligibilityRequestV1,
@@ -56,16 +57,16 @@ export async function resolveRunnerCredentialSelectionCurrentness(
       modelId: input.modelId,
       sourceRevision: input.selection.sourceRevision,
     }, input.signal);
-  } catch {
+  } catch (error) {
     input.signal.throwIfAborted();
-    return { kind: 'source_unavailable' };
+    return withActionFailureCauseDiagnostic({ kind: 'source_unavailable' as const }, error, 'runner.broker_readiness');
   }
   input.signal.throwIfAborted();
   const eligibility = DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema.safeParse(rawEligibility);
   if (!eligibility.success) return { kind: 'source_unavailable' };
   if (eligibility.data.status === 'eligible') return { kind: 'available' };
   if (eligibility.data.reason === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired) {
-    return { kind: 'source_unavailable', reason: eligibility.data.reason };
+    return carryActionFailureDiagnostic({ kind: 'source_unavailable' as const, reason: eligibility.data.reason }, rawEligibility);
   }
-  return { kind: eligibility.data.reason === 'application_unavailable' ? 'update_required' : 'source_unavailable' };
+  return carryActionFailureDiagnostic({ kind: eligibility.data.reason === 'application_unavailable' ? 'update_required' as const : 'source_unavailable' as const }, rawEligibility);
 }

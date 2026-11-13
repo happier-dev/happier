@@ -1,3 +1,4 @@
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { RunnerActivationBindingV1Schema } from '@happier-dev/protocol/ephemeralRunner/activation';
 import type { RunnerEndpointFactsV1 } from '@happier-dev/protocol/ephemeralRunner/endpoint';
@@ -732,9 +733,10 @@ describe('ephemeral Runner endpoint control plane', () => {
   it('releases prepared runtime custody when readiness fails before materialization', async () => {
     const f = fixture();
     const h = harness();
+    const failureCause = { phase: 'runner.broker_readiness', errorClass: 'Error', errorCode: 'EISDIR', httpStatus: null } as const;
     vi.mocked(h.deps.checkNonInferenceReadiness).mockResolvedValue({
       status: 'unavailable',
-      reason: 'broker readiness unavailable',
+      reason: 'broker readiness unavailable', failureCause,
     });
     const controller = createEphemeralRunnerController({
       activation: f,
@@ -745,7 +747,10 @@ describe('ephemeral Runner endpoint control plane', () => {
       ui: h.ui,
     });
 
-    await expect(controller.run()).resolves.toMatchObject({ status: 'failed' });
+    const result = await controller.run();
+    expect(result).toMatchObject({ status: 'failed' });
+    if (result.status !== 'failed') throw new Error('Expected readiness refusal');
+    expect(readActionOutputDiagnostic(result.error)?.failureCause).toEqual(failureCause);
     expect(h.events).toEqual([
       'claim', 'facts', 'review', 'plugin.prepare', 'plugin.apply', 'consent', 'prepare',
       'progress.checking_ai_access', 'decline',

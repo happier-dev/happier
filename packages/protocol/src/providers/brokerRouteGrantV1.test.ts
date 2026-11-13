@@ -38,6 +38,16 @@ const payload = {
 const authority = { payload, signature: { alg: 'Ed25519', keyId: 'home', valueBase64Url: 'A'.repeat(86) } };
 
 describe('Provider broker authority V1', () => {
+  it('retains sanitized source failure facts through both broker open and finite Action refusals', async () => {
+    const { ProviderBrokerActionExecuteResponseV3Schema } = await import('./brokerRouteGrantV1.js');
+    const failureCause = { phase: 'providers.source_open', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: 503 };
+    const refusal = { ok: false, reasonCode: 'broker_unavailable', failureCause };
+    for (const schema of [ProviderBrokerOpenResponseV1Schema, ProviderBrokerActionExecuteResponseV3Schema]) {
+      expect(schema.parse(JSON.parse(JSON.stringify(refusal)))).toEqual(refusal);
+      expect(schema.safeParse({ ...refusal, failureCause: { ...failureCause, message: 'PRIVATE_SOURCE_OUTPUT' } }).success).toBe(false);
+    }
+  });
+
   it('preserves closed source-open reasons while accepting refusals without diagnostic fields', () => {
     const legacy = { ok: false, reasonCode: 'resource_unavailable' };
     expect(ProviderBrokerOpenResponseV1Schema.parse(legacy)).toEqual(legacy);

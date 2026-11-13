@@ -12,6 +12,13 @@ import { ActionOperationIdentifierV1Schema } from './operations/identifierV1.js'
 import { ActionIdSchema } from './actionIds.js';
 export { readActionErrorCodeV1 } from './actionErrorClassV1.js';
 
+/** Approval conflicts expose only the compared subject's fixed field names. */
+export const ApprovalRequestConflictFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+  mismatches: z.array(z.enum(['v', 'actionId', 'requestInputDigest', 'actionArgs',
+    'executionOriginV1', 'requesterConfirmation', 'createdBy'])).check(z.minLength(1)),
+}));
+export type ApprovalRequestConflictFieldV1 = z.infer<typeof ApprovalRequestConflictFailureDetailsV1Schema>['mismatches'][number];
+
 export { ActionRefusalDiagnosticV1Schema, type ActionRefusalReasonV1, createActionRefusalDetailsV1, actionTargetUnavailable } from './actionRefusalDiagnostic.js';
 
 /** Keep authored recovery facts; the output owner supplies its domain fallback. */

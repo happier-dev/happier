@@ -10,6 +10,7 @@ import { createProviderConnectionCpxBridge, projectProviderConnectionBrokerAppli
 import { ProviderContributionV1Schema } from '@happier-dev/plugin-sdk/providers';
 import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from '../../../../../packages/plugins/cliproxyapi/src/provider/contribution';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
+import { ProviderBrokerApplicationFailureError } from './providerBrokerApplicationFailure';
 
 function declaredBroker(pluginId: string, transport: boolean, localId = 'gateway'): ResolvedProviderContribution {
   const definition = ProviderContributionV1Schema.parse({
@@ -75,6 +76,58 @@ function custody(request: (input: ManagedServiceRequest) => Promise<ManagedServi
 }
 
 describe('Provider Connection CPX bridge', () => {
+  it('retains the managed upstream transport cause through the broker request', async () => {
+    const failureCause = { phase: 'provider.transport', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    const managed = custody(async () => { throw Object.assign(new Error('private upstream detail'), { failureCause }); });
+    const bridge = createProviderConnectionCpxBridge({ custody: managed.owner });
+    const projection = await bridge.open({ application, operation,
+      endpoint: { endpointTemplateId: 'responses', normalizedUrl: 'https://gateway.example/v1',
+        protocol: 'openai-responses', publicHeaders: {}, resolvedAddresses: ['203.0.113.10'] },
+      signal: new AbortController().signal, isCurrent: async () => true,
+      acquireRequestCredential: async () => credentialLease(),
+    });
+    try {
+      const result = await projection!.access.request({ method: 'POST', pathAndQuery: '/v1/responses' });
+      expect(result.status).toBe(502);
+      expect(await new Response(await readProviderBrokerResponseBody(result.body)).json()).toMatchObject({
+        type: 'error', error: { code: 'broker_unavailable', failureCause },
+      });
+    } finally { await projection?.retire(); }
+  });
+
+  it('retains the source currentness failure through broker operation acquisition', async () => {
+    const failureCause = { phase: 'provider.source_read', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    const managed = custody(async () => response());
+    const bridge = createProviderConnectionCpxBridge({ custody: managed.owner });
+    await expect(bridge.open({ application, operation,
+      endpoint: { endpointTemplateId: 'responses', normalizedUrl: 'https://gateway.example/v1',
+        protocol: 'openai-responses', publicHeaders: {}, resolvedAddresses: ['203.0.113.10'] },
+      signal: new AbortController().signal,
+      isCurrent: async () => { throw Object.assign(new Error('private Home detail'), { failureCause }); },
+      acquireRequestCredential: async () => credentialLease(),
+    })).rejects.toMatchObject({ failure: { ok: false, reasonCode: 'source_unavailable',
+      sourceOpenFailureReason: 'source_currentness_unknown', failureCause } });
+  });
+
+  it('retains a credential acquisition refusal through the retained request carrier', async () => {
+    const failureCause = { phase: 'provider.credential_resolution', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    const managed = custody(async () => response());
+    const bridge = createProviderConnectionCpxBridge({ custody: managed.owner });
+    const projection = await bridge.open({ application, operation,
+      endpoint: { endpointTemplateId: 'responses', normalizedUrl: 'https://gateway.example/v1',
+        protocol: 'openai-responses', publicHeaders: {}, resolvedAddresses: ['203.0.113.10'] },
+      signal: new AbortController().signal, isCurrent: async () => true,
+      acquireRequestCredential: async () => { throw new ProviderBrokerApplicationFailureError({
+        ok: false, reasonCode: 'provider_secret_missing', failureCause,
+      }); },
+    });
+    try {
+      await expect(projection!.access.request({ method: 'POST', pathAndQuery: '/v1/responses' })).rejects.toMatchObject({
+        failure: { ok: false, reasonCode: 'provider_secret_missing', failureCause },
+      });
+    } finally { await projection?.retire(); }
+  });
+
   it('admits the bundled producer through its declared private source transport', () => {
     const definition = ProviderContributionV1Schema.parse(CLIPROXYAPI_PROVIDER_CONTRIBUTION);
     const provider: ResolvedProviderContribution = {

@@ -289,7 +289,7 @@ export async function prepareDirectProviderLaunch<PrerequisiteFailure extends Re
           error: createProviderErrorV1('provider_authorization_changed', {
             connectionId: attempt.authorization.ticket.connectionId,
             machineId: attempt.authorization.ticket.machineId,
-          }),
+          }, error),
         };
       }
     };
@@ -322,7 +322,7 @@ export async function prepareDirectProviderLaunch<PrerequisiteFailure extends Re
       error: createProviderErrorV1('agent_error', {
         ...(connectionId ? { connectionId } : {}),
         ...(input.machineId ? { machineId: input.machineId } : {}),
-      }),
+      }, error),
     };
   }
 }

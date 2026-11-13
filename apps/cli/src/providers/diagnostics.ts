@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
 
 type RunPreparationPhase =
@@ -42,15 +43,20 @@ export function logProviderUnexpectedFailure(
   operation: 'launch' | 'model_projection',
   error: unknown,
 ): void {
-  const errorType = error instanceof Error
-    ? [Error, TypeError, ReferenceError, RangeError, SyntaxError, URIError, EvalError]
-      .find(type => error.constructor === type)?.name ?? 'Error'
-    : 'Unknown';
-  const sourceLocations = error instanceof Error && typeof error.stack === 'string'
-    ? error.stack.split('\n').flatMap(line => {
-      if (!/^\s+at /.test(line)) return [];
-      const location = /[/\\]([^/\\():\s]+\.(?:[cm]?js|tsx?)):(\d+):(\d+)\)?$/.exec(line);
-      return location ? [`${location[1]}:${location[2]}:${location[3]}`] : [];
-    }) : [];
-  logger.warnLocalFile('[PROVIDER] Unexpected failure', { operation, errorType, sourceLocations });
+  try {
+    const failures: readonly unknown[] = error instanceof AggregateError ? error.errors : [error];
+    for (const failure of failures) {
+      const errorType = failure instanceof Error
+        ? [Error, TypeError, ReferenceError, RangeError, SyntaxError, URIError, EvalError]
+          .find(type => failure.constructor === type)?.name ?? 'Error'
+        : 'Unknown';
+      const sourceLocations = failure instanceof Error && typeof failure.stack === 'string'
+        ? failure.stack.split('\n').flatMap(line => {
+          if (!/^\s+at /.test(line)) return [];
+          const location = /[/\\]([^/\\():\s]+\.(?:[cm]?js|tsx?)):(\d+):(\d+)\)?$/.exec(line);
+          return location ? [`${location[1]}:${location[2]}:${location[3]}`] : [];
+        }) : [];
+      logger.warnLocalFile('[PROVIDER] Unexpected failure', { operation, errorType, sourceLocations, failureCause: projectActionFailureCauseV1(failure) });
+    }
+  } catch { /* Diagnostics cannot replace the original Provider failure. */ }
 }

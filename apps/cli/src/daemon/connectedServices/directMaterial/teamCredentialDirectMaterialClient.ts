@@ -1,4 +1,5 @@
 import type { StoredCredentials } from '@/persistence';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { ConnectedServiceAccountEncryptionMode } from '@/api/client/connectedServiceCredentialApi';
 import { computeTeamCredentialSourceMemberKeyV1, materializeTeamCredentialDirectMaterialV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
@@ -28,11 +29,13 @@ export type TeamCredentialDirectMaterialOperationFailure = Readonly<{
 /** Secret-free carrier for a canonical Team resource operation refusal. */
 export class TeamCredentialDirectMaterialOperationError extends Error {
   readonly code: TeamCredentialErrorCodeV1;
+  readonly failureCause?: ActionFailureCauseV1;
 
-  constructor(error: TeamCredentialDirectMaterialOperationFailure) {
+  constructor(error: TeamCredentialDirectMaterialOperationFailure, cause?: unknown) {
     super(error.error);
     this.name = 'TeamCredentialDirectMaterialOperationError';
     this.code = error.error;
+    if (cause !== undefined) this.failureCause = projectActionFailureCauseV1(cause);
   }
 }
 

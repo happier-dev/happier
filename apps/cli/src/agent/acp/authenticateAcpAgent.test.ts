@@ -114,6 +114,8 @@ describe('ACP login', () => {
       try {
         await expect(authenticateAcpAgent(fixture(dir, 'reject'))).rejects.toMatchObject({
           name: 'AggregateError',
+          cause: expect.objectContaining({ code: -32602 }),
+          failureCause: expect.objectContaining({ phase: 'client_start', providerErrorCode: -32602 }),
           errors: [{ code: -32602 }, { code: 'plugin_exec_termination_incomplete' }],
         });
         expect(existsSync(join(dir, 'settings.json'))).toBe(false);

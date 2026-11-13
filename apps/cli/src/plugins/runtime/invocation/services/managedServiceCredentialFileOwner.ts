@@ -146,6 +146,7 @@ export function createManagedServiceCredentialFileOwner(
                     throw new AggregateError(
                         [error, cleanupError],
                         'Managed-service credential-file acquisition and cleanup failed',
+                        { cause: error },
                     );
                 }
                 throw error;

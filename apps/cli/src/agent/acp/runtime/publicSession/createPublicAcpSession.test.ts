@@ -325,6 +325,7 @@ function writePublicComposerAgent(dir: string): string {
                         sessionCapabilities: { fork: {} },
                       }
                     : scenario.startsWith('history-fork')
+                      || scenario.startsWith('agy-api-key-')
                       || scenario === 'resume-replay'
                       || scenario.startsWith('configuration-update')
                       || scenario.startsWith('sidechain-')
@@ -338,7 +339,7 @@ function writePublicComposerAgent(dir: string): string {
                 : scenario === 'auth-dynamic-large'
                   ? { payload: 'x'.repeat(17_000) }
                   : undefined,
-              authMethods: scenario.startsWith('agy-select-')
+              authMethods: scenario.startsWith('agy-select-') || scenario.startsWith('agy-api-key-')
                 ? [{ id: 'oauth-personal', name: 'Google OAuth' }, { id: 'gemini-api-key', name: 'Gemini key' }]
                 : scenario.startsWith('agy-quota-') || scenario.startsWith('agy-auth-')
                 ? [{ id: 'oauth-personal', name: 'Google OAuth' }]
@@ -356,7 +357,8 @@ function writePublicComposerAgent(dir: string): string {
               && request.params.methodId === (scenario === 'agy-select-key' ? 'gemini-api-key' : 'oauth-personal'))
               || request.params.methodId === 'cursor_login'
               || (scenario === 'grok-interject' && request.params.methodId === 'cached_token')
-              || ((scenario.startsWith('agy-quota-') || scenario.startsWith('agy-auth-')) && request.params.methodId === 'oauth-personal');
+              || ((scenario.startsWith('agy-quota-') || scenario.startsWith('agy-auth-')) && request.params.methodId === 'oauth-personal')
+              || (scenario.startsWith('agy-api-key-') && request.params.methodId === 'gemini-api-key');
             if (scenario === 'auth-dynamic') {
               initializeMetadata = {
                 client: initializeMetadata,
@@ -382,7 +384,7 @@ function writePublicComposerAgent(dir: string): string {
 
             lifecycleMethods.push('session/new');
             newSessionMetadata = request.params._meta ?? null;
-            if ((scenario === 'auth' || scenario === 'grok-interject' || scenario.startsWith('agy-quota-') || scenario.startsWith('agy-select-')) && !authenticated) {
+            if ((scenario === 'auth' || scenario === 'grok-interject' || scenario.startsWith('agy-quota-') || scenario.startsWith('agy-select-') || scenario.startsWith('agy-api-key-')) && !authenticated) {
               send({ jsonrpc: '2.0', id: request.id, error: { code: -32000, message: 'auth required' } });
               continue;
             }
@@ -751,6 +753,16 @@ function writePublicComposerAgent(dir: string): string {
             } else if (scenario === 'request-transform') {
               const text = request.params.prompt?.find((block) => block?.type === 'text')?.text;
               update(sessionId, typeof text === 'string' ? text : 'missing transformed prompt');
+              ok(request.id, { stopReason: 'end_turn' });
+            } else if (scenario.startsWith('agy-api-key-')) {
+              // Observed ACP server output: provider refusal as assistant text plus end_turn.
+              const failure = 'API key not valid. Please pass a valid API key.';
+              userUpdate(sessionId, failure);
+              if (scenario === 'agy-api-key-quoted') update(sessionId, 'The diagnostic says: ' + failure);
+              else if (scenario === 'agy-api-key-code') update(sessionId, '\u0060\u0060\u0060' + failure + '\u0060\u0060\u0060');
+              else if (scenario === 'agy-api-key-user-only') update(sessionId, 'Here is the requested example.');
+              else if (scenario === 'agy-api-key-whole') update(sessionId, failure);
+              else { update(sessionId, failure.slice(0, 17)); update(sessionId, failure.slice(17)); }
               ok(request.id, { stopReason: 'end_turn' });
             } else if (scenario.startsWith('agy-quota-')) {
               const quota = 'Usage Limit Reached\\n\\nYou have reached your current quota for this period.';
@@ -1584,6 +1596,56 @@ describe('createPublicAcpSession', () => {
       expect(safeOutput).not.toContain('nested-secret-value');
     });
   });
+
+  it.each(['whole', 'create', 'resume', 'execution', 'quoted', 'code', 'user-only'] as const)(
+    'classifies Antigravity invalid-key native output without completing a failed turn (%s)', async kind => {
+      await withTempDir('happier-antigravity-invalid-key-', async dir => {
+        const fixture = createFixture(dir, `agy-api-key-${kind}`);
+        const { definition } = buildAntigravityAcpRuntimeOptions({ GEMINI_API_KEY: 'fixture-invalid-key' });
+        const options = { ...fixture.options, definition };
+        const failureCause = { phase: 'turn', failureReason: 'authentication_required',
+          providerErrorMessage: 'API key not valid. Please pass a valid API key.' };
+        if (kind === 'execution') {
+          const run = await createPublicAcpExecutionRun({ kind: 'create', runId: 'invalid-key-run', cwd: dir,
+            profile: { pluginId: 'happier.agent.antigravity', localId: 'antigravity' },
+            localInputId: 'invalid-key-input', input: { text: 'hello' },
+          }, options, fixture.dependencies);
+          const events: AgentExecutionRunEvent[] = [];
+          const subscription = run.watch(event => events.push(event));
+          try {
+            await expect.poll(() => events.some(event => event.kind === 'run-failed' || event.kind === 'run-complete')).toBe(true);
+            expect(events).toContainEqual(expect.objectContaining({ kind: 'run-failed', diagnostic: expect.objectContaining({
+              code: 'acp_turn_failed', details: expect.objectContaining({ failureCause }),
+            }) }));
+            expect(events.some(event => event.kind === 'run-complete')).toBe(false);
+          } finally { subscription.dispose(); await run.dispose(); }
+          return;
+        }
+        const session = await createPublicAcpSession(kind === 'resume'
+          ? { kind: 'resume', sessionId: 'invalid-key-session', providerSessionId: 'native-session', cwd: dir }
+          : { kind: 'create', sessionId: 'invalid-key-session', cwd: dir }, options, fixture.dependencies);
+        const events: AgentSessionRuntimeEvent[] = [];
+        const subscription = session.watch(event => events.push(event));
+        try {
+          await session.send({ inputIds: ['invalid-key-input'], input: { text: 'hello' }, delivery: { kind: 'newTurn', turnId: 'invalid-key-turn' } });
+          await expect.poll(() => events.some(event => event.kind === 'turn-failed' || event.kind === 'turn-complete')).toBe(true);
+          const failure = events.find(event => event.kind === 'turn-failed');
+          if (kind === 'quoted' || kind === 'code' || kind === 'user-only') {
+            expect(failure).toBeUndefined();
+            expect(events.some(event => event.kind === 'turn-complete')).toBe(true);
+          } else {
+            expect(failure).toMatchObject({ diagnostic: { code: 'acp_turn_failed', details: { failureCause } } });
+            expect(events.some(event => event.kind === 'turn-complete')).toBe(false);
+            expect(events.filter(event => event.kind === 'message-delta' && event.channel === 'assistant')
+              .map(event => event.kind === 'message-delta' ? event.text : '').join('')).toBe(failureCause.providerErrorMessage);
+            if (failure?.kind !== 'turn-failed') throw new Error('Missing native failure');
+            expect(classifyPrimarySessionRuntimeIssue({ provider: 'antigravity', cause: 'session_error', error: failure.diagnostic }))
+              .toMatchObject({ status: 'failed', failureCause });
+          }
+        } finally { subscription.dispose(); await session.dispose(); }
+      });
+    },
+  );
 
   it.each(['agy-quota-chunked', 'agy-quota-prior-text', 'agy-quota-quoted', 'agy-quota-refused'])('classifies declared provider quota diagnostics through actual ACP delivery (%s)', async scenario => {
     await withTempDir('happier-public-quota-diagnostic-', async dir => {

@@ -1,5 +1,5 @@
 import { z } from 'zod/mini';
-import { SessionRuntimeFailureCauseV1Schema, readSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { SessionRuntimeFailureCauseV1Schema, projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { ClaudeSessionRuntimeUsageLimitDetailsSchema, ClaudeSessionRuntimeTemporaryThrottleDetailsSchema } from './providerFailureDetails.js';
 import { mapClaudeProviderFailureToUsageDetails as mapProviderFailure } from '../../auth/services/runtime/usage.js';
 
@@ -152,7 +152,7 @@ function buildClaudeIssue(
 ): ClaudeSessionRuntimeIssue {
   return buildClaudeSessionRuntimeIssue({
     ...issue,
-    failureCause: issue.failureCause ?? readSessionRuntimeFailureCause(evidence),
+    failureCause: issue.failureCause ?? projectSessionRuntimeFailureCause(evidence, 'turn', 'agent.turn'),
     sanitizedPreview: readPreview(evidence, fallbackMessage),
   });
 }

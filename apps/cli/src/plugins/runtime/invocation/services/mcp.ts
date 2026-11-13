@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginError, type Disposable, type JsonValue } from '@happier-dev/plugin-sdk';
 import {
     type McpClient as PluginMcpClient,
@@ -352,10 +353,12 @@ export async function invokePeer<T>(operation: () => Promise<T>): Promise<T> {
                     code: mcpCode === -32601 ? 'plugin_mcp_method_not_found' : 'plugin_mcp_peer_error',
                     message: 'MCP peer request failed',
                     details: { mcpCode },
-                });
+                    failureCause: projectActionFailureCauseV1({ name: 'JsonRpcApplicationError', code: mcpCode }, 'mcp.peer'),
+                }, { cause: error });
             }
         }
-        fail('plugin_mcp_peer_failed', 'MCP peer request failed');
+        throw new PluginError({ code: 'plugin_mcp_peer_failed', message: 'MCP peer request failed',
+            failureCause: projectActionFailureCauseV1(error, 'mcp.peer') }, { cause: error });
     }
 }
 

@@ -689,3 +689,24 @@ describe('Direct Team purpose selection through Agent preflight', () => {
     }
   }, 60_000);
 });
+
+it.each(['coded', 'uncoded'] as const)('retains the original %s cause through Team launch projection', kind => {
+  const source = Object.assign(new TypeError('Authorization: Bearer fixture-private'),
+    kind === 'coded' ? { code: 'ECONNREFUSED' } : {});
+  const error = projectTeamCredentialLaunchFailure(source, 'purpose_binding', 'broker_unavailable');
+  expect(error.failureCause).toMatchObject({ code: 'broker_unavailable', phase: 'authentication',
+    actionCause: { errorClass: 'TypeError', errorCode: kind === 'coded' ? 'ECONNREFUSED' : null } });
+  expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error })).toMatchObject({ code: 'broker_unavailable',
+    failureCause: { actionCause: { errorClass: 'TypeError', errorCode: kind === 'coded' ? 'ECONNREFUSED' : null } } });
+  expect(JSON.stringify(error.failureCause)).not.toContain('fixture-private');
+});
+
+
+it('retains the canonical runtime cause when a Team launch refusal is reclassified', () => {
+  const original = new SessionTeamCredentialLaunchUnavailableError('broker_unavailable', 'binding',
+    Object.assign(new TypeError('Bearer private-reclassification-fixture'), { code: 'ECONNREFUSED' }));
+  const reclassified = new SessionTeamCredentialLaunchUnavailableError('resource_unavailable', 'binding', original);
+  expect(reclassified.code).toBe('resource_unavailable');
+  expect(reclassified.failureCause).toEqual(original.failureCause);
+  expect(reclassified.failureCause).toMatchObject({ actionCause: { errorClass: 'TypeError', errorCode: 'ECONNREFUSED' } });
+});

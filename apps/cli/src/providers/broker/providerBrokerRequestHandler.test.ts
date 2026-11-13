@@ -5,6 +5,7 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import type { ManagedProviderEndpointHttpAccess } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import {
     createProviderBrokerRouteGrantSigningInputV1,
+    ProviderConnectionIdSchema,
     type PeerTcpTunnelRelayAuthorizationV2,
     type ProviderBrokerResourceTestRelayBindingV1,
     type ProviderBrokerRouteGrantPayloadV1,
@@ -86,6 +87,25 @@ const request = { pathAndQuery: '/v1/chat/completions', method: 'POST' as const,
 function access(): ManagedProviderEndpointHttpAccess { return { endpointUrl: () => 'http://127.0.0.1:1234', request: vi.fn(async () => ({ ok: true, status: 200, statusText: 'OK', headers: {}, body: null })) }; }
 
 describe('createProviderBrokerRequestHandler', () => {
+    it('retains a typed source failure through an Account connection request', async () => {
+        const failureCause = { phase: 'provider.credential_resolution', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+        const handle = createProviderBrokerRequestHandler({ ...handlerSecurity,
+            admit: async () => ({ ok: false, reasonCode: 'resource_unavailable' }),
+        });
+        await expect(handle({ request, context: {
+            kind: 'account_connection', authenticatedRemoteEndpointId: payload.initiator.endpointId,
+            authority: { payload: { v: 2, grantId: 'account-grant', aud: 'happier-provider-broker-route-v2',
+                issuedAt: 100, expiresAt: 200, homeId: 'home', accountId: 'requester', initiatorTokenEpoch: 0,
+                source: { kind: 'account_connection', connectionId: ProviderConnectionIdSchema.parse('pc_source'),
+                    expectedConnectionSecurityFingerprint: 'connection-security:v1:source',
+                    expectedManagedRuntimeBindingFingerprint: 'managed-runtime-binding:v1:source' },
+                initiator: payload.initiator, target: payload.target, consumer: payload.consumer, application: payload.application,
+            }, signature: authority().signature },
+            acquireSource: async () => { throw Object.assign(new Error('private source detail'), { failureCause }); },
+            streamLifetime: { retire: async () => {}, close: async () => {} },
+        } })).resolves.toMatchObject({ ok: false, reasonCode: 'broker_unavailable', failureCause });
+    });
+
     it('reports the managed carrier size refusal as an observable HTTP 413', async () => {
         const handle = createProviderBrokerRequestHandler({ ...handlerSecurity,
             admit: async () => ({ ok: true, access: { endpointUrl: () => 'http://127.0.0.1:1234',

@@ -207,9 +207,7 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
             resolveBindingIntent: input.resolveManagedPurposeBindingIntent,
           });
       } catch (error) {
-        const failure = providerManagedPurposeBindingError(error, { connectionId, machineId: input.machineId });
-        if (failure.retryable) throw failure;
-        return null;
+        throw providerManagedPurposeBindingError(error, { connectionId, machineId: input.machineId });
       }
     }
     const placement = record.connection.gatewayPlacement;

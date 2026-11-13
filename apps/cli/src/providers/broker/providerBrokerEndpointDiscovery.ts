@@ -1,3 +1,4 @@
+import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
 import { logger } from '@/ui/logger';
@@ -47,6 +48,7 @@ export function createProviderBrokerEndpointDiscovery() {
   let httpStatus: number | undefined;
   let discoveryCause: EndpointDiscoveryFailureCause | undefined;
   let admissionReasonCode: TeamCredentialBrokerApplicationFailureCodeV1 | undefined;
+  let refreshFailureCause: ActionFailureCauseV1 | undefined;
   let readTransportFailure: ProviderBrokerMachineCarrierTunnel['readFailureDiagnostic'];
   let transportFailure: MachineCarrierFailureDiagnostic | undefined;
   let refreshOutcome: 'not_requested' | 'pending' | 'accepted' | 'refused' | 'failed' = 'not_requested';
@@ -79,9 +81,9 @@ export function createProviderBrokerEndpointDiscovery() {
     // Native's fixed HTTP refusal has no broker-code header. Its reader's
     // generic fallback must not overwrite the Home decision retained here.
     if (admissionReasonCode && (!(error instanceof SessionTeamCredentialLaunchUnavailableError)
-      || error.code !== admissionReasonCode)) throw new SessionTeamCredentialLaunchUnavailableError(admissionReasonCode);
-    if (error instanceof SessionTeamCredentialLaunchUnavailableError) throw error;
-    throw new SessionTeamCredentialLaunchUnavailableError(admissionReasonCode ?? 'provider_endpoint_unavailable');
+      || error.code !== admissionReasonCode)) throw new SessionTeamCredentialLaunchUnavailableError(admissionReasonCode, 'binding', refreshFailureCause ? { failureCause: refreshFailureCause } : error);
+    if (error instanceof SessionTeamCredentialLaunchUnavailableError && !refreshFailureCause) throw error;
+    throw new SessionTeamCredentialLaunchUnavailableError(admissionReasonCode ?? 'provider_endpoint_unavailable', 'binding', refreshFailureCause ? { failureCause: refreshFailureCause } : error);
   };
   return {
     failureDiagnostic,
@@ -96,9 +98,10 @@ export function createProviderBrokerEndpointDiscovery() {
         throw error;
       }
     },
-    async refreshBrokerOpen<T extends Readonly<{ ok: boolean; reasonCode?: unknown }>>(open: () => Promise<T>, signal: AbortSignal): Promise<T> {
+    async refreshBrokerOpen<T extends Readonly<{ ok: boolean; reasonCode?: unknown; failureCause?: unknown }>>(open: () => Promise<T>, signal: AbortSignal): Promise<T> {
       refreshOutcome = 'pending';
       admissionReasonCode = undefined;
+      refreshFailureCause = undefined;
       refreshStartedAt = Date.now();
       refreshElapsedMs = undefined;
       try {
@@ -106,14 +109,17 @@ export function createProviderBrokerEndpointDiscovery() {
         refreshOutcome = refreshed.ok ? 'accepted' : 'refused';
         if (!refreshed.ok) {
           discoveryCause = 'broker_refresh_refused';
-          // Retain only Home's closed code before native can replace the
-          // refused callback with an HTTP socket close. Never retain its body.
+          // Retain Home's closed code and sanitized cause before native can
+          // replace the refused callback with an HTTP socket close.
           const reason = ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(refreshed.reasonCode);
           if (reason.success) admissionReasonCode = reason.data;
+          const cause = ActionFailureCauseV1Schema.safeParse(refreshed.failureCause);
+          if (cause.success) refreshFailureCause = cause.data;
         }
         return refreshed;
       } catch (error) {
         refreshOutcome = 'failed';
+        refreshFailureCause = projectActionFailureCauseV1(error);
         discoveryCause = endpointDiscoveryFailureCause(error, signal);
         throw error;
       } finally {
@@ -124,7 +130,11 @@ export function createProviderBrokerEndpointDiscovery() {
       const startedAt = Date.now();
       try {
         return await readProviderBrokerEndpointUrl({ ...input,
-          onRefusal: code => { admissionReasonCode = code; input.onRefusal?.(code); },
+          onRefusal: (code, failureCause) => {
+            admissionReasonCode = code;
+            if (failureCause) refreshFailureCause = failureCause;
+            input.onRefusal?.(code, failureCause);
+          },
           fetchImpl: async (request, options) => {
             const response = await (input.fetchImpl ?? fetch)(request, options);
             httpStatus = response.status;

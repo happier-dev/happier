@@ -1,4 +1,5 @@
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { AgentProviderCredentialTransport } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ProviderCredentialTransportV1, ProviderErrorV1, ProviderWireProtocol, ProviderSettingsV1 } from '@happier-dev/protocol';
 import { readProviderSettingsForCli } from '@/providers/settings/read';
@@ -110,8 +111,9 @@ function fail(
   code: ProviderErrorV1['code'],
   source: ProviderConnectionSource,
   machineId: string,
+  cause?: unknown,
 ): Readonly<{ ok: false; error: ProviderErrorV1 }> {
-  return { ok: false, error: createProviderErrorV1(code, { connectionId: source.connectionId, machineId }) };
+  return { ok: false, error: createProviderErrorV1(code, { connectionId: source.connectionId, machineId }, cause) };
 }
 
 function selectCredential(input: Readonly<{
@@ -378,8 +380,8 @@ export async function resolveAdmittedProviderConnectionSourceSnapshot(input: Rea
         ...(resolved.snapshot.credentialRef.reference.additionalCredentials ?? []).map(row => ({ ref: row.secretId }))],
       ...(input.signal ? { signal: input.signal } : {}),
     });
-  } catch {
-    return fail('provider_secret_missing', input.source, input.machineId);
+  } catch (error) {
+    return fail('provider_secret_missing', input.source, input.machineId, error);
   }
   return resolveFrom(admitted);
 }
@@ -581,10 +583,11 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
     credentialTransport: ProviderCredentialTransportV1;
   }> | null>;
 }>): (request: ProviderConnectionOpenInput) => Promise<TeamCredentialBrokerOpenedSource
-  | Readonly<{ unavailable: TeamCredentialBrokerSourceOpenFailureReason }>> {
-  const unavailable = (reason: TeamCredentialBrokerSourceOpenFailureReason): Readonly<{
+  | Readonly<{ unavailable: TeamCredentialBrokerSourceOpenFailureReason; failureCause?: ActionFailureCauseV1 }>> {
+  const unavailable = (reason: TeamCredentialBrokerSourceOpenFailureReason, cause?: unknown): Readonly<{
     unavailable: TeamCredentialBrokerSourceOpenFailureReason;
-  }> => ({ unavailable: reason });
+    failureCause?: ActionFailureCauseV1;
+  }> => ({ unavailable: reason, ...(cause === undefined ? {} : { failureCause: projectActionFailureCauseV1(cause) }) });
   return async (request) => {
     if (request.brokerMachineId !== input.machineId) return unavailable('broker_machine_mismatch');
     if (request.signal.aborted) return unavailable('request_cancelled');
@@ -612,7 +615,7 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
               modelId: request.modelId,
               sourceRevision: request.sourceRevision,
               signal: request.signal,
-            }).catch(preserveBrokerSourceHealthFailure);
+            });
         })()
       : null;
       if ((request.operation.kind === 'session' || request.operation.kind === 'execution_run')
@@ -684,7 +687,7 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
         : unavailable('activation_occurrence_unavailable');
     }).catch(error => {
       preserveBrokerSourceHealthFailure(error);
-      return unavailable('source_currentness_unknown');
+      return unavailable('source_currentness_unknown', error);
     });
     if ('unavailable' in capture) return capture;
     const expected = capture.snapshot;
@@ -721,18 +724,25 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
           if (rejoinSignal.aborted) { materialized.lease.close(); return null; }
           return materialized.lease;
         } catch (error) {
-          return preserveBrokerSourceHealthFailure(error);
+          preserveBrokerSourceHealthFailure(error);
+          throw error;
         }
       };
-      const projection = await input.openCpxProviderConnection({
-        ...(request.retirementGroup ? { retirementGroup: request.retirementGroup } : {}),
-        application: request.application,
-        operation: request.operation,
-        endpoint: expected.endpoint,
-        signal: rejoinSignal,
-        isCurrent,
-        acquireRequestCredential,
-      }).catch(preserveBrokerSourceHealthFailure);
+      let projection: Awaited<ReturnType<typeof input.openCpxProviderConnection>>;
+      try {
+        projection = await input.openCpxProviderConnection({
+          ...(request.retirementGroup ? { retirementGroup: request.retirementGroup } : {}),
+          application: request.application,
+          operation: request.operation,
+          endpoint: expected.endpoint,
+          signal: rejoinSignal,
+          isCurrent,
+          acquireRequestCredential,
+        });
+      } catch (error) {
+        preserveBrokerSourceHealthFailure(error);
+        return unavailable('managed_custody_unavailable', error);
+      }
       if (!projection) return unavailable('managed_custody_unavailable');
       if (rejoinSignal.aborted || !projection.isCurrent()) {
         if (!rejoinSignal.aborted && !projection.isCurrent()) {

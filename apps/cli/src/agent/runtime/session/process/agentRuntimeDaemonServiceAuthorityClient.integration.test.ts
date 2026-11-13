@@ -10,6 +10,7 @@ import { ProviderBoundModelRefSchema } from '@happier-dev/protocol';
 import { createAgentRuntimeDaemonServiceAuthorityFixture as createTestAuthority } from './agentRuntimeDaemonServiceAuthority.testkit';
 
 import { hashProcessCommand } from '@/daemon/sessionRegistry';
+import { TeamCredentialDirectMaterialOperationError } from '@/daemon/connectedServices/directMaterial/teamCredentialDirectMaterialClient';
 import {
   publishAgentRuntimeDaemonServiceAuthority,
 } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
@@ -320,24 +321,45 @@ describe('current Agent runtime daemon service authority client', () => {
     },
   );
 
-  it('preserves a settled Provider transition failure instead of reporting missing daemon authority', async () => {
+  it.each(['provider_endpoint_unavailable', 'agent_runtime_daemon_service_admission_invalid', 'not_found_or_not_visible'] as const)('preserves a settled Provider transition failure instead of reporting missing daemon authority (%s)', async code => {
+    const failureCause = { phase: 'provider.model_projection', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-transition-error-'));
     roots.push(happyHomeDir);
     const authority = await createTestAuthority({ happyHomeDir, runner: {
       pid: 1234, processStartTimeMs: 1_717_171_717_000,
       processCommandHash: 'a'.repeat(64), snapshotIdentity: 'snapshot:runner-a',
     } });
-    await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: 31_001, capability: 'A'.repeat(43) });
-    // The daemon HTTP transport is the boundary; authority reading and strict response decoding stay real.
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
-      ok: false, error: { code: 'provider_endpoint_unavailable', message: 'provider_endpoint_unavailable' },
-    }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    const server = createServer((_request, response) => {
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ ok: false, error: {
+        code, message: code, failureCause,
+      } }));
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Expected loopback daemon port');
+    await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: address.port, capability: 'A'.repeat(43) });
     const selection = ProviderBoundModelRefSchema.parse({ agentTargetKey: 'agent:acme.plugin/acme-agent', providerConnectionId: 'pc_test', modelId: 'model' });
     if (selection.providerConnectionId === null) throw new Error('Expected a Provider-bound model fixture');
-    await expect(authorizeCurrentAgentRuntimeDaemonModelTransition({
+    try { await expect(authorizeCurrentAgentRuntimeDaemonModelTransition({
       authority, requestId: 'model-transition-failure', timeoutMs: null,
       selection,
-    })).rejects.toMatchObject({ code: 'provider_endpoint_unavailable', message: 'provider_endpoint_unavailable' });
+    })).rejects.toMatchObject(code === 'provider_endpoint_unavailable'
+      ? { code, message: code, failureCause }
+      : { code: 'native_agent_privileged_effect_authority_unavailable', failureCause: { actionCause: failureCause } });
+      const binding = openCurrentRunnerTeamCredentialProviderBinding({ authority,
+        operation: { kind: 'provider_broker.binding.open', resourceId: 'resource-1',
+          expectedResourceRevision: 3, agentTargetKey: selection.agentTargetKey, modelId: selection.modelId },
+      });
+      if (code === 'not_found_or_not_visible') await expect(binding).rejects.toBeInstanceOf(TeamCredentialDirectMaterialOperationError);
+      await expect(binding).rejects.toMatchObject(code === 'provider_endpoint_unavailable' || code === 'not_found_or_not_visible'
+        ? { code, failureCause }
+        : { code: 'native_agent_privileged_effect_authority_unavailable', failureCause: { actionCause: failureCause } });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
   });
 
   it('admits a new prompt after daemon replacement changes only the runner command witness', async () => {

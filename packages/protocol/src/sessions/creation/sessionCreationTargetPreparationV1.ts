@@ -115,6 +115,9 @@ export function projectSessionCreationTargetPreparationRpcFailureV1(
   if (code === RPC_ERROR_CODES.FORBIDDEN || httpStatus === 401 || httpStatus === 403) {
     return { type: 'error', code: 'permission_denied', retryable: false, ...failureCause };
   }
+  if (code === 'checkout_failed' || code === 'checkout_unavailable') {
+    return { ...projectSessionCreationTargetPreparationFailureV1({ ok: false, code }), ...failureCause };
+  }
   return code === 'agent_isolation_unavailable' || code === 'filesystem_identity_custody_unavailable'
     || code === 'MACHINE_ENCRYPTION_UNAVAILABLE'
     ? { type: 'error', code: 'spawn_failed', retryable: false, ...failureCause,

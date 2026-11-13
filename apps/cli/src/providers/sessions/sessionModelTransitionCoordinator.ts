@@ -9,6 +9,7 @@ import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protoc
 import type { SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
 import { projectPluginFailureMessage } from '@/plugins/runtime/lifecycle/utils';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { projectSessionRuntimeFailureCause } from '@/agent/runtime/session/errors/readSessionRuntimeFailureCause';
 import {
   isRuntimeConfigUpdateOutcomeApplied,
   isRuntimeConfigUpdateOutcomeDeferred,
@@ -365,12 +366,12 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         localEffect: () => Promise<U>,
       ) => Promise<
         | Readonly<{ status: 'completed'; value: U }>
-        | Readonly<{ status: 'blocked' }>
+        | Readonly<{ status: 'blocked'; failureCause?: SessionRuntimeIssueV1['failureCause'] }>
       >,
     ) => Promise<T>,
   ) => Promise<
     | Readonly<{ status: 'completed'; value: T }>
-    | Readonly<{ status: 'blocked' }>
+    | Readonly<{ status: 'blocked'; failureCause?: SessionRuntimeIssueV1['failureCause'] }>
   >;
   dispose: () => Promise<void>;
 }> {
@@ -430,7 +431,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     if (reason) return { status: 'unavailable', reason };
     const target = observedAppliedTarget;
     if (target === null) return { status: 'unavailable', reason: 'runtime_model_unconfirmed' };
-    if (!await targetAuthorizationStillCurrent(target)) {
+    if (!(await targetAuthorizationStillCurrent(target)).current) {
       if (observedAppliedTarget === target) observedAppliedTarget = null;
       return { status: 'unavailable', reason: 'runtime_model_unconfirmed' };
     }
@@ -451,11 +452,16 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     localEffect: () => Promise<T>,
   ): Promise<
     | Readonly<{ status: 'completed'; value: T }>
-    | Readonly<{ status: 'blocked' }>
+    | Readonly<{ status: 'blocked'; failureCause?: SessionRuntimeIssueV1['failureCause'] }>
   > => {
     if (!isCurrent()) return { status: 'blocked' };
-    const current = await params.checkCurrentPublisherAuthority()
-      .catch(() => false);
+    let current: boolean;
+    try {
+      current = await params.checkCurrentPublisherAuthority();
+    } catch (error) {
+      publisherAuthorityUnavailable = true;
+      return { status: 'blocked', failureCause: projectSessionRuntimeFailureCause(error, 'turn_start') };
+    }
     if (!current || !isCurrent()) {
       publisherAuthorityUnavailable = true;
       return { status: 'blocked' };
@@ -473,7 +479,9 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
   ): Promise<T> => {
     const result = await runWithCurrentPublisherPermit(localEffect);
     if (result.status === 'blocked') {
-      throw new Error('session_publisher_authority_lost');
+      throw Object.assign(new Error('session_publisher_authority_lost'), {
+        ...(result.failureCause ? { failureCause: result.failureCause } : {}),
+      });
     }
     return result.value;
   };
@@ -516,10 +524,14 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
 
   const targetAuthorizationStillCurrent = async (
     target: AuthorizedSessionModelTransitionTarget,
-  ): Promise<boolean> => {
-    if (target.selection.providerConnectionId === null && target.providerBinding === null) return true;
-    if (typeof target.revalidateBeforeEffect !== 'function') return false;
-    return await target.revalidateBeforeEffect().catch(() => false);
+  ): Promise<Readonly<{ current: boolean; failureCause?: SessionRuntimeIssueV1['failureCause'] }>> => {
+    if (target.selection.providerConnectionId === null && target.providerBinding === null) return { current: true };
+    if (typeof target.revalidateBeforeEffect !== 'function') return { current: false };
+    try {
+      return { current: await target.revalidateBeforeEffect() };
+    } catch (error) {
+      return { current: false, failureCause: projectSessionRuntimeFailureCause(error, 'turn_start') };
+    }
   };
 
   const publishConfiguredTarget = async (
@@ -528,8 +540,9 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     const basis = awaitingRuntimeConfirmation?.basis ?? activeTarget;
     await params.publishActive(target, null);
     if (!isCurrent()) throw new Error('session_publisher_authority_lost');
-    if (!await targetAuthorizationStillCurrent(target)) {
-      throw new Error('provider_authorization_changed_during_publication');
+    const authorization = await targetAuthorizationStillCurrent(target);
+    if (!authorization.current) {
+      throw Object.assign(new Error('provider_authorization_changed_during_publication'), { failureCause: authorization.failureCause });
     }
     if (!isCurrent()) throw new Error('session_publisher_authority_lost');
     activeTarget = target;
@@ -724,7 +737,9 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
             );
           });
           if (transfer.status === 'blocked') {
-            throw new Error('session_publisher_authority_lost');
+            throw Object.assign(new Error('session_publisher_authority_lost'), {
+              ...(transfer.failureCause ? { failureCause: transfer.failureCause } : {}),
+            });
           }
           return transfer.value;
         } finally {
@@ -800,11 +815,11 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     proposal: Proposal,
     target: AuthorizedSessionModelTransitionTarget,
     failureCause?: SessionRuntimeIssueV1['failureCause'],
-  ): Promise<boolean> => {
-    if (!params.readRuntimeModelId) return false;
+  ): Promise<Readonly<{ recovered: boolean; failureCause?: SessionRuntimeIssueV1['failureCause'] }>> => {
+    if (!params.readRuntimeModelId) return { recovered: false };
     const settleContradictoryReadback = async (
       reason: string,
-    ): Promise<boolean> => {
+    ): Promise<Readonly<{ recovered: boolean; failureCause?: SessionRuntimeIssueV1['failureCause'] }>> => {
       reconciliationRequired = true;
       reconciliationActiveSelection = null;
       reconciliationTargets = [];
@@ -819,15 +834,15 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         reason,
         failureCause,
       ));
-      return true;
+      return { recovered: true };
     };
     const readbackObservationRevision = runtimeObservationRevision;
     let modelId: string | null;
     try {
       const rawModelId = await params.readRuntimeModelId();
       modelId = readNonBlankOpaqueIdentifier(rawModelId);
-    } catch {
-      return false;
+    } catch (error) {
+      return { recovered: false, failureCause: projectSessionRuntimeFailureCause(error, 'turn_start') };
     }
     if (!isCurrent()) {
       proposal.resolve(failure(
@@ -835,11 +850,11 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         activeTarget.selection,
         proposal.selection,
       ));
-      return true;
+      return { recovered: true };
     }
-    if (modelId !== target.selection.modelId) return false;
+    if (modelId !== target.selection.modelId) return { recovered: false };
     if (!runtimeModelIdReadbackCanProveTarget(awaitingRuntimeConfirmation?.basis ?? activeTarget, target)) {
-      return false;
+      return { recovered: false };
     }
     if (
       runtimeObservedDriftModelId !== null
@@ -854,8 +869,9 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       );
     }
     const revalidationObservationRevision = runtimeObservationRevision;
-    if (!await targetAuthorizationStillCurrent(target)) {
-      return false;
+    const authorization = await targetAuthorizationStillCurrent(target);
+    if (!authorization.current) {
+      return { recovered: false, failureCause: authorization.failureCause };
     }
     if (!isCurrent()) {
       proposal.resolve(failure(
@@ -863,7 +879,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         activeTarget.selection,
         proposal.selection,
       ));
-      return true;
+      return { recovered: true };
     }
     if (
       runtimeObservedDriftModelId !== null
@@ -885,14 +901,16 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
           activeTarget.selection,
           proposal.selection,
         ));
-        return true;
+        return { recovered: true };
       }
       if (runtimeObservedDriftModelId !== null || reconciliationRequired) {
         return await settleContradictoryReadback(
           'runtime_model_drift_observed_during_readback_publication',
         );
       }
-      if (!await targetAuthorizationStillCurrent(target)) {
+      const publicationAuthorization = await targetAuthorizationStillCurrent(target);
+      if (!publicationAuthorization.current) {
+        failureCause = publicationAuthorization.failureCause ?? failureCause;
         return await settleContradictoryReadback(
           'provider_authorization_changed_during_readback_publication',
         );
@@ -903,7 +921,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
           activeTarget.selection,
           proposal.selection,
         ));
-        return true;
+        return { recovered: true };
       }
       if (runtimeObservedDriftModelId !== null || reconciliationRequired) {
         return await settleContradictoryReadback(
@@ -916,7 +934,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       armedSelection = null;
       const promptCustody =
         await runPromptCustodyAfterSuccessfulTransition(proposal);
-      if (promptCustody === 'settled') return true;
+      if (promptCustody === 'settled') return { recovered: true };
       if (promptCustody === 'not_requested') {
         await clearActiveFenceUnlessPendingSuccessor();
       }
@@ -926,7 +944,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
           activeTarget.selection,
           proposal.selection,
         ));
-        return true;
+        return { recovered: true };
       }
       if (runtimeObservedDriftModelId !== null || reconciliationRequired) {
         return await settleContradictoryReadback(
@@ -938,8 +956,8 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         status: 'applied',
         activeSelection: activeTarget.selection,
       });
-      return true;
-    } catch {
+      return { recovered: true };
+    } catch (error) {
       reconciliationRequired = true;
       reconciliationActiveSelection = target.selection;
       reconciliationTargets = [target];
@@ -947,9 +965,9 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         reconciliationActiveSelection,
         proposal.selection,
         'runtime_readback_publication_failed',
-        failureCause,
+        projectSessionRuntimeFailureCause(error, 'turn_start') ?? failureCause,
       ));
-      return true;
+      return { recovered: true };
     }
   };
 
@@ -1033,6 +1051,9 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
           error instanceof Error ? error.message : null,
           'model_transition_authorization_failed',
         ),
+        classifyPrimarySessionRuntimeIssue({
+          cause: 'session_error', error, startupPhase: 'turn_start',
+        }).failureCause,
       ));
       return;
     }
@@ -1093,6 +1114,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
             error instanceof Error ? error.message : null,
             'intent_publication_failed',
           ),
+          projectSessionRuntimeFailureCause(error, 'turn_start'),
         ));
         return;
       }
@@ -1179,7 +1201,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       const authorizationStillCurrent =
         await targetAuthorizationStillCurrent(target);
       if (await settleIfInterruptedBeforeRuntimeEffect(proposal)) return;
-      if (!authorizationStillCurrent) {
+      if (!authorizationStillCurrent.current) {
         try {
           await clearActiveFence();
         } catch {
@@ -1214,6 +1236,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
           activeTarget.selection,
           proposal.selection,
           'provider_authorization_changed_before_effect',
+          authorizationStillCurrent.failureCause,
         ));
         return;
       }
@@ -1255,6 +1278,8 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         'owner_unavailable',
         activeTarget.selection,
         proposal.selection,
+        undefined,
+        permittedApply.failureCause,
       ));
       return;
     }
@@ -1296,12 +1321,10 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       return;
     }
     if (applied.status === 'unproven') {
-      if (
-        applied.readbackAfterCompletion === true
-        && await recoverAppliedTargetFromRuntimeReadback(proposal, target, applied.failureCause)
-      ) {
-        return;
-      }
+      const readback = applied.readbackAfterCompletion === true
+        ? await recoverAppliedTargetFromRuntimeReadback(proposal, target, applied.failureCause)
+        : null;
+      if (readback?.recovered) return;
       reconciliationRequired = true;
       reconciliationActiveSelection = null;
       reconciliationTargets = [target];
@@ -1309,7 +1332,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         reconciliationActiveSelection,
         proposal.selection,
         applied.reason ?? 'runtime_model_transition_outcome_unproven',
-        applied.failureCause,
+        readback?.failureCause ?? applied.failureCause,
       ));
       return;
     }
@@ -1367,8 +1390,8 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
           ));
           return;
         }
-        if (!authorizationStillCurrent) {
-          throw new Error('provider_authorization_changed_before_publication');
+        if (!authorizationStillCurrent.current) {
+          throw Object.assign(new Error('provider_authorization_changed_before_publication'), { failureCause: authorizationStillCurrent.failureCause });
         }
       }
       if (runtimeObservedDriftModelId !== null) {
@@ -1390,8 +1413,11 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       if (runtimeObservedDriftModelId !== null) {
         throw new Error('runtime_model_drift_observed_during_publication');
       }
-      if (applied.status === 'applied' && !await targetAuthorizationStillCurrent(target)) {
-        throw new Error('provider_authorization_changed_during_publication');
+      if (applied.status === 'applied') {
+        const authorization = await targetAuthorizationStillCurrent(target);
+        if (!authorization.current) {
+          throw Object.assign(new Error('provider_authorization_changed_during_publication'), { failureCause: authorization.failureCause });
+        }
       }
       if (!isCurrent()) {
         proposal.resolve(failure(
@@ -1444,6 +1470,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
           error instanceof Error ? error.message : null,
           'active_fact_publication_failed',
         ),
+        projectSessionRuntimeFailureCause(error, 'turn_start'),
       ));
       return;
     }
@@ -1560,8 +1587,8 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       }
       if (!sameSelection(target.selection, { ...configuredTarget.selection, modelId: observedModelId })
         || !runtimeModelIdReadbackCanProveTarget(basis, target)
-        || !await targetAuthorizationStillCurrent(configuredTarget)
-        || !await targetAuthorizationStillCurrent(target)
+        || !(await targetAuthorizationStillCurrent(configuredTarget)).current
+        || !(await targetAuthorizationStillCurrent(target)).current
         || !observationStillCurrent()) return;
       if (observedAppliedTarget && sameAuthorizedTarget(observedAppliedTarget, target)
         && samePublishedActiveFacts(observedAppliedTarget, target)) target = observedAppliedTarget;
@@ -1569,8 +1596,8 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         await requireCurrentPublisherPermit(async () => {
           if (observationStillCurrent()) await params.publishActive(target, 'runtime_readback');
         });
-        if (!await targetAuthorizationStillCurrent(configuredTarget)
-          || !await targetAuthorizationStillCurrent(target)
+        if (!(await targetAuthorizationStillCurrent(configuredTarget)).current
+          || !(await targetAuthorizationStillCurrent(target)).current
           || !observationStillCurrent()) return;
         observedAppliedTarget = target;
         if (observedModelId === configuredTarget.selection.modelId) awaitingRuntimeConfirmation = null;
@@ -1631,14 +1658,14 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     if (matchingTargets.length !== 1) return;
     const target = matchingTargets[0]!;
     if (!runtimeModelIdReadbackCanProveTarget(awaitingRuntimeConfirmation?.basis ?? activeTarget, target)) return;
-    if (!await targetAuthorizationStillCurrent(target)) {
+    if (!(await targetAuthorizationStillCurrent(target)).current) {
       return;
     }
     if (!isCurrent()) return;
     try {
       await params.publishActive(target);
       if (!isCurrent()) return;
-      if (!await targetAuthorizationStillCurrent(target)) {
+      if (!(await targetAuthorizationStillCurrent(target)).current) {
         reconciliationRequired = true;
         reconciliationActiveSelection = null;
         reconciliationTargets = [];
@@ -1706,12 +1733,12 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         localEffect: () => Promise<U>,
       ) => Promise<
         | Readonly<{ status: 'completed'; value: U }>
-        | Readonly<{ status: 'blocked' }>
+        | Readonly<{ status: 'blocked'; failureCause?: SessionRuntimeIssueV1['failureCause'] }>
       >,
     ) => Promise<T>,
   ): Promise<
     | Readonly<{ status: 'completed'; value: T }>
-    | Readonly<{ status: 'blocked' }>
+    | Readonly<{ status: 'blocked'; failureCause?: SessionRuntimeIssueV1['failureCause'] }>
   > => {
     if (
       !accepting
@@ -1732,16 +1759,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     });
     const target = activeTarget;
     try {
-      const current = await params.checkCurrentPublisherAuthority()
-        .catch(() => false);
-      if (!current || !isCurrent()) {
-        publisherAuthorityUnavailable = true;
-        return { status: 'blocked' };
-      }
-      return {
-        status: 'completed',
-        value: await effect(target, runWithCurrentPublisherPermit),
-      };
+      return await runWithCurrentPublisherPermit(async () => await effect(target, runWithCurrentPublisherPermit));
     } finally {
       stableActiveTargetEffect = false;
       settleStableEffect();
@@ -1784,7 +1802,9 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       await publishConfiguredTarget(target);
     });
     if (publication.status === 'blocked') {
-      throw new Error('session_publisher_authority_lost');
+      throw Object.assign(new Error('session_publisher_authority_lost'), {
+        ...(publication.failureCause ? { failureCause: publication.failureCause } : {}),
+      });
     }
     if (!isCurrent()) {
       throw new Error('session_publisher_authority_lost');

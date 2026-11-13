@@ -381,15 +381,11 @@ async function revalidate(
 ): Promise<'current' | 'aborted' | 'changed'> {
   if (input.signal.aborted) return 'aborted';
   if (!readsCurrent(input.isAuthorizationCurrent)) return 'changed';
-  try {
-    const current = await input.revalidateAuthorization();
-    if (input.signal.aborted) return 'aborted';
-    return current && readsCurrent(input.isAuthorizationCurrent)
-      ? 'current'
-      : 'changed';
-  } catch {
-    return input.signal.aborted ? 'aborted' : 'changed';
-  }
+  const current = await input.revalidateAuthorization();
+  if (input.signal.aborted) return 'aborted';
+  return current && readsCurrent(input.isAuthorizationCurrent)
+    ? 'current'
+    : 'changed';
 }
 
 function revalidationFailureCode(
@@ -425,11 +421,11 @@ export async function startPublicManagedProviderRuntime<TAccess>(input: Readonly
     try {
       await input.launchResourceScope.release();
       return Object.freeze({ ok: false, code, ...(startupFailure ? { startupFailure } : {}) });
-    } catch {
+    } catch (error) {
       return Object.freeze({
         ok: false,
         code: 'managed_provider_cleanup_failed',
-        ...(startupFailure ? { startupFailure } : {}),
+        startupFailure: startupFailure ?? readStartupFailure(error),
       });
     }
   };
@@ -467,8 +463,8 @@ export async function startPublicManagedProviderRuntime<TAccess>(input: Readonly
       pluginId: input.identity.pluginId,
       localId: input.identity.localId,
     }));
-  } catch {
-    acquired = null;
+  } catch (error) {
+    return await fail(input.signal.aborted ? 'managed_provider_start_aborted' : 'managed_provider_runtime_unavailable', readStartupFailure(error));
   }
   if (input.signal.aborted) {
     return await fail('managed_provider_start_aborted');
@@ -478,9 +474,13 @@ export async function startPublicManagedProviderRuntime<TAccess>(input: Readonly
   }
   // Admit this finite start once, before the effect. Runtime identity and local
   // cancellation remain current; later operations receive their own admission.
-  const initialAuthorization = await revalidate(input);
-  if (initialAuthorization !== 'current') {
-    return await fail(revalidationFailureCode(initialAuthorization));
+  try {
+    const initialAuthorization = await revalidate(input);
+    if (initialAuthorization !== 'current') {
+      return await fail(revalidationFailureCode(initialAuthorization));
+    }
+  } catch (error) {
+    return await fail(input.signal.aborted ? 'managed_provider_start_aborted' : 'managed_provider_authorization_changed', readStartupFailure(error));
   }
 
   let endpoint: Awaited<ReturnType<typeof acquired.runtime.start>>;
@@ -542,11 +542,12 @@ export async function startPublicManagedProviderRuntime<TAccess>(input: Readonly
       endpoints: Reflect.get(endpoint, 'endpoints'),
       endpointTemplateIds: request.endpointTemplateIds,
     });
-  } catch {
+  } catch (error) {
     return await fail(
       input.signal.aborted
         ? 'managed_provider_start_aborted'
         : 'managed_provider_result_invalid',
+      readStartupFailure(error),
     );
   }
   if (!endpoints) return await fail('managed_provider_result_invalid');
@@ -557,8 +558,8 @@ export async function startPublicManagedProviderRuntime<TAccess>(input: Readonly
       pluginId: input.identity.pluginId,
       localId: input.identity.localId,
     }));
-  } catch {
-    settledRuntime = null;
+  } catch (error) {
+    return await fail(input.signal.aborted ? 'managed_provider_start_aborted' : 'managed_provider_authorization_changed', readStartupFailure(error));
   }
   if (input.signal.aborted) {
     return await fail('managed_provider_start_aborted');
@@ -579,8 +580,8 @@ export async function startPublicManagedProviderRuntime<TAccess>(input: Readonly
       signal: invocationAbort.signal,
       isCurrent: isRuntimeCurrent,
     });
-  } catch {
-    projection = null;
+  } catch (error) {
+    return await fail(input.signal.aborted ? 'managed_provider_start_aborted' : 'managed_provider_endpoint_access_unavailable', readStartupFailure(error));
   }
   if (!projection) {
     return await fail(
@@ -608,7 +609,7 @@ export async function startPublicManagedProviderRuntime<TAccess>(input: Readonly
     }
     try {
       await adoptService(service.snapshot().id);
-    } catch {
+    } catch (error) {
       const readAdoptedPublicOutcome =
         input.custody.readAdoptedPublicOutcome;
       let adoptedPublicOutcome: unknown = undefined;
@@ -632,7 +633,7 @@ export async function startPublicManagedProviderRuntime<TAccess>(input: Readonly
         custodyProvedUnadoptedCleanup =
           adoptionOutcomeReadCompleted
           && adoptedPublicOutcome === null;
-        return await fail('managed_provider_custody_adoption_failed');
+        return await fail('managed_provider_custody_adoption_failed', readStartupFailure(error));
       }
     }
   }

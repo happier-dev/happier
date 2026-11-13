@@ -4,7 +4,7 @@ import { createProjectServiceRecoveryStore } from './projectServiceRecoveryStore
 import { createHash, randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { createEnvironmentServiceRecovery } from './environmentServiceRecovery';
-import { projectActionFailureCauseV1, readActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentServiceExportV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { bindManagedWorkloadsForHost, type ManagedWorkloadAdmissionForHost } from './managedWorkloads';
 import { fetchWithCredentialRedirectRefusal, CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
@@ -369,9 +369,7 @@ function fail(code: string, message: string, options?: ErrorOptions): never {
 }
 
 function sanitizedManagedServiceFailure(error: unknown, phase: string): PluginError {
-    const failureCause = isPluginError(error) && error.data.failureCause
-        ? readActionFailureCauseV1(error.data.failureCause)
-        : projectActionFailureCauseV1(error, phase);
+    const failureCause = projectActionFailureCauseV1(error, phase);
     // Summarize only classified facts: exception prose, details and environment may contain credentials.
     const cause = new PluginError({
         code: isPluginError(error) ? error.code : failureCause.errorCode ?? 'plugin_managed_service_establishment_failed',
@@ -2023,8 +2021,8 @@ function readHealthyServiceProcessEndpoint(
     }
 }
 
-function requestUnavailable(message: string): never {
-    return fail('plugin_managed_service_unavailable', message);
+function requestUnavailable(message: string, cause?: unknown): never {
+    return requestFailure(undefined, message, cause);
 }
 
 function requestHeaderSizeExceeded(
@@ -2052,11 +2050,11 @@ function requestFailure(
     message: string,
     cause?: unknown,
 ): never {
-    return fail(
-        callerSignal?.aborted ? 'plugin_operation_aborted' : 'plugin_managed_service_unavailable',
+    throw new PluginError({
+        code: callerSignal?.aborted ? 'plugin_operation_aborted' : 'plugin_managed_service_unavailable',
         message,
-        cause === undefined ? undefined : { cause },
-    );
+        ...(cause === undefined ? {} : { failureCause: projectActionFailureCauseV1(cause, 'managed_service.request') }),
+    }, cause === undefined ? undefined : { cause });
 }
 
 function normalizeManagedServiceRequest(
@@ -2204,7 +2202,7 @@ function resolveManagedServiceRequestTarget(
         return target;
     } catch (error) {
         if (isPluginError(error)) throw error;
-        return requestUnavailable('Managed-service request target is invalid');
+        return requestUnavailable('Managed-service request target is invalid', error);
     }
 }
 
@@ -2506,7 +2504,7 @@ async function executeManagedServiceFetch(input: Readonly<{
         cleanupLifetime();
         if (error instanceof CredentialRequestRedirectError) throw toPluginHttpRedirectFailure(error);
         if (isPluginError(error)) throw error;
-        return requestUnavailable('Managed-service response is unavailable');
+        return requestUnavailable('Managed-service response is unavailable', error);
     }
     const establishmentAborted = establishment.signal.aborted;
     cleanupEstablishment();
@@ -3013,7 +3011,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
     /** Joins this owner's one restart reconciliation; consumers never inspect PIDs. */
     restoreProjectServices(): Promise<void>;
     /** First requested read joins retained deployment observation recovery. */
-    restoreEnvironmentServices(target: Readonly<{ serverId: string; machineId: string }>, restore: () => Promise<void>, signal?: AbortSignal): Promise<void>;
+    restoreEnvironmentServices: ReturnType<typeof createEnvironmentServiceRecovery>;
     resolveSetupScriptServiceEffects(input: SetupScriptServiceEffectsInput): Promise<readonly MachineNativeEffectKey[]>;
     bindScope(
         scope: ManagedServicesScope,

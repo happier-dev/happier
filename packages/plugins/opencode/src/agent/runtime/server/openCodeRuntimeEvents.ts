@@ -1,3 +1,4 @@
+import { readSessionRuntimeFailureCause, projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { asRecord, normalizeString } from './openCodeParsing.js';
 import { formatOpenCodeServerPromptErrorMessage } from './formatOpenCodeServerPromptErrorMessage.js';
 import { isOpenCodeServerAuthFailure } from './openCodeServerClient.js';
@@ -52,6 +53,23 @@ export function buildOpenCodeRuntimeIssue(params: Readonly<{
   };
 }
 
+function safeOpenCodeFailureCause(failureCause: OpenCodeRuntimeIssue['failureCause']) {
+  if (!failureCause) return undefined;
+  const { providerErrorMessage: _privateMessage, ...safeCause } = failureCause;
+  return safeCause;
+}
+
+/** One diagnostic projection for Session and Execution Run input failures. */
+export function createOpenCodeRuntimeDiagnostic(code: string, message?: string | null, error?: unknown) {
+  const failureCause = safeOpenCodeFailureCause(projectSessionRuntimeFailureCause(error, 'turn_start', 'agent.turn'));
+  return {
+    code,
+    severity: 'error' as const,
+    ...(message ? { message } : {}),
+    ...(failureCause ? { details: { failureCause } } : {}),
+  };
+}
+
 /** Normalize native history, event and prompt failures before either runtime scope projects them. */
 export function buildOpenCodeProviderErrorIssue(params: Readonly<{
   code: string;
@@ -85,18 +103,20 @@ export function buildOpenCodeProviderErrorIssue(params: Readonly<{
   const nativeProviderFailure = params.providerId && typeof nativeHttpStatus === 'number'
     && Number.isInteger(nativeHttpStatus) && nativeHttpStatus >= 100 && nativeHttpStatus <= 599
     ? { providerId: params.providerId, httpStatus: nativeHttpStatus } : null;
+  const retainedCause = readSessionRuntimeFailureCause(params.error, params.phase ?? 'turn');
+  const failureCause = safeOpenCodeFailureCause(retainedCause ?? (authFailure ? {
+    phase: params.phase ?? 'turn',
+    code: attestationDenied ? 'client_attestation_denied' : 'opencode_authentication_failed',
+    failureReason: attestationDenied ? 'permission_denied' : 'authentication_required',
+    ...(httpStatus === null ? {} : { httpStatus }),
+  } : projectSessionRuntimeFailureCause(params.error, params.phase ?? 'turn', 'agent.turn')));
   return buildOpenCodeRuntimeIssue({
     code: params.code,
     source: authFailure ? 'auth_error' : 'agent_session_error',
     message,
     occurredAt: params.occurredAt,
     ...(nativeProviderFailure ? { nativeProviderFailure } : {}),
-    ...(authFailure ? { failureCause: {
-      phase: params.phase ?? 'turn',
-      code: attestationDenied ? 'client_attestation_denied' : 'opencode_authentication_failed',
-      failureReason: attestationDenied ? 'permission_denied' : 'authentication_required',
-      ...(httpStatus === null ? {} : { httpStatus }),
-    } } : {}),
+    ...(failureCause ? { failureCause } : {}),
   });
 }
 

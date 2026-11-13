@@ -2947,6 +2947,8 @@ describe('native Codex attachment preparation', () => {
         }).catch((failure: unknown) => failure);
         expect(error).toBeInstanceOf(Error);
         expect((error as Error & { code?: unknown }).code).toBe(code ?? -32000);
+        if (code) expect(error).toMatchObject({ cause: expect.objectContaining({ code: -32000 }),
+          failureCause: expect.objectContaining({ phase: 'thread_open', actionCause: expect.objectContaining({ errorCode: '-32000' }) }) });
         expect(
           requests
             .filter((request) => request.method === 'thread/resume')
@@ -2970,6 +2972,7 @@ describe('native Codex attachment preparation', () => {
           );
           expect(error).toMatchObject({
             code: 'AGENT_RESUME_PROVIDER_STATE_MISSING',
+            details: { failureCause: expect.objectContaining({ phase: 'thread_open', actionCause: expect.objectContaining({ errorCode: '-32000' }) }) },
           });
           expect(logs).toContainEqual(
             expect.objectContaining({

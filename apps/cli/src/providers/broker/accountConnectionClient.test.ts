@@ -29,6 +29,7 @@ describe('personal connection broker consumer', () => {
     ['endpoint_discovery_failed', 403, 'typed_http'],
     ['endpoint_discovery_failed', 403, 'source_refusal'],
   ] as const)('logs the private %s branch (HTTP %s, %s) without disclosing broker material', async (reason, httpStatus, variant) => {
+    const failureCause = { phase: 'provider.credential_resolution', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
     const connectionId = ProviderConnectionIdSchema.parse('gateway-1');
     const application = { agentTargetKey: 'backend:claude:built_in', protocol: 'anthropic',
       endpointTemplateId: 'http', implementationIdentity: { pluginId: 'happier.provider.gateway', localId: 'gateway' } } as const;
@@ -82,8 +83,8 @@ describe('personal connection broker consumer', () => {
         connectionId, consumer, application, ...capturedFacts, signal: new AbortController().signal,
         openBroker: async () => {
           homeReads++;
-          if (reason === 'broker_open_refused') return { ok: false, reasonCode: 'broker_unavailable' };
-          return variant === 'refresh' && homeReads > 1 ? { ok: false, reasonCode: 'resource_unavailable' } : opened;
+          if (reason === 'broker_open_refused') return { ok: false, reasonCode: 'broker_unavailable', failureCause };
+          return variant === 'refresh' && homeReads > 1 ? { ok: false, reasonCode: 'resource_unavailable', failureCause } : opened;
         },
         openTunnel,
         fetchImpl: async (request, options) => {
@@ -102,6 +103,7 @@ describe('personal connection broker consumer', () => {
       // Tunnel exceptions retain their existing shape; diagnostics must not alter settlement.
       if (reason !== 'tunnel_open_failed' && variant !== 'signature') expect(ProviderErrorV1Schema.parse(error).code)
         .toBe(variant === 'source_refusal' ? 'provider_endpoint_rate_limited' : 'provider_endpoint_unavailable');
+      if (reason === 'broker_open_refused' || variant === 'refresh') expect(ProviderErrorV1Schema.parse(error).failureCause).toEqual(failureCause);
       const records = warning.mock.calls.filter(([label]) => label === '[ProviderBroker] Account connection open refused');
       const diagnostic = {
         ...(reason === 'broker_open_refused' ? { admissionReasonCode: 'broker_unavailable' } : {}),

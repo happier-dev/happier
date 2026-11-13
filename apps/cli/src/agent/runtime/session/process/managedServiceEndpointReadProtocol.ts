@@ -1,3 +1,4 @@
+import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readCanonicalPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 import { MAX_MANAGED_SERVICE_REQUEST_BODY_BYTES } from '@/plugins/runtime/invocation/services/managedServiceRequestSize';
 
@@ -153,6 +154,7 @@ export const ManagedServiceEndpointReadOpenResultV1Schema = z.discriminatedUnion
     v: z.literal(1),
     requestId: RequestIdSchema,
     status: z.literal('unavailable'),
+    failureCause: z.optional(asHostProtocolZod(ActionFailureCauseV1Schema)),
   }),
 ]);
 
@@ -181,6 +183,7 @@ export const ManagedServiceEndpointReadNextResultV1Schema = z.discriminatedUnion
     v: z.literal(1),
     requestId: RequestIdSchema,
     status: z.literal('unavailable'),
+    failureCause: z.optional(asHostProtocolZod(ActionFailureCauseV1Schema)),
   }),
 ]);
 

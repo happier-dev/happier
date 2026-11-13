@@ -1,3 +1,6 @@
+import { withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
 import { readHomeApplicationCarrierEligibilityFromEnv } from '@happier-dev/cli-common/homeEnrollment';
 import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
@@ -63,13 +66,20 @@ export async function checkRunnerBrokerNonInferenceReadiness(input: Readonly<{
       signal: input.signal,
     }, input.fetchImpl, new Set([MACHINE_HTTP_LOCAL_CAPABILITY_HEADER]));
     if (!response.ok) {
-      return response.status === 403 ? { kind: 'policy_denied' } : { kind: 'broker_unavailable' };
+      const refusal: TeamCredentialResourceReadinessV1 = response.status === 403 ? { kind: 'policy_denied' } : { kind: 'broker_unavailable' };
+      const payload = await response.json().then(body => {
+        const parsed = StrictJsonValueSchema.safeParse(body);
+        return parsed.success ? readPluginActionFailureAuthorPayload(parsed.data).failureCause : undefined;
+      }).catch(() => undefined);
+      return payload ? withActionFailureCauseDiagnostic(refusal, { failureCause: payload }, 'runner.broker_readiness') : refusal;
     }
     const checked = RunnerBrokerReadinessResponseV1Schema.safeParse(await response.json());
     if (!checked.success || !doesRunnerBrokerReadinessResponseMatchRequestV1(request, checked.data)) {
       return { kind: 'broker_unavailable' };
     }
-    return checked.data.readiness;
+    return checked.data.failureCause
+      ? withActionFailureCauseDiagnostic(checked.data.readiness, checked.data, 'runner.broker_readiness')
+      : checked.data.readiness;
   } finally {
     try {
       await tunnel?.close();

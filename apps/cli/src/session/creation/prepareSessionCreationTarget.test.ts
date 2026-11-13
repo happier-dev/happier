@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
+import { readSessionCreationTargetPreparationResultV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
 import { SessionCreationTagV1Schema } from '@happier-dev/protocol';
 
 vi.mock('@/scm/rpc/dispatch', () => ({
@@ -249,6 +250,21 @@ describe('prepareSessionCreationTarget', () => {
         branchName: '',
         errorCode: 'FEATURE_UNSUPPORTED',
       }),
-    })).resolves.toEqual({ ok: false, code: 'checkout_unavailable' });
+    })).rejects.toMatchObject({ rpcErrorCode: 'checkout_unavailable',
+      failureCause: { errorCode: 'FEATURE_UNSUPPORTED' } });
   });
+});
+
+
+it('carries checkout failures through the existing RPC refusal into the spawn result', async () => {
+  const error = await prepareSessionCreationTarget({
+    request: { directory: { kind: 'path', path: '/repo' },
+      checkoutCreationDraft: { kind: 'git_worktree', displayName: 'feature-session', baseRef: 'main', branchMode: 'new' } },
+    platform: 'linux',
+    createCheckout: async () => { throw Object.assign(new Error('private checkout output'), { code: 'EACCES' }); },
+  }).catch((error: unknown) => error);
+  expect(readSessionCreationTargetPreparationResultV1(error)).toMatchObject({ ok: false, result: {
+    type: 'error', failureCause: { phase: 'session.target_preparation', errorCode: 'EACCES', errorClass: 'Error' },
+  } });
+  expect(JSON.stringify(error)).not.toContain('private');
 });

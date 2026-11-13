@@ -36,8 +36,8 @@ export function createTeamCredentialNativeSourceServices(input: Readonly<{
   prepare(request: z.input<typeof DaemonProviderModelProjectionRequestV1Schema>, signal?: AbortSignal): Promise<PrepareTeamCredentialNativeProviderSourceResult>;
   projectModels(request: DaemonProviderModelProjectionRequestV1, signal?: AbortSignal): Promise<DaemonProviderModelProjectionResponseV1>;
 }> {
-  const fail = () => ({ ok: false as const,
-    error: createProviderErrorV1('provider_authorization_changed', { machineId: input.machineId }) });
+  const fail = (cause?: unknown) => ({ ok: false as const,
+    error: createProviderErrorV1('provider_authorization_changed', { machineId: input.machineId }, cause) });
   const sourceRequest = (request: DaemonProviderModelProjectionRequestV1): DaemonProviderModelProjectionRequestV1 => {
     const { nativeSource: _native, ...source } = request;
     return { ...source, includeDirectMaterialization: true, refreshPolicy: 'current_only', forceRefresh: undefined };
@@ -121,12 +121,12 @@ export function createTeamCredentialNativeSourceServices(input: Readonly<{
         cleaned = true;
         try { await prepared.source.cleanup(); } finally { await heldLease.release(); }
       } } };
-    } catch { return fail(); }
+    } catch (error) { return fail(error); }
     finally { await lease?.release(); }
   };
   const projectModels = async (request: DaemonProviderModelProjectionRequestV1, signal = new AbortController().signal)
     : Promise<DaemonProviderModelProjectionResponseV1> => {
-    const unavailable = () => ({ status: 'error' as const, error: fail().error });
+    const unavailable = (cause?: unknown) => ({ status: 'error' as const, error: fail(cause).error });
     let lease: PluginRuntimeRegistryLease | null = null;
     try {
       const resource = await readResource(request, signal);
@@ -165,7 +165,7 @@ export function createTeamCredentialNativeSourceServices(input: Readonly<{
         currentCatalog.groups.map(group => [group.connectionId, group.sourceRevision]),
       )) return unavailable();
       return DaemonProviderModelProjectionResponseV1Schema.parse({ ...projection, groups });
-    } catch { return unavailable(); }
+    } catch (error) { return unavailable(error); }
     finally { await lease?.release(); }
   };
   return { prepare, projectModels };

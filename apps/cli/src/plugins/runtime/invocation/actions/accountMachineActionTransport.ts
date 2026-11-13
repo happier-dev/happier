@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { TargetedContributionManifestDeclaration } from '@happier-dev/cli-common/plugins/registration';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -111,10 +112,12 @@ export async function invokeAccountMachineSourceAction(input: AccountMachineTran
                 ?? (error && typeof error === 'object' && 'code' in error ? error.code : undefined);
             const code = projectPluginActionFailureCode(cause);
             return { status: 'unavailable', code, message: code,
+                data: { failureCause: projectActionFailureCauseV1(error, 'plugin_action.machine_rpc') },
                 actionHandlerInvocation: 'notStarted' };
         }
         // The transport may have emitted the request. No fallback or automatic
         // replay can turn a missing acknowledgement into another provider effect.
-        return { status: 'failed', code: 'plugin_action_outcome_unknown', message: 'The Machine Action outcome is unknown' };
+        return { status: 'failed', code: 'plugin_action_outcome_unknown', message: 'The Machine Action outcome is unknown',
+            data: { failureCause: projectActionFailureCauseV1(error, 'plugin_action.machine_rpc') } };
     }
 }

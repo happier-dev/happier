@@ -1,3 +1,5 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logProviderUnexpectedFailure } from '@/providers/diagnostics';
 import { randomUUID } from 'node:crypto';
 import { assessProviderEndpoint } from '@happier-dev/protocol/providers/safety/url';
 import { createProviderErrorV1, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
@@ -239,15 +241,18 @@ export function createProviderSpawnAuthorizationAttempt<
   const cleanup = () => {
     if (cleaned || transferred) return;
     cleaned = true;
-    try {
-      composed?.cleanup?.();
-    } finally {
-      redactionLease?.close();
-      unsubscribeCurrentness?.();
-      composed = null;
-      redactionLease = null;
-      unsubscribeCurrentness = null;
-    }
+    const failures: unknown[] = [];
+    try { composed?.cleanup?.(); } catch (error) { failures.push(error); }
+    try { redactionLease?.close(); } catch (error) { failures.push(error); }
+    try { unsubscribeCurrentness?.(); } catch (error) { failures.push(error); }
+    composed = null;
+    redactionLease = null;
+    unsubscribeCurrentness = null;
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw Object.assign(
+      new AggregateError(failures, 'Provider binding cleanup failed', { cause: failures[0] }),
+      { failureCause: projectActionFailureCauseV1(failures[0]) },
+    );
   };
 
   const revalidate = async (signal?: AbortSignal) => {
@@ -304,7 +309,7 @@ export function createProviderSpawnAuthorizationAttempt<
         sessionBindingMetadata: input.initial.sessionBindingMetadata,
       };
     } catch (error) {
-      cleanup();
+      try { cleanup(); } catch (cleanupError) { logProviderUnexpectedFailure('launch', cleanupError); }
       if (error instanceof ProviderOperationAbandonedError || error instanceof Error && error.name === 'AbortError') throw error;
       const providerError = ProviderErrorV1Schema.safeParse(error);
       if (providerError.success) return { ok: false as const, error: providerError.data };
@@ -313,7 +318,7 @@ export function createProviderSpawnAuthorizationAttempt<
         error: createProviderErrorV1('provider_materialization_failed', {
           connectionId: input.initial.ticket.connectionId,
           machineId: input.initial.ticket.machineId,
-        }),
+        }, error),
       };
     }
   };
@@ -345,16 +350,16 @@ export function createProviderSpawnAuthorizationAttempt<
       return () => {
         if (exitCleaned) return;
         exitCleaned = true;
-        try {
-          transferredComposed?.cleanup?.();
-        } finally {
-          exitComposed = null;
-          try {
-            transferredRedaction?.close();
-          } finally {
-            transferredUnsubscribe?.();
-          }
-        }
+        const failures: unknown[] = [];
+        try { transferredComposed?.cleanup?.(); } catch (error) { failures.push(error); }
+        exitComposed = null;
+        try { transferredRedaction?.close(); } catch (error) { failures.push(error); }
+        try { transferredUnsubscribe?.(); } catch (error) { failures.push(error); }
+        if (failures.length === 1) throw failures[0];
+        if (failures.length > 1) throw Object.assign(
+          new AggregateError(failures, 'Provider binding cleanup failed', { cause: failures[0] }),
+          { failureCause: projectActionFailureCauseV1(failures[0]) },
+        );
       };
     },
   } satisfies Omit<
@@ -381,7 +386,7 @@ export function createProviderSpawnAuthorizationAttempt<
           error: createProviderErrorV1('provider_secret_missing', {
             connectionId: input.initial.ticket.connectionId,
             machineId: input.initial.ticket.machineId,
-          }),
+          }, error),
         };
       }
       if (!resolvedCredential.ok) return resolvedCredential;
@@ -426,13 +431,13 @@ export function createProviderSpawnAuthorizationAttempt<
       let assessed: ReturnType<typeof assessProviderEndpoint>;
       try {
         assessed = assessProviderEndpoint(normalizedUrl);
-      } catch {
+      } catch (error) {
         return {
           ok: false as const,
           error: createProviderErrorV1('provider_endpoint_unavailable', {
             connectionId: input.initial.ticket.connectionId,
             machineId: input.initial.ticket.machineId,
-          }),
+          }, error),
         };
       }
       if (assessed.locality !== 'loopback') {
@@ -707,7 +712,9 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
           ), admissionLifetime)) ?? undefined;
       } catch (error) {
         if (error instanceof ProviderOperationAbandonedError || error instanceof Error && error.name === 'AbortError') throw error;
-        managedProviderRuntime = undefined;
+        return { ok: false, error: createProviderErrorV1('provider_connection_invalid', {
+          connectionId, machineId: input.machineId,
+        }, error) };
       }
       if (!managedProviderRuntime?.isCurrent()) {
         return {
@@ -727,10 +734,10 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
           adapter: readLeasedAgentProviderBindingAdapter({ lease: input.lease, agentId: input.agentId })?.adapter,
           configuredModels: connectionResolution.record.connection.roleModels,
         }) ?? {});
-      } catch {
+      } catch (error) {
         return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', {
           connectionId, machineId: input.machineId,
-        }) };
+        }, error) };
       }
     }
     let runtimeModelObservation: ProviderRuntimeCatalogSelectionObservation | null;
@@ -768,7 +775,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
       const parsed = ProviderErrorV1Schema.safeParse(error);
       return { ok: false, error: parsed.success ? parsed.data : createProviderErrorV1('provider_endpoint_unavailable', {
         connectionId, machineId: input.machineId,
-      }) };
+      }, error) };
     }
     const remotePlacement = connectionResolution.status === 'resolved'
       && connectionResolution.record.deployment.kind === 'managedLocal'

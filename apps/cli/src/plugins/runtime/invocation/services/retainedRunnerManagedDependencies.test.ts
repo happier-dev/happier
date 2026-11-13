@@ -1,8 +1,10 @@
+import * as fs from 'node:fs/promises';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { PluginHostAccessRequestV2 } from '@happier-dev/protocol';
 
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
@@ -173,7 +175,7 @@ describe('retained Runner managed dependencies', () => {
                 locator: { module: './runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 },
                 normalizedModulePath: 'runtime.mjs', loadMode: 'immutable-js',
             });
-            const host = await createRetainedRunnerManagedDependenciesHost({
+            const input = {
                 paths: resolvePluginStorePaths({ happyHomeDir }), binding,
                 hostAccessRequests: [{ required: true, request: {
                     id: 'runner-process', capability: 'process', reason: 'Exercise retained path dependency',
@@ -190,12 +192,24 @@ describe('retained Runner managed dependencies', () => {
                 agentManifestAuthority: 'bundled_first_party',
                 runnerSnapshotIdentity: `path:${runtimeRoot}`,
                 env: { ...process.env, PATH: dirname(process.execPath) },
-            });
+            } satisfies Parameters<typeof createRetainedRunnerManagedDependenciesHost>[0];
+            const host = await createRetainedRunnerManagedDependenciesHost(input);
             const executable = await host.resolveExecutable({ kind: 'managedDependency', id: {
                 pluginId: 'happier.agent.antigravity', localId: 'tool',
             } }, 'happier.agent.antigravity');
             expect(basename(executable.command)).toBe(systemExecutable);
             executable.release();
+            const realpathFailure = vi.spyOn(fs, 'realpath').mockRejectedValueOnce(
+                Object.assign(new Error('ambient retained source details'), { code: 'EACCES' }),
+            );
+            try {
+                const failure = await createRetainedRunnerManagedDependenciesHost(input).catch((error: unknown) => error);
+                expect(failure).toMatchObject({ code: 'plugin_services_retained_managed_dependency_unavailable' });
+                expect(projectActionFailureCauseV1(failure)).toMatchObject({ errorCode: 'EACCES' });
+                expect(JSON.stringify(failure)).not.toContain('ambient');
+            } finally {
+                realpathFailure.mockRestore();
+            }
         } finally {
             await rm(happyHomeDir, { recursive: true, force: true });
         }

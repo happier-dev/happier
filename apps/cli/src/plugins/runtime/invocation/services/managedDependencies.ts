@@ -1,3 +1,5 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionOutputDiagnostic, withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { isDeepStrictEqual } from 'node:util';
 
 import type {
@@ -90,8 +92,11 @@ type ResolvedOwnerAdapter = Readonly<{
 
 const UNKNOWN_VERSION = 'unknown';
 
-function fail(code: string, message: string): never {
-    throw new PluginError({ code, message });
+function fail(code: string, message: string, cause?: unknown): never {
+    throw new PluginError({ code, message, ...(cause === undefined ? {} : {
+        failureCause: readActionOutputDiagnostic(cause)?.failureCause
+            ?? projectActionFailureCauseV1(cause, 'managed_dependency.resolve'),
+    }) });
 }
 
 function assertNotAborted(signal?: AbortSignal): void {
@@ -678,10 +683,10 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
                     sourceId: null,
                     source: null,
                 })]);
-            } catch {
+            } catch (error) {
                 return fail(
                     'plugin_managed_dependency_source_unsupported',
-                    'Managed dependency source is not executable by this host',
+                    'Managed dependency source is not executable by this host', error,
                 );
             }
         }
@@ -774,13 +779,14 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
             resolvedAdapters = await adapterCandidatesFor(owner);
         } catch (error) {
             if (isPluginError(error)) {
-                return Object.freeze({ state: 'unsupported', id: publicId, code: error.code });
+                return Object.freeze(withActionFailureCauseDiagnostic({ state: 'unsupported' as const, id: publicId, code: error.code }, error, 'managed_dependency.resolve'));
             }
-            return Object.freeze({ state: 'failed', id: publicId, code: 'plugin_managed_dependency_status_failed' });
+            return Object.freeze(withActionFailureCauseDiagnostic({ state: 'failed' as const, id: publicId, code: 'plugin_managed_dependency_status_failed' }, error, 'managed_dependency.resolve'));
         }
         assertNotAborted(signal);
         let sawMissing = false;
         let failureCode: string | null = null;
+        let failure: unknown;
         for (const resolvedAdapter of resolvedAdapters) {
             try {
                 const { adapter } = resolvedAdapter;
@@ -823,6 +829,7 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
                 if (signal?.aborted) {
                     return fail('plugin_managed_dependency_aborted', 'Managed dependency operation was aborted');
                 }
+                failure = error;
                 failureCode = isPluginError(error) ? error.code : 'plugin_managed_dependency_status_failed';
             }
         }
@@ -831,7 +838,9 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
             if (manualFallback) return Object.freeze({ state: 'unsupported', id: publicId, code: manualFallback });
             return Object.freeze({ state: 'missing', id: publicId, supported: true as const });
         }
-        return Object.freeze({ state: 'failed', id: publicId, code: failureCode ?? 'plugin_managed_dependency_status_failed' });
+        const status = { state: 'failed' as const, id: publicId, code: failureCode ?? 'plugin_managed_dependency_status_failed' };
+        return Object.freeze(failure === undefined ? status
+            : withActionFailureCauseDiagnostic(status, failure, 'managed_dependency.resolve'));
     }
 
     async function mutate(
@@ -868,7 +877,7 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
                     });
                 }
                 if (before.state !== 'missing') {
-                    return fail(before.code, 'Managed dependency cannot be ensured');
+                    return fail(before.code, 'Managed dependency cannot be ensured', readActionOutputDiagnostic(before) ? before : undefined);
                 }
                 if (owner.kind === 'legacy') {
                     const descriptor = owner.contribution.descriptor;
@@ -917,7 +926,7 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
                 const code = after.state === 'missing'
                     ? 'plugin_managed_dependency_install_unverified'
                     : after.code;
-                return fail(code, 'Managed dependency was not ready after installation');
+                return fail(code, 'Managed dependency was not ready after installation', readActionOutputDiagnostic(after) ? after : undefined);
             }
             if (operation === 'update' && after.state === 'updateAvailable') {
                 return fail(
@@ -934,7 +943,7 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
             });
         }).catch((error: unknown) => {
             if (isPluginError(error)) throw error;
-            return fail('plugin_managed_dependency_install_failed', 'Managed dependency installation failed');
+            return fail('plugin_managed_dependency_install_failed', 'Managed dependency installation failed', error);
         });
         const flight = Object.freeze({ operation, promise: mutation });
         mutations.set(owner.qualifiedKey, flight);
@@ -1055,6 +1064,7 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
             if (removals.has(owner.qualifiedKey)) {
                 return fail('plugin_managed_dependency_busy', 'Managed dependency is being removed');
             }
+            let resolutionFailure: unknown;
             const tryResolve = async (): Promise<ResolvedExecutableLease | null> => {
                 for (const resolvedAdapter of await adapterCandidatesFor(owner)) {
                     if (!resolvedAdapter.adapter.resolveLaunchCommand) continue;
@@ -1071,8 +1081,9 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
                             args: Object.freeze([...(launch.args ?? [])]),
                             release,
                         });
-                    } catch {
-                        // Source failures are isolated so deterministic fallback can continue.
+                    } catch (error) {
+                        // Keep fallback, but retain the last failed source if no executable resolves.
+                        resolutionFailure = error;
                     }
                 }
                 return null;
@@ -1080,12 +1091,12 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
             const ready = await tryResolve();
             if (ready) return ready;
             if (options?.requireReady) {
-                return fail('plugin_managed_dependency_executable_unavailable', 'Managed dependency executable is unavailable');
+                return fail('plugin_managed_dependency_executable_unavailable', 'Managed dependency executable is unavailable', resolutionFailure);
             }
             await mutate(owner, ref.localId, 'ensure');
             const installed = await tryResolve();
             if (installed) return installed;
-            return fail('plugin_managed_dependency_executable_unavailable', 'Managed dependency executable is unavailable');
+            return fail('plugin_managed_dependency_executable_unavailable', 'Managed dependency executable is unavailable', resolutionFailure);
         } catch (error) {
             release();
             throw error;

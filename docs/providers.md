@@ -694,6 +694,16 @@ cause and optional request ID. A daemon cause without a Provider recovery code
 remains in `failureCause`, including across a subsequent Action wrapper; raw
 exception prose is excluded. Stale Account and Machine grant repairs expose
 their respective scope through the Provider error presenter.
+Launch and turn wrappers use the same Action cause projector, including causes
+carried by `PluginError.data`; Provider errors retain those facts alongside their
+recovery code. Broker refusals keep the existing closed reason and optional
+sanitized cause. At the Session boundary, the runtime cause reader translates
+Provider causes using the phase already supplied by the launch or turn owner.
+The optional `actionCause` retains the full original Action diagnostic, including
+its phase and uncoded error class.
+Native Session causes remain in `SessionRuntimeFailureCauseV1`; neither carrier
+includes arbitrary exception context.
+
 
 Failed Machine endpoint observations in 0.3 development retain the optional typed
 `failureCause` through runtime-state persistence and connection descriptions. The

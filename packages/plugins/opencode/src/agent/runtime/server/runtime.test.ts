@@ -349,6 +349,29 @@ function createNativeSessionRuntimeForTest(operations: OpenCodeRuntimeTurnOperat
   });
 }
 
+it.each([['session', 'session'], ['executionRun', 'session'], ['session', 'raw'], ['executionRun', 'raw']] as const)('retains typed native prompt failures through the %s adapter (%s cause)', async (kind, causeKind) => {
+  const rawActionCause = { phase: 'agent.turn', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: null } as const;
+  const failureCause = causeKind === 'raw'
+    ? { phase: 'turn_start', failureReason: 'unknown', providerErrorCode: 'ECONNRESET', actionCause: rawActionCause } as const
+    : { code: 'provider_endpoint_unavailable', phase: 'turn_start', failureReason: 'permission_denied', httpStatus: 503 } as const;
+  const client = createClientFixture();
+  client.sessionPromptImplementation.mockRejectedValueOnce(causeKind === 'raw' ? new TypeError('Native prompt refused', { cause: Object.assign(new Error('Native peer reset'), { code: 'ECONNRESET' }) }) : Object.assign(new Error('Native prompt refused'), { failureCause: { ...failureCause, providerErrorMessage: 'PRIVATE_CAUSE_SENTINEL' } }));
+  const operations = await createStartedRuntime({ client, ...(kind === 'executionRun' ? { executionRunId: 'typed-cause-run' } : {}) });
+  const runtime = kind === 'session' ? createNativeSessionRuntimeForTest(operations)
+    : createOpenCodeExecutionRunConversation({ operations, executionRunId: 'typed-cause-run', disposeOperations: () => operations.resetOrDisposeRuntime() });
+  const events: unknown[] = [];
+  const subscription = runtime.watch(event => events.push(event));
+  try {
+    await expect(runtime.send({ inputIds: ['typed-cause-input'], input: { text: 'hello' }, delivery: { kind: 'newTurn', turnId: 'typed-cause-turn' } })).resolves.toMatchObject({
+      status: kind === 'session' ? 'unavailable' : 'rejected', diagnostic: { details: { failureCause } },
+    });
+    expect(events).toContainEqual(expect.objectContaining(kind === 'session'
+      ? { kind: 'input-custody-unknown', issue: expect.objectContaining({ details: expect.objectContaining({ failureCause }) }) }
+      : { kind: 'turn-failed', diagnostic: expect.objectContaining({ details: expect.objectContaining({ failureCause }) }) }));
+    expect(JSON.stringify(events)).not.toContain('PRIVATE_CAUSE_SENTINEL');
+  } finally { subscription.dispose(); await runtime.dispose(); }
+});
+
 let testHostTurnSequence = 0;
 
 function beginTestHostTurn(runtime: OpenCodeRuntimeTurnOperations): void {
@@ -1518,7 +1541,7 @@ describe('createOpenCodeServerRuntime', () => {
     {
       label: 'inventory read failure',
       messages: [],
-      inventoryError: new Error('authoritative inventory unavailable'),
+      inventoryError: Object.assign(new Error('authoritative inventory unavailable'), { failureCause: { code: 'provider_endpoint_unavailable', phase: 'turn_start', failureReason: 'permission_denied', httpStatus: 503 } as const }),
     },
   ])('reports unknown custody when an accepted prompt has no unique server-owned user identity: $label', async ({
     inventoryError,
@@ -1550,12 +1573,13 @@ describe('createOpenCodeServerRuntime', () => {
     })).resolves.toMatchObject({
       status: 'unavailable',
       retryable: false,
-      diagnostic: { code: 'opencode_input_custody_unknown' },
+      diagnostic: { code: 'opencode_input_custody_unknown', ...(inventoryError ? { details: { failureCause: inventoryError.failureCause } } : {}) },
     });
 
     expect(nativeEvents.filter((event) => event.kind === 'input-custody-unknown')).toEqual([
       expect.objectContaining({
         inputIds: ['input-identity-unresolved'],
+        ...(inventoryError ? { issue: expect.objectContaining({ details: { failureCause: inventoryError.failureCause } }) } : {}),
       }),
     ]);
     expect(nativeEvents).not.toEqual(expect.arrayContaining([

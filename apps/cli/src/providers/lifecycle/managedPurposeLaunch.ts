@@ -68,8 +68,8 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
   const candidates = resolveAgentManagedPurposeSelections({ contributions: input.lease.registry.contributes,
     agentId: input.agentId, connectedServices: input.connectedServices, selection: input.selection });
   if (candidates.length === 0) return null;
-  const refuse = (code: Parameters<typeof createProviderErrorV1>[0]) => ({ ok: false as const,
-    error: createProviderErrorV1(code, input.machineId ? { machineId: input.machineId } : {}) });
+  const refuse = (code: Parameters<typeof createProviderErrorV1>[0], cause?: unknown) => ({ ok: false as const,
+    error: createProviderErrorV1(code, input.machineId ? { machineId: input.machineId } : {}, cause) });
   if ((typeof input.featureEnabled === 'function' ? await input.featureEnabled() : input.featureEnabled) !== true) return refuse('provider_feature_disabled');
   if (!input.selection) return refuse('provider_model_not_found');
   const selectedTarget = input.resolveSelectionTarget();
@@ -146,7 +146,8 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
       operationClaim: { kind: 'providerBroker', operation: scope }, purposeBindings,
       isSourceCurrent: async currentSignal => !currentSignal.aborted && await catalog.isCurrent(),
       callerSignal: signal });
-    if (!source || 'unavailable' in source) return refuse('provider_endpoint_unavailable');
+    if (!source) return refuse('provider_endpoint_unavailable');
+    if ('unavailable' in source) return refuse('provider_endpoint_unavailable', source.failureCause ? source : undefined);
     resources.register(source.retire);
     resources.register(source.projection.cleanup);
     const endpointUrl = source.projection.access.endpointUrl(group.application.endpointTemplateId);
@@ -181,7 +182,7 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
         ? { ok: true } : refuse('provider_authorization_changed') };
   } catch (error) {
     const typed = ProviderErrorV1Schema.safeParse(error);
-    return typed.success ? { ok: false, error: typed.data } : refuse('provider_materialization_failed');
+    return typed.success ? { ok: false, error: typed.data } : refuse('provider_materialization_failed', error);
   } finally { await resources.release(); }
     } };
 }

@@ -1,3 +1,5 @@
+import * as fsPromises from 'node:fs/promises';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     chmod,
     mkdir,
@@ -13,7 +15,7 @@ import { chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createManagedServiceCredentialFileOwner } from './managedServiceCredentialFileOwner';
 
@@ -32,6 +34,22 @@ afterEach(async () => {
 });
 
 describe('managed-service credential-file owner', () => {
+    it('retains the native acquisition cause when OS rollback also fails', async () => {
+        const root = await createTempDir();
+        const owner = createManagedServiceCredentialFileOwner({ rootDir: root });
+        let restoreBoundaries = () => {};
+        try {
+            const failure = await owner.materialize({ scope: { pluginId: 'acme.provider' },
+                files: { key: new Uint8Array([1]) }, retainCleanup() {
+                    const open = vi.spyOn(fsPromises, 'open').mockRejectedValueOnce(Object.assign(new Error('ambient write'), { code: 'EACCES' }));
+                    const remove = vi.spyOn(fsPromises, 'rm').mockRejectedValueOnce(Object.assign(new Error('ambient rollback'), { code: 'EBUSY' }));
+                    restoreBoundaries = () => { open.mockRestore(); remove.mockRestore(); };
+                } }).catch((error: unknown) => error);
+            expect(failure).toBeInstanceOf(AggregateError);
+            expect(projectActionFailureCauseV1(failure)).toMatchObject({ errorCode: 'EACCES' });
+        } finally { restoreBoundaries(); }
+    });
+
     it('reacquires fixed delivery custody for retained cleanup after removal failure', async () => {
         const root = await createTempDir();
         const first = createManagedServiceCredentialFileOwner({ rootDir: root });

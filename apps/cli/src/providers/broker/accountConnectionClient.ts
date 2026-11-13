@@ -1,7 +1,7 @@
 import { readDecodedFetchResponseHeaders } from '@happier-dev/cli-common/plugins/http';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
-import type { ProviderBrokerApplicationBindingV1, ProviderBrokerConsumerV1, ProviderConnectionId } from '@happier-dev/protocol';
+import type { ProviderBrokerApplicationBindingV1, ProviderBrokerRuntimeConsumerV1, ProviderConnectionId } from '@happier-dev/protocol';
 import { ProviderBrokerAccountOpenResponseV2Schema, type ProviderBrokerAdmissionFailureCodeV1, type ProviderBrokerAccountOpenRequestV2, type ProviderBrokerAccountOpenResponseV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 import { normalizeProviderOriginRelativePathSyntax } from '@happier-dev/protocol/providers/safety/url';
@@ -53,7 +53,7 @@ export type OpenAccountConnectionProviderBrokerAccess = (input: Readonly<{
   expectedConnectionSecurityFingerprint: string;
   expectedManagedRuntimeBindingFingerprint: string;
   targetMachineId: string;
-  consumer: ProviderBrokerConsumerV1;
+  consumer: ProviderBrokerRuntimeConsumerV1;
   executionRunOccurrenceId?: string;
   application: ProviderBrokerApplicationBindingV1;
   signal: AbortSignal;
@@ -75,7 +75,7 @@ export async function openAccountConnectionProviderBrokerAccess(input: Parameter
     const code = ProviderErrorCodeV1Schema.safeParse(cause !== null && typeof cause === 'object' && 'code' in cause ? cause.code : undefined);
     return createProviderErrorV1(code.success ? code.data : 'provider_endpoint_unavailable', {
       connectionId: input.connectionId, machineId: input.targetMachineId,
-    });
+    }, cause);
   };
   let failedReason: BrokerOpenFailureReason = 'consumer_binding_invalid';
   let admissionReasonCode: ProviderBrokerAdmissionFailureCodeV1 | undefined;
@@ -100,7 +100,7 @@ export async function openAccountConnectionProviderBrokerAccess(input: Parameter
     const opened = ProviderBrokerAccountOpenResponseV2Schema.parse(await input.openBroker(request, input.signal));
     if (!opened.ok) {
       admissionReasonCode = opened.reasonCode;
-      throw unavailable();
+      throw unavailable(opened);
     }
     failedReason = 'binding_invalid';
     const payload = opened.authority.payload;

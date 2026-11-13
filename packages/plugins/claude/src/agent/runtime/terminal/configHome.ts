@@ -1,3 +1,4 @@
+import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -36,10 +37,12 @@ export async function prepareClaudeTerminalConfigHome(
     await writeAtomicJsonFile({ path, mode: 0o600, value: {
       ...config, hasCompletedOnboarding: true, theme: config.theme ?? 'dark',
     } });
-  } catch {
+  } catch (error) {
+    const failureCause = projectSessionRuntimeFailureCause(error, 'client_start', 'agent.launch');
     throw new PluginError({
       code: 'claude_terminal_config_unavailable',
+      ...(failureCause ? { details: { failureCause } } : {}),
       message: 'Claude setup could not be prepared. Repair the selected Claude config home and retry this Session.',
-    });
+    }, { cause: error });
   }
 }

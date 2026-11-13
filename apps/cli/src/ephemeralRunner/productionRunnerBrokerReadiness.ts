@@ -1,3 +1,5 @@
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { isDeepStrictEqual } from 'node:util';
 
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -35,7 +37,7 @@ export async function checkProductionRunnerBrokerReadiness(input: Readonly<{
   transportCheck?: typeof checkRunnerBrokerNonInferenceReadiness;
 }>): Promise<
   | Readonly<{ status: 'ready'; readiness: RunnerReadinessV1 }>
-  | Readonly<{ status: 'denied' | 'unavailable'; reason: string }>
+  | Readonly<{ status: 'denied' | 'unavailable'; reason: string; failureCause?: ActionFailureCauseV1 }>
 > {
   input.signal.throwIfAborted();
   const selection = input.manifest.credentialSelectionBinding;
@@ -121,9 +123,11 @@ export async function checkProductionRunnerBrokerReadiness(input: Readonly<{
     signal: input.signal,
   });
   if (readiness.kind !== 'available') {
+    const failureCause = readActionOutputDiagnostic(readiness)?.failureCause;
     return {
       status: readiness.kind === 'broker_unavailable' ? 'unavailable' : 'denied',
       reason: readiness.kind === 'source_unavailable' ? readiness.reason ?? readiness.kind : readiness.kind,
+      ...(failureCause ? { failureCause } : {}),
     };
   }
   if (brokerReadinessRequest === null) {

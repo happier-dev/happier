@@ -1,4 +1,5 @@
 import { stageObservedExit } from '@/daemon/sessions/stageObservedExit';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createSparedHeldAgentCustody } from '@/daemon/processSupervision/sparedHeldAgents';
 import { reachHeldTargetAgent } from '@/daemon/spawn/prepareSessionTargetPlacement';
 import type { SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
@@ -1461,6 +1462,7 @@ export async function startDaemonSessionControlRuntime(
     stopSession: (sessionId: string, options?: StopSessionOptions) => Promise<StopSessionResult>;
     stopRequesterSessionForHandoff: (sessionId: string, expectedSpawnNonce: string) => Promise<'stopped' | 'already_inactive' | 'failed'>;
     isSessionAlreadyRunning: (sessionId: string) => Promise<boolean>;
+    isSessionRespawnPending: (sessionId: string) => boolean;
     restartStaleSessionRunnersAfterDaemonStart: () => ReturnType<typeof restartStaleRunnersAfterDaemonStart>;
     hasPendingRunnerRestarts: () => boolean;
     sessionRunnerStatus: Readonly<{
@@ -12869,8 +12871,10 @@ export async function startDaemonSessionControlRuntime(
             || request.operation.kind === 'provider_managed.binding.read'
             || request.operation.kind === 'provider_managed.binding.close') {
             const operation = request.operation;
-            const unavailable = () => ({ ok: false as const,
-              error: { code: 'provider_endpoint_unavailable', message: 'provider_endpoint_unavailable' } });
+            const unavailable = (cause?: unknown) => ({ ok: false as const,
+              error: { code: 'provider_endpoint_unavailable', message: 'provider_endpoint_unavailable',
+                ...(cause === undefined ? {} : { failureCause: projectActionFailureCauseV1(cause) }),
+              } });
             const tracked = trackedSession;
             if (!tracked || tracked.happySessionId !== sessionId
               || !isCurrentTrackedSession(params.trackedSessionsByKey, tracked)) return unavailable();
@@ -12908,7 +12912,9 @@ export async function startDaemonSessionControlRuntime(
             } catch (error) {
               const providerError = ProviderErrorV1Schema.safeParse(error);
               return providerError.success ? { ok: false as const,
-                error: { code: providerError.data.code, message: providerError.data.code } } : unavailable();
+                error: { code: providerError.data.code, message: providerError.data.code,
+                  ...(providerError.data.failureCause ? { failureCause: providerError.data.failureCause } : {}),
+                } } : unavailable(error);
             }
           }
           if (request.operation.kind === 'provider_broker.refusal.read') {
@@ -13038,6 +13044,7 @@ export async function startDaemonSessionControlRuntime(
                   error: {
                     code: providerError.data.code,
                     message: providerError.data.code,
+                    ...(providerError.data.failureCause ? { failureCause: providerError.data.failureCause } : {}),
                   },
                 };
               }
@@ -13050,6 +13057,7 @@ export async function startDaemonSessionControlRuntime(
                     error: {
                       code: teamCredentialCode.data,
                       message: teamCredentialCode.data,
+                      failureCause: projectActionFailureCauseV1(error),
                     },
                   };
                 }
@@ -15654,6 +15662,7 @@ export async function startDaemonSessionControlRuntime(
       return result.status === 'stopped' ? 'stopped' : 'failed';
     },
     isSessionAlreadyRunning,
+    isSessionRespawnPending: (sessionId) => sessionRunnerRespawnManager.hasPendingRespawn(sessionId),
     hasPendingRunnerRestarts: () => versionRuntimeRefreshAttemptHandoff.hasPending()
       || params.connectedServicesRestartRequestedSessions.size > 0
       || sessionRunnerRespawnManager.hasPendingTerminalSettlements()

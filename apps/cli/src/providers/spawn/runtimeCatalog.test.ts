@@ -590,6 +590,16 @@ describe('provider spawn runtime catalog bridge', () => {
     };
 
     await expect(resolveProviderRuntimeCatalogModel(withSavedSecretMaterializer({
+      selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex',
+        providerConnectionId: authorizedResolution.record.connectionId, modelId: 'managed-model' } },
+      machineId: 'machine-a', accountSettings: { providerSettingsV1: providerSettings }, providerSettings, registry,
+      dnsEvidenceByEndpointUrl: new Map(), runtimeStateStore: { read: readRuntimeState },
+      resolveManagedPurposeBindingIntent: async () => { throw new TypeError('private-fixture'); },
+      ...(placement === 'remote' ? { readModelProjection, signal: new AbortController().signal } : {}),
+    }))).rejects.toMatchObject({ code: 'provider_connection_invalid',
+      failureCause: { errorClass: 'TypeError', errorCode: null } });
+
+    await expect(resolveProviderRuntimeCatalogModel(withSavedSecretMaterializer({
       selection: {
         v: 1,
         updatedAt: 1,
@@ -663,7 +673,7 @@ describe('provider spawn runtime catalog bridge', () => {
       runtimeStateStore: {
         read: readRuntimeState,
       },
-    }))).resolves.toBeNull();
+    }))).rejects.toMatchObject({ code: 'provider_connection_invalid', failureCause: { errorClass: 'Error', errorCode: null } });
     expect(readRuntimeState).not.toHaveBeenCalled();
   });
 });

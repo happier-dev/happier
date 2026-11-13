@@ -1,3 +1,8 @@
+import { logger } from '@/ui/logger';
+import { rmSync } from 'node:fs';
+import { createManagedRunLaunchFixture } from '../lifecycle/managedRunLaunch.testkit';
+import { materializeLeasedAgentProviderBinding } from '@/plugins/runtime/providerBindings/adapter';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import type {
@@ -33,6 +38,12 @@ import { createProviderRedactionLease } from './redaction';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { readPersistedProviderResumeState } from '../lifecycle/readPersistedResumeSelection';
 import { resolveSpawnBindingContinuity } from '../sessions/resolveSpawnBindingContinuity';
+
+// Filesystem removal is the teardown boundary; the registered Agent stays real.
+vi.mock('node:fs', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, rmSync: vi.fn(actual.rmSync) };
+});
 
 // Count the admitted flow without replacing either canonical decision.
 vi.mock('./resolve', async (importOriginal) => {
@@ -449,6 +460,15 @@ describe('provider spawn authorization lifecycle', () => {
 
   it('filters only selected-intake native auth services and leaves unrelated services intact', () => {
     expect(filterSuppressedConnectedServiceBindings({
+      bindings: { v: 2, bindingsByServiceId: {
+        'acme.agent/native-auth': { source: 'connected', selection: 'profile', profileId: 'selected' },
+        'other.agent/native-auth': { source: 'connected', selection: 'profile', profileId: 'unrelated' },
+      } },
+      suppressConnectedServiceIds: ['acme.agent/native-auth'],
+    })).toEqual({ bindings: { v: 2, bindingsByServiceId: {
+      'other.agent/native-auth': { source: 'connected', selection: 'profile', profileId: 'unrelated' },
+    } }, suppressedServiceIds: ['acme.agent/native-auth'] });
+    expect(filterSuppressedConnectedServiceBindings({
       bindings: {
         v: 2,
         bindingsByServiceId: {
@@ -715,6 +735,7 @@ describe('provider spawn authorization lifecycle', () => {
       ok: false,
       error: {
         code: 'provider_secret_missing',
+        failureCause: { errorClass: 'Error', errorCode: null },
         connectionId: 'pc_gateway',
         machineId: 'machine-a',
       },
@@ -761,6 +782,7 @@ describe('provider spawn authorization lifecycle', () => {
       ok: false,
       error: {
         code: 'provider_materialization_failed',
+        failureCause: { errorClass: 'Error', errorCode: null },
         connectionId,
         machineId: 'machine-a',
         retryable: false,
@@ -769,4 +791,115 @@ describe('provider spawn authorization lifecycle', () => {
     });
     attempt.cleanupOnFailure();
   });
+});
+
+
+it('retains the real Agent materialization failure when redaction teardown also fails', async () => {
+  const fixture = await createManagedRunLaunchFixture({ materializationUrl: 'http://127.0.0.1:0' });
+  onTestFinished(() => fixture.cleanup());
+  const registered = readLeasedAgentProviderBindingAdapter({ lease: fixture.lease, agentId: fixture.agentId });
+  if (!registered) throw new Error('Missing admitted fixture Agent adapter');
+  const initial: ExternalProviderSpawnAuthorization = { ...authorization(),
+    binding: { ...authorization().binding, agentTargetKey: fixture.agentTargetKey },
+    prepared: { v: 1, materialization: 'spawnEnv' }, support: registered.support };
+  const cleanupError = Object.assign(new Error('private redaction teardown fixture'), { code: 'EBUSY' });
+  const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+  onTestFinished(() => diagnostic.mockRestore());
+  const attempt = createProviderSpawnAuthorizationAttempt({
+    initial,
+    resolveCredential: () => ({ ok: true, credential: { kind: 'apiKey', value: 'fixture-private' } }),
+    materialize: ({ authorization: admitted, binding, credential }) => materializeLeasedAgentProviderBinding({
+      lease: fixture.lease, agentId: fixture.agentId, binding, prepared: admitted.prepared, credential,
+    }),
+    materializationBaseDir: fixture.happyHomeDir,
+    createRedactionLease: ({ values }) => createProviderRedactionLease({ values,
+      // The close notification is a caller-owned teardown boundary.
+      onClose: () => { throw cleanupError; } }),
+  });
+  const failure = await attempt.materializeAfterHooks();
+  expect(failure).toMatchObject({ ok: false, error: { code: 'provider_materialization_failed',
+    failureCause: { errorClass: 'TypeError', errorCode: 'ECONNREFUSED' } } });
+  expect(diagnostic).toHaveBeenCalledWith('[PROVIDER] Unexpected failure', expect.objectContaining({
+    failureCause: expect.objectContaining({ errorClass: 'Error', errorCode: 'EBUSY' }),
+  }));
+  expect(JSON.stringify([failure, diagnostic.mock.calls])).not.toContain('fixture-private');
+});
+
+
+it.each(['generation', 'retained'] as const)('retains ordered cleanup failures for a %s Agent materialization', async owner => {
+  const fixture = await createManagedRunLaunchFixture({ materializationFiles: [{ relativePath: 'config.json', utf8: '{}' }] });
+  onTestFinished(() => fixture.cleanup());
+  const registered = readLeasedAgentProviderBindingAdapter({ lease: fixture.lease, agentId: fixture.agentId });
+  if (!registered) throw new Error('Missing admitted fixture Agent adapter');
+  const initial: ExternalProviderSpawnAuthorization = { ...authorization(),
+    binding: { ...authorization().binding, agentTargetKey: fixture.agentTargetKey },
+    prepared: { v: 1, materialization: 'configFile' }, support: registered.support };
+  const physicalError = Object.assign(new Error('private physical cleanup fixture'), { code: 'EACCES' });
+  const redactionError = Object.assign(new Error('private redaction cleanup fixture'), { code: 'EBUSY' });
+  const subscriptionError = Object.assign(new Error('private subscription cleanup fixture'), { code: 'EIO' });
+  const order: string[] = [];
+  const attempt = createProviderSpawnAuthorizationAttempt({
+    initial,
+    resolveCredential: () => ({ ok: true, credential: { kind: 'apiKey', value: 'fixture-private' } }),
+    materialize: ({ authorization: admitted, binding, credential }) => materializeLeasedAgentProviderBinding({
+      lease: fixture.lease, agentId: fixture.agentId, binding, prepared: admitted.prepared, credential,
+    }),
+    materializationBaseDir: fixture.happyHomeDir,
+    createRedactionLease: ({ values }) => createProviderRedactionLease({ values,
+      onClose: () => { order.push('redaction'); throw redactionError; } }),
+    subscribeCurrentness: () => () => { order.push('subscription'); throw subscriptionError; },
+  });
+  const materialized = await attempt.materializeAfterHooks();
+  expect(materialized.ok).toBe(true);
+  if (!materialized.ok || materialized.materialization.launchMaterialization.kind !== 'configFile') throw new Error('Expected real file materialization');
+  const root = materialized.materialization.launchMaterialization.rootPath;
+  const actualFs = await vi.importActual<typeof import('node:fs')>('node:fs');
+  vi.mocked(rmSync).mockImplementation((path, options) => {
+    if (path === root && options?.recursive) { order.push('physical'); throw physicalError; }
+    return actualFs.rmSync(path, options);
+  });
+  try {
+    const cleanup = owner === 'retained' ? attempt.takeCleanupOnExit() : attempt.cleanupOnFailure;
+    if (!cleanup) throw new Error('Missing cleanup custody');
+    let failure: unknown;
+    try { cleanup(); } catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(AggregateError);
+    if (!(failure instanceof AggregateError)) throw failure;
+    expect(failure.errors).toEqual([physicalError, redactionError, subscriptionError]);
+    expect(failure.cause).toBe(physicalError);
+    expect(order).toEqual(['physical', 'redaction', 'subscription']);
+    expect(projectActionFailureCauseV1(failure)).toMatchObject({ errorClass: 'Error', errorCode: 'EACCES' });
+    expect(JSON.stringify(projectActionFailureCauseV1(failure))).not.toContain('private');
+  } finally { vi.mocked(rmSync).mockImplementation(actualFs.rmSync); }
+});
+
+
+it('preserves AbortError identity and diagnoses failed materialization teardown', async () => {
+  const cancelled = new Error('private cancellation fixture');
+  cancelled.name = 'AbortError';
+  const cleanupError = Object.assign(new Error('private cancelled cleanup fixture'), { code: 'EBUSY' });
+  const subscriptionError = Object.assign(new Error('private cancelled subscription fixture'), { code: 'EIO' });
+  const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+  onTestFinished(() => diagnostic.mockRestore());
+  const attempt = createProviderSpawnAuthorizationAttempt({
+    initial: authorization(),
+    resolveCredential: () => ({ ok: true, credential: { kind: 'apiKey', value: 'fixture-private' } }),
+    materialize: async () => {
+      // The real fetch boundary rejects with the caller's cancellation reason.
+      await fetch('http://127.0.0.1:0', { signal: AbortSignal.abort(cancelled) });
+      return { v: 1, kind: 'spawnEnv', env: [] };
+    },
+    materializationBaseDir: '/unused',
+    subscribeCurrentness: () => () => { throw subscriptionError; },
+    createRedactionLease: ({ values }) => createProviderRedactionLease({ values,
+      onClose: () => { throw cleanupError; } }),
+  });
+  await expect(attempt.materializeAfterHooks()).rejects.toBe(cancelled);
+  expect(diagnostic).toHaveBeenCalledWith('[PROVIDER] Unexpected failure', expect.objectContaining({
+    failureCause: expect.objectContaining({ errorClass: 'Error', errorCode: 'EBUSY' }),
+  }));
+  expect(diagnostic).toHaveBeenCalledWith('[PROVIDER] Unexpected failure', expect.objectContaining({
+    failureCause: expect.objectContaining({ errorClass: 'Error', errorCode: 'EIO' }),
+  }));
+  expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private cancelled cleanup fixture');
 });

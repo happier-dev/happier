@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PluginSourceCustodyV1 } from '@happier-dev/protocol';
 
@@ -119,6 +120,40 @@ const invalidBindings: readonly (readonly [string, BindingOverride])[] = [
 ];
 
 describe('daemon managed-service endpoint read owner', () => {
+    it.each(['open', 'next', 'environment'] as const)('retains native endpoint %s failure at the daemon consumer', async (phase) => {
+        let owner: ReturnType<typeof createDaemonManagedServiceEndpointReadOwner>;
+        const failureCause = projectActionFailureCauseV1({ code: 'EIO' }, 'managed_service.endpoint_read');
+        owner = createDaemonManagedServiceEndpointReadOwner({
+            credentials: { token: 'test-token', encryption: null },
+            resolveProjection: async () => projection,
+            resolveRunnerEndpointReadRpc: async () => ({ sessionId: projection.sessionId,
+                async call(input) {
+                    const request = input.request as { requestId: string };
+                    if (input.method === MANAGED_SERVICE_ENDPOINT_READ_RPC_METHODS.CANCEL)
+                        return { v: 1, requestId: request.requestId, status: 'cancelled', cancelled: true };
+                    if (input.method === MANAGED_SERVICE_ENDPOINT_READ_RPC_METHODS.OPEN) {
+                        owner.claim({ requestId: request.requestId, projectionToken: projection.projectionToken,
+                            sessionId: projection.sessionId, pluginId });
+                        if (phase === 'next') return { v: 1, requestId: request.requestId, status: 'opened',
+                            response: { status: 200, statusText: 'OK', headers: [], hasBody: true } };
+                    }
+                    return { v: 1, requestId: request.requestId, status: 'unavailable', failureCause };
+                } }),
+        });
+        try {
+            const result = await (async () => {
+                if (phase === 'environment') return await owner.resolveSessionClientAccess({ pluginId,
+                    sessionId: projection.sessionId, contributionId, targetBaseUrl: projection.endpoint.baseUrl,
+                    environmentKey: 'OPENCODE_SERVER_PASSWORD' });
+                const read = await owner.bindHost({ identity, source: { kind: 'opencodeServer', managedEndpoint: true }, signal: new AbortController().signal });
+                const response = await read({ pathAndQuery: '/session' });
+                if (phase === 'next') return await response.body!.getReader().read();
+                return response;
+            })().catch((error: unknown) => error);
+            expect(projectActionFailureCauseV1(result)).toMatchObject({ errorCode: 'EIO' });
+        } finally { await owner.dispose(); }
+    });
+
     afterEach(() => vi.useRealTimers());
     it('lets concurrent endpoint reads wait under caller custody and cancels outstanding headers', async () => {
         vi.useFakeTimers();

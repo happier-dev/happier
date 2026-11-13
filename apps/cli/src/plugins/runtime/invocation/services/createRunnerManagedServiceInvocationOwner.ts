@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { randomUUID } from 'node:crypto';
 import { Buffer } from 'node:buffer';
 import { join } from 'node:path';
@@ -405,10 +406,11 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
 
     const endpointReadPort: RunnerManagedServiceEndpointReadPort = Object.freeze({
         async open(request, signal) {
-            const unavailable = () => ({
+            const unavailable = (cause?: unknown) => ({
                 v: 1 as const,
                 requestId: request.requestId,
                 status: 'unavailable' as const,
+                ...(cause === undefined ? {} : { failureCause: projectActionFailureCauseV1(cause, 'managed_service.endpoint_read') }),
             });
             if (request.route.kind === 'endpointClientEnvironment') {
                 const projection = request.route.projection;
@@ -448,8 +450,8 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
                         status: 'clientEnvironment' as const,
                         environment,
                     };
-                } catch {
-                    return unavailable();
+                } catch (error) {
+                    return unavailable(error);
                 }
             }
             if (!('headers' in request)) return unavailable();
@@ -603,19 +605,20 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
                         hasBody: active.reader !== null,
                     },
                 };
-            } catch {
+            } catch (error) {
                 cancelActiveRead(request.requestId);
-                return unavailable();
+                return unavailable(error);
             } finally {
                 signal?.removeEventListener('abort', onAbort);
             }
         },
         async next(request, signal) {
             const active = activeReads.get(request.requestId);
-            const unavailable = () => ({
+            const unavailable = (cause?: unknown) => ({
                 v: 1 as const,
                 requestId: request.requestId,
                 status: 'unavailable' as const,
+                ...(cause === undefined ? {} : { failureCause: projectActionFailureCauseV1(cause, 'managed_service.endpoint_read') }),
             });
             if (
                 !active
@@ -659,9 +662,9 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
                     status: 'chunk' as const,
                     dataBase64: Buffer.from(value).toString('base64'),
                 };
-            } catch {
+            } catch (error) {
                 cancelActiveRead(request.requestId);
-                return unavailable();
+                return unavailable(error);
             } finally {
                 active.nextPending = false;
                 signal?.removeEventListener('abort', onAbort);

@@ -9,7 +9,7 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import { splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { createProviderOperationLifetime, ProviderOperationAbandonedError } from '../operationLifetime';
-import { admitRuntimeProviderSavedSecret } from './runtimeCredential';
+import { admitRuntimeProviderSavedSecret, resolveRuntimeProviderCredential, providerSavedSecretAdmissionError } from './runtimeCredential';
 
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 
@@ -129,7 +129,7 @@ it.each([
 
   const result = await admitRuntimeProviderSavedSecret(admission);
 
-  expect(result).toEqual({ ok: false, error: { ...createProviderErrorV1(code, { connectionId: admission.connection.connectionId,
+  expect(result).toMatchObject({ ok: false, error: { ...createProviderErrorV1(code, { connectionId: admission.connection.connectionId,
     machineId: 'machine' }), savedSecretReason } });
   expect(JSON.stringify(result)).not.toContain('bob-private-key');
   expect(getActiveAccountSettingsSnapshot()).toBe(alice);
@@ -142,4 +142,26 @@ it('keeps a cancelled Provider admission a cancellation, not a Saved Secret refu
   vi.spyOn(axios, 'get').mockImplementation(async () => { controller.abort(); return new Promise(() => {}); });
 
   await expect(admitRuntimeProviderSavedSecret(admission)).rejects.toBeInstanceOf(ProviderOperationAbandonedError);
+});
+
+it.each(['snapshot', 'materializer'] as const)('retains the %s failure through runtime credential refusal', async phase => {
+  const { admission } = gatewayAdmission({ custody: 'issued', slotId: 'apiKey', companion: 'none' });
+  const failure = Object.assign(new TypeError('Bearer private-fixture-value'), { code: 'ECONNREFUSED' });
+  const result = await resolveRuntimeProviderCredential({
+    credentialRef: { connectionId: admission.connection.connectionId, machineId: 'machine',
+      reference: { kind: 'apiKey', secretId: 'secret', secretRecordFingerprint: 'fingerprint' },
+      protocol: 'openai-responses', transport: { id: 'bearer', protocols: ['openai-responses'], uses: ['runtime'],
+        destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } } },
+    getAccountSettingsSnapshot: () => { if (phase === 'snapshot') throw failure; return admission.snapshot; },
+    resolveSavedSecretMaterializer: async () => { throw failure; },
+  });
+  expect(result).toMatchObject({ ok: false, error: { code: 'provider_secret_missing',
+    failureCause: { errorClass: 'TypeError', errorCode: 'ECONNREFUSED' } } });
+  expect(JSON.stringify(result)).not.toContain('private-fixture-value');
+});
+
+it('retains the unknown Home catalog cause alongside the Saved Secret owner reason', () => {
+  expect(providerSavedSecretAdmissionError(Object.assign(new TypeError('private fixture'), { code: 'ECONNREFUSED' }),
+    { connectionId: 'pc_gateway', machineId: 'machine' })).toMatchObject({ code: 'provider_secret_unavailable',
+      savedSecretReason: 'reference_unavailable', failureCause: { errorClass: 'TypeError', errorCode: 'ECONNREFUSED' } });
 });

@@ -189,7 +189,9 @@ describe('AcpBackend forkSession', () => {
       });
       try {
         await expect(backend.forkSession({ sessionId: ' parent\nsession ' }))
-          .rejects.toThrow(/does not support ACP session\/fork/i);
+          .rejects.toMatchObject({ cause: { code: -32601 }, failureCause: {
+            phase: 'thread_open', providerErrorCode: -32601,
+          } });
         expect(readCalledMethods(dir)).toContain('session/fork');
       } finally { await backend.dispose(); }
     });

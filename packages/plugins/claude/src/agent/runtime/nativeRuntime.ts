@@ -1,3 +1,4 @@
+import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { ClaudeIssuedRequestIdentity } from '../auth/services/runtime/requestIdentity.js';
 import type {
   AgentExecutionRunConversationEventV1,
@@ -259,8 +260,10 @@ export async function resolveClaudeInstalledSystemPromptSnapshotOffSupport(input
   });
 }
 
-function diagnostic(code: string, message: string): PluginDiagnosticData {
-  return { code, severity: 'error', message };
+function diagnostic(code: string, message: string, error?: unknown): PluginDiagnosticData {
+  const failureCause = projectSessionRuntimeFailureCause(error, 'turn_start', 'agent.turn');
+  const { providerErrorMessage: _privateMessage, ...safeCause } = failureCause ?? {};
+  return { code, severity: 'error', message, ...(failureCause ? { details: { failureCause: safeCause } } : {}) };
 }
 
 function jsonValue(value: unknown) {
@@ -429,11 +432,12 @@ function sendFailure(
   message?: string,
   retryable = status === 'unavailable',
   code?: string,
+  error?: unknown,
 ): Exclude<Awaited<ReturnType<AgentSessionRuntime['send']>>, { status: 'admitted' }> {
   return {
     status,
     retryable,
-    diagnostic: diagnostic(code ?? `claude_send_${status}`, message ?? `Claude input was ${status}.`),
+    diagnostic: diagnostic(code ?? `claude_send_${status}`, message ?? `Claude input was ${status}.`, error),
   };
 }
 
@@ -875,6 +879,7 @@ export function createClaudeNativeSessionRuntimeFromOperations(
         const failure = sendFailure(
           'unavailable',
           error instanceof Error ? error.message : String(error),
+          undefined, undefined, error,
         );
         emit({ kind: 'input-custody-unknown', inputIds: nativeRequest.inputIds, issue: failure.diagnostic });
         return failure;
@@ -903,7 +908,7 @@ export function createClaudeNativeSessionRuntimeFromOperations(
       } else if (submissionOutcome.kind === 'rejected_before_effect') {
         if (terminalPromptDelivery) clearTerminalPromptDelivery(terminalPromptDelivery);
         const retryable = submissionOutcome.retryable ?? true;
-        const failure = sendFailure(submissionOutcome.code === 'claude_image_input_unsupported' ? 'unsupported' : 'rejected', submissionOutcome.reason, retryable, submissionOutcome.code);
+        const failure = sendFailure(submissionOutcome.code === 'claude_image_input_unsupported' ? 'unsupported' : 'rejected', submissionOutcome.reason, retryable, submissionOutcome.code, submissionOutcome);
         emit({
           kind: 'input-rejected',
           inputIds: nativeRequest.inputIds,
@@ -913,7 +918,7 @@ export function createClaudeNativeSessionRuntimeFromOperations(
         return failure;
       } else if (submissionOutcome.kind === 'effect_may_have_occurred') {
         if (terminalPromptDelivery) clearTerminalPromptDelivery(terminalPromptDelivery);
-        const failure = sendFailure('unavailable', submissionOutcome.reason);
+        const failure = sendFailure('unavailable', submissionOutcome.reason, undefined, undefined, submissionOutcome);
         emit({
           kind: 'input-custody-unknown',
           inputIds: nativeRequest.inputIds,
@@ -1200,11 +1205,11 @@ function createClaudeExecutionRunConversationFromOperations(
           if (!isRuntimeConfigUpdateOutcomeApplied(update)) {
             return sendFailure(update?.status === 'unsupported' ? 'unsupported' : 'rejected',
               'Claude could not apply the admitted input permission policy.', false,
-              'execution_run_permission_intent_rejected');
+              'execution_run_permission_intent_rejected', update);
           }
-        } catch {
+        } catch (error) {
           return sendFailure('rejected', 'Claude could not apply the admitted input permission policy.', false,
-            'execution_run_permission_intent_rejected');
+            'execution_run_permission_intent_rejected', error);
         }
       }
       try {
@@ -1217,11 +1222,13 @@ function createClaudeExecutionRunConversationFromOperations(
           outcome.reason,
           outcome.kind === 'rejected_before_effect' ? outcome.retryable ?? true : false,
           outcome.kind === 'rejected_before_effect' ? outcome.code : undefined,
+          outcome,
         );
       } catch (error) {
         return sendFailure(
           'unavailable',
           error instanceof Error ? error.message : String(error),
+          undefined, undefined, error,
         );
       }
     },

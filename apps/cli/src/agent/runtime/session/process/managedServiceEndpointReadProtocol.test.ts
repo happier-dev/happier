@@ -9,6 +9,7 @@ import { createManagedServiceEndpointProjectionV1 } from '@/plugins/runtime/invo
 
 import {
     ManagedServiceEndpointReadOpenRequestV1Schema,
+    ManagedServiceEndpointReadOpenResultV1Schema,
     ManagedServiceEndpointReadNextRequestV1Schema,
     ManagedServiceEndpointReadNextResultV1Schema,
 } from './managedServiceEndpointReadProtocol';
@@ -122,6 +123,16 @@ function endpointProjectionRoute() {
 }
 
 describe('managed-service endpoint read protocol', () => {
+    it('retains the same sanitized failure on unavailable open and body reads', () => {
+        const failureCause = { phase: 'managed_service.endpoint', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: 503 };
+        const unavailable = { v: 1, requestId: '00000000-0000-4000-8000-000000000001', status: 'unavailable' };
+        for (const schema of [ManagedServiceEndpointReadOpenResultV1Schema, ManagedServiceEndpointReadNextResultV1Schema]) {
+            expect(schema.parse(JSON.parse(JSON.stringify({ ...unavailable, failureCause })))).toEqual({ ...unavailable, failureCause });
+            expect(schema.parse(unavailable)).toEqual(unavailable);
+            expect(schema.safeParse({ ...unavailable, failureCause: { ...failureCause, message: 'PRIVATE_ENDPOINT_OUTPUT' } }).success).toBe(false);
+        }
+    });
+
     it('discriminates exact-handle requests from current-global endpoint projections', () => {
         const common = {
             v: 1 as const,

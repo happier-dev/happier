@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonPluginUiTargetedContributionsReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { createAccountMachineSourceDeclarationReader } from './accountMachineSourceDeclarations';
@@ -79,4 +80,12 @@ it('keeps shared reads alive for remaining callers and aborts transport when all
     complete?.({ status: 'sourceDeclarations', pluginId: selection.targetPluginId, sourceRevision: 'stale', sourceDeclarations: [declaration] });
     machineRpc.mockResolvedValueOnce({ status: 'sourceDeclarations', pluginId: selection.targetPluginId, sourceRevision: 'fresh', sourceDeclarations: [] });
     expect(await read(selection)).toEqual({ declarations: [] });
+});
+
+it('retains the native Machine transport cause before Action declaration admission', async () => {
+    machineRpc.mockRejectedValueOnce(Object.assign(new Error('ambient transport'), { name: 'AxiosError', code: 'ERR_BAD_RESPONSE', response: { status: 502 } }));
+    const failure = await createAccountMachineSourceDeclarationReader(authority)(selection).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: 'ERR_BAD_RESPONSE' });
+    expect(projectActionFailureCauseV1(failure)).toMatchObject({ errorCode: 'ERR_BAD_RESPONSE', httpStatus: 502 });
+    expect(JSON.stringify(failure)).not.toContain('ambient');
 });

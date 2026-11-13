@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import * as filesystemBoundary from 'node:fs/promises';
@@ -2874,6 +2875,18 @@ describe('createManagedServiceProcessSupervisorHost', () => {
             })],
         });
         await handle.dispose();
+    });
+
+    it('retains a native port reservation failure before managed launch', async () => {
+        const host = createManagedServiceProcessSupervisorHost({
+            reservePort: async () => { throw Object.assign(new Error('private port failure'), { code: 'EACCES' }); },
+        });
+        const servers = host.bind({ occurrenceId: 'port-failure', pluginId: 'fixture.plugin',
+            contributionId: 'fixture.agent', isOccurrenceCurrent: () => true, exec: createExec() });
+        const failure = await servers.supervise(managedSpec('server', { mode: { kind: 'managedSpawn', host: '127.0.0.1' } }))
+            .catch((error: unknown) => error);
+        expect(projectActionFailureCauseV1(failure)).toMatchObject({ errorCode: 'EACCES', errorClass: 'Error' });
+        expect(JSON.stringify(failure)).not.toContain('private');
     });
 
     it('preserves an explicit base URL port through reservation and launch', async () => {

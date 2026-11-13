@@ -345,6 +345,37 @@ async function prepareDevelopmentRetainedAgentFixture() {
 }
 
 describe('runner managed-service invocation owner endpoint binding', () => {
+    it.each(['open', 'next', 'environment'] as const)('retains native endpoint %s failures across the existing unavailable wire', async (phase) => {
+        const input = projectionInput();
+        const projection = createManagedServiceEndpointProjectionV1(input);
+        const failure = Object.assign(new Error('ambient endpoint details'), { code: 'EIO' });
+        // The callbacks represent managed HTTP/credential boundaries; routing and streaming stay real.
+        const binding = createRunnerManagedServiceEndpointProjectionBinding({
+            publishEndpointProjection: async value => createManagedServiceEndpointProjectionV1(value).projectionToken,
+            releaseEndpointProjection: async () => true,
+        }, {
+            claimEndpointRead: async () => ({ daemonCapability: 'admitted-capability' }),
+            validateEndpointRead: async () => true,
+            materializeProjectedManagedServiceClientEnvironment: async () => { throw failure; },
+            resolveProjectedManagedServiceRequest: () => async () => {
+                if (phase === 'open') throw failure;
+                return { ok: true, status: 200, statusText: 'OK', headers: {},
+                    body: new ReadableStream<Uint8Array>({ pull() { throw failure; } }) };
+            },
+        });
+        await binding.publishEndpointProjection(input);
+        const requestId = '00000000-0000-4000-8000-0000000000d1';
+        const opened = phase === 'environment'
+            ? await binding.endpointReadPort.open({ v: 1, requestId,
+                route: { kind: 'endpointClientEnvironment', projection, environmentKey: 'OPENCODE_SERVER_PASSWORD' } })
+            : await binding.endpointReadPort.open({ v: 1, requestId,
+                route: { kind: 'endpointProjection', projection }, pathAndQuery: '/session', method: 'GET', headers: {} });
+        const result = phase === 'next' ? await binding.endpointReadPort.next({ v: 1, requestId,
+            route: { kind: 'endpointProjection', projectionToken: projection.projectionToken } }) : opened;
+        expect(result).toMatchObject({ status: 'unavailable', failureCause: { errorCode: 'EIO' } });
+        expect(JSON.stringify(result)).not.toContain('ambient');
+    });
+
     it('derives the verified Agent declaration and HostAccess from retained G without a caller-supplied declaration', async () => {
         const fixture = await prepareRetainedAgentFixture();
         let owner: Awaited<ReturnType<

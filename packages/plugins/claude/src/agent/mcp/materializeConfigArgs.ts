@@ -1,3 +1,4 @@
+import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { rmdirSync, unlinkSync } from 'node:fs';
 import { rmdir, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -95,7 +96,9 @@ export function materializeClaudeMcpConfigArgsForSpawn(
             try { rmdirSync(dirname(path)); } catch (cleanupError) { recordFailure(errors, cleanupError); }
         }
         try { throwCleanupFailure(errors); } catch (cleanupError) {
-            throw new AggregateError([error, cleanupError], 'Claude MCP materialization failed with incomplete cleanup', { cause: error });
+            throw Object.assign(new AggregateError([error, cleanupError], 'Claude MCP materialization failed with incomplete cleanup', { cause: error }), {
+          failureCause: projectSessionRuntimeFailureCause(error, 'client_start', 'agent.launch'),
+        });
         }
         throw error;
     }

@@ -3,6 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { buildClaudeRuntimeIssue, mapClaudeProviderFailureToUsageDetails } from './runtimeIssues.js';
 
 describe('mapClaudeProviderFailureToUsageDetails', () => {
+  it('retains an existing Provider Action cause in a terminal Turn issue', () => {
+    const actionCause = { phase: 'providers.launch', errorClass: 'TypeError', errorCode: null, httpStatus: 503 } as const;
+    const evidence = Object.assign(new Error('Native failure'), { code: 'provider_endpoint_unavailable', failureCause: actionCause });
+    expect(buildClaudeRuntimeIssue({ evidence, occurredAt: 100 })).toMatchObject({ failureCause: {
+      code: 'provider_endpoint_unavailable', phase: 'turn', failureReason: 'unknown', httpStatus: 503, actionCause,
+    } });
+  });
+
   it.each(['result', 'errors'] as const)('retains failed SDK %s evidence and its own reset without allowance telemetry', (field) => {
     const text = 'Claude AI usage limit reached|1792656000';
     const evidence = { type: 'result', subtype: 'error_during_execution', is_error: true,

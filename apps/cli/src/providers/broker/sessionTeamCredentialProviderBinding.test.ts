@@ -1,3 +1,5 @@
+import { createProviderBrokerEndpointDiscovery } from './providerBrokerEndpointDiscovery';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createUnavailableManagedServices } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import Anthropic from '@anthropic-ai/sdk';
@@ -19,7 +21,7 @@ import { resolveTeamCredentialModelCompatibility } from './teamCredentialModelCo
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import { ProviderBrokerAdmissionFailureCodeV1Schema, createProviderBrokerRouteGrantSigningInputV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { ProviderBrokerOpenResponseV1Schema, ProviderBrokerAdmissionFailureCodeV1Schema, createProviderBrokerRouteGrantSigningInputV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { createProviderBrokerMachineCarrierTunnelOpen } from '@/daemon/peer/iroh/providerBrokerMachineCarrierTunnelOpen';
 import type { DaemonMachineIrohRuntime } from '@/daemon/peer/iroh/daemonMachineIrohRuntime';
 import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
@@ -236,11 +238,14 @@ describe('Session Team credential Provider binding', () => {
         sourceRevision: row.sourceRevision, sourceFacts: row.sourceFacts, brokerMachineId: 'broker-1' },
       lease: lease({ v: 1, adapterVersion: 1, prepare: prepareSpawnEnv, materialize: materializeEmptySpawnEnv }),
       materializationBaseDir: '/tmp/happier-team-broker-refusal', signal: new AbortController().signal,
-      openBroker: async () => ({ ok: false, reasonCode: code }),
+      openBroker: async () => ProviderBrokerOpenResponseV1Schema.parse({ ok: false, reasonCode: code,
+        failureCause: projectActionFailureCauseV1(Object.assign(new TypeError('Bearer private-fixture'), { code: 'ECONNREFUSED' })) }),
       openTunnel: async () => { throw new Error('Refused broker must not open tunnel'); },
     }).then(() => null, (error: unknown) => error);
     expect(refused).toBeInstanceOf(SessionTeamCredentialLaunchUnavailableError);
-    expect(refused).toMatchObject({ code, message: code });
+    expect(refused).toMatchObject({ code, message: code, failureCause: { code, phase: 'authentication',
+      actionCause: { errorClass: 'TypeError', errorCode: 'ECONNREFUSED' } } });
+    expect(JSON.stringify(refused)).not.toContain('private-fixture');
   });
 
   it('launches experimental Team models without consent and recomputes hard compatibility with the worker adapter', async () => {
@@ -857,6 +862,7 @@ describe('Session Team credential Provider binding', () => {
 
   it.each(['refresh before dial', 'refresh socket close', 'refresh HTTP refusal', 'accepted refresh socket close', 'HTTP refusal'] as const)(
     'preserves the discovery refusal through the real carrier: %s', async failure => {
+      const originalCause = projectActionFailureCauseV1(Object.assign(new TypeError('Bearer private-http-refusal'), { code: 'ECONNREFUSED' }));
       const diagnostic = vi.spyOn(logger, 'warnLocalFile');
       onTestFinished(() => diagnostic.mockRestore());
       const readFailureDiagnostic = vi.fn(async () => ({ closingSide: 'initiator' as const, closingStage: 'stream_decision' as const }));
@@ -885,7 +891,7 @@ describe('Session Team credential Provider binding', () => {
             writeProviderBrokerApplicationFailure({
               header: (name, value) => response.setHeader(name, value),
               code: status => ({ send: body => response.writeHead(status).end(JSON.stringify(body)) }),
-            }, { ok: false, reasonCode: 'resource_unavailable' }, 'resource-1');
+            }, { ok: false, reasonCode: 'resource_unavailable', failureCause: originalCause }, 'resource-1');
             return;
           }
         } catch (error) {
@@ -935,6 +941,10 @@ describe('Session Team credential Provider binding', () => {
       const code = failure === 'accepted refresh socket close' ? 'provider_endpoint_unavailable' : 'resource_unavailable';
       expect(refused).toBeInstanceOf(SessionTeamCredentialLaunchUnavailableError);
       expect(refused).toMatchObject({ code });
+      if (failure === 'HTTP refusal') {
+        expect(refused).toMatchObject({ failureCause: { actionCause: originalCause } });
+        expect(JSON.stringify(refused)).not.toContain('private-http-refusal');
+      }
       expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: refused }))
         .toMatchObject({ source: failure === 'accepted refresh socket close' ? 'agent_session_error' : 'team_credential', code });
       expect(adapter.materialize).not.toHaveBeenCalled();
@@ -1269,5 +1279,28 @@ describe('Session Team credential Provider binding', () => {
       openTunnel: async () => ({ localPort: 43123, localCapability: 'c'.repeat(64), observedPath: 'direct', retire: async () => undefined, close }),
     })).rejects.toThrow('Agent provider binding materialization failed');
     expect(close).toHaveBeenCalledOnce();
+  });
+});
+
+
+describe('broker endpoint discovery failure provenance', () => {
+  it.each(['refused', 'failed'] as const)('retains the %s refresh cause through native tunnel failure', async outcome => {
+    const discovery = createProviderBrokerEndpointDiscovery();
+    const signal = new AbortController().signal;
+    const source = Object.assign(new TypeError('Bearer private-refresh-fixture'), { code: 'ECONNREFUSED' });
+    if (outcome === 'refused') {
+      await discovery.refreshBrokerOpen(async () => ProviderBrokerOpenResponseV1Schema.parse({
+        ok: false, reasonCode: 'resource_unavailable', failureCause: projectActionFailureCauseV1(source),
+      }), signal);
+    } else {
+      await expect(discovery.refreshBrokerOpen(async () => { throw source; }, signal)).rejects.toBe(source);
+    }
+    const transportError = new Error('native socket closed');
+    const failure = await discovery.openTunnel(async () => { throw transportError; }, signal).catch(error => error);
+    expect(failure).toMatchObject({
+      code: outcome === 'refused' ? 'resource_unavailable' : 'provider_endpoint_unavailable',
+      failureCause: { phase: 'authentication', actionCause: { errorClass: 'TypeError', errorCode: 'ECONNREFUSED' } },
+    });
+    expect(JSON.stringify(failure)).not.toContain('private-refresh-fixture');
   });
 });

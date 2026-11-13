@@ -1,6 +1,15 @@
 import { projectPluginFailureMessage } from '@happier-dev/protocol/plugins/failureProjection';
 import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
+/** Keep the original public line boundary before redaction can trim native context. */
+export function projectNativeStartupFailureMessage(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const firstLine = value.split(/[\r\n\u2028\u2029]/u, 1)[0]?.trim();
+  if (!firstLine) return undefined;
+  const safe = projectPluginFailureMessage(firstLine).trim();
+  return safe || undefined;
+}
+
 /** Native diagnostic projection only: never read data, stderr, stack or accessors. */
 export function readNativeStartupFailureDetail(error: unknown): Readonly<{
   providerErrorCode?: string | number;
@@ -10,12 +19,8 @@ export function readNativeStartupFailureDetail(error: unknown): Readonly<{
     try { const property = Object.getOwnPropertyDescriptor(value, key); return property && 'value' in property ? property.value : undefined; }
     catch { return undefined; }
   };
-  const text = (value: unknown): string | undefined => {
-    if (typeof value !== 'string') return undefined;
-    // Redact before truncating, so a cut cannot hide the end of a credential.
-    const safe = projectPluginFailureMessage(value).replace(/[\r\n]+/gu, ' ').trim();
-    return safe ? safe.slice(0, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH) : undefined;
-  };
+  const text = (value: unknown): string | undefined =>
+    projectNativeStartupFailureMessage(value)?.slice(0, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH);
   const seen = new Set<object>();
   let current = error;
   let detail: { providerErrorCode?: string | number; providerErrorMessage?: string } = {};

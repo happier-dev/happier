@@ -29,7 +29,8 @@ it('retains redacted model projection transport failure detail in the file log b
   });
 
   expect(readModelProjection).toHaveBeenCalled();
-  expect(result).toMatchObject({ ok: false, error: { code: 'provider_endpoint_unavailable' } });
+  expect(result).toMatchObject({ ok: false, error: { code: 'provider_endpoint_unavailable',
+    failureCause: { errorClass: 'TypeError', errorCode: 'ECONNREFUSED' } } });
   expect(JSON.stringify(result)).not.toContain('diagnostic-fixture-secret');
   expect(log).toHaveBeenCalledWith('[PROVIDER] Spawn authorization phase', expect.objectContaining({
     phase: 'model_projection', status: 'failed', reason: 'unclassified',

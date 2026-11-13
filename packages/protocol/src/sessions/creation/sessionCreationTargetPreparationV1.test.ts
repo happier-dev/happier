@@ -10,6 +10,12 @@ import {
 } from './sessionCreationTargetPreparationV1.js';
 
 describe('Session creation target preparation V1', () => {
+  it('retains a checkout RPC exception cause through the shared UI and CLI preparation reader', () => {
+    const failureCause = { phase: 'session.target_preparation', errorClass: 'Error', errorCode: 'EACCES', httpStatus: null };
+    expect(readSessionCreationTargetPreparationResultV1({ error: 'checkout_failed', errorCode: 'checkout_failed', failureCause }))
+      .toEqual({ ok: false, result: { type: 'error', code: 'spawn_failed', retryable: true, failureCause,
+        launchError: { kind: 'launch_error', code: 'checkout_failed', message: 'checkout_failed' } } });
+  });
   it.each(['raw', 'transport'] as const)('preserves machine admission cause through %s path-directory preflight', shape => {
     const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error',
       errorCode: 'machine_unavailable', httpStatus: 403 };

@@ -199,6 +199,7 @@ describe('Provider Connection Team broker source', () => {
   it.each([
     ['ready', null],
     ['selection', 'source_selection_unavailable'],
+    ['selectionTransport', 'source_currentness_unknown'],
     ['resource', 'resource_not_current'],
     ['account', 'account_snapshot_unavailable'],
     ['activation', 'activation_occurrence_unavailable'],
@@ -228,17 +229,23 @@ describe('Provider Connection Team broker source', () => {
       registry: { generation: 9, contributes: { providersByContributionKey: chatRegistry.providersByContributionKey },
         readPluginOccurrenceId: (id: string) => registry.providerActivationOccurrenceIdsByPluginId.get(id) ?? null,
       } as unknown as ResolvedExecutablePluginRuntimeRegistry };
+    let registryUnavailable = false;
+    const failureCause = { phase: 'provider.registry', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
     const models = createRuntimeProviderModelManagementServices({ machineId: 'machine-a', registry: chatRegistry,
       runtimeStore: createProviderRuntimeStateStore({ happyHomeDir: directory, machineId: 'machine-a' }),
       client: createProviderProbeHttpClient({ transport: async () => { throw new Error('Static catalog cannot contact a vendor'); } }),
       getAccountSettingsSnapshot: () => settings, featureGate: { isEnabled: () => true },
-      resolveAddresses: async () => ['1.1.1.1'], acquireRuntimeLease: async () => lease,
+      resolveAddresses: async () => ['1.1.1.1'], acquireRuntimeLease: async () => {
+        if (registryUnavailable) throw Object.assign(new Error('private runtime registry transport detail'), { failureCause });
+        return lease;
+      },
       modelSettingsMutation: async () => { throw new Error('Read cannot mutate settings'); },
     });
     const catalog = (await resolveTeamCredentialResourceSourceCatalogs({ machineId: 'machine-a', teamId: 'team-a',
       resourceId: 'team-resource', expectedResourceRevision: 4, source, application,
       readSourceModelCatalogs: models.readSourceModelCatalogs }))[0];
     if (!catalog) throw new Error('Expected Team source catalog');
+    registryUnavailable = scenario === 'selectionTransport';
     const custody: ManagedProviderExplicitStartCustody = {
       acquire: async () => scenario === 'bridge' ? null : ({
         access: { endpointUrl: () => 'http://127.0.0.1:43123/v1',
@@ -268,6 +275,7 @@ describe('Provider Connection Team broker source', () => {
         expectedResourceRevision: 4, application, operation, modelId: 'openai/gpt-4.1-mini', sourceRevision: scenario === 'selection' ? 'catalog-r162-stale' : catalog.sourceRevision });
       if (reason) {
         expect(result).toMatchObject({ ok: false, reasonCode: 'resource_unavailable', sourceOpenFailureReason: reason });
+        if (scenario === 'selectionTransport') expect(result).toMatchObject({ failureCause });
         if (!result || !('reasonCode' in result)) throw new Error('Expected source refusal');
         expect(providerBrokerApplicationFailureBody(result, 'team-resource').error.message).toContain(reason);
       }
@@ -293,6 +301,29 @@ describe('Provider Connection Team broker source', () => {
         endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses' },
       signal: new AbortController().signal,
     })).rejects.toMatchObject({ failure: { reasonCode: 'provider_secret_missing' } });
+  });
+
+  it.each(['registry', 'custody'] as const)('retains a %s transport cause when establishing a broker source', async boundary => {
+    const settings = accountSettings();
+    const source = resourceSource(settings);
+    const failureCause = { phase: 'provider.registry', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    const unused = async (): Promise<never> => { throw new Error('Unavailable registry cannot acquire a source'); };
+    const throwTransportFailure = async (): Promise<never> => { throw Object.assign(new Error('private runtime transport detail'), { failureCause }); };
+    const bridge = createProviderConnectionCpxBridge({ custody: { acquire: throwTransportFailure,
+      retire: unused, retireExternalApiKey: unused, revalidateRetainedClaims: unused, retireAll: unused } });
+    const open = createProviderConnectionBrokerSourceOpen({ machineId: 'machine-a',
+      withRegistry: async read => boundary === 'registry' ? await throwTransportFailure() : await read(registry),
+      readResource: async () => ({ teamId: 'team-a', source, enabled: true, revision: 2,
+        brokerPlacement: { kind: 'machine', machineId: 'machine-a' } }), getAccountSettingsSnapshot: () => snapshot(settings),
+      collectDnsEvidence: async () => dnsEvidenceByEndpointUrl, openCpxProviderConnection: bridge.open,
+    });
+    await expect(open({ source, resourceId: 'resource-a', resourceRevision: 2, brokerMachineId: 'machine-a',
+      operation: { kind: 'resource_test', actorAccountId: 'member', requestId: 'request' },
+      application: { agentTargetKey: 'agent:happier.agent.codex/codex',
+        implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+        endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses' },
+      signal: new AbortController().signal,
+    })).resolves.toMatchObject({ unavailable: boundary === 'registry' ? 'source_currentness_unknown' : 'managed_custody_unavailable', failureCause });
   });
 
   it.each(['ready', 'temporarily_unavailable'] as const)('honors admitted Saved Secret availability %s despite retained ready resource bytes', (savedSecretCatalogState) => {
@@ -1023,6 +1054,9 @@ describe('Provider Connection Team broker source', () => {
 
   it('composes the source owner through the real CPX bridge and revokes before the next request', async () => {
     let settings = accountSettings();
+    const failureCause = { phase: 'provider.credential_resolution', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    let snapshotFailure: Error | null = null;
+    let snapshotReadsUntilFailure = 0;
     const source = resourceSource(settings);
     const managedRequests: ManagedServiceRequest[] = [];
     let resourceEnabled = true;
@@ -1078,7 +1112,7 @@ describe('Provider Connection Team broker source', () => {
         };
       },
       withRegistry: async (read) => { registryReads++; return await read(registry); },
-      getAccountSettingsSnapshot: () => snapshot(settings),
+      getAccountSettingsSnapshot: () => { if (snapshotFailure && snapshotReadsUntilFailure-- === 0) throw snapshotFailure; return snapshot(settings); },
       collectDnsEvidence: async () => { dnsReads++; return dnsEvidenceByEndpointUrl; },
       openCpxProviderConnection: bridge.open,
       resolveExactSelection: async () => {
@@ -1145,6 +1179,18 @@ describe('Provider Connection Team broker source', () => {
       resourceReads: 1, registryReads: 1, dnsReads: 1, selectionReads: 1,
     });
 
+    snapshotFailure = Object.assign(new Error('private snapshot detail'), { failureCause });
+    await expect(access.access.request({ pathAndQuery: '/v1/responses', method: 'POST' })).rejects.toMatchObject({
+      failure: { reasonCode: 'source_unavailable', failureCause },
+    });
+    snapshotFailure = null;
+    snapshotReadsUntilFailure = 1;
+    snapshotFailure = Object.assign(new Error('private credential snapshot detail'), { failureCause });
+    await expect(access.access.request({ pathAndQuery: '/v1/responses', method: 'POST' })).rejects.toMatchObject({
+      failure: { reasonCode: 'source_unavailable', failureCause },
+    });
+    snapshotFailure = null;
+
     const renamed = readProviderSettingsForCli(settings).settings;
     settings = snapshotFromProviderSettings({ ...renamed, connections: renamed.connections.map(connection => ({
       ...connection, revision: connection.revision + 1, displayName: 'Renamed gateway',
@@ -1185,7 +1231,7 @@ describe('Provider Connection Team broker source', () => {
       pathAndQuery: '/v1/responses',
       method: 'POST',
       body: new TextEncoder().encode('{}'),
-    })).rejects.toMatchObject({ failure: { reasonCode: 'source_unavailable' } });
+    })).rejects.toMatchObject({ failure: { reasonCode: 'provider_connection_disabled' } });
     expect(managedRequests).toHaveLength(2);
     await lifetime.close();
     expect(cleanup).toHaveBeenCalled();

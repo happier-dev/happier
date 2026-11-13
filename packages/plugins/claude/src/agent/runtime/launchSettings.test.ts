@@ -37,7 +37,7 @@ describe('resolveClaudeNativeLaunchSettings', () => {
     expect(() => resolveClaudeLaunchSettingsOverlayArgs({
       args: ['--settings', '{broken'], interactionKind: 'interactive_terminal',
       permissionMode: 'default', launchSettings: {},
-    })).toThrow('Unable to read Claude launch settings');
+    })).toThrow(expect.objectContaining({ message: 'Unable to read Claude launch settings', cause: expect.objectContaining({ code: 'ENOENT' }), failureCause: expect.objectContaining({ phase: 'client_start', actionCause: expect.objectContaining({ errorCode: 'ENOENT' }) }) }));
   });
 
   it.each([{ rawDays: 1, sameHome: false, expected: 365 }, { rawDays: 1000, sameHome: false, expected: 1000 }, { rawDays: 1, sameHome: true, expected: 1 }])('respects the actual raw retention choice $rawDays (same home=$sameHome)', async ({ rawDays, sameHome, expected }) => {

@@ -792,7 +792,8 @@ describe('Claude plugin SDK query', () => {
     });
 
     it.each([false, true])('preserves spawn failure cause and observable exact MCP cleanup (incomplete=%s)', async (incomplete) => {
-        const failure = new Error('spawn failed');
+        const failureCause = { code: 'provider_endpoint_unavailable', phase: 'client_start', failureReason: 'permission_denied', httpStatus: 503 } as const;
+        const failure = Object.assign(new Error('spawn failed'), { failureCause });
         let configPath: string | undefined;
         const ctx = {
             agentRuntime: {
@@ -822,7 +823,7 @@ describe('Claude plugin SDK query', () => {
         const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         try {
             if (incomplete) {
-                await expect(sdkQuery.next()).rejects.toMatchObject({ cause: failure, errors: [failure, expect.any(Error)] });
+                await expect(sdkQuery.next()).rejects.toMatchObject({ cause: failure, failureCause, errors: [failure, expect.any(Error)] });
                 expect(warning).toHaveBeenCalledWith(expect.stringContaining('claude_mcp_cleanup_incomplete'));
                 await expect(readFile(join(dirname(configPath!), 'unexpected'), 'utf8')).resolves.toBe('retained');
             } else await expect(sdkQuery.next()).rejects.toBe(failure);

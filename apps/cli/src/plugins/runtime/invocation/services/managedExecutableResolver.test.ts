@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ManagedExecutableRef } from '@happier-dev/protocol';
@@ -38,6 +39,18 @@ describe('stable managed executable resolver', () => {
             kind: 'systemTool',
             id: { pluginId: 'other.plugin', localId: 'git' },
         }, 'acme.plugin')).rejects.toMatchObject({ code: 'plugin_system_tool_undeclared' });
+    });
+
+    it('retains the native system lookup failure without publishing its prose', async () => {
+        const resolver = createStableManagedExecutableResolver({
+            systemTools: [{ provenance: 'external', source: { kind: 'bundled' }, pluginId: 'acme.plugin',
+                definition: { id: 'git', title: 'Git', executableNames: ['fixture-git'], platforms: ['linux'] } }],
+            managedDependencies: { resolveExecutable: async () => { throw new Error('unexpected dependency'); } },
+            resolveSystemTool: async () => { throw Object.assign(new Error('private token=secret'), { code: 'EACCES' }); },
+        }, 'linux');
+        const error = await resolver({ kind: 'systemTool', id: 'git' }, 'acme.plugin').catch((error: unknown) => error);
+        expect(projectActionFailureCauseV1(error)).toMatchObject({ errorCode: 'EACCES', errorClass: 'Error' });
+        expect(JSON.stringify(error)).not.toContain('private');
     });
 
     it('rejects a declared system tool on a host platform it does not support', async () => {

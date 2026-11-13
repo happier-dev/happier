@@ -32,7 +32,7 @@ import {
     readClaudePendingLocalId,
 } from '../../providerOperations.js';
 import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
-import { readSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
@@ -320,9 +320,10 @@ const PROVIDER_ERROR_PREVIEW_MAX_LENGTH = 800;
 function projectPromptTransportOutcome(outcome: ClaudeSdkPromptTransportOutcome): ClaudeRuntimePromptSubmissionOutcome {
     if (outcome.kind === 'accepted') return outcome;
     const reason = sanitizeProviderErrorPreview(outcome.error.message) ?? 'Claude SDK prompt transport failed.';
+    const failureCause = projectSessionRuntimeFailureCause(outcome.error, 'turn_start', 'agent.turn');
     return outcome.kind === 'rejected_before_effect'
-        ? { kind: outcome.kind, reason, ...readClaudeManagedMcpPolicyFailure(outcome.error) }
-        : { kind: outcome.kind, reason };
+        ? { kind: outcome.kind, reason, failureCause, ...readClaudeManagedMcpPolicyFailure(outcome.error) }
+        : { kind: outcome.kind, reason, failureCause };
 }
 
 function sanitizeProviderErrorPreview(value: unknown): string | null {
@@ -1312,7 +1313,9 @@ export function createClaudeAgentSdkTurnOperations(
                     params.ctx.logger.warn('[ClaudeAgentSdk] Session hook resource cleanup failed', {
                         error: 'claude_session_hook_cleanup_failed',
                     });
-                    throw new AggregateError([error, cleanupError], 'Claude Session hook preparation and cleanup failed', { cause: error });
+                    throw Object.assign(new AggregateError([error, cleanupError], 'Claude Session hook preparation and cleanup failed', { cause: error }), {
+          failureCause: projectSessionRuntimeFailureCause(error, 'client_start', 'agent.launch'),
+        });
                 }
                 throw error;
             }
@@ -1880,7 +1883,7 @@ export function createClaudeAgentSdkTurnOperations(
                     occurredAt: Date.now(),
                     agentId: 'claude',
                     sanitizedPreview: sanitizeProviderErrorPreview(error.message),
-                    failureCause: readSessionRuntimeFailureCause(error),
+                    failureCause: projectSessionRuntimeFailureCause(error, 'turn', 'agent.turn'),
                 }),
             }));
         };
@@ -2441,7 +2444,9 @@ export function createClaudeAgentSdkTurnOperations(
                 try {
                     await hooks?.dispose();
                 } catch (cleanupError) {
-                    throw new AggregateError([error, cleanupError], 'Claude terminal preparation and cleanup failed', { cause: error });
+                    throw Object.assign(new AggregateError([error, cleanupError], 'Claude terminal preparation and cleanup failed', { cause: error }), {
+          failureCause: projectSessionRuntimeFailureCause(error, 'client_start', 'agent.launch'),
+        });
                 }
                 throw error;
             }
@@ -2713,6 +2718,7 @@ export function createClaudeAgentSdkTurnOperations(
                     kind: 'rejected_before_effect',
                     ...(error instanceof ClaudeBrowserImageUnavailableError ? { code: error.code } : {}),
                     ...readClaudeManagedMcpPolicyFailure(error),
+                    failureCause: projectSessionRuntimeFailureCause(error, 'turn_start', 'agent.turn'),
                     reason: sanitizeProviderErrorPreview(
                         error instanceof Error ? error.message : String(error),
                     ) ?? 'Claude SDK prompt setup failed.',
@@ -2858,7 +2864,8 @@ export function createClaudeAgentSdkTurnOperations(
                                 ? 'dontAsk' : mapToClaudePermissionMode(permissionMode))));
                     } catch (error) {
                         params.ctx.logger.warn('[ClaudeAgentSdk] Live permission mode update failed', { error });
-                        return { status: 'failed' as const, reason: 'permission_mode_update_failed' };
+                        return { status: 'failed' as const, reason: 'permission_mode_update_failed',
+                            failureCause: projectSessionRuntimeFailureCause(error, 'turn_start', 'agent.turn') };
                     }
                     currentPermissionMode = permissionMode;
                 });

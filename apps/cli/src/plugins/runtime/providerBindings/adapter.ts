@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { z } from 'zod/mini';
 import { AgentProviderBindingMaterializationV1Schema, AgentProviderBindingResolvedFactsV1Schema, AgentProviderBindingPrepareInputV1Schema, AgentProviderBindingPreparedV1Schema } from '@happier-dev/protocol/providers/materialization/v1';
 import { AgentProviderRequirementsV1Schema } from '@happier-dev/protocol/providers/compatibility/v1';
@@ -247,8 +248,10 @@ export async function materializeCapturedAgentProviderBinding(params: Readonly<{
     let raw: unknown;
     try {
         raw = await resolved.adapter.materialize(deepFreeze({ v: 1 as const, binding, prepared, credential }));
-    } catch {
-        throw new Error('Agent provider binding materialization failed');
+    } catch (cause) {
+        throw Object.assign(new Error('Agent provider binding materialization failed', { cause }), {
+            failureCause: projectActionFailureCauseV1(cause),
+        });
     }
     if (!resolved.isCurrent()) {
         // The generation retired while materialization was in flight: drop the

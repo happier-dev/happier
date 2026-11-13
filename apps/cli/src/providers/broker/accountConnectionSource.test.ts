@@ -13,9 +13,12 @@ import { createAccountConnectionBrokerSourceOpen } from './accountConnectionSour
 import { createBrokerProviderRegistry } from './providerBroker.testkit';
 import { projectProviderBrokerApplication } from './applicationProjection';
 import { DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
+import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
+import type { ManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
 
 describe('personal hub source admission', () => {
-  it.each(['connectionSecurity', 'managedBinding', 'unchanged', 'legacyConnectionSecurity'] as const)('checks captured %s before projecting or acquiring the current hub', async (changedFact) => {
+  it.each(['connectionSecurity', 'managedBinding', 'unchanged', 'legacyConnectionSecurity', 'sourceCurrentness', 'homeLiveness'] as const)('checks captured %s before projecting or acquiring the current hub', async (changedFact) => {
     const base = createBrokerProviderRegistry();
     const providersByContributionKey = new Map([...base.providersByContributionKey].map(([key, contribution]) => [key, {
       ...contribution, definition: ProviderContributionV1Schema.parse({ ...contribution.definition,
@@ -74,11 +77,51 @@ describe('personal hub source admission', () => {
       consumer: { kind: 'session', sessionId: 'session-1' }, application },
       signature: { alg: 'Ed25519', keyId: 'key-1', valueBase64Url: Buffer.alloc(64).toString('base64url') } };
     let projectionReads = 0;
+    let registryReads = 0;
+    const failureCause = { phase: 'provider.registry', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    const unused = (): never => { throw new Error('Unexpected effect boundary'); };
+    const managed = createManagedServicesOwner({
+      processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
+      dependencies: unused, resolveScope: scope => scope,
+    });
+    const operation = { operationId: 'session-1', pluginId: application.implementationIdentity.pluginId,
+      contributionQualifiedId: 'happier.provider.cliproxyapi/providers/cliproxyapi', occurrenceId: 'account-source',
+      purposeBindingsEqualityKey: 'account-source', lifecycleKind: 'providerBroker' as const };
+    // Keep the semantic/join owner real; only the authorized Provider child is an effect boundary.
+    const custody: ManagedProviderExplicitStartCustody = {
+      acquire: async input => {
+        const joined = await managed.runManagedProviderExplicitStart({ ...operation,
+          signal: input.signal, isCurrent: input.isAuthorizationCurrent,
+          establish: async () => ({ status: 'running', projection: {
+            access: { endpointUrl: () => 'http://127.0.0.1:43120/v1', request: unused },
+            isCurrent: () => true, cleanup: async () => {},
+          } }),
+        });
+        return joined.status === 'established' ? joined.value.projection : null;
+      },
+      retire: async () => await managed.retireManagedProviderExplicitStart(operation),
+      retireExternalApiKey: unused,
+      revalidateRetainedClaims: async signal => await managed.revalidateManagedProviderExplicitStarts(signal),
+      retireAll: async () => await managed.retireManagedProviderExplicitStarts('providerBroker'),
+    };
+    let homeUnavailable = false;
     const open = createAccountConnectionBrokerSourceOpen({ homeId: 'home-1', accountId: 'account-1', machineId: 'hub-1',
       expectedAccountSettingsScopeKey: snapshot.scopeKey!,
-      custody: createManagedProviderExplicitStartCustody({ machineId: 'hub-1', happyHomeDir: '/unreached-personal-source' }),
-      withRegistry: async read => await read(registry), getAccountSettingsSnapshot: () => snapshot,
-      resolveBindingIntent: async () => { throw new Error('No purpose is declared'); }, admitConsumer: async () => true,
+      custody: changedFact === 'homeLiveness' || changedFact === 'sourceCurrentness' ? custody
+        : createManagedProviderExplicitStartCustody({ machineId: 'hub-1', happyHomeDir: '/unreached-personal-source' }),
+      withRegistry: async read => {
+        if (++registryReads === 2 && changedFact === 'sourceCurrentness') {
+          throw Object.assign(new Error('private registry transport detail'), { failureCause });
+        }
+        return await read(registry);
+      }, getAccountSettingsSnapshot: () => snapshot,
+      resolveBindingIntent: async () => { throw new Error('No purpose is declared'); },
+      admitConsumer: async () => {
+        if (changedFact === 'homeLiveness' && homeUnavailable) {
+          throw Object.assign(new Error('private Home transport detail'), { failureCause });
+        }
+        return true;
+      },
       // Canonical model projection is a remote Machine RPC boundary. A denied
       // captured source must not reach it, even if the current catalog is valid.
       projectModels: async () => {
@@ -99,12 +142,29 @@ describe('personal hub source admission', () => {
               compatibility: { result: { status: 'verified', selectedProtocol: application.protocol,
                 evidence: { sourceUrls: ['https://example.test'], verifiedAt: '2026-10-09' } },
                 compatibilityFingerprint: 'compatibility:v1:source', confirmed: false },
-              endpointHealth: 'not_checked', catalog: { stale: true }, loadState: 'unknown', visibility: 'visible',
+              endpointHealth: 'not_checked', catalog: { stale: changedFact !== 'sourceCurrentness' && changedFact !== 'homeLiveness' }, loadState: 'unknown', visibility: 'visible',
             }] }],
         });
       } });
-    expect(await open({ authority, signal: new AbortController().signal })).toBeNull();
-    expect(projectionReads).toBe(changedFact === 'connectionSecurity' || changedFact === 'managedBinding' ? 0 : 1);
-    expect(capturedManagedBinding).not.toContain(authorized.record.deployment.implementationIdentity.pluginId);
+    try {
+      if (changedFact === 'homeLiveness') {
+        const opened = await open({ authority, signal: new AbortController().signal });
+        expect(opened).not.toBeNull();
+        if (!opened) throw new Error('Expected source acquisition');
+        homeUnavailable = true;
+        await expect(opened.revalidate()).rejects.toMatchObject({ failureCause });
+        homeUnavailable = false;
+        await expect(opened.revalidate()).resolves.toBe(true);
+        await opened.cleanup();
+      } else if (changedFact === 'sourceCurrentness') {
+        await expect(open({ authority, signal: new AbortController().signal })).rejects.toMatchObject({
+          failure: { reasonCode: 'source_unavailable', sourceOpenFailureReason: 'source_currentness_unknown', failureCause },
+        });
+      } else {
+        expect(await open({ authority, signal: new AbortController().signal })).toBeNull();
+      }
+      expect(projectionReads).toBe(changedFact === 'connectionSecurity' || changedFact === 'managedBinding' ? 0 : 1);
+      expect(capturedManagedBinding).not.toContain(authorized.record.deployment.implementationIdentity.pluginId);
+    } finally { await managed.dispose(); }
   });
 });

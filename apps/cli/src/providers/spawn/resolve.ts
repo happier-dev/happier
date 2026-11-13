@@ -932,7 +932,7 @@ export function resolveProviderSpawnDefinitiveRejection(input: Readonly<{
         model: { id: selection.data.modelId, name: selection.data.modelId } });
     } catch (error) {
       if (!(error instanceof ProviderCredentialTransportAmbiguityErrorV1)) throw error;
-      return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', { connectionId }) };
+      return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', { connectionId }, error) };
     }
   }
 
@@ -1015,8 +1015,8 @@ export function resolveProviderSpawnSelection(
   let adapter: ReturnType<typeof readLeasedAgentProviderBindingAdapter>;
   try {
     adapter = readLeasedAgentProviderBindingAdapter({ lease: input.lease, agentId: input.agentId });
-  } catch {
-    return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', errorContext) };
+  } catch (error) {
+    return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', errorContext, error) };
   }
   if (!adapter) return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', errorContext) };
   const facts = resolveProviderSourceFacts(record);
@@ -1170,8 +1170,8 @@ export function resolveProviderSpawnAuthorization(
           ...(roleModels !== undefined ? { roleModels } : {}),
         },
       });
-    } catch {
-      return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', errorContext) };
+    } catch (error) {
+      return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', errorContext, error) };
     }
     const bindingSecurityFingerprint = createProviderBindingSecurityFingerprintV1({
       agentTargetKey: input.agentTargetKey,
@@ -1327,8 +1327,8 @@ export function resolveProviderSpawnAuthorization(
           : {}),
       },
     });
-  } catch {
-    return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', errorContext) };
+  } catch (error) {
+    return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', errorContext, error) };
   }
   const bindingSecurityFingerprint = createProviderBindingSecurityFingerprintV1({
     agentTargetKey: input.agentTargetKey,

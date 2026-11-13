@@ -43,6 +43,10 @@ import { openCurrentRunnerTeamCredentialProviderBinding } from '@/agent/runtime/
 import { readSessionPreparationFailureDiagnostic } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { ProviderModelBindingSourceV1Schema } from '@happier-dev/protocol/providers/binding-compatibility';
 import { registerManagedActivityRpcHandlers } from '@/api/machine/rpcHandlers.managedActivity';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
+import * as persistence from '@/persistence';
+import { getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { createManagedActivityInventory } from './lifecycle/managedActivity';
@@ -368,10 +372,13 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
     }
   });
 
-  it('returns a real Provider authorization refusal through the strict model-transition service response', async () => {
+  it.each(['missing', 'storage'] as const)('returns a real Provider authorization refusal through the strict model-transition service response (%s)', async source => {
+    const managed = source === 'storage' ? await createManagedRunLaunchFixture({ remote: true, probeCatalog: true }) : null;
+    const priorSnapshot = getActiveAccountSettingsSnapshot();
+    const failureCause = { phase: 'provider.model_projection', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
     const fixture = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
       runtimeOptions: { pluginIds: ['happier.agent.codex'] } });
-    const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
+    const lease = managed?.lease ?? await acquireAuthoritativePluginRuntimeRegistryLease();
     const sessionId = 'session-provider-transition-refusal';
     const retainedAgent = createRetainedAgent();
     const runner = { pid: 2240, processStartTimeMs: 1_717_171_717_500,
@@ -390,7 +397,13 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       runnerAgentSourceCustodyV1: retainedAgent.sourceCustody,
       runnerAgentInvocationContext: { cwd: '/workspace', environment: {}, providerBindingActive: true },
     };
-    const selection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: ProviderConnectionIdSchema.parse('pc_missing'), modelId: 'model' };
+    const selection = { agentTargetKey: managed?.agentTargetKey ?? 'agent:happier.agent.codex/codex',
+      providerConnectionId: ProviderConnectionIdSchema.parse(managed ? 'run-gateway' : 'pc_missing'), modelId: managed ? 'model-a' : 'model' };
+    if (managed) setActiveAccountSettingsSnapshot(managed.snapshot);
+    const credentials = source === 'storage'
+      ? vi.spyOn(persistence, 'readStoredCredentials').mockRejectedValue(Object.assign(new Error('private credential storage detail'),
+          createProviderErrorV1('provider_endpoint_unavailable', { failureCause })))
+      : null;
     const app = createDaemonControlApp({ getChildren: () => [tracked], machineId: 'machine-1',
       stopSession: async () => ({ status: 'not_found' as const }),
       spawnSession: async () => ({ type: 'success' as const, sessionId: 'unused' }),
@@ -399,8 +412,10 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       // No internal authorization, registry or error classifier is substituted.
       agentRuntimeDaemonServices: { dispatch: async () => {
         await authorizeSessionModelTransitionProviderTargetWithLease({
-          sessionId, machineId: 'machine-1', agentId: 'codex', agentTargetKey: selection.agentTargetKey, lease,
-          input: { selection, activeSelection: selection, activeSessionBindingMetadata: {
+          sessionId, machineId: managed?.machineId ?? 'machine-1', agentId: managed?.agentId ?? 'codex', agentTargetKey: selection.agentTargetKey, lease,
+          input: { selection, activeSelection: selection,
+            ...(managed ? { managedPurposeBindingSnapshot: { v: 1 as const, bindings: [] } } : {}),
+            activeSessionBindingMetadata: {
             v: 1, connectionId: selection.providerConnectionId, contributionKey: 'provider.test', connectionRevision: 1,
             model: { id: selection.modelId, name: selection.modelId }, protocol: 'openai-responses', materialization: 'engineConfig',
             compatibilityFingerprint: 'compatibility', bindingSecurityFingerprint: 'security',
@@ -416,15 +431,22 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
           context: { token: capabilityA, sessionId },
           operation: { kind: 'model_transition.authorize', requestId: 'provider-refusal', selection } } });
       expect(response.statusCode).toBe(200);
-      expect(AgentRuntimeDaemonServiceResponseV1Schema.parse(response.json())).toEqual({
-        ok: false, error: { code: 'provider_connection_not_found', message: 'provider_connection_not_found' },
-      });
+      const result = AgentRuntimeDaemonServiceResponseV1Schema.parse(response.json());
+      if (managed) {
+        expect(credentials).toHaveBeenCalled();
+        expect(result).toMatchObject({ ok: false, error: { failureCause } });
+      }
+      else expect(result).toEqual({ ok: false, error: { code: 'provider_connection_not_found', message: 'provider_connection_not_found' } });
     } finally {
       await app.close();
       await removeAgentRuntimeDaemonServiceAuthorityIfOwned({ happyHomeDir: configuration.happyHomeDir,
         publicReleaseRing: configuration.publicReleaseRing, path: authorityPath, capabilityDigest: authority.capabilityDigest });
       await lease.release();
       await fixture.dispose();
+      credentials?.mockRestore();
+      if (priorSnapshot) setActiveAccountSettingsSnapshot(priorSnapshot);
+      else resetActiveAccountSettingsSnapshotForTests();
+      await managed?.cleanup();
     }
   });
 

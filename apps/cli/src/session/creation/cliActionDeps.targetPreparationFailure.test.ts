@@ -7,8 +7,8 @@ import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/cr
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 
 // HTTP is the system boundary; Machine RPC and creation projection stay real.
-const httpGet = vi.hoisted(() => vi.fn());
-vi.mock('axios', () => ({ default: { defaults: {}, get: httpGet } }));
+const { httpGet, httpPost } = vi.hoisted(() => ({ httpGet: vi.fn(), httpPost: vi.fn() }));
+vi.mock('axios', () => ({ default: { defaults: {}, get: httpGet, post: httpPost } }));
 
 describe('session creation target preparation transport failures', () => {
   it.each([
@@ -107,4 +107,23 @@ it('keeps a typed catalog cause when the selected Agent contribution is absent',
   expect(SessionSpawnNewResultV1Schema.parse(result)).toMatchObject({ type: 'error', code: 'target_unavailable', retryable: false,
     failureCause: { phase: 'session.agent_target', errorClass: 'Error', errorCode: 'agent_contribution_unavailable', httpStatus: null },
   });
+});
+
+
+it('retains a typed failure when the target capability read fails before launch', async () => {
+  httpGet.mockReset().mockRejectedValue(Object.assign(new Error('private capability response'), { code: 'ECONNRESET' }));
+  const token = `e30.${Buffer.from(JSON.stringify({ sub: 'capability-test' })).toString('base64url')}.signature`;
+  const deps = createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId: '',
+    serverId: 'capability-home', mode: 'plain', ctx: null,
+    actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }) });
+  const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'capability-failure',
+    executionTarget: { serverId: 'capability-home', machineId: 'capability-machine' },
+    directory: { kind: 'path', path: '/tmp' },
+    agentTarget: { kind: 'agent', identity: { pluginId: 'missing.agent.plugin', localId: 'missing-agent' } },
+    connectedServices: { v: 2, bindingsByServiceId: {} } });
+  const result = await deps.sessionSpawnNew!({ ...input, actionCaller: { kind: 'host' }, callerSurface: 'cli',
+    sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: input.creationKey }) });
+  expect(SessionSpawnNewResultV1Schema.parse(result)).toMatchObject({ type: 'error', code: 'machine_offline',
+    failureCause: { phase: 'session.target_capabilities', errorCode: 'ECONNRESET', errorClass: 'Error' } });
+  expect(JSON.stringify(result)).not.toContain('private');
 });

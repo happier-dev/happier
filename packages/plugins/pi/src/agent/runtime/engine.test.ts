@@ -25,6 +25,25 @@ describe('Pi Agent runtime', () => {
     vi.useRealTimers();
   });
 
+  it.each([false, true])('retains a typed native configuration failure through Session opening (cleanup fails=%s)', async cleanupFails => {
+    const boundary = hostBoundaries();
+    const write = boundary.write.getMockImplementation()!;
+    if (cleanupFails) boundary.disposeProcess.mockRejectedValueOnce(new Error('Native cleanup failed'));
+    const failureCause = { code: 'provider_endpoint_unavailable', phase: 'client_start', failureReason: 'permission_denied', httpStatus: 503 } as const;
+    boundary.write.mockImplementation(async record => {
+      if (record && typeof record === 'object' && !Array.isArray(record) && record.type === 'set_model') {
+        throw Object.assign(new Error('Native model configuration refused'), { failureCause });
+      }
+      await write(record);
+    });
+    await expect(createPiAgentRuntime().sessions.open({
+      kind: 'create', sessionId: 'pi-config-cause', cwd: '/workspace',
+      configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: 'github-copilot/fixture-model', updatedAtMs: 0 },
+        permissionIntent: { value: null, updatedAtMs: 0 }, options: {} },
+    }, boundary.context)).rejects.toMatchObject(cleanupFails ? { failureCause } : { details: { failureCause } });
+    expect(boundary.disposeProcess).toHaveBeenCalled();
+  });
+
   it('returns a model prerequisite with the native refusal through Session opening', async () => {
     const boundary = hostBoundaries();
     const write = boundary.write.getMockImplementation()!;
@@ -302,7 +321,12 @@ describe('Pi Agent runtime', () => {
       type: 'set_model', provider: 'anthropic', modelId: 'claude-sonnet-4-6',
     }));
     const args = boundary.spawn.mock.calls[0]?.[0].launch.args;
-    expect(args?.[args.indexOf('--tools') + 1]).toBe('read,grep,find,ls');
+    expect(args).not.toContain('--tools');
+    const toolsConfigPath = args?.[args.indexOf('--happier-tools-config') + 1];
+    expect(toolsConfigPath).toBeTruthy();
+    expect(JSON.parse(readFileSync(toolsConfigPath!, 'utf8'))).toMatchObject({
+      nativeTools: ['read', 'grep', 'find', 'ls'],
+    });
     releaseModel();
     await opening;
     expect(opened).toBe(true);

@@ -2460,6 +2460,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         message: string,
         cause?: unknown,
       ): Promise<OpenCodePromptIdentityUnresolvedError> => {
+        const failure = new OpenCodePromptIdentityUnresolvedError(message, cause === undefined ? undefined : { cause });
         const failedTurnId = ownsActiveHostTurn(turnId) ? claimOpenCodeActiveTurnForTerminalEvent(state) : null;
         if (failedTurnId) {
           const emittedAtMs = Date.now();
@@ -2474,13 +2475,11 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
               source: 'agent_session_error',
               message,
               occurredAt: emittedAtMs,
+              failureCause: failure.failureCause,
             }),
           });
         }
-        return new OpenCodePromptIdentityUnresolvedError(
-          message,
-          cause === undefined ? undefined : { cause },
-        );
+        return failure;
       };
       try {
         const mcpRegistration = await params.mcpRegistration;

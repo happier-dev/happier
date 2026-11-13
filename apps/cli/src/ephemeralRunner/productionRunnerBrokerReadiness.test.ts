@@ -1,4 +1,10 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { once } from 'node:events';
+import { createServer } from 'node:http';
+import axios from 'axios';
+import { createRunnerBrokerReadinessApplicationLifecycle } from '@/daemon/peer/mediation/loopback/runnerBrokerReadinessApplication';
+import { RunnerBrokerReadinessResponseV1Schema } from '@happier-dev/protocol/teams/credentials/readinessV1';
+import { checkRunnerBrokerNonInferenceReadiness } from './runnerBrokerReadinessClient';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -78,7 +84,7 @@ function createReadinessFacts() {
 }
 
 describe('production Runner broker readiness', () => {
-  it('derives the exact reviewed target and unique Provider protocol, dual-signs the carrier request, and signs content-free readiness', async () => {
+  it('derives the exact reviewed target and unique Provider protocol, dual-signs the carrier request, signs content-free readiness, and retains broker failure causes', async () => {
     const { activation, installation, binding, claim } = createReadinessFacts();
     const selection = { v: 1 as const, resourceId: 'resource-1', brokerMachineId: 'broker-machine', revision: 9,
       application: { agentTargetKey: 'agent:happier.agent.codex/codex', implementationIdentity: { pluginId: 'happier.provider.openai', localId: 'openai' }, endpointTemplateId: 'responses', protocol: 'openai-responses' },
@@ -169,6 +175,63 @@ describe('production Runner broker readiness', () => {
     expect(transportCheck).not.toHaveBeenCalled();
     expect(await checkProductionRunnerBrokerReadiness({ ...checkInput, transportCheck: async () => reconnect }))
       .toEqual({ status: 'denied', reason: reconnect.reason });
+
+    // Real HTTP boundaries model Home authorization and the selected resource API.
+    // Currentness, broker application, response decoding and launch readiness stay real.
+    const sourceApi = createServer((request, response) => {
+      if (request.url !== '/authorize') {
+        response.writeHead(503, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ error: 'ambient private source failure' }));
+        request.resume();
+        return;
+      }
+      let body = '';
+      request.setEncoding('utf8');
+      request.on('data', chunk => { body += chunk; });
+      request.on('end', () => {
+        const facts = JSON.parse(body);
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ v: 1, credentialSelectionBinding: selection, readiness: { kind: 'available' },
+          binding: { homeServerIdentityId: facts.homeServerIdentityId, activationId: facts.activationId,
+            launchManifestCommitment: facts.launchManifestCommitment, resourceId: facts.resourceId,
+            agentTargetKey: facts.agentTargetKey, protocol: facts.protocol, modelId: facts.modelId,
+            initiator: facts.initiator, target: facts.target } }));
+      });
+    });
+    sourceApi.listen(0, '127.0.0.1');
+    await once(sourceApi, 'listening');
+    const address = sourceApi.address();
+    if (!address || typeof address === 'string') throw new Error('Missing source API address');
+    const sourceUrl = `http://127.0.0.1:${address.port}`;
+    const broker = createRunnerBrokerReadinessApplicationLifecycle({
+      authorize: async request => RunnerBrokerReadinessResponseV1Schema.parse((await axios.post(`${sourceUrl}/authorize`, request)).data),
+      checkLocalCurrentness: async ({ selection, modelId }, signal) => await resolveRunnerCredentialSelectionCurrentness({
+        registeredMachineId: 'broker-machine', selection, modelId, signal,
+        readResource: async () => (await axios.get(`${sourceUrl}/resource`)).data,
+        resolveEligibility: async request => (await axios.post(`${sourceUrl}/eligibility`, request)).data,
+      }),
+    });
+    try {
+      const localPort = await broker.ensureListening();
+      let brokerStatus: number | undefined;
+      const failed = await checkProductionRunnerBrokerReadiness({ ...checkInput,
+        transportCheck: async input => await checkRunnerBrokerNonInferenceReadiness({ ...input,
+          // Native Iroh owns this transport seam; HTTP still crosses the real loopback application.
+          createRuntime: async () => ({ available: true, endpoint: { endpointId: 'c'.repeat(64) },
+            openHttpTunnel: async () => ({ localPort, localCapability: 'f'.repeat(64), remoteEndpointId: 'd'.repeat(64),
+              observedPath: 'direct', close: async () => undefined }), shutdown: async () => undefined }),
+          fetchImpl: async (...args) => { const response = await fetch(...args); brokerStatus = response.status; return response; },
+        }),
+      });
+      expect(brokerStatus).toBe(503);
+      expect(failed).toMatchObject({ status: 'unavailable', reason: 'broker_unavailable',
+        failureCause: { errorCode: 'ERR_BAD_RESPONSE', httpStatus: 503 } });
+      expect(JSON.stringify(failed)).not.toContain('ambient private');
+    } finally {
+      await broker.stop();
+      sourceApi.closeAllConnections();
+      await new Promise<void>(resolve => sourceApi.close(() => resolve()));
+    }
   });
 
   it('uses a separately installed public-SDK Provider on the broker, without installing it on the Runner, and rejects revoked sources', async () => {
@@ -272,9 +335,13 @@ describe('production Runner broker readiness', () => {
       // Account settings, DNS and persisted observation storage are boundaries;
       // catalog assembly, compatibility, registry lookup and eligibility are real.
       let state = createEmptyProviderRuntimeStateFileV1('broker-machine');
+      let failCatalogRead = false;
       const runtimeStore: ProviderRuntimeStateStore = {
         path: join(brokerHome, 'fixture-observations.json'),
-        read: async () => state,
+        read: async () => {
+          if (failCatalogRead) await readFile(brokerHome, 'utf8');
+          return state;
+        },
         update: async (transform) => { state = await transform(state); return state; },
         updateTransientEndpointHealth: async (transform) => { state = { ...state, endpointHealth: [...await transform(state.endpointHealth)] }; },
       };
@@ -296,9 +363,9 @@ describe('production Runner broker readiness', () => {
       const selection = { v: 1 as const, resourceId: 'resource-1', brokerMachineId: 'broker-machine', revision: 9, application: row.application, sourceRevision: group.sourceRevision };
       const resource = TeamCredentialResourceSummaryV1Schema.parse({
         id: selection.resourceId, teamId: 'team-1', custodianAccountId: 'custodian', displayName: 'Fixture', enabled: true, revision: 9,
-        disclosureCeiling: 'brokered_only', sessionUsePolicy: 'personal_allowed', source,
+        deliveryPolicy: { preferredAllowedModes: ['brokered'] }, sessionUsePolicy: 'personal_allowed', source,
         sourcePresentation: { kind: 'provider', provider: group.sourceAuthority.provider },
-        requestPolicy: null, brokerPlacement: { kind: 'machine', machineId: 'broker-machine' }, allMembersDeliveryMode: null,
+        requestPolicy: null, brokerPlacement: { kind: 'machine', machineId: 'broker-machine' }, allMembersAllowedRoutes: null,
         groupGrants: [], memberGrants: [], readiness: { kind: 'available' }, recoveryAction: null,
         brokerPresentation: { selectedTarget: null, eligibleTargets: [], selectedPool: null, eligiblePools: [] }, createdAt: '', updatedAt: '',
       });
@@ -329,6 +396,33 @@ describe('production Runner broker readiness', () => {
       const readiness = await checkProductionRunnerBrokerReadiness(checkInput);
       expect(readiness.status, readiness.status === 'ready' ? 'ready' : readiness.reason).toBe('ready');
       expect(readiness).toMatchObject({ status: 'ready', readiness: { payload: { installation: { agentRuntimeId: 'codex', executablePath: '/managed/codex' } } } });
+      // The persisted observation adapter performs a genuine failing OS read.
+      // Every source catalog/eligibility/currentness owner above it stays real.
+      failCatalogRead = true;
+      const readinessBroker = createRunnerBrokerReadinessApplicationLifecycle({
+        authorize: async request => RunnerBrokerReadinessResponseV1Schema.parse({ v: 1,
+          binding: { homeServerIdentityId: request.homeServerIdentityId, activationId: request.activationId,
+            launchManifestCommitment: request.launchManifestCommitment, resourceId: request.resourceId,
+            agentTargetKey: request.agentTargetKey, protocol: request.protocol, modelId: request.modelId,
+            initiator: request.initiator, target: request.target }, credentialSelectionBinding: selection, readiness: { kind: 'available' } }),
+        checkLocalCurrentness: currentness,
+      });
+      try {
+        const localPort = await readinessBroker.ensureListening();
+        let brokerStatus: number | undefined;
+        const refused = await checkProductionRunnerBrokerReadiness({ ...checkInput,
+          transportCheck: async input => await checkRunnerBrokerNonInferenceReadiness({ ...input,
+            createRuntime: async () => ({ available: true, endpoint: { endpointId: 'c'.repeat(64) },
+              openHttpTunnel: async () => ({ localPort, localCapability: 'f'.repeat(64), remoteEndpointId: 'd'.repeat(64),
+                observedPath: 'direct', close: async () => undefined }), shutdown: async () => undefined }),
+            fetchImpl: async (...args) => { const response = await fetch(...args); brokerStatus = response.status; return response; },
+          }),
+        });
+        expect(brokerStatus).toBe(200);
+        expect(refused).toMatchObject({ status: 'denied', reason: 'source_unavailable', failureCause: { errorCode: 'EISDIR' } });
+        expect(JSON.stringify(refused)).not.toContain(brokerHome);
+      } finally { await readinessBroker.stop(); }
+      failCatalogRead = false;
       resource.enabled = false;
       expect(await checkProductionRunnerBrokerReadiness(checkInput)).toEqual({ status: 'denied', reason: 'source_unavailable' });
     } finally {

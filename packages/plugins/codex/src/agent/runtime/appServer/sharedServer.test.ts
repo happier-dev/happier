@@ -644,6 +644,12 @@ describe('createCodexSharedAppServer', () => {
           : expect.any(Error) } : { status: 'fulfilled', value: { pong: true } },
         { status: 'fulfilled', value: { pong: true } },
       ]));
+      if (firstInitializeFails && firstCleanupFails) {
+        expect(outcomes).toContainEqual(expect.objectContaining({ status: 'rejected', reason: expect.objectContaining({
+          cause: expect.objectContaining({ code: -32000 }), failureCause: expect.objectContaining({ phase: 'client_start',
+            actionCause: expect.objectContaining({ errorCode: '-32000' }) }),
+        }) }));
+      }
       if (firstInitializeFails) expect(cleanupWasExclusive[0]).toBe(true);
       expect(spawnOptions).toEqual([{ nativeLaunch }, { nativeLaunch }]);
       expect(probeOptions.every(options => options === undefined)).toBe(true);

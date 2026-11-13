@@ -1,3 +1,5 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import fastify, { type FastifyInstance } from 'fastify';
 import axios from '@/api/client/credentialAxios';
 import { doesRunnerBrokerReadinessResponseMatchRequestV1, RunnerBrokerReadinessResponseV1Schema } from '@happier-dev/protocol/teams/credentials/readinessV1';
@@ -49,7 +51,10 @@ export function registerRunnerBrokerReadinessApplication(
           },
           abort.signal,
         );
-        if (currentness.kind !== 'available') response = { ...response, readiness: currentness };
+        if (currentness.kind !== 'available') {
+          const failureCause = readActionOutputDiagnostic(currentness)?.failureCause;
+          response = { ...response, readiness: currentness, ...(failureCause ? { failureCause } : {}) };
+        }
       }
       abort.signal.throwIfAborted();
       return reply.code(200).send(response);
@@ -61,7 +66,8 @@ export function registerRunnerBrokerReadinessApplication(
         && homeStatus !== 429
         ? 403
         : 503;
-      return reply.code(status).send();
+      return reply.code(status).send({ failureCause: readActionOutputDiagnostic(error)?.failureCause
+        ?? projectActionFailureCauseV1(error, 'runner.broker_readiness') });
     } finally {
       request.raw.off('aborted', onClose);
     }

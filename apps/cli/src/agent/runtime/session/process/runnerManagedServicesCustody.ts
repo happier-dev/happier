@@ -1,5 +1,7 @@
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readCanonicalPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { randomUUID } from 'node:crypto';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -349,7 +351,7 @@ export type RunnerManagedServicesCustodyOwnerV1 =
     }>;
 
 export const RUNNER_MANAGED_SERVICES_CUSTODY_RPC_METHOD =
-    'managedServices.custody.v1';
+    SESSION_RPC_METHODS.SESSION_MANAGED_SERVICES_CUSTODY_V1;
 
 const BoundedProcessStringSchema = lazyZodSchema(() => z.string().check(z.maxLength(65_536), z.refine((value) => !value.includes('\0'))));
 const BoundedStringRecordSchema = lazyZodSchema(() => z.record(
@@ -775,8 +777,8 @@ type CustodyObservation = {
 };
 
 
-function fail(code: ManagedServiceErrorCode, message: string): never {
-    throw new PluginError({ code, message });
+function fail(code: ManagedServiceErrorCode, message: string, failureCause?: ActionFailureCauseV1): never {
+    throw new PluginError({ code, message, ...(failureCause ? { failureCause } : {}) });
 }
 
 function runnerManagedServiceCleanupAggregate(
@@ -3129,6 +3131,7 @@ export function createRunnerManagedServicesClient(input: Readonly<{
                         request.signal?.aborted
                             ? 'Managed service request was aborted'
                             : 'Runner managed-service request is unavailable',
+                        opened.status === 'unavailable' ? opened.failureCause : undefined,
                     );
                 }
                 const headers = Object.fromEntries(
@@ -3180,6 +3183,7 @@ export function createRunnerManagedServicesClient(input: Readonly<{
                                     'plugin_managed_service_unavailable',
                                 message:
                                     'Runner managed-service response became unavailable',
+                                ...(next.failureCause ? { failureCause: next.failureCause } : {}),
                             });
                         } catch (error) {
                             await cancelRemote();

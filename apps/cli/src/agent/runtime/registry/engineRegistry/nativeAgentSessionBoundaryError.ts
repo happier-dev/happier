@@ -1,6 +1,6 @@
 import { readSessionRuntimeFailureCause } from '@/agent/runtime/session/errors/readSessionRuntimeFailureCause';
 import { SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-import { readNativeStartupFailureDetail } from '@/agent/runtime/session/errors/nativeStartupFailureDetail';
+import { projectNativeStartupFailureMessage, readNativeStartupFailureDetail } from '@/agent/runtime/session/errors/nativeStartupFailureDetail';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { AgentRuntimeDiagnosticDataV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
@@ -182,7 +182,8 @@ export function sanitizeNativeAgentSessionBoundaryError(
     const name =
         redactBugReportSensitiveText(error.name).trim()
         || 'Error';
-    const message = projectPluginFailureText(error);
+    const message = projectNativeStartupFailureMessage(readOwnDataProperty(error, 'message'))
+        ?? projectPluginFailureText(undefined);
     const stack = projectNativeAgentSessionBoundaryStack(error);
     const diagnosticProperty = readOwnDataProperty(error, 'diagnostic');
     const admittedDiagnostic = AgentRuntimeDiagnosticDataV1Schema.safeParse(diagnosticProperty);
@@ -193,9 +194,7 @@ export function sanitizeNativeAgentSessionBoundaryError(
         ? codeProperty.value
         : undefined;
     const pluginError = readCanonicalPluginError(error, rawCode);
-    const code = typeof rawCode === 'string'
-        ? projectPluginFailureText(new Error(rawCode))
-        : undefined;
+    const code = projectNativeStartupFailureMessage(rawCode);
     const codePropertyIsSafeToRetain =
         codeProperty.kind === 'absent'
         || (

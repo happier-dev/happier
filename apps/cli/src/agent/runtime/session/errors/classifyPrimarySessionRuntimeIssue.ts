@@ -549,7 +549,7 @@ export function classifyPrimarySessionRuntimeIssue(
   const typedDiagnostic = diagnostic?.success ? diagnostic.data : null;
   const diagnosticDetails = readRecord(typedDiagnostic?.details);
   const structuredInputFailure = readStructuredInputPreparationFailure(input.error);
-  const failureCause = SessionRuntimeFailureCauseV1Schema.safeParse(readSessionRuntimeFailureCause(typedDiagnostic ?? input.error)
+  const failureCause = SessionRuntimeFailureCauseV1Schema.safeParse(readSessionRuntimeFailureCause(typedDiagnostic ?? input.error, input.startupPhase)
     ?? (structuredInputFailure?.preparationCause ? {
       phase: 'turn_start', failureReason: 'unknown', preparationCause: structuredInputFailure.preparationCause,
     } : undefined));

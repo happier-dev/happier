@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, ProviderSettingsV1Schema, splitProviderSettingsV1, type ConnectedAccountPurposeDeclarationV1, type ProviderModelLoadDescriptorV1 } from '@happier-dev/protocol';
+import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, ProviderSettingsV1Schema, splitProviderSettingsV1, type ConnectedAccountPurposeDeclarationV1, type ProviderModelLoadDescriptorV1, type AgentProviderBindingMaterializationV1 } from '@happier-dev/protocol';
 import { writeCommittedLocalPathPluginFixture } from '@/plugins/store/state.testkit';
 import { createLocalPathPluginDistributionIdentity, createPluginTrustRecord } from '@/plugins/store/install/trustIdentity';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
@@ -19,7 +19,7 @@ import type { AgentProviderRequirementsV1 } from '@happier-dev/protocol/provider
 
 /** Real committed plugin/Agent/Provider source. Only endpoint transport is
  * supplied by each test; no authorization, registry or materializer is mocked. */
-export async function createManagedRunLaunchFixture(input: Readonly<{ directory?: string; happyHomeDir?: string; controller?: PluginReloadController; remote?: boolean; probeCatalog?: boolean; physicalGateway?: boolean; sourceEnvelopeTransport?: 'cpx-v1'; materializationUrl?: string; signedOutAgentCli?: boolean;
+export async function createManagedRunLaunchFixture(input: Readonly<{ directory?: string; happyHomeDir?: string; controller?: PluginReloadController; remote?: boolean; probeCatalog?: boolean; physicalGateway?: boolean; sourceEnvelopeTransport?: 'cpx-v1'; materializationUrl?: string; materializationFiles?: Extract<AgentProviderBindingMaterializationV1, { kind: 'configFile' }>['files']; signedOutAgentCli?: boolean;
   catalogModels?: Parameters<typeof createSharedGatewayRegistryTestkit>[0]['catalogModels'];
   connectedAccountModels?: Parameters<typeof createSharedGatewayRegistryTestkit>[0]['connectedAccountModels'];
   modelLoad?: ProviderModelLoadDescriptorV1;
@@ -97,7 +97,7 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
           credentialSupport: { supportsNoAuth: true, apiKeyTransports: [{ protocol: 'openai-responses',
             destination: { kind: 'httpHeader', names: 'anyValidated', formats: input.acceptedCredentialFormats ?? [input.runtimeCredentialHeader?.format ?? 'bearer'] } }] },
           authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: ['RUN_PROVIDER_TOKEN', 'RUN_PROVIDER_URL'] },
-          materialization: 'spawnEnv', applyPolicy: 'restart_session', supportsFreeformModelIds: input.supportsFreeformModelIds ?? false } }],
+          materialization: input.materializationFiles ? 'configFile' : 'spawnEnv', applyPolicy: 'restart_session', supportsFreeformModelIds: input.supportsFreeformModelIds ?? false } }],
       ...(gateway ? {} : { providers: [{ v: 1, id: 'gateway', name: 'Gateway', kind: input.modelLoad ? 'local' : 'aggregator',
         ...(input.modelLoad ? { modelLoad: input.modelLoad } : {}),
         credential: { kind: 'apiKey', required: false, slotId: 'apiKey', transports: [{ id: 'bearer',
@@ -175,10 +175,10 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
     api.agents.register('agent', fixtureAgentRuntimeFactory, {
       sessionRunnerFactory: { module: ${JSON.stringify(input.sessionRunnerFactoryModule ?? './agentRuntime.mjs')}, export: 'fixtureAgentRuntimeFactory', runtimeApiVersion: 1 },
       providerBinding: { v: 1, adapterVersion: 1,
-      prepare() { return { v: 1, materialization: 'spawnEnv' }; },
+      prepare() { return { v: 1, materialization: ${JSON.stringify(input.materializationFiles ? 'configFile' : 'spawnEnv')} }; },
       async materialize(input) { if (input.credential.kind !== 'apiKey') throw new Error('Expected consumer bearer');
         ${input.materializationUrl ? `await fetch(${JSON.stringify(input.materializationUrl)});` : ''}
-        return { v: 1, kind: 'spawnEnv', env: [
+        return { v: 1, kind: ${JSON.stringify(input.materializationFiles ? 'configFile' : 'spawnEnv')}, ${input.materializationFiles ? `files: ${JSON.stringify(input.materializationFiles)},` : ''} env: [
           { name: 'RUN_PROVIDER_TOKEN', value: input.credential.value, source: 'provider' },
           { name: 'RUN_PROVIDER_URL', value: input.binding.endpoint.normalizedUrl, source: 'provider' }
         ] }; }

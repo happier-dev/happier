@@ -240,11 +240,10 @@ export function readCodexAppServerTurnFailureDiagnostic(
     : { failureReason: 'unclassified_provider_error' };
 }
 
-function readRetainedFailureCause(error: unknown): CodexFailureCause | null {
-  const candidate =
-    readRecord(readRecord(error)?.details)?.failureCause ??
-    readRecord(readRecord(error)?.runtimeIssueV1)?.failureCause;
-  return readSessionRuntimeFailureCause({ failureCause: candidate }) ?? null;
+function readRetainedFailureCause(error: unknown, phase?: CodexFailureCause['phase']): CodexFailureCause | null {
+  return readSessionRuntimeFailureCause(error, phase)
+    ?? readSessionRuntimeFailureCause(readRecord(error)?.runtimeIssueV1, phase)
+    ?? null;
 }
 
 function readRedactedProviderErrorMessage(error: unknown, nativeStartup = false, nativeProviderMessage?: string | null): string | undefined {
@@ -766,7 +765,7 @@ export function createCodexAppServerTurnFailure(
     CODEX_APP_SERVER_LOCAL_FAILURE_CODES.has(rawCode)
       ? rawCode
       : null);
-  const retainedCause = readRetainedFailureCause(params.value);
+  const retainedCause = readRetainedFailureCause(params.value, params.phase ?? 'turn');
   const phase = retainedCause?.phase ?? params.phase ?? 'turn';
   const nativeStartup = phase === 'client_start' || phase === 'thread_open' || phase === 'authentication';
   const providerErrorMessage = readRedactedProviderErrorMessage(params.value, nativeStartup,

@@ -13,6 +13,7 @@ import type { ProviderConnectionRegistryReader } from './providerConnectionSourc
 import { createAccountConnectionModelProjectionRequest, projectProviderBrokerApplication } from './applicationProjection';
 import { acquireBrokerSourceOperation } from './brokerSourceOperationAcquisition';
 import { preserveBrokerSourceHealthFailure } from './sourceFailure';
+import { ProviderBrokerApplicationFailureError } from './providerBrokerApplicationFailure';
 import type { ProviderBrokerAccountConnectionAccess } from './daemonProviderBrokerRuntime';
 
 /** An ended consumer releases only the custody already named by its signed
@@ -141,7 +142,11 @@ export function createAccountConnectionManagedConsumerSourceOpen(input: AccountC
       isSourceCurrent,
       callerSignal: signal,
     });
-    if (!opened || 'unavailable' in opened) return null;
+    if (!opened) return null;
+    if ('unavailable' in opened) throw new ProviderBrokerApplicationFailureError({
+      ok: false, reasonCode: 'source_unavailable', sourceOpenFailureReason: opened.unavailable,
+      ...(opened.failureCause ? { failureCause: opened.failureCause } : {}),
+    });
     return {
       access: opened.projection.access,
       revalidate: async (currentSignal = signal) => {
@@ -149,13 +154,8 @@ export function createAccountConnectionManagedConsumerSourceOpen(input: AccountC
           || !opened.isAuthorizationCurrent()) return false;
         // The Home checks only whether this signed Session/Run is still active.
         // It does not re-evaluate source or model authority for admitted work.
-        let active: boolean;
-        try {
-          active = await input.admitConsumer(payload, currentSignal);
-        } catch {
-          // Unknown Home liveness refuses this request without withdrawing custody.
-          return false;
-        }
+        // Unknown Home liveness refuses this request without withdrawing custody.
+        const active = await input.admitConsumer(payload, currentSignal);
         if (currentSignal.aborted) return false;
         return active && opened.isAuthorizationCurrent();
       },

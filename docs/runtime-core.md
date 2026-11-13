@@ -76,7 +76,8 @@ An ACP Agent may project an exact native error emitted as assistant text through
 once to the final assistant segment at terminal completion, validates its existing
 diagnostic carrier and publishes a failed Session turn or finite Run while retaining
 the original text. Copilot uses this for native HTTP errors returned with `end_turn`;
-ordinary prose, quoted errors and code examples remain assistant content. This
+Antigravity uses it for the exact Gemini invalid-API-key response returned the same way.
+Ordinary prose, quoted errors and code examples remain assistant content. This
 executable development-source contract requires matching SDK, host and plugin
 source; older hosts do not consume the optional codec.
 
@@ -91,6 +92,14 @@ Unclassified typed native turn errors retain `failureCause.phase: turn`,
 the shared Session classifier. An explicit native cause or known startup phase
 takes precedence; the classifier does not infer a transport or authentication
 cause from a generic termination message.
+
+Launch and turn wrappers use `projectSessionRuntimeFailureCause` at that existing
+Protocol owner. It retains an admitted native Session cause first, then projects
+an unstructured exception through the canonical Action diagnostic. The optional
+`failureCause.actionCause` keeps that original sanitized Action class, code,
+status and phase through Session wrappers and subsequent Action boundaries.
+Agent-specific RPC and authentication normalizers still supply their native
+facts before the generic fallback; raw exception context is not retained.
 
 Native startup failures retain a redacted native code and the first message line
 through the shared startup diagnostic projection. The classifier publishes these

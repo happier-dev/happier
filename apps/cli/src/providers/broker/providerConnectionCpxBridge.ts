@@ -15,7 +15,9 @@ import type {
 } from './providerConnectionSource';
 import { acquireBrokerSourceOperation } from './brokerSourceOperationAcquisition';
 import { readProviderBrokerTransportFailure } from './providerBrokerTransportFailure';
-import { ProviderBrokerApplicationFailureError } from './providerBrokerApplicationFailure';
+import { ProviderBrokerApplicationFailureError, providerBrokerApplicationFailureBody } from './providerBrokerApplicationFailure';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { preserveBrokerSourceHealthFailure } from './sourceFailure';
 
 const SOURCE_CREDENTIAL_HEADER = 'x-happier-provider-source-credential';
 const SOURCE_ADDITIONAL_CREDENTIALS_HEADER = 'x-happier-provider-source-additional-credentials';
@@ -92,13 +94,16 @@ const PRIVATE_REQUEST_HEADERS = new Set([
   'accept-encoding',
 ]);
 
-function upstreamUnavailable(): ManagedServiceResponse {
+function upstreamUnavailable(cause?: unknown): ManagedServiceResponse {
+  const body = cause === undefined ? undefined : providerBrokerApplicationFailureBody({
+    ok: false, reasonCode: 'broker_unavailable', failureCause: projectActionFailureCauseV1(cause),
+  }, undefined);
   return Object.freeze({
     ok: false,
     status: 502,
     statusText: 'Upstream unavailable',
-    headers: Object.freeze({}),
-    body: null,
+    headers: Object.freeze(body ? { 'content-type': 'application/json' } : {}),
+    body: body ? new Response(JSON.stringify(body)).body : null,
   });
 }
 
@@ -233,7 +238,11 @@ export function createProviderConnectionCpxBridge(input: Readonly<{
         isSourceCurrent: async (signal) => await openInput.isCurrent(signal),
         callerSignal: openInput.signal,
       });
-      if (!acquired || 'unavailable' in acquired) return null;
+      if (!acquired) return null;
+      if ('unavailable' in acquired) throw new ProviderBrokerApplicationFailureError({
+        ok: false, reasonCode: 'source_unavailable', sourceOpenFailureReason: acquired.unavailable,
+        ...(acquired.failureCause ? { failureCause: acquired.failureCause } : {}),
+      });
       const { projection, retire, isAuthorizationCurrent } = acquired;
       const send = async (
         requestInput: ManagedServiceRequest,
@@ -288,7 +297,7 @@ export function createProviderConnectionCpxBridge(input: Readonly<{
         } catch (error) {
           lease.close();
           if (error instanceof ProviderBrokerApplicationFailureError) throw error;
-          return readProviderBrokerTransportFailure(error) ?? upstreamUnavailable();
+          return readProviderBrokerTransportFailure(error) ?? upstreamUnavailable(error);
         }
         if ((response.status >= 300 && response.status < 400)
           || Object.entries(response.headers).some(([name, value]) => (
@@ -323,7 +332,11 @@ export function createProviderConnectionCpxBridge(input: Readonly<{
         if (openInput.signal.aborted || !isAuthorizationCurrent()) {
           throw new ProviderBrokerApplicationFailureError({ ok: false, reasonCode: 'source_unavailable' });
         }
-        const lease = await openInput.acquireRequestCredential().catch(() => null);
+        const lease = await openInput.acquireRequestCredential().catch(error => {
+          preserveBrokerSourceHealthFailure(error);
+          throw new ProviderBrokerApplicationFailureError({ ok: false, reasonCode: 'source_unavailable',
+            failureCause: projectActionFailureCauseV1(error) });
+        });
         if (!lease) throw new ProviderBrokerApplicationFailureError({ ok: false, reasonCode: 'source_unavailable' });
         return await send(requestInput, lease);
       };

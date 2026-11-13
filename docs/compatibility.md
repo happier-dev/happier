@@ -20,6 +20,25 @@ and older causes without `actionCause` remain valid. The synchronized 0.3 reload
 also covers Session runtime issue producers and readers; earlier strict
 development cause readers reject the added field.
 
+The CLI's strict Runner/daemon service refusal envelope also accepts optional
+`error.failureCause` with `ActionFailureCauseV1`. Provider model-transition,
+managed-binding and broker-binding writers retain the cause through their
+existing error codes, and Runner consumers preserve it through the existing
+Provider or Session error carrier. The matching 0.3 Runner and daemon reload
+together; older strict development readers reject the field. The scoped
+`../0.2` checkout has no
+`apps/cli/src/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol.ts`
+seam. This changes no persisted format or released SDK contract.
+
+Runner launch-readiness responses accept optional `failureCause` using the same
+Action carrier: the strict HTTP 200 root response and existing HTTP 403/503 error
+payload retain it through the terminal launch error. HTTP statuses and the
+resource-readiness domain schema keep their existing meanings. Protocol, daemon
+and Runner refresh together under the unpublished 0.3 direct cut; older strict
+development readers reject the added root field. The scoped `../0.2` frontier
+has no `packages/protocol/src/teams/credentials/readinessV1.ts` seam. No persisted
+format or compatibility adapter is added.
+
 ## Runner endpoint-read causes (unreleased 0.3)
 
 The existing unavailable results for Runner managed-service endpoint open and
@@ -381,6 +400,8 @@ The inspected `../0.2` frontier at
 `7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no Machine Setup contracts.
 
 ## Platform upload provenance (unreleased 0.3)
+
+Protected TargetLink provider content also accepts optional `sourceMethod`. Existing links without it remain readable and use the legacy Git default; new Create and inspection flows retain the authored choice, with explicit invocation choices taking precedence. No migration or inference from provider Git-access facts is performed. Matching Protocol, deployment-protocol, CLI and UI development readers update together because older strict readers reject the added field.
 
 `DeploymentTargetRoleResultV1` adds optional `uploadProvenance` to the existing provider observation. Existing receipts without upload evidence remain valid. New upload results record a source manifest fingerprint and a discriminated build location: `provider`, or `controller` with image, toolchain name/version and output manifest fingerprint. Later observations may omit it; the receipt writer retains the original upload evidence.
 
@@ -929,7 +950,13 @@ selector as JSON; the Home route decodes it before strict input validation.
 Preview-template edits use the existing Environment content-update proof and
 sole template schema. The authored patch carries the private operand; prepared
 Home storage rejects it and accepts only the rewritten Artifact reference plus
-the remaining metadata patch. Own-server template selections optionally retain
+the remaining metadata patch. Create root admission preserves the existing
+`source_changed` refusal for a readable copy source whose reviewed revision is
+stale. The bounded Action HTTP error vocabulary now carries that conflict (409
+at the authorization endpoint) through matching unpublished 0.3 components;
+unreadable and deleted sources retain `credential_scope_denied`. No 0.2
+deployment predecessor or compatibility adapter is involved.
+Own-server template selections optionally retain
 `copyFrom` source capture coordinates and explicit `destinationBackup` authoring
 inputs. Child preparation owns fresh generated bindings; source credentials and
 grants are not copied. Repository Compose remains the sole repository content
@@ -8459,6 +8486,18 @@ The scoped-clean `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf`
 has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
+
+Unreleased 0.3 Machine Services list/detail rows add optional `failureCause`
+using the existing closed `ActionFailureCauseV1` schema. A failed retained
+source is an inert unavailable row; healthy services remain readable through the
+same Account disclosure owner. The row and nested identity/diagnostic objects
+stay closed, with no unknown-field preservation or executable custody granted by
+the diagnostic. Earlier rows without the field remain valid. Matching Protocol,
+CLI, UI and SDK source reload together under the unpublished 0.3 direct cut;
+earlier strict development readers reject the new field. No persisted format,
+union member, wire epoch, capability or adapter changes. The inspected 0.2
+frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no counterpart at
+`packages/protocol/src/actions/specs/machine/services.ts`.
 
 Unreleased 0.3 Session capability writes and Session-trigger PR-link availability
 add optional `diagnostic: { reason }` to their closed failure outputs. They use

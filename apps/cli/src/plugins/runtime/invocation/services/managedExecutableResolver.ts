@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ManagedExecutableRef, PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
@@ -136,7 +137,8 @@ export function createStableManagedExecutableResolver(params: Readonly<{
             });
         } catch (error) {
             if (isPluginError(error)) throw error;
-            return fail('plugin_system_tool_unavailable', 'System tool is unavailable');
+            throw new PluginError({ code: 'plugin_system_tool_unavailable', message: 'System tool is unavailable',
+                failureCause: projectActionFailureCauseV1(error, 'exec.system_tool.resolve') }, { cause: error });
         }
         return Object.freeze({
             command: resolved.command,

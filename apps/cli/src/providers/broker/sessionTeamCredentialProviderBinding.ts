@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { BackendTargetKeyV2Schema } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import type { ProviderBrokerApplicationBindingV1, ProviderBrokerConsumerV1, ProviderBrokerOpenRequestV1, ProviderBrokerOpenResponseV1 } from '@happier-dev/protocol';
+import type { ProviderBrokerApplicationBindingV1, ProviderBrokerRuntimeConsumerV1, ProviderBrokerOpenRequestV1, ProviderBrokerOpenResponseV1 } from '@happier-dev/protocol';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
   SessionTeamCredentialBindingIntentV1,
@@ -56,7 +56,7 @@ export type ExactSessionTeamCredentialProviderSelection = Readonly<{
 
 type SessionTeamCredentialProviderBindingOpenDependencies = Readonly<{
   sessionId?: string;
-  consumer?: ProviderBrokerConsumerV1;
+  consumer?: ProviderBrokerRuntimeConsumerV1;
   machineId: string;
   agentId: string;
   lease: PluginRuntimeRegistryLease;
@@ -76,7 +76,7 @@ type ProviderTeamDirectOpen = NonNullable<
 >;
 
 export type SessionTeamCredentialDirectOpen = (
-  input: Parameters<ProviderTeamDirectOpen>[0] & Readonly<{ consumer: ProviderBrokerConsumerV1 }>,
+  input: Parameters<ProviderTeamDirectOpen>[0] & Readonly<{ consumer: ProviderBrokerRuntimeConsumerV1 }>,
 ) => ReturnType<ProviderTeamDirectOpen>;
 
 /** One automatic route decision for presentation and fresh launch admission.
@@ -141,8 +141,8 @@ export async function qualifySessionTeamCredentialProviderModels(input: Readonly
 
 function resolveProviderBrokerConsumer(input: Readonly<{
   sessionId?: string;
-  consumer?: ProviderBrokerConsumerV1;
-}>): ProviderBrokerConsumerV1 {
+  consumer?: ProviderBrokerRuntimeConsumerV1;
+}>): ProviderBrokerRuntimeConsumerV1 {
   const sessionId = input.sessionId?.trim();
   if (input.consumer?.kind === 'execution_run') {
     const executionRunId = input.consumer.executionRunId.trim();
@@ -226,7 +226,7 @@ export async function openExactSessionTeamCredentialProviderBinding(
     application: selection.application,
   } as const;
   const opened = input.initialBrokerOpen ?? await input.openBroker(brokerOpenRequest, input.signal);
-  if (!opened.ok) throw new SessionTeamCredentialLaunchUnavailableError(opened.reasonCode);
+  if (!opened.ok) throw new SessionTeamCredentialLaunchUnavailableError(opened.reasonCode, 'binding', opened.failureCause ? opened : undefined);
   const authority = opened.authority.payload;
   if (
     opened.target.brokerMachineId !== selection.brokerMachineId
@@ -384,7 +384,7 @@ export async function openExactSessionTeamCredentialProviderBinding(
  */
 export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
   sessionId?: string;
-  consumer?: ProviderBrokerConsumerV1;
+  consumer?: ProviderBrokerRuntimeConsumerV1;
   machineId: string;
   agentId: string;
   agentTargetKey: string;
@@ -560,7 +560,7 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
     consumer,
     application: row.application,
   }, input.signal);
-  if (!opened.ok) throw new SessionTeamCredentialLaunchUnavailableError(opened.reasonCode);
+  if (!opened.ok) throw new SessionTeamCredentialLaunchUnavailableError(opened.reasonCode, 'binding', opened.failureCause ? opened : undefined);
 
   return await openExactSessionTeamCredentialProviderBinding({
     consumer,

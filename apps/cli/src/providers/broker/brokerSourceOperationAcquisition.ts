@@ -4,6 +4,7 @@ import type {
 } from '@/providers/connections/publicManagedRuntimeStart';
 import type { SharedManagedProviderGatewayBinding } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 type AcquiredBrokerSourceOperation = Readonly<{
   projection: NonNullable<Awaited<ReturnType<ManagedProviderExplicitStartCustody['acquire']>>>;
@@ -32,10 +33,11 @@ export async function acquireBrokerSourceOperation(input: Readonly<{
   /** Source authority at this opening's admission boundary. */
   isSourceCurrent(signal: AbortSignal): Promise<boolean>;
   callerSignal: AbortSignal;
-}>): Promise<AcquiredBrokerSourceOperation | Readonly<{ unavailable: 'source_currentness_unknown' }> | null> {
+}>): Promise<AcquiredBrokerSourceOperation | Readonly<{ unavailable: 'source_currentness_unknown'; failureCause?: ActionFailureCauseV1 }> | null> {
   let authorizationCurrent = true;
   // Asserted so TypeScript does not narrow this closure-written local to 'current'.
   let lastSourceRead = 'current' as 'current' | 'stale' | 'unknown';
+  let sourceFailureCause: ActionFailureCauseV1 | undefined;
   const isAuthorizationCurrent = (): boolean => authorizationCurrent && !retired && !retireInFlight;
   // One source decision belongs to this admitted opening. Later requests and
   // physical re-joins consume it without consulting a newer Home projection.
@@ -51,8 +53,11 @@ export async function acquireBrokerSourceOperation(input: Readonly<{
         lastSourceRead = current ? 'current' : 'stale';
         authorizationCurrent = current;
         return current;
-      } catch {
-        if (!signal.aborted) lastSourceRead = 'unknown';
+      } catch (error) {
+        if (!signal.aborted) {
+          lastSourceRead = 'unknown';
+          sourceFailureCause = projectActionFailureCauseV1(error);
+        }
         return false;
       }
     })();
@@ -102,7 +107,7 @@ export async function acquireBrokerSourceOperation(input: Readonly<{
   try {
     acquired = await acquireProjection(input.callerSignal);
   } catch (error) {
-    if (lastSourceRead === 'unknown') return { unavailable: 'source_currentness_unknown' };
+    if (lastSourceRead === 'unknown') return { unavailable: 'source_currentness_unknown', failureCause: sourceFailureCause };
     throw error;
   }
   if (!acquired || input.callerSignal.aborted || !await revalidateAuthorization()) {
@@ -112,7 +117,7 @@ export async function acquireBrokerSourceOperation(input: Readonly<{
       }
       await Promise.resolve(acquired.cleanup()).catch(() => undefined);
     }
-    return lastSourceRead === 'unknown' ? { unavailable: 'source_currentness_unknown' } : null;
+    return lastSourceRead === 'unknown' ? { unavailable: 'source_currentness_unknown', failureCause: sourceFailureCause } : null;
   }
   if (!input.sharedGateway) return Object.freeze({ projection: acquired, isAuthorizationCurrent, retire });
   let projection = acquired;

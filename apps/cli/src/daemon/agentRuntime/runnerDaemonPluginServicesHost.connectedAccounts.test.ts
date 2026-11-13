@@ -9,6 +9,7 @@ import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/se
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { refreshActiveConnectedAccountCatalog } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
 import { logger } from '@/ui/logger';
 import { createActiveAccountSettingsConnectedAccountPurposeBindingStore, createConnectedAccountPurposeBindingOwner } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createRunnerDaemonPluginServicesHost } from './runnerDaemonPluginServicesHost';
@@ -74,7 +75,9 @@ async function fixture(authorizedPurposes: readonly string[] = purposes) {
             exec: unavailable.exec, interactions: unavailable.interactions, targetedContributions: unavailable.targetedContributions,
             composerContent: unavailable.composerContent, backgroundServices: unavailable.backgroundServices, deploymentSource: unavailable.deploymentSource },
     });
-    return { accounts: runnerServices.connectedAccounts, directAccounts: connectedAccounts, requests, async dispose() { controller.abort(); await host.dispose(); } };
+    return { accounts: runnerServices.connectedAccounts, directAccounts: connectedAccounts, requests,
+        refreshPurposeCatalog: () => refreshActiveConnectedAccountCatalog({ credentials, key: 'purposes', readMode: 'admitted' }, true),
+        async dispose() { controller.abort(); await host.dispose(); } };
 }
 
 function home(readCurrentness: () => Promise<void> = async () => {}) {
@@ -114,7 +117,8 @@ describe('runner qualified-purpose cold preparation through the real binding own
     });
 
     it.each(['slow', 'failed'] as const)('settles four watches and concurrent reads after a %s Home currentness read', async variant => {
-        const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+        vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
         const entered = deferred();
         const release = deferred();
         let failing = variant === 'failed';
@@ -134,9 +138,9 @@ describe('runner qualified-purpose cold preparation through the real binding own
             await vi.waitFor(() => {
                 const requests = f.requests.filter(request => request.kind === 'plugin_connected_accounts.get_binding_v1');
                 expect(requests).toHaveLength(4);
-                for (const request of requests) expect(log.mock.calls).toContainEqual(['[connected-account-binding-stage]',
+                for (const request of requests) expect(debug.mock.calls).toContainEqual(['[connected-account-binding-stage]',
                     expect.objectContaining({ agentSessionId: 'binding-session', requestId: request.requestId, purpose: request.purpose,
-                        stage: 'consumer_lock', event: 'begin' })]);
+                        stage: 'binding_read', event: 'begin' })]);
             });
             release.resolve();
             const results = await pending;
@@ -145,11 +149,15 @@ describe('runner qualified-purpose cold preparation through the real binding own
                 expect(results.every(result => result.status === 'rejected')).toBe(true);
                 for (const result of results) if (result.status === 'rejected') expect(result.reason).toMatchObject({ code: 'plugin_connected_account_settings_unavailable' });
             }
-            // A failed Home observation releases ownership; the same invocation recovers.
+            // A published refusal remains authoritative until the catalog owner republishes.
             failing = false;
+            if (variant === 'failed') {
+                await expect(f.accounts.getBinding(purposes[0])).rejects.toMatchObject({ code: 'plugin_connected_account_settings_unavailable' });
+                expect(await f.refreshPurposeCatalog()).toMatchObject({ status: 'ready' });
+            }
             expect(await Promise.all(purposes.map(purpose => f.accounts.getBinding(purpose)))).toEqual([null, null, null, null]);
             for (const request of f.requests.filter(request => request.kind === 'plugin_connected_accounts.get_binding_v1').slice(-4)) {
-                expect(log.mock.calls).toContainEqual(['[connected-account-binding-stage]', expect.objectContaining({
+                expect(debug.mock.calls).toContainEqual(['[connected-account-binding-stage]', expect.objectContaining({
                     requestId: request.requestId, operation: 'get_binding', stage: 'dispatch', event: 'end', durationMs: expect.any(Number),
                 })]);
             }
@@ -159,6 +167,7 @@ describe('runner qualified-purpose cold preparation through the real binding own
     it('correlates pending and failed owner stages to the runner request without private error content', async () => {
         const entered = deferred();
         const release = deferred();
+        const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
         const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
         home(async () => { entered.resolve(); await release.promise;
             throw Object.assign(new Error('private Home body'), { code: 'ECONNRESET', credentials: 'private-credential' }); });
@@ -168,15 +177,15 @@ describe('runner qualified-purpose cold preparation through the real binding own
             await entered.promise;
             const request = f.requests.find(request => request.kind === 'plugin_connected_accounts.get_binding_v1')!;
             const identity = { agentSessionId: 'binding-session', invocationId: 'binding-invocation', requestId: request.requestId };
-            expect(log.mock.calls).toContainEqual(['[connected-account-binding-stage]', expect.objectContaining({ ...identity, purpose: purposes[0], stage: 'account_currentness', event: 'begin' })]);
+            expect(debug.mock.calls).toContainEqual(['[connected-account-binding-stage]', expect.objectContaining({ ...identity, purpose: purposes[0], stage: 'account_currentness', event: 'begin' })]);
             release.resolve();
             expect(await pending).toMatchObject({ code: 'plugin_connected_account_settings_unavailable' });
-            for (const stage of ['authorization', 'consumer_lock', 'retained_binding', 'account_purpose_read']) {
-                expect(log.mock.calls).toContainEqual(['[connected-account-binding-stage]', expect.objectContaining({ ...identity,
+            for (const stage of ['authorization', 'binding_read', 'retained_binding', 'account_purpose_read']) {
+                expect(debug.mock.calls).toContainEqual(['[connected-account-binding-stage]', expect.objectContaining({ ...identity,
                     ...(stage === 'authorization' ? {} : { purpose: purposes[0] }), stage, event: 'begin' })]);
             }
             expect(log.mock.calls).toContainEqual(['[connected-account-binding-stage]', expect.objectContaining({ ...identity, purpose: purposes[0], stage: 'account_currentness', event: 'failure', errorCode: 'account_encryption_currentness_unavailable', durationMs: expect.any(Number) })]);
-            expect(JSON.stringify(log.mock.calls)).not.toMatch(/private Home body|private-credential|binding-fixture/);
+            expect(JSON.stringify([...debug.mock.calls, ...log.mock.calls])).not.toMatch(/private Home body|private-credential|binding-fixture/);
         } finally { release.resolve(); await pending; await f.dispose(); }
     });
 

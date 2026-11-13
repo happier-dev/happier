@@ -97,12 +97,17 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
     } finally { publication.resolve(); await operations.disposeProviderSession(); }
   });
 
-  it('retains a classified native failure cause through the public Claude diagnostic without private evidence', async () => {
+  it.each(['session', 'action', 'raw'] as const)('retains a classified native failure cause through the public Claude diagnostic without private evidence (%s)', async causeKind => {
     const exec = createSdkExecFixture();
-    const failureCause = { code: 'provider_endpoint_unauthorized', phase: 'client_start',
-      failureReason: 'permission_denied', httpStatus: 403, providerErrorMessage: 'fixture-private-provider-detail' } as const;
-    const failure = new PluginError({ code: 'provider_endpoint_unauthorized', message: 'fixture-private-provider-detail',
-      details: { failureCause } });
+    const actionCause = { phase: 'providers.launch', errorClass: 'TypeError', errorCode: null, httpStatus: 403 } as const;
+    const rawActionCause = { phase: 'agent.turn', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    const failureCause = causeKind === 'raw'
+      ? { phase: 'turn', failureReason: 'unknown', providerErrorCode: 'ECONNRESET', actionCause: rawActionCause } as const
+      : causeKind === 'session'
+      ? { code: 'provider_endpoint_unauthorized', phase: 'client_start', failureReason: 'permission_denied', httpStatus: 403 } as const
+      : { code: 'provider_endpoint_unauthorized', phase: 'turn', failureReason: 'unknown', httpStatus: 403, actionCause } as const;
+    const failure = causeKind === 'raw' ? new TypeError('fixture-private-provider-detail', { cause: Object.assign(new Error('Native peer reset'), { code: 'ECONNRESET' }) }) : new PluginError({ code: 'provider_endpoint_unauthorized', message: 'fixture-private-provider-detail',
+      details: { failureCause: causeKind === 'session' ? { ...failureCause, providerErrorMessage: 'fixture-private-provider-detail' } : actionCause } });
     const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {
       exec: { ...exec.service, async spawnClient() { throw failure; } },
     });
@@ -120,9 +125,7 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       operations.beginProviderTurn('typed-cause-turn');
       await operations.sendProviderTurnPrompt('hello');
       await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ kind: 'turn-failed',
-        diagnostic: expect.objectContaining({ details: expect.objectContaining({ failureCause: {
-          code: failureCause.code, phase: failureCause.phase, failureReason: failureCause.failureReason, httpStatus: 403,
-        } }) }),
+        diagnostic: expect.objectContaining({ details: expect.objectContaining({ failureCause }) }),
       })));
       expect(JSON.stringify(events)).not.toContain('fixture-private-provider-detail');
     } finally { unregister.close(); subscription.dispose(); await operations.disposeProviderSession(); }
@@ -410,7 +413,8 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
     const exec = createSdkExecFixture();
     const sessionHooks = createSessionHooksFixture();
     const follows: TranscriptFileFollowInputV1[] = [];
-    const denied = Object.assign(new Error('Transcript proof access denied'), { code: 'EACCES' });
+    const failureCause = { code: 'provider_endpoint_unavailable', phase: 'turn_start', failureReason: 'permission_denied', httpStatus: 503 } as const;
+    const denied = Object.assign(new Error('Transcript proof access denied'), { code: 'EACCES', failureCause });
     const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {
       exec: exec.service, sessionHooks: sessionHooks.service,
       transcripts: {
@@ -440,8 +444,10 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
         session_id: 'local-proof-denied-native', prompt: 'Keep my local conversation' });
       if (failurePhase === 'onError') await follows[0]?.onError?.(denied);
       await operations.observeTerminalExecution({ kind: 'provider_stopped', plan: presentation.plan, exitCode: 0, signal: null });
-      await expect(operations.sendTurnPrompt('Continue from the app')).resolves.toMatchObject({
-        kind: 'rejected_before_effect', reason: expect.stringContaining('Transcript proof access denied'),
+      const context = { session: { services: { activeInput: { bind: () => ({ dispose() {} }) }, models: { bind: () => ({ dispose() {} }) } } } } as unknown as AgentSessionRuntimeContext;
+      const runtime = createClaudeNativeSessionRuntimeFromOperations(operations, { kind: 'create', sessionId: 'local-proof-denied-session', cwd: '/tmp/claude-project' }, context);
+      await expect(runtime.send({ inputIds: ['proof-denied-input'], input: { text: 'Continue from the app' }, delivery: { kind: 'newTurn', turnId: 'proof-denied-turn' } })).resolves.toMatchObject({
+        status: 'rejected', diagnostic: { details: { failureCause } },
       });
       expect(exec.spawnClient).not.toHaveBeenCalled();
       expect(operations.readSessionIdentity()).toEqual({ sessionId: 'local-proof-denied-native' });
@@ -1663,6 +1669,29 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
     } finally {
       await operations.disposeProviderSession();
     }
+  });
+
+  it('retains typed native permission transport failure before execution input admission', async () => {
+    const exec = createSdkExecFixture();
+    const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, { exec: exec.service });
+    const operations = createClaudeAgentSdkProviderOperations({ ctx, directory: '/tmp/claude-project', launchEnv: {}, permissionMode: 'default' });
+    const failureCause = { code: 'provider_endpoint_unavailable', phase: 'turn_start', failureReason: 'permission_denied', httpStatus: 503 } as const;
+    try {
+      await operations.sendProviderTurnPrompt('initial prompt');
+      const handle = await exec.spawnClient.mock.results[0].value;
+      await exec.emit({ type: 'system', subtype: 'init', session_id: 'native-permission-cause' });
+      const writeRecord = handle.client.writeRecord.bind(handle.client);
+      // The SDK process transport is the boundary; keep query/control orchestration real.
+      vi.spyOn(handle.client, 'writeRecord').mockImplementation(async (record, options) => {
+        if (record && typeof record === 'object' && 'type' in record && record.type === 'control_request') {
+          throw Object.assign(new Error('Native permission transport refused'), { failureCause });
+        }
+        return await writeRecord(record, options);
+      });
+      await expect(operations.updateProviderConfiguration({ permissionMode: 'yolo' })).resolves.toMatchObject({
+        status: 'failed', failureCause,
+      });
+    } finally { await operations.disposeProviderSession(); }
   });
 
   it('stores permission intent after a completed SDK query without writing to its disposed client', async () => {

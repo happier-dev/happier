@@ -1,3 +1,4 @@
+import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
 import { TeamCredentialResourceReadinessV1Schema, type TeamCredentialResourceReadinessV1 } from './resourceReadinessV1.js';
 export { TeamCredentialResourceReadinessV1Schema, type TeamCredentialResourceReadinessV1 } from './resourceReadinessV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -43,6 +44,7 @@ export const RunnerBrokerReadinessResponseV1Schema = lazyZodSchema(() => z.stric
   binding: RunnerBrokerReadinessResponseBindingV1Schema,
   credentialSelectionBinding: RunnerCredentialSelectionBindingV1Schema,
   readiness: TeamCredentialResourceReadinessV1Schema,
+  failureCause: z.optional(ActionFailureCauseV1Schema),
 }).check(z.superRefine((value, context) => {
   const selection = value.credentialSelectionBinding;
   if (

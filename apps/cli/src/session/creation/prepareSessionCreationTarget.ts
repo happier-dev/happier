@@ -1,3 +1,5 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { SessionCreationTargetPreparationRequestV1Schema, SessionCreationTargetPreparationResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
@@ -135,15 +137,13 @@ export async function prepareSessionCreationTarget(input: Readonly<{
     });
   } catch (error) {
     input.signal?.throwIfAborted();
-    return { ok: false, code: 'checkout_failed' };
+    throw createRpcCallError({ error: 'checkout_failed', errorCode: 'checkout_failed',
+      failureCause: projectActionFailureCauseV1(error, 'session.target_preparation') });
   }
   if (!checkoutResult.success) {
-    return {
-      ok: false,
-      code: isCheckoutUnavailable(checkoutResult.errorCode)
-        ? 'checkout_unavailable'
-        : 'checkout_failed',
-    };
+    const code = isCheckoutUnavailable(checkoutResult.errorCode) ? 'checkout_unavailable' : 'checkout_failed';
+    throw createRpcCallError({ error: code, errorCode: code,
+      failureCause: projectActionFailureCauseV1({ code: checkoutResult.errorCode }, 'session.target_preparation') });
   }
 
   const canonicalFinal = resolveCanonicalAbsolutePath(checkoutResult.worktreePath, {

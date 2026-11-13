@@ -337,9 +337,10 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
                 ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
             });
             if (dispatched) return dispatched.ok ? dispatched.result : dispatched;
-          } catch {
+          } catch (error) {
             const errorCode = input.signal?.aborted ? 'cancelled' : 'target_unavailable';
-            return { ok: false, errorCode, error: errorCode };
+            return { ok: false, errorCode, error: errorCode,
+              failureCause: projectActionFailureCauseV1(error, 'session.requester_dispatch') };
           }
         }
       }
@@ -532,9 +533,10 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             return { type: 'error', code: 'invalid_input', retryable: false };
           }
         } catch (error) {
+          const failureCause = projectActionFailureCauseV1(error, 'session.managed_target');
           return isAuthenticationError(error)
-            ? { type: 'error', code: 'permission_denied', retryable: false }
-            : { type: 'error', code: 'spawn_failed', retryable: true };
+            ? { type: 'error', code: 'permission_denied', retryable: false, failureCause }
+            : { type: 'error', code: 'spawn_failed', retryable: true, failureCause };
         }
       }
       const normalizedActionRequestId = normalizeStringValue(actionRequestId);
@@ -562,6 +564,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             ...(signal ? { signal } : {}),
           });
         } catch (error) {
+          const failureCause = projectActionFailureCauseV1(error, 'session.target_capabilities');
           const spawnMayHaveBeenAccepted = hasPossiblyAcceptedSpawnNonce(error);
           if (signal?.aborted) {
             if (spawnMayHaveBeenAccepted) {
@@ -571,12 +574,12 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
                 outcome: 'unknown',
               };
             }
-            return { type: 'error', code: 'cancelled', retryable: true };
+            return { type: 'error', code: 'cancelled', retryable: true, failureCause };
           }
           if (isAuthenticationError(error)) {
-            return { type: 'error', code: 'permission_denied', retryable: false };
+            return { type: 'error', code: 'permission_denied', retryable: false, failureCause };
           }
-          return { type: 'error', code: 'machine_offline', retryable: true };
+          return { type: 'error', code: 'machine_offline', retryable: true, failureCause };
         }
         if (
           !targetCapabilityProjection
@@ -910,9 +913,10 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             sourceSessionId: sourceContext.sourceSessionId,
           });
         } catch (error) {
+          const failureCause = projectActionFailureCauseV1(error, 'session.source_authority');
           return isAuthenticationError(error)
-            ? { type: 'error', code: 'permission_denied', retryable: false }
-            : { type: 'error', code: 'spawn_failed', retryable: true };
+            ? { type: 'error', code: 'permission_denied', retryable: false, failureCause }
+            : { type: 'error', code: 'spawn_failed', retryable: true, failureCause };
         }
         if (sourceAuthority.status !== 'owned') {
           return sourceAuthority.status === 'not_owned'

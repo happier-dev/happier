@@ -24,6 +24,7 @@ export type ProviderBrokerApplicationFailureBodyV1 = Readonly<{
         /** Only the resource already selected by this consumer. */
         resourceId?: string;
         message: string;
+        failureCause?: ProviderBrokerApplicationFailure['failureCause'];
         usageLimit?: TeamCredentialUsageLimitDenialV1;
     }>;
 }>;
@@ -47,6 +48,7 @@ export function providerBrokerApplicationFailureBody(
             code: response.reasonCode,
             ...(resourceId ? { resourceId } : {}),
             message,
+            ...(cause ? { failureCause: cause } : {}),
             ...(usageLimit ? { usageLimit } : {}),
         },
     };

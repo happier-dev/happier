@@ -1,4 +1,5 @@
-import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
+import { isPluginErrorData } from '../../plugins/errors.js';
+import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '../../actions/actionExecutionResult.js';
 import { ProviderErrorCodeV1Schema } from '../../providers/errors.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
@@ -356,6 +357,7 @@ export type RunnerDaemonPluginServicesPreparationCauseV1 =
 
 /** Failure diagnostics, never an authority/retry decision. Provider messages are redacted by their producer. */
 export const SessionRuntimeFailureCauseV1Schema = lazyZodSchema(() => z.strictObject({
+  actionCause: z.optional(ActionFailureCauseV1Schema),
   code: z.optional(SessionRuntimeFailureCauseCodeV1Schema),
   retryable: z.optional(z.boolean()),
   requestId: z.optional(NonBlankOpaqueIdentifierSchema),
@@ -417,11 +419,16 @@ function readDataRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 /** Read the existing runtime cause envelopes without evaluating foreign accessors. */
-export function readSessionRuntimeFailureCause(error: unknown): SessionRuntimeIssueV1['failureCause'] {
+export function readSessionRuntimeFailureCause(
+  error: unknown,
+  phase?: NonNullable<SessionRuntimeIssueV1['failureCause']>['phase'],
+): SessionRuntimeIssueV1['failureCause'] {
   const details = readDataField(error, 'details');
   const providerError = readDataField(details, 'providerError') ?? error;
+  const pluginData = readDataRecord(readDataField(providerError, 'data'));
   const cause = readDataRecord(readDataField(details, 'failureCause')
-    ?? readDataField(error, 'failureCause') ?? readDataField(providerError, 'failureCause'));
+    ?? readDataField(error, 'failureCause') ?? readDataField(providerError, 'failureCause')
+    ?? (isPluginErrorData(pluginData) ? readDataField(pluginData, 'failureCause') : undefined));
   const parsed = SessionRuntimeFailureCauseV1Schema.safeParse(cause && {
     ...cause,
     ...(Object.hasOwn(cause, 'preparationCause')
@@ -429,15 +436,28 @@ export function readSessionRuntimeFailureCause(error: unknown): SessionRuntimeIs
       : {}),
   });
   if (parsed.success) return parsed.data;
-  // Catalog admission uses Action diagnostics; translate once at the runtime envelope owner.
+  // Provider launch/turn admission uses Action diagnostics; translate once at the runtime envelope owner.
   const action = ActionFailureCauseV1Schema.safeParse(cause);
-  const code = ProviderErrorCodeV1Schema.safeParse(readDataField(providerError, 'code'));
-  if (!action.success || action.data.phase !== 'providers.catalog' || !code.success) return undefined;
+  const code = (phase ? z.optional(SessionRuntimeFailureCauseCodeV1Schema) : ProviderErrorCodeV1Schema)
+    .safeParse(readDataField(providerError, 'code'));
+  if (!action.success || !code.success || (!phase && action.data.phase !== 'providers.catalog')) return undefined;
   return {
-    code: code.data, phase: 'client_start', failureReason: 'unknown',
+    ...(code.data === undefined ? {} : { code: code.data }),
+    phase: phase ?? 'client_start', failureReason: 'unknown', actionCause: action.data,
     ...(action.data.errorCode === null ? {} : { providerErrorCode: action.data.errorCode }),
     ...(action.data.httpStatus === null ? {} : { httpStatus: action.data.httpStatus }),
   };
+}
+
+/** Retain typed runtime evidence before projecting a raw launch or turn exception. */
+export function projectSessionRuntimeFailureCause(
+  error: unknown,
+  phase: NonNullable<SessionRuntimeIssueV1['failureCause']>['phase'],
+  actionPhase?: string,
+): SessionRuntimeIssueV1['failureCause'] {
+  if (error === undefined) return undefined;
+  return readSessionRuntimeFailureCause(error, phase)
+    ?? readSessionRuntimeFailureCause({ failureCause: projectActionFailureCauseV1(error, actionPhase) }, phase);
 }
 
 /** The source distinguishes native Agent sign-in refusals from Provider endpoint credentials. */

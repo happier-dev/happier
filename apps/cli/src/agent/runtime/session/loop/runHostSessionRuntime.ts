@@ -2035,11 +2035,13 @@ async function runHostedSessionRuntime(
   };
   if (sessionOpenContext.credentials && config.pluginRuntimeRegistryLease) {
     const credentials = sessionOpenContext.credentials;
+    const nativeCredentialRuntimeRegistry = config.pluginRuntimeRegistryLease.registry;
     sessionAccountRuntime = createRetainedAccountExecutionRuntime(() => {
       const operationContext = readSessionOpenAccountOperation();
       if (!operationContext) throw new Error('saved_secret_account_snapshot_unavailable');
       return {
         happyHomeDir: config.machineMetadata.happyHomeDir,
+        nativeCredentialRuntimeRegistry,
         signal: startupRegistrationLifetime.signal,
         resolveServerFeaturesSnapshot: () => currentLifecycleSession.getServerFeaturesSnapshot(),
         accountExecution: { credentials, serverUrl: sessionOpenContext.home.serverUrl,
@@ -2228,9 +2230,13 @@ async function runHostedSessionRuntime(
   > = currentLifecycleSession;
   const checkCurrentModelPublisherAuthority = async (): Promise<boolean> => {
     if (!modelTransitionOwnerCurrent) return false;
-    const current = await modelTransitionMetadataSession
-      .checkCurrentPublisherAuthority()
-      .catch(() => false);
+    let current: boolean;
+    try {
+      current = await modelTransitionMetadataSession.checkCurrentPublisherAuthority();
+    } catch (error) {
+      modelTransitionOwnerCurrent = false;
+      throw error;
+    }
     if (!current) modelTransitionOwnerCurrent = false;
     return current;
   };
@@ -3673,6 +3679,7 @@ async function runHostedSessionRuntime(
               const { originalCode } = readSessionPreparationFailureDiagnostic({ code: result.reason });
               throw Object.assign(new Error(`Startup model intent reconciliation failed: ${result.status}`), {
                 code: originalCode === 'unknown' ? 'agent_startup_model_reconciliation_failed' : originalCode,
+                ...(result.failureCause ? { failureCause: result.failureCause } : {}),
               });
             }
           });

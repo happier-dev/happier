@@ -222,8 +222,8 @@ export async function prepareProviderLaunch<PrerequisiteFailure extends Readonly
     let confirmed = false;
     try {
       confirmed = await input.confirmSecurityChange(exactConfirmation);
-    } catch {
-      confirmed = false;
+    } catch (error) {
+      continuity = { ok: false, error: createProviderErrorV1(continuity.error.code, continuity.error, error) };
     }
     if (confirmed) {
       continuity = resolveSpawnBindingContinuity({

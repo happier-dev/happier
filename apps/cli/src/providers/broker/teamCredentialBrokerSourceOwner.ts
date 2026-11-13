@@ -1,4 +1,5 @@
 import type { ProviderBrokerSourceOpenFailureReasonV1, ProviderBrokerSourceApplicationBindingV1, ProviderBrokerRouteGrantPayloadV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ProviderBrokerRequestPolicySnapshot } from './providerBrokerRequestHandler';
 import { projectProviderConnectionBrokerApplication } from './providerConnectionCpxBridge';
 import type { ProviderContributionRegistryView } from '@/providers/registry';
@@ -149,6 +150,7 @@ export type TeamCredentialBrokerSourceAcquireResult =
   | Readonly<{
       ok: false;
       sourceOpenFailureReason?: TeamCredentialBrokerSourceOpenFailureReason;
+      failureCause?: ActionFailureCauseV1;
       reasonCode:
         | typeof CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired
         | 'source_invalid'
@@ -199,7 +201,7 @@ export type TeamCredentialBrokerOpenedSource = Readonly<{
 }>;
 
 type SourceOpenResult = Promise<TeamCredentialBrokerOpenedSource
-  | Readonly<{ unavailable: TeamCredentialBrokerSourceOpenFailureReason }> | null>;
+  | Readonly<{ unavailable: TeamCredentialBrokerSourceOpenFailureReason; failureCause?: ActionFailureCauseV1 }> | null>;
 
 function admittedRequestPolicyKey(authority: ProviderBrokerRouteGrantPayloadV1): string {
   return JSON.stringify(['policy', authority.teamId, authority.resourceId, authority.sourceRevision,
@@ -404,6 +406,7 @@ export function createTeamCredentialBrokerSourceOwner(input: Readonly<{
         return Object.freeze({
           ok: false as const,
           reasonCode: 'source_unavailable' as const,
+          failureCause: projectActionFailureCauseV1(error),
         });
       }
       if (!opened || 'unavailable' in opened) {
@@ -414,6 +417,7 @@ export function createTeamCredentialBrokerSourceOwner(input: Readonly<{
           ok: false as const,
           reasonCode: 'source_unavailable' as const,
           ...(sourceOpenFailureReason ? { sourceOpenFailureReason } : {}),
+          ...(opened?.failureCause ? { failureCause: opened.failureCause } : {}),
         });
       }
       const { projection, sourceMember } = opened;

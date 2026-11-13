@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PluginError, type Disposable } from '@happier-dev/plugin-sdk';
@@ -1192,7 +1193,7 @@ describe('stable plugin MCP host', () => {
             servers: [server('acme.one', 'tools')], discoverySources: [],
             activateOnDemand: async () => {},
             readServer: () => runtime('acme.one/tools', {
-                callTool: async () => { throw new Error('token=super-secret'); },
+                callTool: async () => { throw Object.assign(new Error('token=super-secret'), { code: 'ECONNRESET' }); },
             }),
             readDiscoverySource: () => null,
         });
@@ -1202,6 +1203,7 @@ describe('stable plugin MCP host', () => {
 
         const failure = await client.callTool('echo', {}).catch((error: unknown) => error);
         expect(failure).toMatchObject({ code: 'plugin_mcp_peer_failed' });
+        expect(projectActionFailureCauseV1(failure)).toMatchObject({ errorCode: 'ECONNRESET', errorClass: 'Error' });
         expect(String((failure as Error).message)).not.toContain('super-secret');
         await client.dispose();
     });
@@ -1224,6 +1226,7 @@ describe('stable plugin MCP host', () => {
             code: 'plugin_mcp_method_not_found',
             details: { mcpCode: -32601 },
         });
+        expect(projectActionFailureCauseV1(failure)).toMatchObject({ errorCode: '-32601' });
         expect(String((failure as Error).message)).not.toContain('secret');
         await client.dispose();
         await host.dispose();

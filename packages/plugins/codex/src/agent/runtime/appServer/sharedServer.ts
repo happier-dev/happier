@@ -1,3 +1,4 @@
+import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { constants } from 'node:os';
@@ -445,7 +446,9 @@ export async function createCodexSharedAppServer(params: Readonly<{
           await serverProcess?.dispose().catch((cleanupError: unknown) => { failures.push(cleanupError); });
           serverProcess = null;
           if (failures.length > 1) {
-            throw new AggregateError(failures, 'Codex shared app-server startup and cleanup failed.');
+            throw Object.assign(new AggregateError(failures, 'Codex shared app-server startup and cleanup failed.', { cause: error }), {
+              failureCause: projectSessionRuntimeFailureCause(error, 'client_start', 'agent.launch'),
+            });
           }
           throw error;
         }

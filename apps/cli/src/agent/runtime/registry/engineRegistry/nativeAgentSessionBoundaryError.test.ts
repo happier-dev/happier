@@ -5,7 +5,7 @@ import {
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 import { describe, expect, it } from 'vitest';
-import { projectActionFailureCauseV1, UNKNOWN_ACTION_FAILURE_CAUSE_V1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
@@ -59,7 +59,9 @@ describe('native Agent session boundary error sanitization', () => {
             const sanitized = sanitizeNativeAgentSessionBoundaryError(error, forceSafeShape);
             expect(isPluginError(sanitized)).toBe(true);
             expect(JSON.stringify(sanitized)).not.toContain(secret);
-            expect(normalizeActionExecutorThrownError(sanitized).failureCause).toEqual(UNKNOWN_ACTION_FAILURE_CAUSE_V1);
+            expect(normalizeActionExecutorThrownError(sanitized).failureCause).toEqual({
+                phase: 'dispatch', errorClass: 'Error', errorCode: 'EACCES', httpStatus: null,
+            });
         } finally { redaction.close(); }
     });
 

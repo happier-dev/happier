@@ -88,8 +88,8 @@ export async function prepareTeamCredentialNativeProviderSource(
   const expectedResourceRevision = input.resource.resourceRevision;
   const expectedSourceRevision = input.resource.sourceRevision;
   const expectedSource = JSON.stringify(input.resource.source);
-  const fail = (code: ProviderErrorV1['code'] = 'provider_authorization_changed') => ({
-    ok: false as const, error: createProviderErrorV1(code, { machineId: input.controllerMachineId }),
+  const fail = (code: ProviderErrorV1['code'] = 'provider_authorization_changed', cause?: unknown) => ({
+    ok: false as const, error: createProviderErrorV1(code, { machineId: input.controllerMachineId }, cause),
   });
   let closed = false;
   const leases: Extract<Awaited<ReturnType<typeof materializeProviderConnectionBrokerSource>>, { ok: true }>['lease'][] = [];
@@ -144,7 +144,7 @@ export async function prepareTeamCredentialNativeProviderSource(
   };
   let expected: Awaited<ReturnType<typeof resolveCurrent>>;
   try { expected = await input.withRegistry(resolveCurrent); }
-  catch { return fail(); }
+  catch (error) { return fail('provider_authorization_changed', error); }
   if (!expected.ok) return expected;
   const captured = expected;
   return { ok: true, source: Object.freeze({
@@ -167,7 +167,7 @@ export async function prepareTeamCredentialNativeProviderSource(
         if (!admitted.ok) return admitted;
         return await materializeProviderConnectionBrokerSource({ expected: captured.snapshot, registry,
           dnsEvidenceByEndpointUrl: captured.dnsEvidenceByEndpointUrl, getAccountSettingsSnapshot: input.getAccountSettingsSnapshot });
-      }).catch(() => fail());
+      }).catch(error => fail('provider_authorization_changed', error));
       if (!material.ok) return material;
       if (closed || input.signal.aborted) { material.lease.close(); return fail(); }
       const credential = material.lease.credential;

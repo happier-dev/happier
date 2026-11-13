@@ -1,3 +1,4 @@
+import { withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { TeamCredentialResourceTestApplicationRequestV1Schema } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import type { TeamCredentialResourceTestApplicationRequestV1, TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams';
 import type { TeamCredentialSourceModelProjectionFailureV1 } from '@happier-dev/protocol/rpc/providers';
@@ -71,16 +72,16 @@ export async function resolveTeamCredentialBrokerEligibility(input: Readonly<{
   input.signal?.throwIfAborted();
   const source = await input.readSourceModelCatalogs({
     machineId: input.machineId, source: input.source, application: input.application, refreshPolicy: 'current_only',
-  }, input.signal).catch(caught => ({
+  }, input.signal).catch(caught => withActionFailureCauseDiagnostic({
     status: 'unavailable' as const,
     reason: isTeamCredentialSourceModelProjectionFailureV1(caught)
       && caught.reason === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired ? caught.reason
       : isTeamCredentialSourceModelProjectionFailureV1(caught) && caught.reason === 'incompatible'
         ? 'application_unavailable' as const : 'source_unavailable' as const,
-  }));
+  }, caught, 'provider.broker_eligibility'));
   if (source.status === 'unavailable') return source;
-  if (source.status === 'error') return { status: 'unavailable', reason: source.error.code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired
-    ? source.error.code : 'source_unavailable' };
+  if (source.status === 'error') return withActionFailureCauseDiagnostic({ status: 'unavailable' as const, reason: source.error.code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired
+    ? source.error.code : 'source_unavailable' as const }, source.error, 'provider.broker_eligibility');
   const sameApplication = source.catalogs.filter(catalog => pluginJsonValuesEqual(catalog.application, input.application));
   if (sameApplication.length === 0) return { status: 'unavailable', reason: 'application_unavailable' };
   const sameModel = sameApplication.filter(catalog => catalog.rows.some(row => row.descriptor.id === input.modelId));

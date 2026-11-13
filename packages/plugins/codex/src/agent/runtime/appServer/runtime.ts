@@ -1,3 +1,4 @@
+import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { AGENT_UNSUPPORTED_CONTENT_TEXT } from '@happier-dev/plugin-sdk/sessions/file-stores';
 import { createHash, randomUUID } from 'node:crypto';
 import { createCodexCompactionOperation, type CodexCompactionOperation } from './compaction.js';
@@ -2197,11 +2198,11 @@ export function createCodexAppServerRuntime(
         const call = readRecord(request);
         const tool = params.functionTools?.find(candidate => candidate.name === call?.tool);
         const input = AgentRuntimeJsonValueSchema.safeParse(call?.arguments);
-        if (disposed || !threadId || call?.threadId !== threadId || (call.namespace ?? null) !== hostFunctionNamespace || !tool || !input.success) {
+        if (disposed || !threadId || call?.threadId !== threadId || (call.namespace ?? null) !== hostFunctionNamespace || typeof call.callId !== 'string' || !call.callId.trim() || !tool || !input.success) {
           return { contentItems: [{ type: 'inputText', text: 'Host function is unavailable for this call.' }], success: false };
         }
         try {
-          const result = await tool.call(input.data);
+          const result = await tool.call(input.data, { callId: call.callId });
           return { contentItems: [{ type: 'inputText', text: JSON.stringify(result) }], success: true };
         } catch {
           return { contentItems: [{ type: 'inputText', text: 'Host function failed.' }], success: false };
@@ -2794,8 +2795,9 @@ export function createCodexAppServerRuntime(
       } catch (error) {
         if (isCodexAppServerApplicationRejectionForMethod(error, 'thread/resume')
           && error instanceof Error && /\bno rollout found\b/i.test(error.message)) {
-          throw Object.assign(new Error('Provider session state is missing; the original thread cannot be resumed.'), {
+          throw Object.assign(new Error('Provider session state is missing; the original thread cannot be resumed.', { cause: error }), {
             code: 'AGENT_RESUME_PROVIDER_STATE_MISSING' as const,
+            failureCause: projectSessionRuntimeFailureCause(error, 'thread_open', 'agent.launch'),
           });
         }
         if (options?.importHistory === true || !isCodexAppServerOversizedJsonFrameError(error)) {

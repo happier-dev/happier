@@ -32,9 +32,10 @@ function readLaunchSecretReferenceOverlayProviderErrorCodeV1(
 export function createLaunchSecretReferenceOverlayProviderErrorV1(
   reason: LaunchSecretReferenceOverlayFailureReasonV1,
   context: Readonly<{ connectionId?: string; machineId?: string; sourceProfileId?: string }> = {},
+  cause?: unknown,
 ): ProviderErrorV1 {
   return createProviderErrorV1(readLaunchSecretReferenceOverlayProviderErrorCodeV1(reason),
-    reason === 'undeclared_requirement' ? context : { ...context, savedSecretReason: reason });
+    reason === 'undeclared_requirement' ? context : { ...context, savedSecretReason: reason }, cause);
 }
 
 /** Thrown-refusal carrier: keeps the projected code and adds the typed Provider error as details. */

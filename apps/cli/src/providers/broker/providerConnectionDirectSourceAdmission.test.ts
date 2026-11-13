@@ -227,6 +227,7 @@ describe('Provider direct source admits its shared Saved Secret before preparati
       adapterVersion: adapter.adapter.adapterVersion, model });
     if (compatibility.result.status !== 'experimental') throw new Error('Expected experimental Gateway');
     expect(readProviderSettingsForCli(current).settings.experimentalBindingConfirmations).toEqual([]);
+    let sourceReadFailure: Error | null = null;
     const input = { controllerAccountId: 'controller-account', controllerMachineId: 'machine-a', accountScopeKey: scopeKey,
       resource: authority, application: { agentTargetKey, implementationIdentity: contribution.identity,
         endpointTemplateId: 'responses', protocol: 'openai-responses' as const },
@@ -234,7 +235,12 @@ describe('Provider direct source admits its shared Saved Secret before preparati
         modelId: model.id }, updatedAt: 1 }, agentId: runtime.agentId, agentTargetKey, lease: runtime.lease },
       withRegistry: async <T,>(read: (value: typeof registry) => T | Promise<T>) => await read(registry),
       collectDnsEvidence: async () => dnsEvidenceByEndpointUrl, getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot,
-      readCurrentResource: async () => authority, signal: new AbortController().signal };
+      readCurrentResource: async () => { if (sourceReadFailure) throw sourceReadFailure; return authority; }, signal: new AbortController().signal };
+    const sourceFailureCause = { phase: 'provider.source_read', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    sourceReadFailure = Object.assign(new Error('private Home detail'), { failureCause: sourceFailureCause });
+    await expect(prepareTeamCredentialNativeProviderSource(input)).resolves.toMatchObject({ ok: false,
+      error: { code: 'provider_authorization_changed', failureCause: sourceFailureCause } });
+    sourceReadFailure = null;
     const prepared = await prepareTeamCredentialNativeProviderSource(input);
     expect(prepared, prepared.ok ? 'prepared' : prepared.error.code).toMatchObject({ ok: true });
     if (!prepared.ok) throw new Error(prepared.error.code);
@@ -269,6 +275,14 @@ describe('Provider direct source admits its shared Saved Secret before preparati
 
     await expect(resolve()).resolves.toMatchObject({ ok: false });
     expect(axios.get).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains the typed transport cause when refreshing the selected shared key fails', async () => {
+    const failureCause = { phase: 'provider.credential_resolution', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    vi.mocked(axios.get).mockRejectedValue(Object.assign(new Error('private source detail'), { failureCause }));
+    await expect(resolve()).resolves.toMatchObject({ ok: false,
+      error: { code: 'provider_secret_missing', failureCause },
+    });
   });
 
   it('prepares from a still-authorized key without republishing an unchanged catalog', async () => {

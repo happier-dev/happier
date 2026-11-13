@@ -15,6 +15,21 @@ import {
 } from './failure.js';
 
 describe('createCodexAppServerTurnFailure', () => {
+  it('retains a typed cause supplied directly by the native launch boundary', () => {
+    const failureCause = { code: 'provider_endpoint_unavailable', phase: 'client_start', failureReason: 'permission_denied', httpStatus: 503 } as const;
+    const failure = createCodexAppServerTurnFailure({ value: Object.assign(new Error('Launch refused'), { failureCause }), phase: 'thread_open' });
+    expect(readCodexAppServerFailureCause(failure)).toMatchObject(failureCause);
+  });
+
+  it('retains the Provider Action cause at its native launch phase', () => {
+    const actionCause = { phase: 'providers.launch', errorClass: 'TypeError', errorCode: null, httpStatus: 503 } as const;
+    const error = Object.assign(new Error('Provider refused launch'), { code: 'provider_endpoint_unavailable', failureCause: actionCause });
+    const failure = createCodexAppServerTurnFailure({ value: error, phase: 'client_start' });
+    expect(readCodexAppServerFailureCause(failure)).toMatchObject({
+      code: 'provider_endpoint_unavailable', phase: 'client_start', failureReason: 'unknown', httpStatus: 503, actionCause,
+    });
+  });
+
   it.each(['usageLimitExceeded', 'usageLimitReached', 'insufficient_quota'])(
     'retains structured %s exhaustion and explicit provider timing',
     (code) => {

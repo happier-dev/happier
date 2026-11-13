@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpcErrors';
 import { UiContributedActionExecuteResponseV1Schema, type UiContributedActionExecuteRequestV1, type UiContributedActionExecuteResponseV1 } from '@happier-dev/protocol/plugins/actions/clientInvocationV1';
@@ -12,11 +13,12 @@ type ClientActionMachineRpc = Readonly<{
   ): Promise<Readonly<{ ok: true; result: unknown }> | Readonly<{ ok: false; errorCode?: string; error?: string; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }>>;
 }>;
 
-function unavailable(clientId?: string): UiContributedActionExecuteResponseV1 {
+function unavailable(clientId?: string, cause?: unknown): UiContributedActionExecuteResponseV1 {
   return {
     ok: false, errorCode: clientId ? 'client_not_available' : 'plugin_action_client_target_unavailable',
     error: clientId ? 'The selected clientId is not eligible or is disconnected' : 'No answering UI client is available',
     actionHandlerInvocation: 'notStarted',
+    ...(cause === undefined ? {} : { data: { failureCause: projectActionFailureCauseV1(cause, 'plugin_action.client_rpc') } }),
   };
 }
 
@@ -32,9 +34,10 @@ export function createClientActionMachineRpcExecutor(
       return unavailable(options.clientId);
     }
     let issued = false;
-    const unknownOutcome = (): UiContributedActionExecuteResponseV1 => ({
+    const unknownOutcome = (cause?: unknown): UiContributedActionExecuteResponseV1 => ({
       ok: false, errorCode: 'plugin_action_outcome_unknown',
       error: 'The answering UI Action outcome is unknown',
+      ...(cause === undefined ? {} : { data: { failureCause: projectActionFailureCauseV1(cause, 'plugin_action.client_rpc') } }),
     });
     try {
       const response = await client.callConnectedClientRpc(
@@ -57,13 +60,13 @@ export function createClientActionMachineRpcExecutor(
         return !issued || response.errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
           || response.errorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND
           || response.errorCode === RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE
-          ? unavailable(options.clientId) : unknownOutcome();
+          ? unavailable(options.clientId, { code: response.errorCode }) : unknownOutcome({ code: response.errorCode });
       }
-      if (isRpcMethodNotFoundResult(response.result)) return unavailable(options.clientId);
+      if (isRpcMethodNotFoundResult(response.result)) return unavailable(options.clientId, response.result);
       const parsed = UiContributedActionExecuteResponseV1Schema.safeParse(response.result);
       return parsed.success ? parsed.data : unknownOutcome();
-    } catch {
-      return issued ? unknownOutcome() : unavailable(options.clientId);
+    } catch (error) {
+      return issued ? unknownOutcome(error) : unavailable(options.clientId, error);
     }
   };
 }

@@ -419,3 +419,12 @@ describe('prepareProviderLaunch', () => {
   });
 
 });
+
+it('retains a failed confirmation boundary cause with its continuity refusal', async () => {
+  const input = base({ previousBinding: binding({ bindingSecurityFingerprint: 'binding-security:v1:old' }),
+    confirmSecurityChange: async () => { throw Object.assign(new TypeError('Authorization: Bearer fixture-private'), { code: 'ECONNREFUSED' }); } });
+  const result = await prepareProviderLaunch(input);
+  expect(result).toMatchObject({ ok: false, error: { code: 'provider_binding_changed',
+    failureCause: { errorClass: 'TypeError', errorCode: 'ECONNREFUSED' } } });
+  expect(JSON.stringify(result)).not.toContain('fixture-private');
+});

@@ -1,3 +1,4 @@
+import { logProviderUnexpectedFailure } from '@/providers/diagnostics';
 import {
   chmodSync,
   closeSync,
@@ -42,9 +43,11 @@ function writePrivateFile(path: string, contents: string): void {
   const descriptor = openSync(path, 'wx', 0o600);
   try {
     writeFileSync(descriptor, contents, { encoding: 'utf8' });
-  } finally {
-    closeSync(descriptor);
+  } catch (error) {
+    try { closeSync(descriptor); } catch (cleanupError) { logProviderUnexpectedFailure('launch', cleanupError); }
+    throw error;
   }
+  closeSync(descriptor);
 }
 
 function createJsonObjectOverlay(contents: string): (nativeContents: string) => string {
@@ -169,7 +172,8 @@ export async function composeProviderBindingMaterialization(input: Readonly<{
     }
     physicalCleanup = resolvedCleanup;
   } catch (error) {
-    rmSync(rootPath, { recursive: true, force: true });
+    try { rmSync(rootPath, { recursive: true, force: true }); }
+    catch (cleanupError) { logProviderUnexpectedFailure('launch', cleanupError); }
     throw error;
   }
   let cleanupOwner: 'generation' | 'retained_session' | 'cleaned' =
@@ -237,7 +241,7 @@ export async function composeProviderBindingMaterialization(input: Readonly<{
       takeCleanupOwnership,
     };
   } catch (error) {
-    cleanup();
+    try { cleanup(); } catch (cleanupError) { logProviderUnexpectedFailure('launch', cleanupError); }
     throw error;
   }
 }

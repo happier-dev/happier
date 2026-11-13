@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { describe, expect, it, vi } from 'vitest';
 import { mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
@@ -48,6 +49,7 @@ import { assemblePluginRuntimeConsumers } from '../../composition/consumerAssemb
 import { activatePluginRuntimeRegistry } from '../../lifecycle/manager';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { createProductionPluginInvocationServiceOwners } from './production';
+import { executeOwnServerReadOnlyDataQuery } from '@/deployments/targets/ownServer/dataQuery';
 
 const executable = Object.freeze({ kind: 'systemTool', id: 'fixture.node' } as const satisfies ManagedExecutableRef);
 
@@ -423,6 +425,42 @@ describe('createStablePluginExecService', () => {
         expect(output.join('')).toContain('[REDACTED]');
     });
 
+    it('carries an admitted invocation channel: host input reaches the spawned process, its output reaches the observer', async () => {
+        const output: string[] = [];
+        let sink: Readonly<{ write(data: Uint8Array): Promise<void>; closeStdin(): Promise<void> }> | null = null;
+        let unbound = 0;
+        const service = createStablePluginExecService({
+            signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => process.cwd(),
+            observeProcessOutput: event => { if (event.stream === 'stdout') output.push(Buffer.from(event.data).toString('utf8')); },
+            bindProcessInput: process => { sink = process; return () => { unbound += 1; }; },
+        });
+        // A channel process echoes every input line until its stdin ends.
+        const handle = await service.spawn({ executable, args: ['-e',
+            'process.stdin.on("data",d=>process.stdout.write("got:"+d));process.stdin.on("end",()=>process.exit(0))'] },
+        { outputDelivery: 'invocation' });
+        expect(sink).not.toBeNull();
+        await sink!.write(Buffer.from('one\n'));
+        await vi.waitFor(() => expect(output.join('')).toBe('got:one\n'));
+        await sink!.write(Buffer.from('two\n'));
+        await vi.waitFor(() => expect(output.join('')).toBe('got:one\ngot:two\n'));
+        await sink!.closeStdin();
+        await expect(handle.waitForExit()).resolves.toMatchObject({ observed: { kind: 'exit', exitCode: 0 } });
+        await vi.waitFor(() => expect(unbound).toBe(1));
+    });
+
+    it('binds no invocation channel to a process that did not select invocation delivery', async () => {
+        let bound = 0;
+        const service = createStablePluginExecService({
+            signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => process.cwd(),
+            bindProcessInput: () => { bound += 1; return () => undefined; },
+        });
+        const handle = await service.spawn({ executable, args: ['-e', 'process.exit(0)'] });
+        await handle.waitForExit();
+        expect(bound).toBe(0);
+    });
+
     it('rechecks deployment binding custody after asynchronous launch admission and before spawn', async () => {
         let current = true;
         let disposed = 0;
@@ -630,6 +668,55 @@ describe('createStablePluginExecService', () => {
             await expect(service.spawn(request, { descendantDisposition: 'preserve-on-success' }))
                 .rejects.toMatchObject({ code: 'plugin_exec_managed_handoff_forbidden' });
         } finally { authorization.dispose(); }
+    });
+
+    it.each([0, 17])('keeps complete query rows from actual truncated native stdout while ordinary native reads refuse (exit %s)', async exitCode => {
+        const io = createProjectNativeToolchainIoForHost({ resolveTool: async () => null });
+        // The real subprocess exceeds the supervisor's existing 8MiB buffer.
+        // No process, custody, native IO or query parser is substituted.
+        const request = { command: process.execPath, cwd: process.cwd(), env: {},
+            args: ['-e', `process.stdout.write("value\\n"+("q".repeat(1023)+"\\n").repeat(9*1024));process.exitCode=${exitCode}`] };
+        await expect(io.run(request)).rejects.toMatchObject({ code: 'project_native_toolchain_output_incomplete' });
+        let capturedBytes = 0;
+        const pending = executeOwnServerReadOnlyDataQuery({ engine: 'postgresql', database: 'app',
+            sql: 'SELECT value FROM example', params: {}, password: 'fixture', signal: new AbortController().signal }, {
+            async run() {
+                const partialRequest = { ...request, allowTruncatedStdout: true as const };
+                const output = await io.run(partialRequest);
+                capturedBytes = Buffer.byteLength(output.stdout);
+                expect(output).toMatchObject({ exitCode, stdoutTruncated: true });
+                return { ...output, stdoutTruncated: 'stdoutTruncated' in output && output.stdoutTruncated === true };
+            },
+        });
+        if (exitCode !== 0) {
+            await expect(pending).rejects.toMatchObject({ code: 'query_failed', details: { exitCode } });
+            expect(capturedBytes).toBe(8 * 1024 * 1024);
+            return;
+        }
+        const result = await pending;
+        expect(capturedBytes).toBe(8 * 1024 * 1024);
+        expect(result).toMatchObject({ columns: [{ name: 'value' }], complete: false,
+            diagnostic: { code: 'native_output_truncated' } });
+        expect(result.rows.length).toBeGreaterThan(0);
+        expect(result.rows.length).toBeLessThan(9 * 1024);
+        expect(result.rows.every(row => row.length === 1 && row[0] === 'q'.repeat(1023))).toBe(true);
+    });
+
+    it('preserves cancellation after actual native stdout has truncated with partial-output opt-in', async () => {
+        await withTempDir('happier-native-query-cancel-', async cwd => {
+            const controller = new AbortController();
+            const marker = join(cwd, 'output-drained');
+            const io = createProjectNativeToolchainIoForHost({ resolveTool: async () => null });
+            const pending = io.run({ command: process.execPath, cwd, env: {}, allowTruncatedStdout: true,
+                signal: controller.signal, args: ['-e',
+                    'process.stdout.write("q".repeat(9*1024*1024),()=>{require("node:fs").writeFileSync(process.argv[1],"ready");setInterval(()=>{},1000)})', marker],
+            }).then(value => value, (error: unknown) => error);
+            try {
+                await vi.waitFor(async () => expect(await readFile(marker, 'utf8')).toBe('ready'));
+                controller.abort();
+                expect(await pending).toMatchObject({ code: 'plugin_exec_aborted' });
+            } finally { controller.abort(); await pending; }
+        });
     });
 
     it('attributes generic native IO to Happier instead of borrowing the invoking Session owner', async () => {
@@ -1885,14 +1972,14 @@ describe('createStablePluginExecService', () => {
         const service = createStablePluginExecService({
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
-            resolveExecutable: async () => { throw new Error('ambient resolver detail'); },
+            resolveExecutable: async () => { throw Object.assign(new Error('ambient resolver detail'), { code: 'EACCES' }); },
             resolvePath: async () => { throw new Error('unexpected path'); },
         });
 
-        await expect(service.spawn({ executable })).rejects.toMatchObject({
-            name: 'PluginError',
-            code: 'plugin_exec_resolve_failed',
-        });
+        const failure = await service.spawn({ executable }).catch((error: unknown) => error);
+        expect(failure).toMatchObject({ name: 'PluginError', code: 'plugin_exec_resolve_failed' });
+        expect(projectActionFailureCauseV1(failure)).toMatchObject({ errorCode: 'EACCES', errorClass: 'Error' });
+        expect(JSON.stringify(failure)).not.toContain('ambient');
     });
 
     it.each([false, true])('settles a managed executable lease without claiming cleanup of unobserved descendants (pre-exit opportunity=%s)', async (preExitOpportunity) => {
@@ -1976,8 +2063,9 @@ describe('createStablePluginExecService', () => {
             resolvePath: async () => { throw new Error('unexpected path'); },
         });
 
-        await expect(service.spawn({ executable, args: ['bad\0argument'] }))
-            .rejects.toMatchObject({ code: 'plugin_exec_spawn_failed' });
+        const failure = await service.spawn({ executable, args: ['bad\0argument'] }).catch((error: unknown) => error);
+        expect(failure).toMatchObject({ code: 'plugin_exec_spawn_failed' });
+        expect(projectActionFailureCauseV1(failure)).toMatchObject({ errorCode: 'ERR_INVALID_ARG_VALUE' });
         expect(release).toHaveBeenCalledTimes(1);
     });
 

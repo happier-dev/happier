@@ -18,6 +18,17 @@ export function buildAntigravityAcpRuntimeOptions(
         // ACP 1.3.0 marks failed refresh/onboarding separately from generic missing authentication.
         setupFailure: { requestErrorCode: -32000, dataReason: 'onboarding_failed' },
       },
+      sessionUpdates: {
+        project: () => null,
+        projectOutputDiagnostic(text) {
+          // The native Gemini refusal is emitted as assistant text with end_turn.
+          const message = text.trim();
+          if (message !== 'API key not valid. Please pass a valid API key.') return null;
+          return { code: 'acp_turn_failed', severity: 'error', message, details: {
+            failureCause: { phase: 'turn', failureReason: 'authentication_required', providerErrorMessage: message },
+          } };
+        },
+      },
       mcp: { policy: 'pass_through' },
       // Rendered diagnostic in the pinned ACP 1.3.0 quota_errors.py; advisory reset prose never creates a reset instant.
       usageLimitDiagnostic: {

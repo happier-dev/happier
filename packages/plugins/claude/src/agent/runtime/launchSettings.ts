@@ -1,3 +1,4 @@
+import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { readClaudeSettingSourcesV2 } from '@happier-dev/protocol/agents/claude/predecessor-message-meta';
 import type { ClaudeSettingSourceV2 } from '@happier-dev/protocol/agents/claude/settings-policy';
 import type { AgentLaunchEnvironment, AgentSessionConfigurationSnapshot, AgentSessionMcpToolPolicy, AgentSessionOpenRequest, AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -212,8 +213,10 @@ export function resolveClaudeLaunchSettingsOverlayArgs(input: Readonly<{
           throw new Error('Invalid Claude settings document');
         }
         baseSettings = fromFile as Record<string, unknown>;
-      } catch {
-        throw new Error('Unable to read Claude launch settings');
+      } catch (error) {
+        throw Object.assign(new Error('Unable to read Claude launch settings', { cause: error }), {
+          failureCause: projectSessionRuntimeFailureCause(error, 'client_start', 'agent.launch'),
+        });
       }
     }
   }

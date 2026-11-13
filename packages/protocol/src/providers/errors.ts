@@ -159,11 +159,15 @@ export function createProviderErrorV1(
     savedSecretReason?: SavedSecretOperationAdmissionFailureReasonV1;
     modelLoadAvailable?: boolean;
   }> = {},
+  cause?: unknown,
 ): ProviderErrorV1 {
   const [retryable, action] = ERROR_DEFAULTS[code];
   const { modelLoadAvailable = false, ...errorContext } = context;
   const resolvedAction = code === 'provider_model_unloaded' && modelLoadAvailable ? 'load_model' : action;
-  return ProviderErrorV1Schema.parse({ v: 1, code, retryable, action: resolvedAction, ...errorContext });
+  return ProviderErrorV1Schema.parse({ v: 1, code, retryable, action: resolvedAction, ...errorContext,
+    ...(errorContext.failureCause === undefined && cause !== undefined
+      ? { failureCause: projectActionFailureCauseV1(cause) } : {}),
+  });
 }
 
 /** Classify Provider transport/Account mutation failures without disclosing raw failure prose. */
@@ -174,8 +178,8 @@ export function providerErrorFromRpcFailure(
   const failure = parseActionExecuteFailure(caught);
   const requestId = failure?.requestId ?? (caught && typeof caught === 'object' && 'requestId' in caught
     && typeof caught.requestId === 'string' && caught.requestId.length > 0 ? caught.requestId : undefined);
-  const errorContext = { ...context, ...(requestId ? { requestId } : {}),
-    ...(failure?.failureCause ? { failureCause: failure.failureCause } : {}) };
+  const failureCause = failure?.failureCause ?? projectActionFailureCauseV1(caught);
+  const errorContext = { ...context, ...(requestId ? { requestId } : {}), failureCause };
   const typed = ProviderErrorV1Schema.safeParse(failure?.details ?? caught);
   if (typed.success) return { ...typed.data, ...(requestId ? { requestId } : {}),
     ...(!typed.data.failureCause && failure?.failureCause ? { failureCause: failure.failureCause } : {}) };
@@ -230,7 +234,5 @@ export function providerErrorFromRpcFailure(
     || message?.includes('Machine encryption not found')) {
     return createProviderErrorV1('machine_offline', errorContext);
   }
-  const failureCause = failure?.failureCause ?? projectActionFailureCauseV1(caught);
-  return createProviderErrorV1('agent_error', { ...errorContext,
-    ...(failureCause.errorCode !== null ? { failureCause } : {}) });
+  return createProviderErrorV1('agent_error', errorContext);
 }

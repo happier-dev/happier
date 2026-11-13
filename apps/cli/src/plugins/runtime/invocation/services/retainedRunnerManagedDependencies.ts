@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { join } from 'node:path';
 
 import { resolveInstallablesRegistry } from '@happier-dev/protocol/installables/registry';
@@ -37,13 +38,14 @@ import {
     createV2ManagedDependencySourceModel,
 } from './managedDependencySourceModel';
 
-function unavailable(): never {
+function unavailable(cause?: unknown): never {
     throw new PluginError({
         code:
             'plugin_services_retained_managed_dependency_unavailable',
         message:
             'Exact retained Runner Agent managed-dependency authority is unavailable',
-    });
+        ...(cause === undefined ? {} : { failureCause: projectActionFailureCauseV1(cause, 'managed_dependency.retained') }),
+    }, cause === undefined ? undefined : { cause });
 }
 
 function sourceSpec(
@@ -280,8 +282,8 @@ export async function createRetainedRunnerManagedDependenciesHost(
                 );
             }
         }
-    } catch {
-        return unavailable();
+    } catch (error) {
+        return unavailable(error);
     }
 
     const resolvedCandidateQualifiedIds = registryCandidates.map(
@@ -333,7 +335,7 @@ export async function createRetainedRunnerManagedDependenciesHost(
             removeManagedSource: async () => unavailable(),
             ...(params.env ? { env: params.env } : {}),
         });
-    } catch {
-        return unavailable();
+    } catch (error) {
+        return unavailable(error);
     }
 }

@@ -1,4 +1,4 @@
-import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type {
     ManagedProviderEndpointHttpAccess,
 } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
@@ -397,7 +397,7 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
                 return await requestProviderAccess(access, sanitized);
             } catch (error) {
                 if (error instanceof ProviderBrokerApplicationFailureError) return error.failure;
-                return { ok: false, reasonCode: 'broker_unavailable' };
+                return { ok: false, reasonCode: 'broker_unavailable', failureCause: projectActionFailureCauseV1(error) };
             }
         }
         if (context.kind === 'external') {

@@ -1,11 +1,21 @@
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { describe, expect, it } from 'vitest';
 import { classifyPrimarySessionRuntimeIssue } from './classifyPrimarySessionRuntimeIssue';
 import { sanitizeNativeAgentSessionBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 import { withRetry } from '@/agent/acp/withRetry';
+import { readNativeStartupFailureDetail } from './nativeStartupFailureDetail';
+import { createRuntimeFailureTranscriptProjector } from '../transcripts/runtimeFailureTranscript';
 
 describe('native startup failure cause retention', () => {
+  it.each(['client_start', 'turn_start'] as const)('retains Provider launch causes at the known %s boundary', phase => {
+    const failureCause = { phase: 'dispatch', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: 503 } as const;
+    const error = createProviderErrorV1('provider_materialization_failed', { failureCause });
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: phase, error });
+    expect(issue.failureCause).toMatchObject({ phase, code: error.code, providerErrorCode: 'ECONNRESET', httpStatus: 503 });
+  });
+
   it.each([['root', false], ['root', true], ['details', false], ['details', true]] as const)(
     'redacts a typed %s cause while dropping unrelated native context (forced=%s)', (envelope, forceSafeShape) => {
     const failureCause = { code: 'resource_unavailable', phase: 'authentication', failureReason: 'unknown',
@@ -76,6 +86,55 @@ describe('native startup failure cause retention', () => {
       code: issue.code, details: { v: 1, source: issue.source, failureCause: issue.failureCause } } });
     expect(replay.failureCause).toEqual(issue.failureCause);
   });
+  it.each(['\n', '\r\n', '\r', '\u2028', '\u2029'])('omits native multiline context after the first line (%j)', separator => {
+    const firstLine = 'Native startup refused api_key=synthetic-private-token';
+    const message = `${firstLine}${separator}PRIVATE_STDERR`;
+    const native = Object.assign(new Error(message), { code: 'EACCES' });
+    const error = sanitizeNativeAgentSessionBoundaryError(new Error('Host wrapper', { cause: native }), true);
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: 'client_start', error });
+    expect(issue.failureCause).toMatchObject({ providerErrorCode: 'EACCES',
+      providerErrorMessage: redactBugReportSensitiveText(firstLine) });
+    expect(readNativeStartupFailureDetail(message).providerErrorMessage).toBe(redactBugReportSensitiveText(firstLine));
+    expect(JSON.stringify({ issue, detail: readNativeStartupFailureDetail(native) })).not.toMatch(/PRIVATE_STDERR|synthetic-private-token/);
+  });
+
+  it('does not promote private context after an empty native message line', () => {
+    expect(readNativeStartupFailureDetail('\nPRIVATE_STDERR').providerErrorMessage).toBeUndefined();
+  });
+
+  it.each([false, true])('does not promote stderr after a blank public line through native sanitization and history (forced=%s)', async forceSafeShape => {
+    const native = Object.assign(new Error(' \nPRIVATE_STDERR'), { code: 'EACCES' });
+    const error = sanitizeNativeAgentSessionBoundaryError(native, forceSafeShape);
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: 'client_start', error });
+    const stored: unknown[] = [];
+    const project = createRuntimeFailureTranscriptProjector({ provider: 'codex', providerName: 'Codex', session: {
+      sessionId: 'native-privacy', enqueueAgentMessageCommitted: async (provider, body, options) => {
+        stored.push({ provider, body, meta: options.meta });
+        return { persisted: true, delivered: true, committedSequence: 1 };
+      },
+    } });
+    await project({ kind: 'turn-failed', sessionId: 'native-privacy', turnId: 'startup', sequence: 1,
+      emittedAtMs: 1, diagnostic: { code: issue.code, severity: 'error' } }, { issue });
+    expect(issue.failureCause?.providerErrorCode).toBe('EACCES');
+    expect(stored.length).toBeGreaterThan(0);
+    expect(JSON.stringify({ issue, stored })).not.toContain('PRIVATE_STDERR');
+  });
+
+  it.each([false, true])('does not promote a private native code after a blank line (forced=%s)', forceSafeShape => {
+    const native = Object.assign(new Error('Native startup refused'), { code: ' \nPRIVATE_NATIVE_CODE' });
+    const error = sanitizeNativeAgentSessionBoundaryError(native, forceSafeShape);
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: 'client_start', error });
+    expect(issue.failureCause?.providerErrorMessage).toBe('Native startup refused');
+    expect(JSON.stringify({ error, issue })).not.toContain('PRIVATE_NATIVE_CODE');
+  });
+
+  it.each([' \nPRIVATE_STDERR', { message: ' \nPRIVATE_STDERR', code: 'EACCES' }])(
+    'does not promote a blank native public line from a non-Error rejection (%j)', native => {
+      const error = sanitizeNativeAgentSessionBoundaryError(native, true);
+      const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: 'client_start', error });
+      expect(JSON.stringify({ error, issue })).not.toContain('PRIVATE_STDERR');
+    });
+
   it.each([
     ['Authentication required', 'authentication_required'],
     ['The selected model is unavailable in the native catalog', 'model_selection_required'],

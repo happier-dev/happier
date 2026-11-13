@@ -1,6 +1,6 @@
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { parseQualifiedPluginActionId, formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PROVIDER_BROKER_ACTION_EXECUTE_PATH_V3, ProviderBrokerActionExecuteRequestV3Schema, ProviderBrokerActionExecuteResponseV3Schema, type SignedProviderBrokerActionRouteGrantV3 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import fastify, { errorCodes, type FastifyError, type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
@@ -179,7 +179,8 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
         // failures use the same closed refusal as other broker unavailability,
         // so neither its default 500 body nor Provider exception text escapes.
         if (error.statusCode && error.statusCode < 500 && Object.hasOwn(errorCodes, error.code)) return reply.send(error);
-        return writeProviderBrokerApplicationFailure(reply, { ok: false, reasonCode: 'broker_unavailable' });
+        return writeProviderBrokerApplicationFailure(reply, { ok: false, reasonCode: 'broker_unavailable',
+            failureCause: projectActionFailureCauseV1(original) });
     });
 
     const sendResponse = async (
@@ -283,7 +284,8 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
         } catch (error) {
             const failure = error instanceof ProviderBrokerApplicationFailureError ? error.failure
                 : { ok: false as const, reasonCode: isConnectedAccountSourceReconnectRequiredError(error)
-                    ? 'connected_service_credential_reconnect_required' as const : 'broker_unavailable' as const };
+                    ? 'connected_service_credential_reconnect_required' as const : 'broker_unavailable' as const,
+                    failureCause: projectActionFailureCauseV1(error) };
             return reply.code(failure.reasonCode === 'broker_unavailable' ? 503 : 403)
                 .send(ProviderBrokerActionExecuteResponseV3Schema.parse(failure));
         } finally {
@@ -338,7 +340,10 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
                     if (typeof value === 'string') headers[name] = value;
                 }
                 const localConsumer = !context ? input.localConsumer : undefined;
-                if (localConsumer ? !localConsumer.authorize(headers) : !context || context.kind === 'external' || context.kind === 'action_operation') {
+                // Only private/Account model streams forward inference here.
+                const streamContext = context && context.kind !== 'external' && context.kind !== 'action_operation'
+                    ? context : undefined;
+                if (localConsumer ? !localConsumer.authorize(headers) : !streamContext) {
                     return reply.code(403).send();
                 }
                 // The Agent's bearer is its local capability, meaningful only to
@@ -359,7 +364,7 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
                     ...(body ? { body } : {}),
                     signal: controller.signal,
                 };
-                const privateClose = context && context.kind !== 'external'
+                const privateClose = streamContext
                     && request.method === 'DELETE' && forwardedRequest.pathAndQuery === PROVIDER_BROKER_PRIVATE_CLOSE_PATH;
                 const suppliedCloseId = privateClose
                     ? closeRequestIdSchema.safeParse(request.headers[PROVIDER_BROKER_CLOSE_REQUEST_ID_HEADER])
@@ -369,7 +374,7 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
                     // is never logged or treated as transport/operation authority.
                     requestId: suppliedCloseId?.success ? suppliedCloseId.data : request.id,
                     applicationRequestId: request.id,
-                    targetMachineId: context.authority.payload.target.machineId,
+                    targetMachineId: streamContext.authority.payload.target.machineId,
                 } : null;
                 const recordClose = (event: 'received' | 'retirement_completed'): void => {
                     if (!closeDiagnostic) return;
@@ -382,10 +387,10 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
                 recordClose('received');
                 const result = localConsumer
                     ? await localConsumer.request(forwardedRequest)
-                    : await input.handler({ context, request: forwardedRequest });
+                    : await input.handler({ context: streamContext, request: forwardedRequest });
                 // The canonical handler returns 204 only after retirement.
                 if (result.ok && result.response.status === 204) recordClose('retirement_completed');
-                return await sendResponse(reply, result, controller.signal, request.id, context);
+                return await sendResponse(reply, result, controller.signal, request.id, streamContext);
             },
         });
     });

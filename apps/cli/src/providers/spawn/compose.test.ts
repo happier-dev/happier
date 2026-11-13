@@ -1,8 +1,17 @@
+import { logger } from '@/ui/logger';
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, win32 } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { rmSync, closeSync, writeFileSync } from 'node:fs';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+
+// Removal is the OS boundary; composition and its validation remain real.
+vi.mock('node:fs', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, rmSync: vi.fn(actual.rmSync), closeSync: vi.fn(actual.closeSync), writeFileSync: vi.fn(actual.writeFileSync) };
+});
 import { FX_STATE_SHARING } from '../../../../../packages/plugins/fx/src/agent/auth/connectedAccount';
 import { AGENT_STATE_SHARING_DESCRIPTOR as PI_STATE_SHARING } from '../../../../../packages/plugins/pi/src/agent/definition';
 import { AGENT_STATE_SHARING_DESCRIPTOR as OH_MY_PI_STATE_SHARING } from '../../../../../packages/plugins/ohmypi/src/agent/definition';
@@ -174,4 +183,64 @@ describe('provider binding host materialization', () => {
       },
     })).toBeNull();
   });
+});
+
+
+it.each(['launch metadata', 'file write', 'logging failure'] as const)('retains the primary %s failure when private-root cleanup also fails', async phase => {
+  const base = await mkdtemp(join(tmpdir(), 'happier-provider-double-fault-'));
+  const actualFs = await vi.importActual<typeof import('node:fs')>('node:fs');
+  const cleanupError = Object.assign(new Error('private cleanup fixture'), { code: 'EBUSY' });
+  const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {
+    if (phase === 'logging failure') throw new Error('private log sink failure');
+  });
+  vi.mocked(rmSync).mockImplementation((path, options) => {
+    if (options?.recursive) throw cleanupError;
+    return actualFs.rmSync(path, options);
+  });
+  try {
+    const failure = await composeProviderBindingMaterialization({
+      materialization: { v: 1, kind: 'configFile', env: [], files: phase !== 'launch metadata'
+        ? [{ relativePath: 'conflict', utf8: '{}' }, { relativePath: 'conflict/nested.json', utf8: '{}' }]
+        : [{ relativePath: 'config.json', utf8: '{}' }] },
+      // The filesystem accepts a control character; the real launch schema rejects it.
+      materializationBaseDir: phase === 'launch metadata' ? `${base}/unsafe\nmaterialized` : join(base, 'materialized'),
+    }).then(() => undefined, (error: unknown) => error);
+    if (phase !== 'launch metadata') expect(failure).toMatchObject({ code: 'EEXIST' });
+    else expect(failure).toMatchObject({ issues: expect.arrayContaining([expect.objectContaining({ path: ['rootPath'] })]) });
+    expect(diagnostic).toHaveBeenCalledWith('[PROVIDER] Unexpected failure', expect.objectContaining({
+      operation: 'launch', failureCause: expect.objectContaining({ errorClass: 'Error', errorCode: 'EBUSY' }),
+    }));
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private cleanup fixture');
+  } finally {
+    vi.mocked(rmSync).mockImplementation(actualFs.rmSync);
+    diagnostic.mockRestore();
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+
+it('retains the primary file write failure when descriptor close also fails', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'happier-provider-write-close-'));
+  const actualFs = await vi.importActual<typeof import('node:fs')>('node:fs');
+  const writeError = Object.assign(new Error('private file write fixture'), { code: 'ENOSPC' });
+  const closeError = Object.assign(new Error('private descriptor close fixture'), { code: 'EBUSY' });
+  const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+  vi.mocked(writeFileSync).mockImplementation(() => { throw writeError; });
+  vi.mocked(closeSync).mockImplementation(fd => { actualFs.closeSync(fd); throw closeError; });
+  try {
+    const failure = await composeProviderBindingMaterialization({
+      materialization: { v: 1, kind: 'configFile', env: [], files: [{ relativePath: 'config.json', utf8: '{}' }] },
+      materializationBaseDir: base,
+    }).then(() => undefined, (error: unknown) => error);
+    expect(failure).toBe(writeError);
+    expect(projectActionFailureCauseV1(failure)).toMatchObject({ errorClass: 'Error', errorCode: 'ENOSPC' });
+    expect(diagnostic).toHaveBeenCalledWith('[PROVIDER] Unexpected failure', expect.objectContaining({
+      failureCause: expect.objectContaining({ errorClass: 'Error', errorCode: 'EBUSY' }),
+    }));
+  } finally {
+    vi.mocked(writeFileSync).mockImplementation(actualFs.writeFileSync);
+    vi.mocked(closeSync).mockImplementation(actualFs.closeSync);
+    diagnostic.mockRestore();
+    await rm(base, { recursive: true, force: true });
+  }
 });

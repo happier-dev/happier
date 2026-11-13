@@ -219,6 +219,19 @@ function request(
 }
 
 describe('Team credential broker source owner', () => {
+  it('retains the typed cause when source establishment throws', async () => {
+    const failureCause = { phase: 'provider.credential_resolution', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    const owner = createTeamCredentialBrokerSourceOwner({
+      selectConnectedServicesSourceMember: async () => null,
+      custody: { retire: async () => true }, machineId: 'broker-machine',
+      openConnectedServicesSource: async () => { throw Object.assign(new Error('private source detail'), { failureCause }); },
+      openProviderConnectionSource: async () => opened(),
+    });
+    await expect(owner.acquire(request(accountSource))).resolves.toMatchObject({
+      ok: false, reasonCode: 'source_unavailable', failureCause,
+    });
+  });
+
   it('keeps the admitted source when Home changes after managed establishment', async () => {
     const harness = sourceCustodyHarness('connected_account', { revokeSourceAfterJoin: true });
     try {

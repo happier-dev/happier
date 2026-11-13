@@ -13,8 +13,8 @@ export function providerManagedPurposeBindingError(error: unknown, context: Read
   const typed = ProviderErrorV1Schema.safeParse(error);
   if (typed.success) return typed.data;
   try { rethrowRequesterHomeReadFailure(error); }
-  catch { return createProviderErrorV1('provider_catalog_unavailable', context); }
-  return createProviderErrorV1('provider_connection_invalid', context);
+  catch { return createProviderErrorV1('provider_catalog_unavailable', context, error); }
+  return createProviderErrorV1('provider_connection_invalid', context, error);
 }
 
 export type ResolveManagedProviderPurposeBindingIntent = (

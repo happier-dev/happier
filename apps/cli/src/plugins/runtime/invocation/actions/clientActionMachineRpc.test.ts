@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { RPC_METHODS, type UiContributedActionExecuteRequestV1 } from '@happier-dev/protocol';
 
+import { UiContributedActionExecuteResponseV1Schema } from '@happier-dev/protocol/plugins/actions/clientInvocationV1';
+import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { createClientActionMachineRpcExecutor } from './clientActionMachineRpc';
 
 const request: UiContributedActionExecuteRequestV1 = {
@@ -130,4 +132,20 @@ describe('client Action machine RPC outcome custody', () => {
     }));
     expect(await execute(request, {})).toMatchObject({ ok: false, errorCode: 'plugin_action_outcome_unknown' });
   });
+});
+
+
+it.each([false, true])('retains a typed transport rejection with issued=%s', async issued => {
+  const execute = createClientActionMachineRpcExecutor(() => ({
+    callConnectedClientRpc: async (_method, _payload, options) => {
+      if (issued) options.onIssued();
+      throw Object.assign(new Error('private transport detail'), { code: 'ECONNRESET' });
+    },
+  }));
+  const result = UiContributedActionExecuteResponseV1Schema.parse(await execute(request, {}));
+  expect(result).toMatchObject({ ok: false, errorCode: issued ? 'plugin_action_outcome_unknown' : 'plugin_action_client_target_unavailable' });
+  expect(readPluginActionFailureAuthorPayload(!result.ok ? result.data : undefined)).toMatchObject({
+    failureCause: { errorCode: 'ECONNRESET', errorClass: 'Error' },
+  });
+  expect(JSON.stringify(result)).not.toContain('private');
 });

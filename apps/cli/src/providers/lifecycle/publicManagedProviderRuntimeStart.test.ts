@@ -74,6 +74,7 @@ function managedServices(): ManagedServices {
       remove: unavailable,
     }),
     supervise: unavailable,
+    observeWorkload: unavailable,
   });
 }
 
@@ -1274,4 +1275,39 @@ describe('public managed Provider runtime start coordinator', () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 
+});
+
+it.each([
+  ['acquire', 'managed_provider_runtime_unavailable'],
+  ['settle', 'managed_provider_authorization_changed'],
+  ['authorization', 'managed_provider_authorization_changed'],
+  ['projection', 'managed_provider_endpoint_access_unavailable'],
+  ['adoption', 'managed_provider_custody_adoption_failed'],
+  ['cleanup', 'managed_provider_cleanup_failed'],
+] as const)('retains the sanitized %s failure in the managed startup result', async (phase, code) => {
+  const failure = Object.assign(new TypeError('Authorization: Bearer private-fixture-value'), { code: 'ECONNREFUSED' });
+  const scope = createProviderLaunchResourceScope();
+  if (phase === 'cleanup') scope.register(() => { throw failure; });
+  const service = managedServiceHandle();
+  const runtime = resolvedRuntime({ start: async () => ({ service,
+    endpoints: [{ endpointTemplateId: 'responses', endpoint: { kind: 'servicePath', path: '/v1' } }] }) });
+  let acquisitions = 0;
+  const result = await startPublicManagedProviderRuntime({
+    identity: { pluginId: 'cliproxyapi', localId: 'cliproxyapi' },
+    request: { reason: 'sessionDemand', connectionId: ProviderConnectionIdSchema.parse('connection-1'),
+      connectionRevision: 1, endpointTemplateIds: ['responses'] },
+    acquireRuntime: async () => { acquisitions++; if (phase === 'acquire' || phase === 'settle' && acquisitions === 2) throw failure;
+      return phase === 'cleanup' ? null : runtime; },
+    connectedAccounts: connectedAccounts(),
+    custody: { managedServices: managedServices(),
+      projectEndpointAccess: async () => { if (phase === 'projection') throw failure;
+        return { access: {}, cleanup: async () => {}, isCurrent: () => true }; },
+      adoptService: async () => { if (phase === 'adoption') throw failure; } },
+    isAuthorizationCurrent: () => true,
+    revalidateAuthorization: async () => { if (phase === 'authorization') throw failure; return true; },
+    signal: new AbortController().signal, launchResourceScope: scope,
+  });
+  expect(result).toMatchObject({ ok: false, code, startupFailure: {
+    failureCause: { errorClass: 'TypeError', errorCode: 'ECONNREFUSED' } } });
+  expect(JSON.stringify(result)).not.toContain('private-fixture-value');
 });

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   SessionRuntimeIssueV1Schema,
   readSessionRuntimeFailureCause,
+  projectSessionRuntimeFailureCause,
   SessionRuntimeTemporaryThrottleDetailsV1Schema,
   SessionRuntimeUsageLimitDetailsV1Schema,
   sanitizeSessionRuntimeIssueV1,
@@ -12,6 +13,49 @@ import {
 } from './runtimeIssueV1.js';
 
 describe('runtime authentication recovery', () => {
+  it('projects raw native failures once while retaining an existing Session cause unchanged', () => {
+    expect(projectSessionRuntimeFailureCause(undefined, 'turn_start')).toBeUndefined();
+    const error = new TypeError('PRIVATE_NATIVE_CONTEXT', { cause: Object.assign(new Error('PRIVATE_NATIVE_DETAIL'), { code: 'ECONNRESET' }) });
+    const projected = projectSessionRuntimeFailureCause(error, 'turn_start', 'agent.turn');
+    expect(projected).toMatchObject({ phase: 'turn_start', providerErrorCode: 'ECONNRESET', actionCause: {
+      phase: 'agent.turn', errorClass: 'TypeError', errorCode: 'ECONNRESET',
+    } });
+    expect(JSON.stringify(projected)).not.toMatch(/PRIVATE_NATIVE_CONTEXT|PRIVATE_NATIVE_DETAIL/);
+    const failureCause = { phase: 'thread_open', failureReason: 'permission_denied', providerErrorCode: 'EACCES' } as const;
+    expect(projectSessionRuntimeFailureCause({ failureCause }, 'turn_start', 'agent.turn')).toEqual(failureCause);
+  });
+
+  it('retains an uncoded Provider TypeError instead of flattening it to the recovery code', () => {
+    const actionCause = { phase: 'providers.materialization', errorClass: 'TypeError', errorCode: null, httpStatus: null };
+    const issue = readSessionRuntimeFailureCause({ code: 'provider_materialization_failed', failureCause: actionCause }, 'client_start');
+    expect(issue).toMatchObject({ code: 'provider_materialization_failed', actionCause });
+    expect(SessionRuntimeIssueV1Schema.parse({ v: 1, scope: 'primary_session', status: 'failed',
+      code: 'agent_session_error', source: 'agent_session_error', occurredAt: 1, failureCause: issue }).failureCause).toEqual(issue);
+  });
+  it.each(['native', 'action'] as const)('reads the canonical PluginError data %s cause at the Session boundary', kind => {
+    const native = { phase: 'turn_start', failureReason: 'permission_denied', providerErrorCode: 'EACCES' };
+    const action = { phase: 'agent.launch', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: null };
+    const failureCause = kind === 'native' ? native : action;
+    const error = Object.assign(new Error('Launch refused'), { name: 'PluginError', code: 'plugin_native_launch_failed', retryable: false,
+      data: { name: 'PluginError', code: 'plugin_native_launch_failed', message: 'Launch refused', retryable: false, failureCause } });
+    expect(readSessionRuntimeFailureCause(error, 'client_start')).toMatchObject(kind === 'native' ? native : { actionCause: action });
+  });
+  it('retains a typed Action cause on a wrapper without its own recovery code', () => {
+    const actionCause = { phase: 'providers.materialization', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: null };
+    expect(readSessionRuntimeFailureCause({ failureCause: actionCause }, 'client_start')).toEqual({
+      phase: 'client_start', failureReason: 'unknown', actionCause, providerErrorCode: 'ECONNRESET',
+    });
+  });
+  it('retains broker source evidence using the authentication phase supplied by the launch owner', () => {
+    const failureCause = { phase: 'providers.source_open', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: 503 };
+    const error = { code: 'resource_unavailable', failureCause };
+    expect(readSessionRuntimeFailureCause(error, 'authentication')).toEqual({
+      code: 'resource_unavailable', phase: 'authentication', failureReason: 'unknown', providerErrorCode: 'ECONNRESET', httpStatus: 503, actionCause: failureCause,
+    });
+    expect(readSessionRuntimeFailureCause(error)).toBeUndefined();
+    expect(readSessionRuntimeFailureCause({ ...error, code: 'PRIVATE refusal prose' }, 'authentication')).toBeUndefined();
+  });
+
   it('explains incompatible brokered Team sources and native-login recovery', () => {
     const message = readSessionStartupFailurePreview('provider_incompatible_with_agent');
     expect(message).toMatch(/brokered Team/);

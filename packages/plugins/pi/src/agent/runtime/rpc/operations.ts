@@ -1411,7 +1411,11 @@ function createPiConversationRuntime(params: Readonly<{
       } catch (error) {
         return {
           status: 'rejected',
-          diagnostic: diagnostic('pi_configuration_failed', error instanceof Error ? error.message : String(error), error),
+          // Native negative acknowledgements carry only refusal text. Keep that
+          // diagnostic available to the initial configuration's startup classifier;
+          // transport exceptions retain their independent canonical cause evidence.
+          diagnostic: diagnostic('pi_configuration_failed', error instanceof Error ? error.message : String(error),
+            error instanceof PiRpcNegativeAcknowledgementError ? undefined : error),
         };
       }
     },

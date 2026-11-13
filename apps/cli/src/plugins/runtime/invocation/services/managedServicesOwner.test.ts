@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { materializeConfiguredExternalSessionSourceCandidates, resolveConfiguredExternalSessionSourceAtAdmission } from '@/session/external/configuredSourceMaterializer';
 import { PLUGIN_MANIFEST as OPENCODE_DISCOVERY_MANIFEST } from '@happier-dev/plugins-opencode/manifest';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol';
@@ -3348,6 +3349,20 @@ describe('managed-services SVC09 owner', () => {
         });
         expect(harness.supervise).not.toHaveBeenCalled();
         expect(harness.registerRawForRedaction).not.toHaveBeenCalled();
+    });
+
+    it('retains a native response read failure through the managed request boundary', async () => {
+        const response = new Response(null, { status: 200 });
+        Object.defineProperty(response, 'statusText', { get() { throw Object.assign(new Error('private response'), { code: 'EIO' }); } });
+        const harness = createHarness(async () => response);
+        const handle = await harness.owner.bindScope(harness.scope, exec).supervise({ id: 'gateway',
+            mode: { kind: 'spawn', launch: { executable: {} as never },
+                endpoint: { kind: 'assignAndInject', port: { kind: 'fixed', port: 4312 } } } });
+        try {
+            const failure = await handle.request({ pathAndQuery: '/v1/models' }).catch((error: unknown) => error);
+            expect(projectActionFailureCauseV1(failure)).toMatchObject({ errorCode: 'EIO', errorClass: 'Error' });
+            expect(JSON.stringify(failure)).not.toContain('private');
+        } finally { await handle.dispose(); }
     });
 
     it('rejects invalid requests and stale handles while following an ordinary endpoint redirect', async () => {

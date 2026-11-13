@@ -33,7 +33,7 @@ export function providerSavedSecretAdmissionError(
   context: Readonly<{ connectionId: string; machineId: string }>,
 ): ProviderErrorV1 {
   const reason = error instanceof SavedSecretOperationAdmissionError ? error.reason : 'reference_unavailable';
-  return createLaunchSecretReferenceOverlayProviderErrorV1(reason, context);
+  return createLaunchSecretReferenceOverlayProviderErrorV1(reason, context, error);
 }
 
 /** Refresh only the selected shared credential at a new Provider operation's admission. */
@@ -77,9 +77,9 @@ export async function admitRuntimeProviderSavedSecret(input: Readonly<{
       const ref = resolveProviderSecretBindingIdV1(input.providerSettings, connection.connectionId, connection.machineId, slotId);
       return ref !== null && parseSavedSecretRefV1(ref).kind === 'shared_resource' ? [{ ref }] : [];
     });
-  } catch {
+  } catch (error) {
     // An unparseable binding is a configuration fault, not a Home read.
-    return { ok: false, error: createProviderErrorV1('provider_secret_missing', context) };
+    return { ok: false, error: createProviderErrorV1('provider_secret_missing', context, error) };
   }
   if (!references.length) {
     return { ok: true, snapshot, catalogRead: false };
@@ -159,7 +159,7 @@ export async function resolveRuntimeProviderCredential(
       error: createProviderErrorV1('provider_secret_missing', {
         connectionId: input.credentialRef.connectionId,
         machineId: input.credentialRef.machineId,
-      }),
+      }, error),
     };
   }
   if (!snapshot) {
@@ -251,7 +251,7 @@ export async function resolveRuntimeProviderCredential(
       }) : createProviderErrorV1('provider_secret_missing', {
         connectionId: input.credentialRef.connectionId,
         machineId: input.credentialRef.machineId,
-      }),
+      }, error),
     };
   }
 }

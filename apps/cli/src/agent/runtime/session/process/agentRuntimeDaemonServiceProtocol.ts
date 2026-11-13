@@ -20,7 +20,7 @@ import { ProviderRuntimeBindingBasisV1Schema } from '@happier-dev/protocol/provi
 import { QualifiedConnectedAccountPurposeV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
 import { QualifiedConnectedAccountPurposeBindingV1Schema, QualifiedConnectedAccountPurposeBindingTargetV1Schema } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { TeamCredentialRouteV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
@@ -522,6 +522,7 @@ export const AgentRuntimeDaemonServiceResponseV1Schema =
         message: z.string().check(z.maxLength(4_096)),
         cause: z.optional(RunnerDaemonPluginServicesPreparationCauseV1Schema),
         retryable: z.optional(z.boolean()),
+        failureCause: z.optional(asHostProtocolZod(ActionFailureCauseV1Schema)),
       }),
     }),
   ]);

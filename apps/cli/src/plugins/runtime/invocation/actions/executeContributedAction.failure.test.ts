@@ -1,3 +1,6 @@
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { registerSensitiveDiagnosticValues } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -204,6 +207,24 @@ describe('executeContributedAction invocation-authority derivation', () => {
 });
 
 describe('executeContributedAction lazy activation failures', () => {
+    it('preserves the real authored activation native cause through the terminal Action failure', async () => {
+        const plugin = definePlugin({ id: 'example.activation-cause', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
+            actions: { run: { title: 'Run', dangerLevel: 'safe', surfaces: ['cli'], scopes: ['global'],
+                inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+                resultSchema: { type: 'object', properties: {}, additionalProperties: false }, run: async () => ({}) } } });
+        const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ coldStart: true,
+            plugins: [{ manifest: plugin.manifest, files: { 'daemon.mjs':
+                "export function activate() { throw Object.assign(new Error('ambient native activation'), { code: 'EACCES' }); }" } }],
+            runtimeOptions: { scopedActionRuntime: { credentials: null, actionsSettingsProvider: createActionSettingsProvider() } },
+        });
+        try {
+            const attempt = await executeContributedAction({ runtimeRegistry: fixture.registry,
+                actionId: 'example.activation-cause/run', context: { surface: 'cli' }, input: {} });
+            expect(attempt).toMatchObject({ matched: true, result: { ok: false, errorCode: 'plugin_activation_failed',
+                actionHandlerInvocation: 'notStarted', data: { failureCause: { errorCode: 'EACCES' } } } });
+        } finally { await fixture.dispose(); }
+    });
+
     it('captures the exact prepared target without invoking it during contributed admission', async () => {
         const action = {
             pluginId: 'acme.target',

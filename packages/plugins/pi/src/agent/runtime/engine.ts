@@ -1,3 +1,4 @@
+import { readSessionRuntimeFailureCause, projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import {
   type AgentExecutionRunOpenRequest,
   type AgentExecutionRunRuntime,
@@ -58,7 +59,7 @@ function resolvePiResumeSessionSelector(request: AgentSessionOpenRequest): strin
 
 function initialConfigurationFailure(result: Readonly<{
   status: string;
-  diagnostic?: Pick<PluginDiagnosticData, 'code' | 'message'>;
+  diagnostic?: Pick<PluginDiagnosticData, 'code' | 'message' | 'details'>;
 }>): PluginError {
   const code = result.diagnostic?.code ?? result.status;
   const detail = result.diagnostic?.message;
@@ -70,7 +71,7 @@ function initialConfigurationFailure(result: Readonly<{
   const startupCode = modelUnavailable ? 'agent_startup_model_reconciliation_failed' : 'agent_startup_failed';
   return new PluginError({
     code: startupCode, retryable: false, message,
-    details: { failureCause: { code: startupCode, phase: 'client_start',
+    details: { failureCause: readSessionRuntimeFailureCause(result.diagnostic, 'client_start') ?? { code: startupCode, phase: 'client_start',
       failureReason: modelUnavailable ? 'model_selection_required' : 'unclassified_provider_error',
       retryable: false, providerErrorCode: code, providerErrorMessage: message } },
   });
@@ -189,7 +190,9 @@ async function openPiSession(
           runtime ? undefined : preparedTools?.dispose(),
         ]);
       } catch (disposeError) {
-        throw new AggregateError([error, disposeError], 'Pi session preparation failed');
+        throw Object.assign(new AggregateError([error, disposeError], 'Pi session preparation failed', { cause: error }), {
+          failureCause: projectSessionRuntimeFailureCause(error, 'client_start', 'agent.launch'),
+        });
       }
       throw error;
     }
@@ -206,7 +209,9 @@ async function openPiSession(
       try {
         await runtime.dispose('runtime_recovery');
       } catch (disposeError) {
-        throw new AggregateError([error, disposeError], 'Pi initial session configuration failed');
+        throw Object.assign(new AggregateError([error, disposeError], 'Pi initial session configuration failed', { cause: error }), {
+          failureCause: projectSessionRuntimeFailureCause(error, 'client_start', 'agent.launch'),
+        });
       }
       throw error;
     }
@@ -218,7 +223,9 @@ async function openPiSession(
     try {
       await runtime.dispose();
     } catch (disposeError) {
-      throw new AggregateError([failure, disposeError], failure.message);
+      throw Object.assign(new AggregateError([failure, disposeError], failure.message, { cause: failure }), {
+          failureCause: projectSessionRuntimeFailureCause(failure, 'client_start', 'agent.launch'),
+        });
     }
     throw failure;
   } finally {
@@ -317,7 +324,9 @@ async function openPiExecutionRun(
             conversation ? undefined : preparedTools?.dispose(),
           ]);
         } catch (disposeError) {
-          throw new AggregateError([error, disposeError], 'Pi execution-run preparation failed');
+          throw Object.assign(new AggregateError([error, disposeError], 'Pi execution-run preparation failed', { cause: error }), {
+          failureCause: projectSessionRuntimeFailureCause(error, 'client_start', 'agent.launch'),
+        });
         }
         throw error;
       } finally {

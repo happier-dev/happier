@@ -30,6 +30,8 @@ import { createProviderBrokerRequestHandler } from './providerBrokerRequestHandl
 import { PROVIDER_BROKER_PRIVATE_CLOSE_PATH } from './providerBrokerPrivateProtocol';
 import { logger } from '@/ui/logger';
 import { ProviderBrokerApplicationFailureError } from './providerBrokerApplicationFailure';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { PROVIDER_BROKER_ACTION_EXECUTE_PATH_V3 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 
 const signingKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
 const payload: ProviderBrokerRouteGrantPayloadV1 = {
@@ -95,11 +97,12 @@ async function requestThroughApplicationTarget(input: Readonly<{
   authority?: SignedProviderBrokerRouteGrantV1;
   /** Overrides the default small JSON body; used to probe the ingress limit. */
   body?: string;
+  path?: string;
   onData?: (chunk: Buffer) => void;
 }>): Promise<string> {
   const body = input.body ?? JSON.stringify({ model: 'gpt-5', messages: [{ role: 'user', content: 'hello' }] });
   const request = [
-    'POST /v1/chat/completions HTTP/1.1',
+    `POST ${input.path ?? '/v1/chat/completions'} HTTP/1.1`,
     'Host: 127.0.0.1',
     ...(input.authority ? [`Authorization: Bearer ${encodeProviderBrokerAuthorityV1(input.authority)}`] : []),
     'X-Provider-Request: retained',
@@ -158,6 +161,36 @@ async function closeApplicationTarget(input: Readonly<{
 }
 
 describe('Provider broker target application integration', () => {
+  it('retains a typed execution cause over the finite Action carrier', async () => {
+    const actionInput = { region: 'eu' };
+    const failureCause = { phase: 'provider.credential_resolution', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    const server = await startProviderBrokerApplicationServer({
+      handler: async () => ({ ok: false, reasonCode: 'resource_unavailable' }),
+    });
+    try {
+      const target = await server.createActionStreamTarget({ kind: 'action_operation', authority: {
+        payload: { v: 3, grantId: 'action-grant', aud: 'happier-provider-broker-action-v3',
+          issuedAt: 100, expiresAt: 200, teamId: payload.teamId, resourceId: payload.resourceId,
+          source: { v: 1, kind: 'provider_connection', connectionId: 'pc_source',
+            connectionSecurityFingerprint: 'connection-security:v1:source', credentialSlotId: 'apiKey' },
+          consumer: { kind: 'action_operation', operationId: 'operation', actionId: 'example.cloud/actions/options',
+            pluginVersion: '1.0.0', purpose: { consumer: { pluginId: 'example.cloud', localId: 'options' }, purpose: 'cloud-api' } },
+          inputDigest: computeActionInputApprovalDigestV1('example.cloud/actions/options', actionInput),
+          declaration: { version: '1.0.0', manifestDigestSha256: `sha256:${'a'.repeat(64)}` },
+          initiator: payload.initiator, target: payload.target,
+        }, signature: signedAuthority().signature,
+      }, execute: async () => { throw Object.assign(new Error('private source detail'), { failureCause }); } });
+      const response = await requestThroughApplicationTarget({ ...target,
+        path: PROVIDER_BROKER_ACTION_EXECUTE_PATH_V3, body: JSON.stringify({ input: actionInput }),
+      });
+      expect(response).toContain('HTTP/1.1 503');
+      expect(JSON.parse(response.slice(response.indexOf('\r\n\r\n') + 4))).toMatchObject({
+        ok: false, reasonCode: 'broker_unavailable', failureCause,
+      });
+      expect(response).not.toContain('private source detail');
+    } finally { await server.close(); }
+  });
+
   it('rewrites a gateway request-auth refusal through the canonical broker body writer', async () => {
     const server = await startProviderBrokerApplicationServer({
       handler: async () => ({ ok: false, reasonCode: 'resource_unavailable' }),
@@ -174,17 +207,18 @@ describe('Provider broker target application integration', () => {
     } finally { await server.close(); }
   });
   it('preserves a typed refusal thrown by local managed access at the HTTP writer', async () => {
+    const failureCause = { phase: 'provider.source_read', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
     const server = await startProviderBrokerApplicationServer({
       handler: async () => ({ ok: false, reasonCode: 'resource_unavailable' }),
       localConsumer: { authorize: () => true, request: async () => {
-        throw new ProviderBrokerApplicationFailureError({ ok: false, reasonCode: 'source_unavailable' });
+        throw new ProviderBrokerApplicationFailureError({ ok: false, reasonCode: 'source_unavailable', failureCause });
       } },
     });
     try {
       const response = await server.app.inject({ method: 'GET', url: '/v1/models' });
       expect(response.statusCode).toBe(403);
       expect(response.headers[PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER]).toBe('source_unavailable');
-      expect(response.json().error).toMatchObject({ type: 'permission_error', code: 'source_unavailable' });
+      expect(response.json().error).toMatchObject({ type: 'permission_error', code: 'source_unavailable', failureCause });
     } finally { await server.close(); }
   });
   it('writes a typed source refusal from managed access through the handler and HTTP failure owner', async () => {
@@ -396,6 +430,7 @@ describe('Provider broker target application integration', () => {
       expect(response.statusCode).toBe(503);
       expect(response.headers[PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER]).toBe('broker_unavailable');
       expect(response.json().error.code).toBe('broker_unavailable');
+      if (code === 'ECONNRESET') expect(response.json().error.message).toContain('ECONNRESET');
       expect(diagnostics).toHaveBeenCalledWith('[provider-broker-application]', {
         stage: 'handler', code: 'exception', phase: 'handler', applicationRequestId: expect.any(String), ...expected,
       });

@@ -74,7 +74,8 @@ describe('direct Provider launch lifecycle', () => {
         resolvePrerequisites: async () => { throw new Error('Native launch has no Provider prerequisites'); },
         createAuthorizationAttempt: async () => { throw new Error('Native launch has no Provider authorization'); },
       });
-      expect(result).toEqual({ ok: false, error: createProviderErrorV1('agent_error', { machineId: 'machine-a' }) });
+      expect(result).toMatchObject({ ok: false, error: { code: 'agent_error', machineId: 'machine-a',
+        failureCause: { errorClass: 'Error', errorCode: null } } });
       expect(diagnostic).toHaveBeenCalledWith('[PROVIDER] Unexpected failure', expect.objectContaining({
         operation: 'launch', errorType: 'ReferenceError',
         sourceLocations: expect.arrayContaining([expect.stringMatching(/prepareDirectLaunch\.test\.ts:\d+:\d+/)]),
