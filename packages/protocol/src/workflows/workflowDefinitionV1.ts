@@ -494,3 +494,37 @@ export const WorkflowAcceptedSnapshotListingV1Schema = lazyZodSchema(() => z.obj
   origin: z.optional(WorkflowAcceptedOriginV1Schema),
 }));
 export type WorkflowAcceptedSnapshotListingV1 = z.infer<typeof WorkflowAcceptedSnapshotListingV1Schema>;
+
+/**
+ * A Run row's display summary: the listing facts above, sealed beside the
+ * accepted snapshot at admission (stored purpose `display_summary`) so a Run
+ * list does not ship the frozen program. Destinations are always resolved.
+ */
+export const WorkflowRunDisplaySummaryV1Schema = lazyZodSchema(() => z.strictObject({
+  targetSessionIds: z.array(preservedBoundedNfcString(191, 'Session ids')),
+  startedBy: WorkflowRunStartedByV1Schema,
+  authoredDefinition: z.strictObject({
+    inputs: WorkflowDefinitionBaseSchema.shape.inputs,
+    displayTitle: z.nullable(z.string()),
+  }),
+  metadata: z.nullable(WorkflowDefinitionMetadataV1Schema),
+  source: z.union([WorkflowAcceptedDirectSourceV1Schema, WorkflowAcceptedAutomationSourceV1Schema]),
+  machineId: preservedBoundedNfcString(191, 'Machine ids'),
+  workspaceTarget: WorkflowAcceptedWorkspaceTargetV1Schema,
+  origin: z.optional(WorkflowAcceptedOriginV1Schema),
+  /**
+   * The authored names a held step's row shows (Inbox attention), so an attention page reads this
+   * summary instead of the frozen program. Keyed by `workflowRunStepNameKeyV1`: the enclosing
+   * workflow-block chain plus the block (steps) or the parallel block and branch (lanes).
+   * Absent on summaries sealed before it existed: the row then shows the step's kind.
+   */
+  stepNames: z.optional(z.strictObject({
+    steps: z.record(z.string(), z.strictObject({ kind: z.string(), name: z.string() })),
+    lanes: z.record(z.string(), z.string()),
+  })),
+}));
+export type WorkflowRunDisplaySummaryV1 = z.infer<typeof WorkflowRunDisplaySummaryV1Schema>;
+/** One owner for the summary's step/lane name keys (writer and reader). */
+export function workflowRunStepNameKeyV1(workflowChain: readonly string[], ...ids: readonly string[]): string {
+  return JSON.stringify([...workflowChain, '|', ...ids]);
+}

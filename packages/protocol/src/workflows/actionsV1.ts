@@ -240,6 +240,18 @@ export const WorkflowRunListRequestV1Schema = lazyZodSchema(() => z.strictObject
     if (value[key] !== undefined) context.addIssue({ code: 'custom', path: [key], message: 'Membership cannot select private facts' });
   }
 })));
+/**
+ * Whether a full list page must carry each Run's frozen program (accepted
+ * snapshot): only requested invocation provenance numbers authored steps.
+ * Attention holds name their step from the display summary's step names.
+ * Every other row reads its sealed display summary when the Run has one;
+ * Runs admitted before summaries existed ship the snapshot.
+ */
+export function workflowRunListRequiresAcceptedProgramV1(request: Readonly<{
+  invocationProvenance?: ReadonlyArray<Readonly<{ invocationRecordIds: readonly unknown[] }>>;
+}>): boolean {
+  return (request.invocationProvenance ?? []).some(ref => ref.invocationRecordIds.length > 0);
+}
 export const WorkflowRunPrivateMetadataV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('available'), value: WorkflowDefinitionMetadataV1Schema }),
   z.strictObject({ kind: z.literal('unavailable'), reason: WorkflowOperationErrorCodeV1Schema }),

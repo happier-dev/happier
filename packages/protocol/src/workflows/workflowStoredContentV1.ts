@@ -7,7 +7,9 @@ import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { StoredContentEnvelopeV1Schema } from '../automations/automationStoredContentEnvelopeV1.js';
 import { preservedBoundedNfcString } from '../strings/preservedBoundedNfcString.js';
-import { WorkflowAcceptedSnapshotListingV1Schema, WorkflowAcceptedSnapshotV1Schema, type WorkflowAcceptedSnapshotListingV1 } from './workflowDefinitionV1.js';
+import { WorkflowAcceptedSnapshotListingV1Schema, WorkflowAcceptedSnapshotV1Schema, WorkflowRunDisplaySummaryV1Schema, workflowRunStepNameKeyV1, type WorkflowAcceptedSnapshotListingV1, type WorkflowAcceptedSnapshotV1, type WorkflowRunDisplaySummaryV1 } from './workflowDefinitionV1.js';
+import { deriveWorkflowDestinationsV1 } from './workflowDestinationsV1.js';
+import { walkWorkflowBlocks, type WorkflowBlock } from './workflowV1.js';
 import {
   WorkflowCheckpointEnvelopeV1Schema,
   WorkflowDecimalV1Schema,
@@ -42,14 +44,20 @@ export const WorkflowFinalResultStoredBindingV1Schema = lazyZodSchema(() => (<T 
   purpose: z.literal('final_result'),
 })));
 
+export const WorkflowDisplaySummaryStoredBindingV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(WorkflowStoredBindingBaseV1Schema, {
+  purpose: z.literal('display_summary'),
+})));
+
 export const WorkflowStoredContentBindingV1Schema = lazyZodSchema(() => z.discriminatedUnion('purpose', [
   WorkflowAcceptedSnapshotStoredBindingV1Schema,
+  WorkflowDisplaySummaryStoredBindingV1Schema,
   WorkflowInvocationProgressStoredBindingV1Schema,
   WorkflowCheckpointStoredBindingV1Schema,
   WorkflowFinalResultStoredBindingV1Schema,
 ]));
 export type WorkflowStoredContentBindingV1 = z.infer<typeof WorkflowStoredContentBindingV1Schema>;
 export type WorkflowAcceptedSnapshotStoredBindingV1 = z.infer<typeof WorkflowAcceptedSnapshotStoredBindingV1Schema>;
+export type WorkflowDisplaySummaryStoredBindingV1 = z.infer<typeof WorkflowDisplaySummaryStoredBindingV1Schema>;
 export type WorkflowInvocationProgressStoredBindingV1 = z.infer<typeof WorkflowInvocationProgressStoredBindingV1Schema>;
 export type WorkflowCheckpointStoredBindingV1 = z.infer<typeof WorkflowCheckpointStoredBindingV1Schema>;
 export type WorkflowFinalResultStoredBindingV1 = z.infer<typeof WorkflowFinalResultStoredBindingV1Schema>;
@@ -62,6 +70,10 @@ const WorkflowAcceptedSnapshotStoredPayloadV1Schema = lazyZodSchema(() => z.stri
 const WorkflowAcceptedSnapshotListingStoredPayloadV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(2), binding: WorkflowAcceptedSnapshotStoredBindingV1Schema,
   content: WorkflowAcceptedSnapshotListingV1Schema,
+}));
+const WorkflowDisplaySummaryStoredPayloadV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(2), binding: WorkflowDisplaySummaryStoredBindingV1Schema,
+  content: WorkflowRunDisplaySummaryV1Schema,
 }));
 const WorkflowInvocationProgressStoredPayloadV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(2), binding: WorkflowInvocationProgressStoredBindingV1Schema,
@@ -117,6 +129,7 @@ function isWorkflowRunDataKey(key: unknown): key is Uint8Array {
 type ParsedWorkflowStoredPayloadV1 =
   | Readonly<{ purpose: 'accepted_snapshot'; payload: z.infer<typeof WorkflowAcceptedSnapshotStoredPayloadV1Schema> }>
   | Readonly<{ purpose: 'accepted_snapshot_listing'; payload: z.infer<typeof WorkflowAcceptedSnapshotListingStoredPayloadV1Schema> }>
+  | Readonly<{ purpose: 'display_summary'; payload: z.infer<typeof WorkflowDisplaySummaryStoredPayloadV1Schema> }>
   | Readonly<{ purpose: 'invocation_progress'; payload: z.infer<typeof WorkflowInvocationProgressStoredPayloadV1Schema> }>
   | Readonly<{ purpose: 'checkpoint'; payload: z.infer<typeof WorkflowCheckpointStoredPayloadV1Schema> }>
   | Readonly<{ purpose: 'final_result'; payload: z.infer<typeof WorkflowFinalResultStoredPayloadV1Schema> }>;
@@ -134,6 +147,10 @@ function parsePayloadForBinding(
         return parsed.success ? { purpose: 'accepted_snapshot_listing', payload: parsed.data } : null;
       }
       const parsed = (storedRead ? createStoredReadSchema(WorkflowAcceptedSnapshotStoredPayloadV1Schema) : WorkflowAcceptedSnapshotStoredPayloadV1Schema).safeParse(value);
+      return parsed.success ? { purpose: binding.purpose, payload: parsed.data } : null;
+    }
+    case 'display_summary': {
+      const parsed = (storedRead ? createStoredReadSchema(WorkflowDisplaySummaryStoredPayloadV1Schema) : WorkflowDisplaySummaryStoredPayloadV1Schema).safeParse(value);
       return parsed.success ? { purpose: binding.purpose, payload: parsed.data } : null;
     }
     case 'invocation_progress': {
@@ -272,6 +289,80 @@ export function openWorkflowAcceptedSnapshotListingStoredEnvelopeV1(params: Read
   return opened.payload.purpose === 'accepted_snapshot_listing'
     ? { kind: 'available' as const, content: opened.payload.payload.content }
     : { kind: 'contentInvalid' as const };
+}
+
+/** The row facts a Run list shows, derived once from the admitted snapshot. */
+/** Every named step and lane the frozen program can hold, keyed as `authoredContext` resolves an invocation path. */
+function projectWorkflowRunStepNamesV1(snapshot: WorkflowAcceptedSnapshotV1): NonNullable<WorkflowRunDisplaySummaryV1['stepNames']> {
+  const steps: Record<string, { kind: string; name: string }> = {};
+  const lanes: Record<string, string> = {};
+  const visit = (blocks: readonly WorkflowBlock[], chain: readonly string[], refs: ReadonlySet<string>) => {
+    for (const block of walkWorkflowBlocks(blocks)) {
+      const name = block.name?.trim();
+      if (name) steps[workflowRunStepNameKeyV1(chain, block.id)] = { kind: block.kind, name };
+      if (block.kind === 'parallel') for (const branch of block.branches) {
+        const lane = branch.name?.trim();
+        if (lane) lanes[workflowRunStepNameKeyV1(chain, block.id, branch.id)] = lane;
+      }
+      if (block.kind === 'workflow' && !refs.has(block.workflowRef)) {
+        const child = snapshot.frozenChildren[block.workflowRef];
+        if (child) visit(child.blocks, [...chain, block.id], new Set([...refs, block.workflowRef]));
+      }
+    }
+  };
+  visit(snapshot.definition.blocks, [], new Set());
+  return { steps, lanes };
+}
+
+export function projectWorkflowRunDisplaySummaryV1(snapshot: WorkflowAcceptedSnapshotV1): WorkflowRunDisplaySummaryV1 {
+  const listed = WorkflowAcceptedSnapshotListingV1Schema.parse(snapshot);
+  return WorkflowRunDisplaySummaryV1Schema.parse({
+    stepNames: projectWorkflowRunStepNamesV1(snapshot),
+    targetSessionIds: listed.targetSessionIds ?? deriveWorkflowDestinationsV1({ definition: snapshot.definition,
+      materializedLeaves: snapshot.materializedLeaves, originSessionId: snapshot.origin?.originSessionId }).targetSessionIds,
+    startedBy: listed.startedBy, authoredDefinition: listed.authoredDefinition, metadata: listed.metadata,
+    source: listed.source, machineId: listed.machineId, workspaceTarget: listed.workspaceTarget,
+    ...(listed.origin ? { origin: listed.origin } : {}),
+  });
+}
+
+export function sealWorkflowRunDisplaySummaryStoredEnvelopeV1(params: Readonly<{
+  binding: WorkflowDisplaySummaryStoredBindingV1;
+  displaySummary: WorkflowRunDisplaySummaryV1;
+}> & WorkflowStoredEnvelopeSealModeV1): WorkflowStoredContentEnvelopeV1 {
+  return sealWorkflowStoredEnvelopeV1({
+    ...params, payload: { v: 2, binding: params.binding, content: params.displaySummary },
+  });
+}
+export function openWorkflowRunDisplaySummaryStoredEnvelopeV1(params: Readonly<{
+  mode: 'plain' | 'e2ee'; binding: WorkflowDisplaySummaryStoredBindingV1;
+  envelope: unknown; runDataKey?: Uint8Array;
+}>): Readonly<{ kind: 'available'; content: WorkflowRunDisplaySummaryV1 }> | WorkflowStoredContentOpenFailureV1 {
+  const opened = openWorkflowStoredEnvelopeV1(params);
+  if (opened.kind !== 'available') return opened;
+  return opened.payload.purpose === 'display_summary'
+    ? { kind: 'available' as const, content: opened.payload.payload.content }
+    : { kind: 'contentInvalid' as const };
+}
+
+/**
+ * The one admission writer shape: the accepted snapshot and its row display
+ * summary, sealed under the same Run data key (cf. Session metadata beside
+ * `displayProjectionV1`).
+ */
+export function sealWorkflowRunAcceptedEnvelopesV1(params: Readonly<{
+  accountId: string; runId: string; acceptedSnapshot: WorkflowAcceptedSnapshotV1;
+}> & WorkflowStoredEnvelopeSealModeV1): Readonly<{ acceptedEnvelope: string; displayEnvelope: string }> {
+  const { accountId, runId } = params;
+  return {
+    acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+      ...params, binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId },
+    })),
+    displayEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowRunDisplaySummaryStoredEnvelopeV1({
+      ...params, binding: { v: 1, purpose: 'display_summary', accountId, runId },
+      displaySummary: projectWorkflowRunDisplaySummaryV1(params.acceptedSnapshot),
+    })),
+  };
 }
 
 export function sealWorkflowProgressStoredEnvelopeV1(params: Readonly<{

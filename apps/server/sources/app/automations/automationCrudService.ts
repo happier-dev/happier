@@ -2408,6 +2408,9 @@ export async function applyAutomationAccountEncryptionTransitionStageInTx(
                     candidate.item.target.workflowAcceptedSnapshotEnvelope,
                 workflowCheckpointEnvelope:
                     candidate.item.target.workflowCheckpointEnvelope,
+                // A re-sealed snapshot retires the summary sealed under the old Run key.
+                ...(candidate.item.target.workflowAcceptedSnapshotEnvelope !== candidate.row.workflowAcceptedSnapshotEnvelope
+                    ? { workflowDisplaySummaryEnvelope: null } : {}),
                 resultEnvelope: candidate.item.target.resultEnvelope,
                 replyContextEnvelope: candidate.item.target.replyContextEnvelope,
                 errorMessage: candidate.item.target.failureDetailEnvelope
@@ -3775,6 +3778,9 @@ export async function migrateAutomationAccountEncryptionInTx(params: Readonly<{
                 ...(item.workflow ? {
                     workflowAcceptedSnapshotEnvelope: item.workflow.acceptedSnapshotEnvelope,
                     workflowCheckpointEnvelope: item.workflow.checkpointEnvelope,
+                    // The display summary was sealed under the replaced Run key;
+                    // the list reads this Run from its re-sealed snapshot instead.
+                    workflowDisplaySummaryEnvelope: null,
                 } : {}),
                 resultEnvelope: item.resultEnvelope,
                 replyContextEnvelope: item.replyContextEnvelope,
