@@ -20,6 +20,9 @@ vi.mock('react-native', async () => {
     });
 });
 
+const { SelectionList } = await import('../SelectionList');
+const { buildDirectorySelectionSection } = await import('@/components/sharing/buildDirectorySelectionSection');
+
 function makeStep(section: SelectionListDynamicSection): SelectionListStep {
     return {
         id: 'root',
@@ -69,6 +72,54 @@ afterEach(() => {
 });
 
 describe('SelectionList dynamic-section state rendering (Phase 2.2 mapping)', () => {
+    it.each([false, true])('keeps a cold multi-source directory accessible as loading when an empty sibling settles (reverse=%s)', async (reverse) => {
+        const { act } = await import('react-test-renderer');
+        const root = (pending: boolean): SelectionListStep => {
+            const sections = [
+                buildDirectorySelectionSection({
+                    source: { kind: 'account', title: 'Members', candidates: [], status: pending ? 'loading' : 'idle', cursor: null, hasMore: false, loadingMore: false },
+                    id: 'members', title: 'Members', resolverKey: String(pending), showSkeletonsOnFirstLoad: true,
+                    options: () => pending ? [] : [{ id: 'ada', label: 'Ada' }],
+                }),
+                buildDirectorySelectionSection({
+                    source: { kind: 'group', title: 'Groups', candidates: [], status: 'idle', cursor: null, hasMore: false, loadingMore: false },
+                    id: 'groups', title: 'Groups', resolverKey: 'groups', showSkeletonsOnFirstLoad: true,
+                    options: () => [],
+                }),
+            ];
+            return { id: 'root', inputPlaceholder: 'Search', sections: reverse ? sections.reverse() : sections };
+        };
+        const loadingFrames: Array<Readonly<{ text: string; status: unknown }>> = [];
+        let observeLoading = false;
+        const view = (pending: boolean) => (
+            <React.Profiler id="directory" onRender={() => {
+                if (observeLoading) loadingFrames.push({ text: screen.getTextContent(), status: statusText(screen) });
+            }}>
+                <SelectionList {...defaultProps(root(pending))} inputValue="Ada" />
+            </React.Profiler>
+        );
+        const screen = await renderScreen(view(true));
+        await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+
+        // Include the visually hidden live region: a skeleton must not coexist
+        // with an accessible claim that this unfinished directory has no matches.
+        const statuses = screen.tree.root.findAll(node => typeof node.type === 'string' && node.props.role === 'status');
+        expect(statuses).toHaveLength(1);
+        expect(statusText(screen)).toContain('Loading');
+        expect(screen.getTextContent()).not.toContain('No matches');
+
+        await screen.update(view(false));
+        await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+        expect(screen.getTextContent()).not.toContain('Loading');
+        expect(screen.getTextContent()).toContain('Ada');
+
+        observeLoading = true;
+        await screen.update(view(true));
+        expect(loadingFrames.length).toBeGreaterThan(0);
+        expect(loadingFrames.every(frame => typeof frame.status === 'string'
+            && frame.status.includes('Loading') && !frame.text.includes('No matches'))).toBe(true);
+    });
+
     it('projects one polite bounded provider status from loading through result settlement', async () => {
         const { act } = await import('react-test-renderer');
         let settle: ((value: { options: Array<{ id: string; label: string }> }) => void) | undefined;

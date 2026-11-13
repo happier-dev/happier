@@ -70,6 +70,7 @@ import { useContainingGlassSurfaceGroup } from '@/components/ui/glass/GlassSurfa
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { CurrentUiContextCommandInvocation, CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { SelectionListActivationCommandContext, SelectionListCommandHost, type SelectionListCommandInvoke } from './SelectionListCommandHost';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 
 const EMPTY_FILTERS: ReadonlyArray<SelectionListFilter> = Object.freeze([]);
 
@@ -161,7 +162,7 @@ const stylesheet = StyleSheet.create((theme) => ({
  */
 type MeasuredStepBodyHeight = Readonly<{ stepId: string; height: number }>;
 type SelectionListStatusAnnouncement = Readonly<{
-    eventId: number;
+    transitionKey: string;
     message: string;
 }>;
 
@@ -186,81 +187,61 @@ function stepContainsExpandedContent(
     return false;
 }
 
-function useSelectionListStatusAnnouncement(
+function buildSelectionListStatusAnnouncement(
     sections: ReadonlyArray<SelectionListSectionDescriptor>,
     states: ReadonlyMap<string, DynamicSectionState>,
     renderPlan: ReadonlyArray<SectionRenderPlan>,
 ): SelectionListStatusAnnouncement | null {
-    const previousSignaturesRef = React.useRef<ReadonlyMap<string, string>>(new Map());
-    const [announcement, setAnnouncement] = React.useState<SelectionListStatusAnnouncement | null>(null);
+    const signatures: string[] = [];
+    const displayedSectionById = new Map(renderPlan.map((section) => [section.id, section]));
+    let nextAnnouncement: string | null = null;
+    let loadingAnnouncement: string | null = null;
+    let statusHintAnnouncement: string | null = null;
 
-    React.useEffect(() => {
-        const previousSignatures = previousSignaturesRef.current;
-        const nextSignatures = new Map<string, string>();
-        const displayedSectionById = new Map(renderPlan.map((section) => [section.id, section]));
-        let nextAnnouncement: string | null = null;
-        let changed = false;
-
-        for (const section of sections) {
-            const displayedSection = displayedSectionById.get(section.id);
-            if (section.kind === 'static') {
-                const resultHint = displayedSection?.resultHint ?? section.resultHint;
-                if (!resultHint) continue;
-                const signature = `static\u0000${resultHint}`;
-                nextSignatures.set(section.id, signature);
-                if (previousSignatures.get(section.id) === signature) continue;
-                changed = true;
-                const title = section.title?.trim() ?? '';
-                nextAnnouncement = title.length > 0 ? `${title} · ${resultHint}` : resultHint;
-                continue;
-            }
-            const state = states.get(section.id);
-            if (!state) continue;
-            const displayedResultCount = displayedSection?.options.length ?? 0;
-            const signature = `${state.seed ?? ''}\u0000${state.status}\u0000${displayedResultCount}\u0000${state.emptyHint ?? ''}\u0000${state.notFoundHint ?? ''}\u0000${state.resultHint ?? ''}`;
-            nextSignatures.set(section.id, signature);
-            if (previousSignatures.get(section.id) === signature) continue;
-            changed = true;
-
+    for (const section of sections) {
+        const displayedSection = displayedSectionById.get(section.id);
+        if (section.kind === 'static') {
+            const resultHint = displayedSection?.resultHint ?? section.resultHint;
+            if (!resultHint) continue;
             const title = section.title?.trim() ?? '';
-            if (state.status === 'loading') {
-                nextAnnouncement = title.length > 0
-                    ? `${title} · ${t('common.loading')}`
-                    : t('common.loading');
-            } else if (state.status === 'success') {
-                const resultStatus = displayedResultCount === 0
-                    ? title.length > 0
-                        ? `${title} · ${t('selectionList.emptyMatch')}`
-                        : t('selectionList.emptyMatch')
-                    : title.length > 0
-                        ? `${displayedResultCount} · ${title}`
-                        : String(displayedResultCount);
-                const emptyHint = displayedResultCount === 0
-                    ? state.emptyHint ?? state.notFoundHint
-                    : undefined;
-                nextAnnouncement = emptyHint !== undefined
-                    ? title.length > 0 ? `${title} · ${emptyHint}` : emptyHint
-                    : state.resultHint
-                        ? `${resultStatus} · ${state.resultHint}`
-                        : resultStatus;
-            }
-            // Errors remain section-local. Their existing calm inline alert is
-            // the one announcement source for that failure.
+            signatures.push(`${section.id}\u0000static\u0000${title}\u0000${resultHint}`);
+            statusHintAnnouncement ??= title.length > 0 ? `${title} · ${resultHint}` : resultHint;
+            continue;
         }
-
-        if (previousSignatures.size !== nextSignatures.size) changed = true;
-        previousSignaturesRef.current = nextSignatures;
-        if (changed) {
-            setAnnouncement((previous) => nextAnnouncement === null
-                ? null
-                : {
-                    eventId: (previous?.eventId ?? 0) + 1,
-                    message: nextAnnouncement,
-                });
+        const state = states.get(section.id);
+        if (!state) continue;
+        const displayedResultCount = displayedSection?.options.length ?? 0;
+        const title = section.title?.trim() ?? '';
+        signatures.push(`${section.id}\u0000${title}\u0000${state.seed ?? ''}\u0000${state.status}\u0000${displayedResultCount}\u0000${state.emptyHint ?? ''}\u0000${state.notFoundHint ?? ''}\u0000${state.resultHint ?? ''}`);
+        if (displayedSection?.dynamicState === 'loading' || state.status === 'loading') {
+            const hint = displayedSection?.hint ?? t('common.loading');
+            loadingAnnouncement ??= title.length > 0 ? `${title} · ${hint}` : hint;
+        } else if (state.status === 'success') {
+            const resultStatus = displayedResultCount === 0
+                ? title.length > 0
+                    ? `${title} · ${t('selectionList.emptyMatch')}`
+                    : t('selectionList.emptyMatch')
+                : title.length > 0
+                    ? `${displayedResultCount} · ${title}`
+                    : String(displayedResultCount);
+            const emptyHint = displayedResultCount === 0
+                ? state.emptyHint ?? state.notFoundHint
+                : undefined;
+            nextAnnouncement = emptyHint !== undefined
+                ? title.length > 0 ? `${title} · ${emptyHint}` : emptyHint
+                : state.resultHint
+                    ? `${resultStatus} · ${state.resultHint}`
+                    : resultStatus;
         }
-    }, [renderPlan, sections, states]);
+        // Errors remain section-local. Their existing calm inline alert is
+        // the one announcement source for that failure.
+    }
 
-    return announcement;
+    // Directory snapshots carry pending work as a static resultHint. Both
+    // that hint and dynamic loading outrank a sibling's empty answer. Derive
+    // the text and transition together so no committed frame retains old text.
+    const message = loadingAnnouncement ?? statusHintAnnouncement ?? nextAnnouncement;
+    return message === null ? null : { transitionKey: JSON.stringify(signatures), message };
 }
 
 /**
@@ -547,7 +528,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     ) {
         throw new Error('SelectionList multiple selection cannot be combined with expandedContent');
     }
-    const statusAnnouncement = useSelectionListStatusAnnouncement(
+    const statusAnnouncement = buildSelectionListStatusAnnouncement(
         currentStep.sections,
         dynamicSectionStates,
         renderPlan,
@@ -1016,12 +997,12 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         return [
             { key: 'activate', title: currentStep.title ?? props.listAccessibilityLabel ?? t('common.choose'),
                 description: `${commandScope}.activate ${JSON.stringify(options)}; input: {id}`, invoke: (input, context, invocation) => {
-                    if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.id !== 'string') return false;
+                    if (!isJsonObject(input) || typeof input.id !== 'string') return false;
                     return handleActivate(input.id, context, invocation);
                 } },
             ...(showSearchHeader && !currentStep.inputReadOnly ? [{ key: 'search', title: currentStep.inputPlaceholder ?? props.rootStep.inputPlaceholder ?? t('common.search'),
                 description: `${commandScope}.search; input: {value}`, invoke: (input: Parameters<CurrentUiContextLocalCommand['invoke']>[0]) => {
-                    if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.value !== 'string') return false;
+                    if (!isJsonObject(input) || typeof input.value !== 'string') return false;
                     setInputValue(input.value);
                 } }] : []),
             ...(stack.canPop ? [{ key: 'back', title: currentStep.backLabel ?? props.rootStep.title ?? t('common.back'),
@@ -1571,7 +1552,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             ) : null}
             <PoliteAccessibilityStatus
                 announcement={statusAnnouncement?.message ?? ''}
-                transitionKey={String(statusAnnouncement?.eventId ?? 'idle')}
+                transitionKey={statusAnnouncement?.transitionKey ?? 'idle'}
                 statusTestID={selectionListTestId(resolvedTestId, 'status')}
             />
             {seatInputAtBottom || seatInputInBody ? null : searchHeaderZone}

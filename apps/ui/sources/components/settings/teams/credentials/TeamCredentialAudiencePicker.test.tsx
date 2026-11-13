@@ -111,6 +111,7 @@ describe('TeamCredentialAudiencePicker exact member mode', () => {
             await act(async () => { picker.changeTextByTestId('team-credential-audience-picker:header:input', 'Ada'); });
             await vi.waitFor(() => expect(harness.requestsFor(GROUPS_LIST_PATH)).toHaveLength(1));
             const { t } = await import('@/text');
+            expect(picker.findByTestId('team-credential-audience-picker:status')?.props.role).toBe('status');
             expect(picker.getTextContent()).toContain(t('common.loading'));
             expect(picker.getTextContent()).not.toContain(t('common.noMatches'));
         } finally {
