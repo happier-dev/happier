@@ -55,7 +55,7 @@ async function isNativeMachineSetupApply(input: MachineSetupApplyInputV1, contex
   const admittedChild = readHostAdmittedReviewedChildV1(context);
   // Home has already bound this install-only child to its accepted Run.
   // Spend that exact leaf without reading the requester's Run as the custodian.
-  if (!hasApps && binding && admittedChild && isReviewedMachineSetupCodecV1(binding)
+  if (binding && admittedChild && isReviewedMachineSetupCodecV1(binding)
     && admittedChild.actionId === binding.workflowActionOrigin?.reviewedChild?.actionId
     && admittedChild.role === binding.workflowActionOrigin.reviewedChild.role
     && admittedChild.inputDigest === binding.workflowActionOrigin.reviewedChild.inputDigest

@@ -1,4 +1,4 @@
-import { createActionRefusalDetailsV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionRefusalDetailsV1, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { CliActionDepsParams, ResolvedSessionTransport } from './cliActionDeps/types';
 import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import type { logger } from '@/ui/logger';
@@ -340,7 +340,10 @@ export function createCliWorkflowFamily(
     const { classifyServerEndpointError } = await import('@/api/client/classifyServerEndpointError');
     if (resolved.kind === 'unavailable' && 'cause' in resolved
       && classifyServerEndpointError(resolved.cause).retryable) throw resolved.cause;
-    if (resolved.kind !== 'available') throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
+    if (resolved.kind !== 'available') throw Object.assign(new Error('content_unavailable'), {
+      code: 'content_unavailable', failureCause: projectActionFailureCauseV1(resolved.kind === 'unavailable'
+        ? resolved.cause : { code: 'encryption_material_unavailable' }, 'workflow.run.encryption'),
+    });
     return resolved;
   };
 

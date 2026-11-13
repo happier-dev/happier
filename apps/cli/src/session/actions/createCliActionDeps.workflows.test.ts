@@ -63,7 +63,9 @@ const workflowAccountPersonToken = `fixture.${Buffer.from(JSON.stringify({ sub: 
 
 const processIdentity = vi.hoisted(() => vi.fn());
 // The runner's OS process identity and daemon HTTP are external boundaries.
-vi.mock('@/daemon/processIdentity', () => ({ readProcessIdentityByPid: processIdentity }));
+vi.mock('@/daemon/processIdentity', async importOriginal => ({
+  ...await importOriginal<typeof import('@/daemon/processIdentity')>(), readProcessIdentityByPid: processIdentity,
+}));
 
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn(), request: vi.fn() }));
 const signedRootAction = vi.hoisted(() => vi.fn());
@@ -240,7 +242,8 @@ describe('createCliActionDeps workflow boundary', () => {
       : deps.workflowAction!({ actionId: 'workflow.run.get', input: { runId, includeUsage: false }, context });
     await expect(result).resolves.toMatchObject(mode === 'plain' || custody === 'session'
       ? readInvocation ? { invocation: { index, progress } } : { run: { id: runId, ownerAccountId: 'requester' }, definition }
-      : { ok: false, errorCode: 'content_unavailable' });
+      : { ok: false, errorCode: 'content_unavailable',
+          failureCause: { phase: 'workflow.run.encryption', errorCode: 'encryption_material_unavailable' } });
   });
 
   it.each(['plain', 'unknown'] as const)('keeps an admitted approval mode %s when Home mode changes before the Artifact write', async admittedAccountEncryptionMode => {

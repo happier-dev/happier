@@ -1,7 +1,6 @@
 import { invokeHostAdmittedSignedReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { isReviewedMachineSetupCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createHostReviewedChildPortV1, type HostReviewedParentV1, type HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/actionExecutor';
@@ -41,7 +40,7 @@ export async function invokeAdmittedReviewedChild(input: Readonly<{
     && binding.serverIdentityId === context.serverIdentityId
     && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
     && sameStrictJsonValue(binding.target, context.externalActionTarget)
-    && signedChild.inputDigest === computeActionInputApprovalDigestV1(MACHINE_SETUP_APPLY_ACTION_ID_V1, input.actionInput)
+    && signedChild.inputDigest === computeActionInputApprovalDigestV1(input.actionId, input.actionInput)
     && (!input.receivingAdmission || input.receivingAdmission.actorAccountId === binding.accountId
       && input.receivingAdmission.custodianAccountId === binding.custodianAccountId
       && input.receivingAdmission.machineId === binding.machineId

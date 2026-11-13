@@ -1,3 +1,8 @@
+import { MACHINE_REBOOT_ACTION_IDS } from '@happier-dev/protocol/machines/rebootActionIdsV1';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -184,4 +189,30 @@ describe('Move original-Stop reviewed child admission', () => {
       expect(execute).not.toHaveBeenCalled();
     },
   );
+});
+
+
+describe('signed native setup child admission', () => {
+  it.each(['machines.setup.apply', 'machines.setup.updates.apply', ...MACHINE_REBOOT_ACTION_IDS] as const)('restores the exact %s digest under its own Action identity', async actionId => {
+    const actionInput = { homeId: 'home', machineId: 'receiver' };
+    const target = { kind: 'machine' as const, machineId: 'receiver' };
+    const reviewedChild = { actionId, role: 'native-child', inputDigest: computeActionInputApprovalDigestV1(actionId, actionInput) };
+    const authorization = retainVerifiedExternalActionRequester({ isCurrent: async () => true,
+      authorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-native-child', binding: {
+        actionId, accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+        machineId: target.machineId, installationId: 'receiver-installation', serverIdentityId: 'home', target,
+        requestId: 'run/child/0', requestEnvelopeDigest: 'a'.repeat(43), accountEncryptionMode: 'plain', admittedMachineRole: 'manage',
+        workflowActionOrigin: { runId: '11111111-1111-4111-8111-111111111111', requestId: 'run/child/0', reviewedChild },
+      } }),
+    });
+    const context: ActionExecutorContext = { externalActionExecutionAuthorization: authorization,
+      externalActionTarget: target, runtimeAccountId: 'owner', defaultSessionMachineId: target.machineId,
+      serverIdentityId: 'home', actionRequestId: 'run/child/0', surface: 'ui' };
+    const execute = async (_input: unknown, issued: ActionExecutorContext) => ({ ok: true as const,
+      result: readHostAdmittedReviewedChildV1(issued) });
+    expect(await invokeAdmittedReviewedChild({ actionId, actionInput, context, requesterOwnedReview: false, execute }))
+      .toMatchObject({ ok: true, result: { ...reviewedChild, input: actionInput } });
+    expect(await invokeAdmittedReviewedChild({ actionId, actionInput: { ...actionInput, machineId: 'other' }, context,
+      requesterOwnedReview: false, execute })).toBeNull();
+  });
 });

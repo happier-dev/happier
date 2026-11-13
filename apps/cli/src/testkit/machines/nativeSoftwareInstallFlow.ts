@@ -346,6 +346,11 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
               origin: workflowProposal.workflowActionOrigin! },
           } })).toBe(true);
         const parent = workflowProposal.executionAuthorization;
+        if (actionId === 'machines.setup.apply') {
+          expect(workflowProposal.workflowActionOrigin?.reviewedChild).toMatchObject({
+            actionId, inputDigest: expect.any(String),
+          });
+        }
         if (parent) expect(roots.get(parent.token)?.binding).toEqual(parent.binding);
         workflowParent = parent;
       }

@@ -1,3 +1,4 @@
+import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { isReviewedMachineSetupCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { randomBytes } from 'node:crypto';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
@@ -86,7 +87,13 @@ export async function dispatchInstalledWorkflowNativeSetupAction(input: Paramete
   const context = installed?.context;
   const caller = context?.actionCaller;
   const parent = caller?.kind === 'workflowRun' ? caller.authorization.externalActionExecutionAuthorization : undefined;
-  const reviewedChild = caller?.kind === 'workflowRun' ? caller.authorization.reviewedChild : undefined;
+  // The live Run reader issues exact child consent as a private host proof.
+  // It is not part of the accepted caller authorization or the invocation codec.
+  const admittedChild = readHostAdmittedReviewedChildV1(context);
+  const reviewedChild = admittedChild?.actionId === input.actionId
+    ? { actionId: admittedChild.actionId, role: admittedChild.role, inputDigest: admittedChild.inputDigest,
+      ...(admittedChild.deploymentNativeAdmission ? { deploymentNativeAdmission: admittedChild.deploymentNativeAdmission } : {}) }
+    : caller?.kind === 'workflowRun' ? caller.authorization.reviewedChild : undefined;
   const binding = parent?.binding;
   if (!installed || !context || caller?.kind !== 'workflowRun' || !parent || !binding
     || !isReviewedMachineSetupCodecV1({ actionId: input.actionId, workflowActionOrigin: {

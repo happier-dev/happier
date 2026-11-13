@@ -142,30 +142,43 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     expect(executionAuthorizationOwner.readAdmittedBotTemplateParentActionIdV1({ surface: 'api', authority: 'account_automation' })).toBeNull();
   });
 
-  it.each([{ accountEncryptionMode: 'plain' as const, custodianAccountId: 'alice', terminalTransport: false },
-    { accountEncryptionMode: 'e2ee' as const, custodianAccountId: 'bob', terminalTransport: false },
-    { accountEncryptionMode: 'e2ee' as const, custodianAccountId: 'bob', terminalTransport: true }])('delivers only invocation codec for reviewed setup ($accountEncryptionMode)', async ({ accountEncryptionMode, custodianAccountId, terminalTransport }) => {
+  it.each([{ accountEncryptionMode: 'plain' as const, custodianAccountId: 'alice', terminalTransport: false, privateChild: false },
+    { accountEncryptionMode: 'e2ee' as const, custodianAccountId: 'bob', terminalTransport: false, privateChild: false },
+    { accountEncryptionMode: 'e2ee' as const, custodianAccountId: 'bob', terminalTransport: true, privateChild: false },
+    { accountEncryptionMode: 'plain' as const, custodianAccountId: 'bob', terminalTransport: true, privateChild: true },
+    { accountEncryptionMode: 'e2ee' as const, custodianAccountId: 'bob', terminalTransport: true, privateChild: true }])('delivers only invocation codec for reviewed setup ($accountEncryptionMode)', async ({ accountEncryptionMode, custodianAccountId, terminalTransport, privateChild }) => {
     const requestId = crypto.randomUUID();
+    const publisherTarget = privateChild ? { kind: 'machine' as const, machineId: 'publisher-machine' } : target;
     const parent = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'captured-parent', binding: {
       accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 }, serverIdentityId: 'srv_bob_home',
-      machineId: target.machineId, custodianAccountId, installationId: 'alice-installation',
-      actionId: 'session.spawn_new', requestId: crypto.randomUUID(), target, admittedMachineRole: 'manage',
+      machineId: publisherTarget.machineId, custodianAccountId, installationId: 'alice-installation',
+      actionId: privateChild ? 'machines.setup.apply' : 'session.spawn_new', requestId: crypto.randomUUID(), target: publisherTarget, admittedMachineRole: 'manage',
       accountEncryptionMode, requestEnvelopeDigest: 'a'.repeat(43),
     } });
     const childInput = MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_bob_home', machineId: target.machineId,
       targets: [{ homeId: 'srv_bob_home', machineId: target.machineId, desiredRevision: 0, recipePlans: [],
         sources: [{ kind: 'direct', setup: { items: [] } }] }] });
     const reviewedChild = { actionId: SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.action,
-      role: SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.role,
+      role: privateChild ? 'setup-invocation' : SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.role,
       inputDigest: computeActionInputApprovalDigestV1('machines.setup.apply', childInput) };
     const runId = deriveMachineSetupCombinedRunIdV1({ homeId: 'srv_bob_home', accountId: 'bob',
       requestId: parent.binding.requestId, reviewedChild });
-    const context = { surface: 'agent', authority: 'account_automation', actionRequestId: requestId,
+    const context = { runtimeAccountId: 'bob', externalActionExecutionAuthorization: parent, externalActionTarget: publisherTarget, surface: 'agent', authority: 'account_automation', actionRequestId: requestId,
       executionRunWorkflowRunId: runId, actionCaller: { kind: 'workflowRun', runId, authorization: {
         principal: { kind: 'host' }, admittedPermissionCeiling: 'default',
-        externalActionExecutionAuthorization: parent, reviewedChild,
+        externalActionExecutionAuthorization: parent, ...(!privateChild ? { reviewedChild } : {}),
       } } } satisfies ActionExecutorContext;
-    vi.spyOn(axios, 'get').mockImplementation(async () => { throw new Error('No fresh Account or Machine lookup for admitted setup'); });
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      // A remote receiver's public installation key seals only the invocation codec.
+      if (privateChild && String(url).endsWith('/v1/machines/' + target.machineId)) return { status: 200, data: { machine: {
+        id: target.machineId, kind: 'persistent', active: true, installationId: 'alice-installation',
+        managedMachineRef: null, revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
+        installationPublicKey: Buffer.from(keys.publicKey).toString('base64'),
+        access: { custodian: { accountId: custodianAccountId, displayName: 'Receiver' }, role: 'manage',
+          resourceMode: accountEncryptionMode, accessState: 'ready' },
+      } } };
+      throw new Error('No Account content lookup for admitted setup');
+    });
     let delivered = false;
     vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
       if (String(url).endsWith('/verify')) return { status: 200, data: { ok: true } };
@@ -174,7 +187,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
         expect(request.executionAuthorization).toEqual(parent);
         expect(request.workflowActionOrigin).toEqual({ runId, requestId, reviewedChild });
         return { status: 200, data: { v: 1, token: 'scoped-setup-leaf', binding: {
-          ...parent.binding, actionId: 'machines.setup.apply', requestId,
+          ...parent.binding, machineId: target.machineId, target, actionId: 'machines.setup.apply', requestId,
           workflowActionOrigin: request.workflowActionOrigin,
           deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1('machines.setup.apply', childInput),
           requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
@@ -197,14 +210,21 @@ describe('requester HTTP authority on the existing external Action carrier', () 
         admittedMachineRole: 'manage', installationId: 'alice-installation' });
       return { status: 409, data: { error: 'invalid_request', code: 'target_unavailable' } };
     });
-    expect(await executionAuthorizationOwner.dispatchOriginalAccountAction({ actionId: 'machines.setup.apply',
+    const dispatch = (admittedContext: ActionExecutorContext) => executionAuthorizationOwner.dispatchOriginalAccountAction({ actionId: 'machines.setup.apply',
       input: childInput, requestId, target, credentials: { token: terminalTransport ? `${encodeTokenPart({ alg: 'none' })}.${encodeTokenPart({
         sub: 'bob', tokenEpoch: 7, provenance: { v: 1, kind: 'terminal', authority: 'account_automation' },
       })}.signature` : accountToken, encryption: accountEncryptionMode === 'plain' ? null : {
         type: 'dataKey', machineKey: new Uint8Array(32).fill(57), publicKey: keys.publicKey } },
       serverHttpBaseUrl: 'https://home.test', serverIdentityId: 'srv_bob_home',
-      installedWorkflow: { context, machineId: target.machineId, installationId: 'alice-installation', privateKey: keys.secretKey },
-    })).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+      installedWorkflow: { context: admittedContext, machineId: publisherTarget.machineId, installationId: 'alice-installation', privateKey: keys.secretKey },
+    });
+    const result = privateChild ? await invokeHostReviewedChildV1({
+      parent: { actionId: 'machines.setup.apply', input: { ...childInput, machineId: publisherTarget.machineId } },
+      child: { action: 'machines.setup.apply', role: reviewedChild.role, input: childInput }, context,
+      approvedBy: { accountId: 'bob' }, admittedReview: { action: 'machines.setup.apply', role: reviewedChild.role, surface: 'agent' },
+      execute: (_input, admittedContext) => dispatch(admittedContext),
+    }) : await dispatch(context);
+    expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
     expect(delivered).toBe(true);
   });
 
