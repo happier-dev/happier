@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseExternalActionResponseEnvelopeV1, readExternalActionResponseExecutionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { MachineRolesSetInputV1Schema, type MachineRolesSetInputV1 } from '@happier-dev/protocol/actions/specs/machineRoles';
 import { matchesManagedMachineEnrollmentRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
@@ -750,7 +751,10 @@ export function dispatchOriginalAccountAction(input: OriginalAccountActionInput)
  */
 export async function dispatchOriginalAccountAction(input: OriginalAccountActionInput & Readonly<{ foreignTargetOnly?: true }>): Promise<ActionExecuteResult | null> {
   // Preparation cannot start the effect; delivery owns evidence after submission.
-  const fail = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode, effectAttempted: false });
+  const fail = (errorCode: string, issuerPhase?: string): ActionExecuteFailure => ({
+    ok: false, errorCode, error: errorCode, effectAttempted: false,
+    ...(issuerPhase ? { failureCause: projectActionFailureCauseV1({ code: errorCode }, issuerPhase) } : {}),
+  });
   const phase = <T>(name: string, read: () => T | Promise<T>) => runTracedExternalActionInnerStage(`dispatch.${name}`, read);
   input.signal?.throwIfAborted();
   const installedCaller = input.installedWorkflow?.context.actionCaller;
@@ -786,15 +790,15 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       || !await isReviewedSessionSpawnNativeCredentialChild({ authorization, envelope: spawnChild.context.originalActionEnvelope,
         actionId: input.actionId, machineId: spawnChild.machineId, params: input.input,
         binding: spawnChild.binding, agentTargetKey: spawnChild.agentTargetKey, modelId: spawnChild.modelId,
-        ...(input.signal ? { signal: input.signal } : {}) })) return fail('admission_unavailable');
+        ...(input.signal ? { signal: input.signal } : {}) })) return fail('admission_unavailable', 'dispatch.spawn_custody');
   }
   if (workflow && (workflowCaller?.kind !== 'workflowRun'
     || workflow.context.executionRunWorkflowRunId !== workflowCaller.runId
     || workflow.context.actionRequestId !== input.requestId || !input.serverIdentityId
-    || input.target.kind !== 'machine')) return fail('admission_unavailable');
+    || input.target.kind !== 'machine')) return fail('admission_unavailable', 'dispatch.workflow_invocation');
   if (workflowCaller?.kind === 'workflowRun' && workflowCaller.authorization.principal.kind === 'api'
     && (!workflowBinding || 'authentication' in workflowBinding || workflowBinding.custodianAccountId !== publisherAccountId
-      || workflowBinding.serverIdentityId !== input.serverIdentityId)) return fail('admission_unavailable');
+      || workflowBinding.serverIdentityId !== input.serverIdentityId)) return fail('admission_unavailable', 'dispatch.workflow_binding');
   const isCurrent = async () => !input.signal?.aborted
     && (!spawnRequester || input.isCurrent === spawnRequester.isCurrent || await phase('spawn_custody', () => spawnRequester.isCurrent()))
     && (!input.isCurrent || await phase('currentness', () => input.isCurrent!()));
@@ -867,7 +871,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       ...(provenance?.provenance && 'evidence' in provenance.provenance ? { evidence: provenance.provenance.evidence } : {}) });
   if (!publisherAccountId || !accountId || !authentication.success
     || !((kind === 'account' && provenance?.provenance.authority === 'present_user')
-      || (kind === 'terminal' && provenance?.provenance.authority === 'account_automation'))) return fail('admission_unavailable');
+      || (kind === 'terminal' && provenance?.provenance.authority === 'account_automation'))) return fail('admission_unavailable', 'dispatch.requester_authentication');
   const invocationAuthority = resolveInvocationAuthority({ credential: kind, surface: 'rpc' });
   const headers = { Authorization: `Bearer ${input.credentials.token}`, 'Content-Type': 'application/json',
     ...(invocationAuthority === 'account_automation' || input.authority === 'account_automation'
@@ -919,7 +923,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     || workflowActionOrigin && isReviewedMachineSetupCodecV1({ actionId: input.actionId, workflowActionOrigin }));
   if (controllerCodec) material = { type: 'dataKey', machineKey: randomBytes(32) };
   if (mode.mode === 'e2ee') {
-    if (!input.serverIdentityId) return fail('admission_unavailable');
+    if (!input.serverIdentityId) return fail('admission_unavailable', 'dispatch.home_identity');
     if (workflowBinding && accountId !== publisherAccountId) return fail('content_unavailable');
     try { if (!controllerCodec) {
       const keyed = requireAccountEncryptionCredentials(input.credentials).encryption;
@@ -957,7 +961,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     return execution && spawnChild.context.originalActionEnvelope ? { externalActionExecution: execution,
       method, requestId, params, originalActionEnvelope: spawnChild.context.originalActionEnvelope } : null;
   })() : undefined;
-  if (spawnChild && !nativeCredentialSpawnChild) return fail('admission_unavailable');
+  if (spawnChild && !nativeCredentialSpawnChild) return fail('admission_unavailable', 'dispatch.spawn_credential');
   if (workflow && workflowActionOrigin) {
     body = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: workflow.machineId,
       envelope, workflowActionOrigin,
@@ -970,16 +974,16 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     if (isDeploymentChildEffectActionIdV1(actionId) || actionId === 'deployments.teardown'
       || actionId === 'deployments.templates.instantiate' || setupApply?.success) {
       // PAT authority never becomes the publisher's Account credential custody.
-      if (workflowBinding && !('authentication' in workflowBinding)) return fail('admission_unavailable');
+      if (workflowBinding && !('authentication' in workflowBinding)) return fail('admission_unavailable', 'dispatch.workflow_authentication');
       if (publisherAccountId !== accountId) return fail('requester_credential_disclosure_required');
-      if (input.target.kind !== 'machine') return fail('admission_unavailable');
+      if (input.target.kind !== 'machine') return fail('admission_unavailable', 'dispatch.workflow_target');
       // A Workflow leaf is not an original own-Account invocation. Mint its
       // exact admitted root, then use the existing requester box; the receiver
       // must never borrow its custodian's ordinary credentials for this origin.
       const proposal = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
       const installed = await readInstalledPublication(input.target.machineId);
       if (!installed?.installationPublicKey || installed.access?.accessState !== 'ready'
-        || !await isCurrent()) return fail('admission_unavailable');
+        || !await isCurrent()) return fail('admission_unavailable', 'dispatch.workflow_installation');
       if (installed.access.custodian.accountId !== accountId) return fail('requester_credential_disclosure_required');
       const minted = await phase('mint_authorization', () => mintExternalActionExecutionAuthorization({
         actionId, envelope, machineId: workflow.machineId, pat: input.credentials.token, serverHttpBaseUrl: homeUrl,
@@ -1001,7 +1005,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
         || root.sessionActionOrigin || root.sessionActionSource || root.managedContinuation
         || root.handoffContinuation || root.handoffPreflight
         || !isExternalActionAuthorizationBoundToEnvelope(root, { actionId, machineId: input.target.machineId, envelope })
-        || !await isCurrent()) return fail('admission_unavailable');
+        || !await isCurrent()) return fail('admission_unavailable', 'dispatch.workflow_authorization');
       try {
         const authorization = controllerCodec && material
           ? sealManagedControllerActionCodecV1({ authorization: minted.authorization, material,
@@ -1016,7 +1020,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       } catch { return fail('content_unavailable'); }
     }
   } else if (scopedController || machine && access && (foreign || requiresMachineProof)) {
-    if (!input.serverIdentityId) return fail('admission_unavailable');
+    if (!input.serverIdentityId) return fail('admission_unavailable', 'dispatch.machine_home_identity');
     if (foreign && !controllerCodec && !input.onRequesterSessionCredentialDisclosure) return fail('requester_credential_disclosure_required');
     const readInstalledMachine = async (observed: CurrentAccountMachineInventoryItem) => {
       const isOriginalTarget = input.target.kind === 'machine' && observed.id === input.target.machineId && requiresMachineProof;
@@ -1029,7 +1033,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       return installed;
     };
     const installed = scopedController ?? (machine ? await readInstalledMachine(machine) : null);
-    if (!installed) return fail('admission_unavailable');
+    if (!installed) return fail('admission_unavailable', 'dispatch.machine_installation');
     const destinationId = scopedController?.machineId ?? machine!.id;
     const custodianAccountId = scopedController?.custodian.accountId ?? access!.custodian.accountId;
     const minted = await phase('mint_authorization', () => mintExternalActionExecutionAuthorization({ actionId, envelope, machineId: destinationId,
@@ -1070,7 +1074,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
         || root.managedContinuation.creationRequestId !== input.managedContinuation.creationRequestId
         || root.managedContinuation.expectedIntentRevision !== input.managedContinuation.expectedIntentRevision
         : root.managedContinuation !== undefined)
-      || !await isCurrent()) return fail('admission_unavailable');
+      || !await isCurrent()) return fail('admission_unavailable', 'dispatch.machine_authorization');
     const confirmDisclosure = async (recipient: Readonly<{ id: string; custodian?: Readonly<{ accountId: string; displayName: string }> }>): Promise<ActionExecuteResult | null> => {
       if (kind === 'account' && input.authority === 'account_automation'
         || input.credentials.credentialProvenance === 'api_token') return fail('requester_account_material_unavailable');
@@ -1089,12 +1093,12 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     let authorization = minted.authorization;
     try {
       if (controllerCodec) {
-        if (!installed.installationPublicKey || !material || authorization.managedFiniteWake) return fail('admission_unavailable');
+        if (!installed.installationPublicKey || !material || authorization.managedFiniteWake) return fail('admission_unavailable', 'dispatch.controller_codec');
         authorization = sealManagedControllerActionCodecV1({ authorization, material,
           ...(input.invocation ? { invocation: input.invocation } : {}),
           installationPublicKey: decodeBase64(installed.installationPublicKey, scopedController ? 'base64url' : 'base64'), randomBytes });
       } else if (foreign || input.invocation) {
-        if (!installed.installationPublicKey) return fail('admission_unavailable');
+        if (!installed.installationPublicKey) return fail('admission_unavailable', 'dispatch.requester_installation_key');
         if (foreign) {
           const refusal = await confirmDisclosure({ id: machine!.id, custodian: machine!.access?.custodian });
           if (refusal) return refusal;
@@ -1107,7 +1111,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       const wake = authorization.managedFiniteWake;
       if (wake) {
         const wakeController = wake.target.controller;
-        if (!wakeController) return fail('admission_unavailable');
+        if (!wakeController) return fail('admission_unavailable', 'dispatch.wake_controller');
         // Home already admitted this exact controller and key. Guest Use need
         // not grant controller inventory access, including delegated enrollment.
         if (wake.requesterCredentialDisclosure) {
