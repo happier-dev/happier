@@ -6,6 +6,7 @@ import { projectExternalActionExecutionResultV1 } from '@happier-dev/protocol/ac
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { ProjectSourcesCreateOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { createDeploymentSocketHome } from '../../../server/sources/testkit/deploymentSocketHome.testkit.mjs';
+import { auth } from '../../../server/sources/app/auth/auth';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { createHostApprovalOriginCurrentness } from '@/session/actions/approvals/hostOriginCurrentness';
@@ -24,11 +25,19 @@ import { accountSettingsParse } from '@happier-dev/protocol/account/settings/acc
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { handleActionsCommand } from '@/cli/commands/actions';
+import { writeStoredCredentialsForServerId } from '@/persistence';
 
 afterEach(() => vi.restoreAllMocks());
 
-it('retains the CLI binding review until the native owner reports the missing active service', async () => {
-    const home = await createDeploymentSocketHome({ encryptionMode: 'plain' });
+// Both fixtures share the server process's canonical Home identity cache.
+const serverId = `srv_${randomUUID().replaceAll('-', '')}`;
+
+it.each(['controller', 'targeted-cli', 'targeted-terminal'] as const)('retains the %s binding review through its canonical approval decision', async entry => withConfiguredDaemonTestHome({
+    prefix: 'happier-cli-binding-review-', env: { HAPPIER_ACTIVE_SERVER_ID: 'cli-review-profile' },
+}, async () => {
+    const home = await createDeploymentSocketHome({ encryptionMode: 'plain', serverId });
     let daemon: Awaited<ReturnType<typeof createS0DeploymentDaemonIngress>> | undefined;
     const lifetime = new AbortController();
     try {
@@ -116,33 +125,78 @@ it('retains the CLI binding review until the native owner reports the missing ac
             serverUrl: home.baseUrl, token: home.token });
         const checkDaemonOrigin = createDaemonApprovalExecutionOriginCurrentnessFromCredentials({ credentials,
             machineId: home.machineId, serverId: home.serverId, serverApiUrl: home.baseUrl, resolveServerFeaturesSnapshot });
-        // Exercise the controller-side executor after its own real approval review.
-        // The targeted public wrapper already uses the canonical requester projector.
-        const controller = createCliActionExecutor({ token: home.token, credentials,
-            sessionId: 'cli-global', mode: 'plain', ctx: null,
-            actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({
+        const actionsSettingsProvider = createActionSettingsProvider({ accountSettings: accountSettingsParse({
                 actionsSettingsV1: { v: 1, actions: { 'deployments.bindings.set': { approvalRequiredSurfaces: ['cli'] } } },
-            }) }),
+            }) });
+        const onApprovalRequested: NonNullable<Parameters<typeof createCliActionExecutor>[0]['onApprovalRequested']> = async (artifactId, _signal, decide) => {
+            approvals.push(artifactId);
+            return decide('approve');
+        };
+        const targetedCredentials = entry === 'targeted-terminal' ? readS0ControllerCredentials({ ...home,
+            token: await auth.createToken(home.accountId, undefined, { kind: 'terminal', authority: 'account_automation' }) }) : credentials;
+        const executor = entry !== 'controller'
+            ? createCliActionExecutorFromCredentials({ credentials: targetedCredentials, readCredentials: async () => targetedCredentials,
+                externalActionClient: true, machineId: home.machineId,
+                serverId: home.serverId, serverIdentityId: home.serverId, serverApiUrl: home.baseUrl,
+                actionsSettingsProvider, onApprovalRequested })
+            : createCliActionExecutor({ token: home.token, credentials,
+            sessionId: 'cli-global', mode: 'plain', ctx: null, actionsSettingsProvider,
             serverId: home.serverId, serverIdentityId: home.serverId, serverHttpBaseUrl: home.baseUrl,
             machineId: home.machineId,
             isApprovalExecutionOriginCurrent: createHostApprovalOriginCurrentness({ credentials,
                 serverId: home.serverId, serverApiUrl: home.baseUrl, resolveServerFeaturesSnapshot, checkDaemonOrigin }),
-            onApprovalRequested: async (artifactId, _signal, decide) => {
-                approvals.push(artifactId);
-                return decide('approve');
-            } });
-        const decided = await controller.execute('deployments.bindings.set', { serverId: home.serverId,
+            onApprovalRequested });
+        const bindingInput = { serverId: home.serverId,
             environmentId: environment.environmentId, expectedRevision: detail.environment.revision,
             set: [{ purpose: 'dataRole', service: 'database', role: 'readOnlyPassword',
-                source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } }], remove: [] },
-            { surface: 'cli', actionCaller: { kind: 'host' }, authority: 'present_user',
+                source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } }], remove: [] };
+        if (entry === 'targeted-terminal') {
+            expect(configuration.activeServerId).not.toBe(home.serverId);
+            await writeStoredCredentialsForServerId(configuration.activeServerId, targetedCredentials);
+            const output: string[] = [];
+            const previousExitCode = process.exitCode;
+            const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+                output.push(String(chunk));
+                const callback = args.find(value => typeof value === 'function');
+                if (typeof callback === 'function') callback();
+                return true;
+            });
+            const stderr = vi.spyOn(console, 'error').mockImplementation(value => {
+                let event: unknown = value;
+                if (typeof value === 'string') {
+                    try { event = JSON.parse(value); } catch { return; }
+                }
+                if (event && typeof event === 'object' && 'data' in event && event.data
+                    && typeof event.data === 'object' && 'kind' in event.data
+                    && event.data.kind === 'approval_request_created' && 'artifactId' in event.data
+                    && typeof event.data.artifactId === 'string') approvals.push(event.data.artifactId);
+            });
+            try {
+                await handleActionsCommand(['invoke', 'deployments.bindings.set', '--input-json', JSON.stringify(bindingInput),
+                    '--server-id', configuration.activeServerId, '--machine-id', home.machineId,
+                    '--request-id', randomUUID(), '--yes', '--json'], {
+                    createExecutorFn: params => createCliActionExecutorFromCredentials({ ...params, actionsSettingsProvider }),
+                }, lifetime.signal);
+            } finally {
+                stdout.mockRestore();
+                stderr.mockRestore();
+                process.exitCode = previousExitCode;
+            }
+            const result: unknown = JSON.parse(output.join(''));
+            expect(approvals, JSON.stringify(result)).toHaveLength(1);
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: false, error: { code: 'service_unavailable' } });
+            return;
+        }
+        const decided = await executor.execute('deployments.bindings.set', bindingInput,
+            { surface: 'cli', actionCaller: { kind: 'host' }, authority: entry === 'controller' ? 'present_user' : 'account_automation',
                 serverId: home.serverId, serverIdentityId: home.serverId, actionRequestId: randomUUID(),
                 externalActionTarget: { kind: 'machine', machineId: home.machineId } });
-        expect(approvals).toHaveLength(1);
-        expect(decided, JSON.stringify(decided)).toMatchObject({ ok: false, errorCode: 'service_unavailable' });
+        expect(approvals, JSON.stringify(decided)).toHaveLength(1);
+        expect(decided, JSON.stringify(decided)).toMatchObject({ ok: false,
+            errorCode: entry === 'targeted-cli' ? 'present_user_required' : 'service_unavailable' });
     } finally {
         lifetime.abort();
         await daemon?.close();
         await home.close();
     }
-});
+}));

@@ -28,6 +28,7 @@ export interface DeploymentSocketHomeFixture {
 }
 export function createDeploymentSocketHome(options?: Readonly<{
     encryptionMode?: 'plain' | 'e2ee';
+    serverId?: string;
     prepareMachineContent?: (key: Uint8Array, metadata: Readonly<Record<string, unknown>>) => string | Promise<string>;
     configureApp?: (app: Fastify) => void | Promise<void>;
 }>): Promise<DeploymentSocketHomeFixture>;

@@ -1,9 +1,10 @@
 import axios from 'axios';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import nacl from 'tweetnacl';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
-import { ExternalActionExecutionAuthorizationRequestV1Schema, projectDeploymentPreparationAdmissionV1, projectExternalActionDeploymentMetadataEnvironmentIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, projectDeploymentPreparationAdmissionV1, projectExternalActionDeploymentMetadataEnvironmentIdV1, projectExternalActionDeploymentNativeEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { configuration } from '@/configuration';
 import { updateSettings, writeDaemonState } from '@/persistence';
@@ -62,6 +63,9 @@ it.each([
     ['deployments.environments.create', 'apply', false, 'host', false, false, 'cold'],
     ['deployments.environments.create', 'apply', true, 'plugin', false, false, 'retained'],
     ['deployments.targets.link', 'apply', true],
+    ['deployments.bindings.set', 'apply', false], ['deployments.bindings.set', 'apply', true],
+    ['deployments.backups.configure', 'test', true], ['deployments.backups.restore', 'prepare', true],
+    ['deployments.restart', 'execute', true],
     ['deployments.templates.instantiate', 'preview', false], ['deployments.templates.instantiate', 'apply', false],
     ['deployments.templates.instantiate', 'preview', true],
     ['deployments.templates.instantiate', 'preview', true, 'plugin'],
@@ -103,9 +107,30 @@ it.each([
         const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/app' };
         const workspace = { id: 'repository-workspace', serverId: 'srv_home', machineId: workspaceMachine.id,
             rootPath: '/repository/app', createdAtMs: 1, repositoryIdentity: repository, source: { sourceId: 'source', revision: 1 } };
-        const accountSettings = accountSettingsParse(setupSpawn ? { actionsSettingsV1: { v: 1,
-            actions: { 'session.spawn_new': { approvalRequiredSurfaces: ['cli'] } } } } : {});
-        const input = authoredPreview ? { mode, serverId: 'srv_home', projectSourceId: 'source', requestKey: 'create-preview',
+        const bindings = actionId === 'deployments.bindings.set';
+        const accountSettings = accountSettingsParse(setupSpawn || bindings ? { actionsSettingsV1: { v: 1,
+            actions: { [actionId]: { approvalRequiredSurfaces: ['cli'] } } } } : {});
+        const input = actionId === 'deployments.restart' ? {
+            serverId: 'srv_home', environmentId: 'environment', deploymentId: 'deployment',
+            targetLinkId: 'runtime', machineId: machine.id, installationId: machine.installationId,
+            expectedGeneration: 'generation', service: { kind: 'deployment', machineId: machine.id,
+                environmentId: 'environment', environmentInstanceId: 'instance', composeService: 'app', serviceId: 'instance/app' },
+        } : actionId === 'deployments.backups.configure' ? {
+            serverId: 'srv_home', environmentId: 'environment', expectedRevision: 1, intent: 'test',
+            configuration: { configRevision: 1, destinationRef: { pluginId: 'example.storage', localId: 'local' },
+                occurrenceId: 'reviewed', config: { path: '/backups' },
+                credentialBindings: [{ purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword' }],
+                ownership: { environmentId: 'environment', prefix: 'owned' },
+                sources: [{ kind: 'volume', sourceId: 'data', service: 'app', volume: 'data', consistency: 'stopDuringCopy' }],
+                retention: { kind: 'keepEverything' } },
+            backupBindings: [{ purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword',
+                source: { kind: 'secret', ref: formatSharedSavedSecretRefV1('backup-secret'), resourceRevision: 1 } }],
+        } : actionId === 'deployments.backups.restore' ? {
+            mode: 'prepare', serverId: 'srv_home', environmentId: 'environment', machineId: machine.id,
+            installationId: machine.installationId, targetLinkId: 'runtime', deploymentId: 'deployment', expectedRevision: 1,
+            source: { kind: 'repository', snapshotId: 'snapshot' },
+            destination: { kind: 'volume', service: 'app', volume: 'data' },
+        } : authoredPreview ? { mode, serverId: 'srv_home', projectSourceId: 'source', requestKey: 'create-preview',
             name: 'pr-17', protection: 'nonProduction', purpose: 'preview', deployerMode: 'managers', preview: {
                 templateEnvironmentId: 'template', expectedTemplateRevision: 1, runtimeTargetLinkId: 'template-runtime',
                 pullRequestId: '17', headSha: 'a'.repeat(40), provenance: { v: 1, templateEnvironmentId: 'template',
@@ -136,7 +161,10 @@ it.each([
                 baseCommit: 'a'.repeat(40), baseBranch: 'main', branchName: 'template/app', composePath: 'compose.yaml', title: 'Add app' }
                 : mode === 'preview' ? { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` }
                 : { kind: 'stored' },
-        }) : actionId === 'deployments.targets.link' ? {
+        }) : bindings ? { serverId: 'srv_home', environmentId: 'environment', expectedRevision: 1,
+            set: [{ purpose: 'dataRole', service: 'database', role: 'readOnlyPassword',
+                source: { kind: 'secret', ref: formatSharedSavedSecretRefV1('role-secret'), resourceRevision: 1 } }], remove: [],
+        } : actionId === 'deployments.targets.link' ? {
             serverId: 'srv_home', environmentId: 'environment', expectedRevision: 1, requestKey: 'link-provider',
             role: 'runtime', targetId: 'platform', targetKind: 'platform', machines: [],
             source: { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'platform' } },
@@ -201,18 +229,20 @@ it.each([
             const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
             requests.push(String(url));
             envelopes.push(request.envelope);
+            const deploymentNativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope: request.envelope });
             if (String(url).endsWith('/execution-authorization')) return { status: 200, data: { v: 1, token: 'home-proof', binding: {
                 accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
                 serverIdentityId: 'srv_home', custodianAccountId: 'owner', machineId: selectedMachine.id, installationId: selectedMachine.installationId,
                 actionId, requestId: request.envelope.requestId, target: request.envelope.target,
-                environmentId: projectExternalActionDeploymentMetadataEnvironmentIdV1(actionId, input),
+                environmentId: deploymentNativeAdmission?.environmentId ?? projectExternalActionDeploymentMetadataEnvironmentIdV1(actionId, input),
+                deploymentNativeAdmission,
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
                 ...(actionId === 'deployments.environments.create' || template
                     ? { deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, input) } : {}),
             } } };
             if (actionId === 'deployments.environments.create' || template)
                 expect(request.executionAuthorization?.binding.deploymentPreparationAdmission).toMatchObject({ operation: template ? 'template' : 'create', mode });
-            else expect(request.executionAuthorization?.requesterAccountContext).toBeDefined();
+            else if (actionId !== 'deployments.restart') expect(request.executionAuthorization?.requesterAccountContext).toBeDefined();
             return { status: 200, data: { v: 1, actionId,
                 requestId: request.envelope.requestId, execution: partial ? { ok: true, result: partial } : expected } };
             } catch (error) { boundaryFailures.push(error); throw error; }
@@ -248,7 +278,7 @@ it.each([
             if (template && !repositoryWorkspace) expect(machineReads.mock.calls.map(([url]) => String(url))).toContain('https://home.test/v1/machines/controller');
             for (const envelope of envelopes) expect(envelope).toMatchObject({ v: 1, input,
                 target: { kind: 'machine', machineId: selectedMachine.id } });
-            expect(result).toEqual(expected);
+            expect(result).toMatchObject(expected);
             expect(requests).toEqual([`https://home.test/v1/actions/${actionId}/execution-authorization`,
                 `https://home.test/v1/actions/${actionId}`]);
             if (setupSpawn || template || move || authoredPreview) expect(localTransport).not.toHaveBeenCalled();

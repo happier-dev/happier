@@ -2828,10 +2828,14 @@ or the host's failure reason and available alternative; direct and discovered
 Action calls consume the same presentation.
 Local Codex Voice uses the native `happier_voice_action` function with `{t,args}`.
 Its input schema and examples come from the same published Voice Action schemas.
-The carrier queues structured calls on the existing Voice output channel; the UI
-decoder and Action executor retain validation, binding, review and admission.
-A queued call is not an executed Action. The existing tool-results follow-up
-carries its outcome. Assistant text is no longer an Action transport.
+In 0.3 development source, native calls await the existing client Action binding,
+review and admission path and return its settled result, including the created
+Session id. An approval-required call stays pending until review settles it.
+The native provider's callId is the Action request identity; the canonical Session
+creation materializer derives its creation key from that identity. Resending the
+same call therefore returns the same child, while distinct calls create distinct
+children. The carrier adds no deduplication or retry policy. Assistant text is
+not an Action transport.
 Codex accepts these function definitions on a new thread, so a cold-resumed
 carrier without confirmed function delivery asks for a fresh Voice conversation.
 
@@ -8501,7 +8505,12 @@ delivery. The Session permission RPC owner still checks authenticated access,
 the current request and turn, and the answers/grants that request offers.
 An unknown or stale request returns `permission_request_not_found`; an
 unoffered response returns `permission_response_invalid` without settling the
-request. No Agent-owned permission policy or decision store is introduced.
+request. For a request with provider-offered native choices, an exact
+`nativeChoice` selects one; a plain `decision` (Allow/Deny, Allow for Session,
+Stop) selects the one offered choice with that decision and scope (Deny falls
+back to an offered Stop when no denial is offered). No match, more than one
+match, or extra grants a native offer cannot carry (mode, tool rules,
+amendments) are unoffered. No Agent-owned permission policy or decision store is introduced.
 
 `session.permission.respond` stays excluded from trusted-plugin discovery and invocation
 (`PLUGIN_SURFACE_EXCLUSION_REASONS`). A plugin's daemon code carries automation provenance, and that
@@ -8597,6 +8606,10 @@ In 0.3 development, an invalid body returns `approval_invalid` with schema issue
 codes, paths and messages. `approval_request_conflict` identifies different
 captured content under the same request identity; a failed body/header read is
 invalid rather than a conflict.
+The built-in creation subject comparison reports `details.mismatches` with fixed field names.
+The approval-read and failure-history owners preserve those names through current
+built-in receipts; operand values and credentials are excluded. Older receipts
+and conflicts from other producers may omit these details.
 
 In 0.3 development, a retained native plugin `discussion.post` or
 `discussion.reply` keeps its open person approval when its executable generation

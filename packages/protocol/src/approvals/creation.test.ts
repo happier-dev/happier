@@ -2,13 +2,18 @@ import { projectExternalActionMachineRuntimeDemandV1 } from '../actions/actionSp
 import { describe, expect, it } from 'vitest';
 import { computeActionInputApprovalDigestV1 } from '../actions/decisionAuthority.js';
 import { normalizeActionExecutorThrownError } from '../actions/executor/resultProjection.js';
+import { approvalReadFailure } from '../actions/executor/approvalRead.js';
+import { projectApprovalRequestForPublicRead } from '../actions/actionApprovalPresentation.js';
+import { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } from './approvalExecutionFailure.js';
+import { ApprovalRequestPublicReadSchema } from './approvalRequestPublicRead.js';
 import { buildApprovalRequestArtifactHeaderV1, buildTargetActionApprovalArtifactHeaderV1 } from './approvalArtifactHeaderV1.js';
-import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from './approvalRequestV1.js';
-import { createApprovalRequestArtifact, deriveApprovalRequestArtifactId } from './creation.js';
+import { ApprovalRequestV2Schema, StoredApprovalRequestSchema, type ApprovalRequestV2 } from './approvalRequestV1.js';
+import { assertApprovalRequestCreationBinding, createApprovalRequestArtifact, deriveApprovalRequestArtifactId } from './creation.js';
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from './targetActionApprovalRequestV1.js';
 import { sealExternalActionRequestV2 } from '../actions/externalActionEncryption.js';
 import { ExternalActionExecutionAuthorizationV1Schema, projectExternalActionDeploymentNativeEnvelopeAdmissionV1 } from '../actions/externalActionApi.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '../actions/externalActionExecutionAuthorization.js';
+import { isDeploymentChildRootActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
 
 function proposal(value = 'private-value'): ApprovalRequestV2 {
   const actionId = 'identity.providers.secret.replace';
@@ -52,7 +57,7 @@ describe('approval Artifact request identity', () => {
         composeService: 'web', serviceId: 'instance/web' } } },
     { actionId: 'deployments.backups.restore', input: { serverId: 'home', environmentId: 'environment', deploymentId: 'deployment',
       targetLinkId: 'runtime', machineId: 'controller', installationId: 'installation', expectedRevision: 3,
-      restoreBackupId: 'backup', mode: 'prepare' } },
+      source: { kind: 'repository', snapshotId: 'backup' }, mode: 'prepare' } },
   ] as const)('creates and rejoins an encrypted $actionId review without losing signed native admission', async ({ actionId, input }) => {
     const home = persistence();
     const target = { kind: 'machine', machineId: 'controller' } as const;
@@ -64,6 +69,7 @@ describe('approval Artifact request identity', () => {
       accountEncryptionMode: 'e2ee', serverIdentityId: 'srv_home', machineId: target.machineId,
       installationId: 'installation', actionId, requestId: envelope.requestId, target, environmentId: input.environmentId,
       deploymentNativeAdmission: projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope }),
+      ...(isDeploymentChildRootActionIdV1(actionId) ? { deploymentChildRoot: true } : {}),
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
     } });
     const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
@@ -232,6 +238,7 @@ describe('approval Artifact request identity', () => {
     await home.create(proposal());
     const failure = await home.create(proposal('changed-private-value')).catch(normalizeActionExecutorThrownError);
     expect(failure).toEqual({ errorCode: 'approval_request_conflict', error: 'approval_request_conflict',
+      details: { mismatches: ['requestInputDigest'] },
       failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'approval_request_conflict', httpStatus: null } });
     expect(home.counts().writes).toBe(1);
     expect(home.rows.size).toBe(1);
@@ -241,11 +248,42 @@ describe('approval Artifact request identity', () => {
     const home = persistence();
     const original = proposal();
     await home.create(original);
-    for (const changed of [
-      { ...original, actionArgs: { different: true } },
-      { ...original, executionOriginV1: { ...original.executionOriginV1, authority: 'account_automation' as const } },
-    ]) await expect(home.create(changed)).rejects.toMatchObject({ code: 'approval_request_conflict' });
+    for (const [changed, field] of [
+      [{ ...original, actionArgs: { different: true } }, 'actionArgs'],
+      [{ ...original, executionOriginV1: { ...original.executionOriginV1, authority: 'account_automation' as const } }, 'executionOriginV1'],
+    ] as const) await expect(home.create(changed)).rejects.toMatchObject({ code: 'approval_request_conflict',
+      details: { mismatches: [field] } });
     expect(home.counts().writes).toBe(1);
+  });
+
+  it('preserves canonical subject mismatch fields when an approval read fails', () => {
+    const original = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli', summary: 'Read machine vitals',
+      actionId: 'machines.vitals.get', actionArgs: { machineId: 'machine' },
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
+        serverId: 'home', accountId: 'account', actionId: 'machines.vitals.get', requestId: 'vitals-review' },
+    });
+    let conflict: unknown;
+    try {
+      assertApprovalRequestCreationBinding(original, { ...original,
+        executionOriginV1: { ...original.executionOriginV1, authority: 'present_user' } });
+    } catch (error) { conflict = error; }
+    expect(conflict).toMatchObject({ code: 'approval_request_conflict' });
+    expect(approvalReadFailure(conflict)).toMatchObject({ ok: false, errorCode: 'approval_request_conflict',
+      details: { mismatches: ['executionOriginV1'] } });
+    const failure = approvalReadFailure(conflict);
+    const execution = projectApprovalExecutionFailureV2({ request: original, failure, executedAtMs: 3 });
+    const stored = StoredApprovalRequestSchema.parse({ ...original, status: 'failed', updatedAtMs: 3,
+      decision: { kind: 'approve', decidedAtMs: 2 }, execution });
+    expect(readApprovalExecutionFailure(stored)).toMatchObject({ details: { mismatches: ['executionOriginV1'] } });
+    const publicRead = ApprovalRequestPublicReadSchema.parse(projectApprovalRequestForPublicRead(stored));
+    expect(publicRead).toMatchObject({ execution: { details: { mismatches: ['executionOriginV1'] } } });
+    for (const unsafe of [{ mismatches: ['private-operand'] }, { mismatches: ['actionArgs'], value: 'private-operand' }]) {
+      expect(projectApprovalExecutionFailureV2({ request: original, failure: { ...failure, details: unsafe }, executedAtMs: 3 }))
+        .not.toHaveProperty('details');
+    }
+    expect(approvalReadFailure(new Error('Storage is unavailable'))).toEqual({ ok: false,
+      errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' });
   });
 
   it('uses the same persisted winner across simultaneous clients and refuses a changed-input race', async () => {

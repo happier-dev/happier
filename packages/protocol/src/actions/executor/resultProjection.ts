@@ -2,7 +2,7 @@ import type { core } from 'zod/mini';
 import { isRpcError } from '../../rpc/errors.js';
 import { isPluginError } from '../../plugins/errors.js';
 import { readPluginActionError, readPluginActionFailureAuthorPayload } from '../../plugins/actions/invocation.js';
-import { ApprovalRequestInvalid } from '../../approvals/creation.js';
+import { ApprovalRequestConflict, ApprovalRequestInvalid } from '../../approvals/creation.js';
 import { RegistryFetchErrorV1, RegistrySourceStatusV1Schema } from '../../registries/registryListV1.js';
 import { readRegistrySourceUrlErrorCodeV1 } from '../../registries/registryRpcV1.js';
 import { MemoryDocFailureV1 } from '../../prompts/library/promptLibraryActionOperations.js';
@@ -122,7 +122,8 @@ export function normalizeActionExecutorThrownError(error: unknown, phase?: strin
 
 function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode: string; error: string; details?: unknown; effectAttempted?: boolean }> {
   if (error instanceof ActionCatalogUnavailableError) return { errorCode: error.code, error: error.code };
-  if (error instanceof ApprovalRequestInvalid) return { errorCode: error.code, error: error.code, details: error.details };
+  if (error instanceof ApprovalRequestInvalid || error instanceof ApprovalRequestConflict)
+    return { errorCode: error.code, error: error.code, ...(error.details ? { details: error.details } : {}) };
   const registrySourceUrlErrorCode = readRegistrySourceUrlErrorCodeV1(error);
   if (registrySourceUrlErrorCode) return { errorCode: registrySourceUrlErrorCode, error: registrySourceUrlErrorCode };
   if (error instanceof RegistryFetchErrorV1) {

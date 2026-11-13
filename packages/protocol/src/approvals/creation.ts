@@ -1,4 +1,5 @@
 import { computeCanonicalDomainSeparatedHexDigest } from '../crypto/canonicalDigest.js';
+import type { ApprovalRequestConflictFieldV1 } from '../actions/actionExecutionResult.js';
 import { deriveAccountScopedArtifactIdV1, resolveAccountScopedArtifactIdV1, type ArtifactIdScopeV1 } from '../artifacts/idScope.js';
 import { encodeExternalActionResolvedTargetV1 } from '../actions/externalActionExecutionAuthorization.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
@@ -24,7 +25,11 @@ function requestIdentity(request: CreationRequest): CapturedRequest | null {
 
 export class ApprovalRequestConflict extends Error {
   readonly code = 'approval_request_conflict';
-  constructor() { super('approval_request_conflict'); }
+  readonly details?: Readonly<{ mismatches: readonly ApprovalRequestConflictFieldV1[] }>;
+  constructor(mismatches?: readonly ApprovalRequestConflictFieldV1[]) {
+    super('approval_request_conflict');
+    if (mismatches) this.details = { mismatches };
+  }
 }
 
 export class ApprovalRequestInvalid extends Error {
@@ -170,15 +175,19 @@ export function assertApprovalRequestCreationBinding(request: ApprovalRequestV2,
   // envelope. Compare the proposal through the same canonical settlement owner.
   const subject = request.status === 'open' || request.status === 'approved' || request.status === 'executing'
     ? proposed : settleApprovalRequestReplayInputs(proposed);
-  if (subject.v !== 2) throw new ApprovalRequestConflict();
-  if (request.actionId !== proposed.actionId
-    || request.requestInputDigest !== proposed.requestInputDigest
-    || !sameStrictJsonValue(request.actionArgs, subject.actionArgs, { omitUndefinedObjectMembers: true })
-    || !sameStrictJsonValue(creationOriginSubject(request), creationOriginSubject(subject))
-    || !sameStrictJsonValue(request.requesterConfirmation ?? null, proposed.requesterConfirmation ?? null)
-    || !sameStrictJsonValue(request.createdBy, proposed.createdBy)) {
-    throw new ApprovalRequestConflict();
-  }
+  if (subject.v !== 2) throw new ApprovalRequestConflict(['v']);
+  // Report only field names: captured operands, origin proofs and credentials stay private.
+  const mismatches: ApprovalRequestConflictFieldV1[] = [];
+  if (request.actionId !== proposed.actionId) mismatches.push('actionId');
+  if (request.requestInputDigest !== proposed.requestInputDigest) mismatches.push('requestInputDigest');
+  if (!sameStrictJsonValue(request.actionArgs, subject.actionArgs, { omitUndefinedObjectMembers: true }))
+    mismatches.push('actionArgs');
+  if (!sameStrictJsonValue(creationOriginSubject(request), creationOriginSubject(subject)))
+    mismatches.push('executionOriginV1');
+  if (!sameStrictJsonValue(request.requesterConfirmation ?? null, proposed.requesterConfirmation ?? null))
+    mismatches.push('requesterConfirmation');
+  if (!sameStrictJsonValue(request.createdBy, proposed.createdBy)) mismatches.push('createdBy');
+  if (mismatches.length > 0) throw new ApprovalRequestConflict(mismatches);
 }
 
 function rejoin(stored: StoredArtifact | null, proposed: CreationRequest): CreationRequest {
