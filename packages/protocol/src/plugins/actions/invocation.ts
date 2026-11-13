@@ -433,7 +433,12 @@ export function readPluginActionError(error: unknown): Readonly<{
   retryable: boolean;
   data?: StrictJsonValue;
 }> | null {
-  if (!isPluginError(error)) return null;
+  if (!isPluginError(error)) {
+    const failureCause = readActionOutputDiagnostic(error)?.failureCause;
+    if (!failureCause) return null;
+    return Object.freeze({ code: PLUGIN_ACTION_FAILURE_FALLBACK_CODE, message: PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE,
+      retryable: false, data: { failureCause: { ...failureCause } } });
+  }
   const data = AgentRuntimeJsonValueV1Schema.safeParse(error.data);
   const failure = Object.freeze({
     code: projectPluginActionFailureCode(error.code),

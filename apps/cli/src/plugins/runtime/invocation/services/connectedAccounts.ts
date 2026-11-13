@@ -1,8 +1,12 @@
 import { Buffer } from 'node:buffer';
-import { readConnectedAccountListLimit } from '@happier-dev/cli-common/connectedAccounts';
+import { QualifiedConnectedAccountMaterialError, ConnectedAccountProducerResultError, ConnectedAccountAuthenticationModeUnavailableError, ConnectedAccountRuntimeInvocationNotStartedError, readConnectedAccountListLimit } from '@happier-dev/cli-common/connectedAccounts';
+import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
+import { withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import type { ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { ConnectedAccountMaterializationRequestSchema } from '@happier-dev/protocol/connect/connected-account-purposes';
+import { RequestAuthFactsV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
 import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connected-account-purposes';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -53,6 +57,8 @@ export type ConnectedAccountMaterializationCredentialRevisionBasis = Readonly<{
 }>;
 
 export type StablePluginConnectedAccountsOwner = Readonly<{
+    /** Host-private snapshot for finite SCM Action credential admission. */
+    resolveCurrentSessionPurposeBindingSnapshot?: import('@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner').ConnectedAccountPurposeBindingOwner['resolveCurrentSessionPurposeBindingSnapshot'];
     /** Host Agent factories bind an already-admitted Run, rather than durable defaults. */
     readExecutionRunPurposeBindingSubjectId?(runId: string): string | null;
     getBinding(
@@ -178,6 +184,36 @@ function materializationOutOfScope(): PluginError {
         code: 'plugin_connected_account_binding_out_of_scope',
         message: 'Connected Accounts owner returned materialization outside the request authorization',
     });
+}
+
+/** Keep host failure facts, never credential values or arbitrary exception prose. */
+function materializationFailure(error: unknown, seed: PluginInvocationServicesSeed,
+    operation: 'materialize' | 'materialize_listed'): unknown {
+    const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
+    const failureCause = {
+        phase: `connected_accounts.${operation}`,
+        errorClass: diagnostic.errorClass,
+        errorCode: error instanceof QualifiedConnectedAccountMaterialError
+            || error instanceof ConnectedAccountProducerResultError
+            || error instanceof ConnectedAccountAuthenticationModeUnavailableError
+            || error instanceof ConnectedAccountRuntimeInvocationNotStartedError
+            ? error.code : diagnostic.errorCode,
+        httpStatus: diagnostic.httpStatus,
+    };
+    // Preserve the exception identity for non-Action consumers (including HTTP custody).
+    // The Action exception projector consumes this existing private diagnostic carrier.
+    if (error instanceof Error) {
+        try { withActionFailureCauseDiagnostic(error, { name: failureCause.errorClass, code: failureCause.errorCode, status: failureCause.httpStatus }, failureCause.phase); }
+        catch { /* A frozen exception still reaches the file diagnostic below. */ }
+    }
+    try {
+        logger.warnLocalFile('[connected-account-materialization-failed]', {
+            correlationId: seed.correlationId, pluginId: seed.plugin.id, localId: seed.contribution.id,
+            ...failureCause,
+            stackFrames: diagnostic.stackFrames,
+        });
+    } catch { /* File logging cannot replace the materialization failure. */ }
+    return error;
 }
 
 function listingOutOfScope(): PluginError {
@@ -401,6 +437,8 @@ function snapshotMaterialization(
     const scope = usageAccountScope === undefined ? {} : { usageAccountScope };
     if (request.kind === 'httpHeaders') {
         if (!isUnknownRecord(materialization.headers)) throw materializationOutOfScope();
+        const facts = materialization.facts === undefined ? undefined : RequestAuthFactsV1Schema.safeParse(materialization.facts);
+        if (facts && !facts.success) throw materializationOutOfScope();
         const requestedNames = new Set(request.headerNames.map((name) => name.toLowerCase()));
         const returnedNames = new Set<string>();
         const headerEntries: Array<readonly [string, string]> = [];
@@ -420,6 +458,8 @@ function snapshotMaterialization(
             kind: 'httpHeaders',
             ...scope,
             headers: Object.freeze(Object.fromEntries(headerEntries)),
+            ...(typeof materialization.expiresAt === 'number' ? { expiresAt: materialization.expiresAt } : {}),
+            ...(facts?.success ? { facts: Object.freeze(facts.data) } : {}),
         });
     }
     if (request.kind === 'environment') {
@@ -748,6 +788,8 @@ export function createStablePluginConnectedAccountsHost(
                         registerMaterializationForRedaction(snapshot, seed, hostOptions, publicValues);
                         assertCurrent(seed);
                         return snapshot;
+                    } catch (error) {
+                        throw materializationFailure(error, seed, 'materialize');
                     } finally {
                         signals.dispose();
                     }
@@ -811,6 +853,8 @@ export function createStablePluginConnectedAccountsHost(
                         registerMaterializationForRedaction(snapshot, seed, hostOptions, publicValues);
                         assertCurrent(seed);
                         return snapshot;
+                    } catch (error) {
+                        throw materializationFailure(error, seed, 'materialize_listed');
                     } finally {
                         signals.dispose();
                     }

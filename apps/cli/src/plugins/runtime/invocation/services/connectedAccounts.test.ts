@@ -1,4 +1,6 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { logger } from '@/ui/logger';
+import { readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { CRABBOX_PLUGIN } from '../../../../../../../packages/plugins/machine-crabbox/src/manifest';
@@ -49,6 +51,8 @@ import { buildOpenCodeManagedServerSpawnSpec } from '../../../../../../../packag
 import { OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV } from '../../../../../../../packages/plugins/opencode/src/agent/auth/services/requestAuth/env';
 import { OPEN_CODE_SYSTEM_TOOL_ID } from '../../../../../../../packages/plugins/opencode/src/agent/systemTool';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { openAiCodexConnectedAccountRuntime } from '../../../../../../../packages/plugins/codex/src/connectedAccounts/openAiCodexRuntime';
+import { parseHttpHeadersRequestAuthMaterial } from '@/daemon/connectedServices/requestAuth/parseHttpHeadersRequestAuthMaterial';
 
 const scope: PluginConnectedAccountBindingScope = Object.freeze({
     purpose: 'realtime_upstream',
@@ -1065,6 +1069,31 @@ describe('stable plugin Connected Accounts host', () => {
         expect(registerExactForRedaction).not.toHaveBeenCalled();
     });
 
+    it('preserves real Codex expiry through purpose materialization and the native request-auth reader', async () => {
+        const { seed } = createSeed();
+        const serviceRef = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+        const account = { service: serviceRef, accountId: 'expiry-account' };
+        const expiresAt = 4_102_444_800_000;
+        const values = new Map([['accessToken', 'fixture-access'], ['expiresAtMs', String(expiresAt)], ['providerAccountId', 'fixture-account']]);
+        const request = { kind: 'httpHeaders' as const, origin: 'https://chatgpt.com', headerNames: ['authorization', 'chatgpt-account-id'] };
+        const fixture = createForegroundPurposeOwnerFixture({
+            consumer: { pluginId: seed.plugin.id, localId: seed.contribution.id }, service: serviceRef,
+            accountId: account.accountId, purpose: scope.purpose,
+            materializeAccount: async input => openAiCodexConnectedAccountRuntime.materialize(input.request, {
+                account: input.account, signal: input.signal, credentials: { get: async key => values.get(key) ?? null },
+                configuration: { target: { kind: 'account', account, modeId: 'oauth' }, revision: 'fixture-config', values: {}, getSecret: async () => null },
+                services: {},
+            } as Parameters<typeof openAiCodexConnectedAccountRuntime.materialize>[1]),
+        });
+        const host = createStablePluginConnectedAccountsHost(fixture.owner);
+        try {
+            const material = await host.bind(seed, [{ ...scope, serviceRefs: [serviceRef] }]).materialize(scope.purpose, request);
+            expect(parseHttpHeadersRequestAuthMaterial(request, material)).toEqual({
+                headers: { authorization: 'Bearer fixture-access', 'chatgpt-account-id': 'fixture-account' }, facts: {}, expiresAt,
+            });
+        } finally { host.retire(); }
+    });
+
     it('returns bounded point-in-time copies and registers redaction from those copies', async () => {
         const sourceHeaders = { authorization: 'Bearer original-header' };
         const sourceEnvironment = { TOKEN: 'original-environment' };
@@ -1731,5 +1760,82 @@ describe('stable plugin Connected Accounts host', () => {
                 ? { account: listedAccount().account } : metadataList());
             await expect(read()).rejects.toMatchObject({ code: 'plugin_final_generation_retired' });
         } finally { release(); await pending.catch(() => undefined); }
+    });
+});
+
+describe('Coder options with established token material', () => {
+    it.each(['ok', 'missing', 'io'] as const)('settles Coder options with %s material through the real owner', async failure => {
+        const { PLUGIN } = await import('../../../../../../../packages/plugins/machine-coder/src/manifest');
+        const { CODER_CONNECTED_ACCOUNT_RUNTIME: runtime } = await import('../../../../../../../packages/plugins/machine-coder/src/machine/connection');
+        const manifest = normalizePluginManifestV2(PLUGIN.manifest);
+        const account = { service: { pluginId: manifest.id, localId: 'coder-account' }, accountId: 'selected' };
+        const descriptor = manifest.contributes.connectedAccountDescriptors[0]!;
+        const scope: PluginConnectedAccountBindingScope = { purpose: 'coder-account', serviceRefs: [account.service], operations: ['select', 'use'], materializationKinds: ['environment'] };
+        const original = createSeed();
+        const seed = { ...original.seed, plugin: { id: manifest.id, version: manifest.version }, contribution: { id: 'options', qualifiedId: `${manifest.id}/actions/options` } };
+        const token = 'synthetic-coder-token';
+        const warnings = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        onTestFinished(() => warnings.mockRestore());
+        const lease = { ref: account.service, descriptor, runtime, occurrenceId: createPluginRuntimeOccurrenceId(account.service.pluginId),
+            sourceCustody: { kind: 'managed' as const, immutableGenerationId: 'provider-artifact', installSource: 'npm' as const }, isCurrent: () => true };
+        const invoker = createConnectedAccountHostRuntimeInvoker({
+            resolveRuntime: async () => lease, resolvePlugin: () => ({ version: '1.0.0', hostAccessRequests: [] }),
+            resolveHostPolicy: () => ({ hostAccess: [], serviceBinding: createPluginInvocationServiceBinding('provider-generation', 'provider') }),
+            // The loaded provider invokes no platform service; its configuration and credential readers remain real.
+            createServices: () => ({}) as PluginInvocationContext['services'],
+            registerRawForRedaction() {},
+        });
+        const registry = { resolveConnectedAccountRuntime: async () => lease, connectedAccountRuntimeInvoker: invoker };
+        const content = (kind: 'credential' | 'configuration', payload: unknown) => sealQualifiedConnectedAccountContentEnvelope({
+            kind, accountMode: 'plain', payload, randomBytes: length => new Uint8Array(length),
+        });
+        const revisions = { authenticationModeId: 'token', revisionSemantics: 'revisioned',
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: 'selected-configuration' };
+        const credential = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ...revisions, ref: account,
+            content: content('credential', { v: 1, values: { token } }), metadata: { scopes: [] } });
+        const configuration = QualifiedConnectedAccountConfigurationSnapshotV4Schema.parse({ ...revisions,
+            target: { kind: 'account', ref: account }, configurationContent: content('configuration', {
+                values: { endpoint: "https://coder.example.test" }, secretRefs: {}, secretValues: {},
+            }) });
+        const established = createQualifiedConnectedAccountEstablishedRuntimeOwner({
+            // Runtime loading and persisted snapshots are the only substituted system boundaries.
+            reloadController: { acquireRuntimeRegistry: async () => ({ registry, source: 'active', release: async () => {} }),
+                isRuntimeRegistryCurrent: () => true } as unknown as Pick<PluginReloadController, 'acquireRuntimeRegistry' | 'isRuntimeRegistryCurrent'>,
+            credentials: { token: 'home-token', encryption: null }, getAccountEncryptionMode: async () => 'plain',
+            readCredential: async () => { if (failure === 'io') throw Object.assign(new TypeError('private-credential-error'), { code: 'EIO' }); return failure === 'missing' ? null : credential; }, readConfiguration: async () => configuration,
+            configuration: { read: async () => null, secrets: { admit: async () => {}, has: async () => false, read: async () => null } },
+        });
+        const fixture = createForegroundPurposeOwnerFixture({ consumer: { pluginId: seed.plugin.id, localId: seed.contribution.id },
+            service: account.service, accountId: account.accountId, purpose: scope.purpose,
+            materializeAccount: createConnectedAccountPurposeMaterializer(established) });
+
+        const host = createStablePluginConnectedAccountsHost(fixture.owner);
+        const handlers = new Map<string, ActionHandler>();
+        await PLUGIN.activate({ actions: { register(id: string, handler: ActionHandler) {
+            handlers.set(id, handler); return { dispose() {} };
+        } }, connectedAccounts: { register() { return { dispose() {} }; } } } as unknown as PluginApi);
+        const http = vi.fn(async () => ({ status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify([
+            { id: 'template', name: 'Development', organization_id: 'org', active_version_id: 'version' },
+        ])), finalUrl: 'https://coder.example.test/api/v2/organizations/org/templates' }));
+        const context = { signal: seed.signal, invokedAtMs: 1, services: { connectedAccounts: host.bind(seed, [scope]), http: { request: http } } } as unknown as PluginInvocationContext;
+        try {
+            if (failure !== 'ok') {
+                const failureResult = await handlers.get('options')!({ organizationId: 'org' }, context).catch(error => readPluginActionError(error));
+                expect(failureResult).toMatchObject({
+                    code: 'plugin_action_execution_failed', data: { failureCause: { phase: 'connected_accounts.materialize',
+                        errorCode: failure === 'io' ? 'EIO' : 'credential_snapshot_unavailable' } },
+                });
+                expect(http).not.toHaveBeenCalled();
+                const records = warnings.mock.calls.filter(([message]) => message === '[connected-account-materialization-failed]');
+                expect(records).toHaveLength(1);
+                expect(records[0]?.[1]).toMatchObject({ phase: 'connected_accounts.materialize',
+                    errorClass: failure === 'io' ? 'TypeError' : 'Error',
+                    errorCode: failure === 'io' ? 'EIO' : 'credential_snapshot_unavailable' });
+                expect(JSON.stringify(records)).not.toMatch(/synthetic-coder-token|private-credential-error/);
+                return;
+            }
+            await expect(handlers.get('options')!({ organizationId: 'org' }, context)).resolves.toMatchObject({ dimensions: { image: [{ id: 'template' }] } });
+            expect(http).toHaveBeenCalledOnce();
+        } finally { host.retire(); }
     });
 });
