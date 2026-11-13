@@ -2725,6 +2725,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         const desired = Math.round(available * 0.34);
         return clampNumber(desired, 160, Math.min(320, available));
     }, [props.maxPanelHeight, screenHeight, viewerComposerReserve]);
+    // What the rest of the composer (input, actions, status row) leaves of the same budget, measured: the tray may
+    // grow into it so a long request's decision stays whole above the input (R144-A). Null until measured.
+    const permissionRequestsMaxHeightCeilingPx = React.useMemo(() => {
+        if (composerBlockHeightPx === null) return null;
+        const available = Math.max(1, (props.maxPanelHeight ?? screenHeight) - viewerComposerReserve);
+        return Math.max(0, available - (composerBlockHeightPx - composerAttentionHeightPx));
+    }, [composerAttentionHeightPx, composerBlockHeightPx, props.maxPanelHeight, screenHeight, viewerComposerReserve]);
     const composerAttentionRequestsNode = React.useMemo(() => {
         if (!attentionRequestSessionId || !hasComposerAttentionRequests) return null;
         const sharedProps: Omit<AgentInputPermissionRequestsProps, 'permissionLocationsById'> = {
@@ -2735,6 +2742,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             canApprovePermissions,
             disabledReason: props.permissionDisabledReason,
             maxHeightPx: permissionRequestsMaxHeightPx,
+            maxHeightCeilingPx: permissionRequestsMaxHeightCeilingPx,
             presentation: compactCommandMenu ? 'oneAtATime' : 'shared',
             onContentSizeChange: (_w, h) => {
                 permissionRequestsFades.onContentSizeChange?.(_w, h);
@@ -2764,6 +2772,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         composerPermissionRequests,
         hasComposerAttentionRequests,
         permissionRequestsFades,
+        permissionRequestsMaxHeightCeilingPx,
         permissionRequestsMaxHeightPx,
         props.metadata,
         props.permissionDisabledReason,

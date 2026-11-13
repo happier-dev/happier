@@ -56,6 +56,20 @@ export function shareApprovalPromptRoom(available: number,
 }
 
 /**
+ * How tall the tray of shared approval cards may be. It keeps its usual share of the composer, but grows to hold
+ * every shown card's head and decision whole (`decisionsPx`, their measured minimums), so no action of the
+ * decision sits under the input (R144-A: a 70 px command rule put Stop under the composer at 390). It never
+ * grows past the room the rest of the composer leaves (`ceilingPx`); past that the tray scrolls. Until the cards
+ * and the composer are measured it keeps its share.
+ */
+export function resolveApprovalPromptTrayMaxHeight(input: Readonly<{
+  preferredPx: number; decisionsPx: number | null; ceilingPx: number | null;
+}>): number {
+  if (input.decisionsPx === null || input.ceilingPx === null) return input.preferredPx;
+  return Math.max(input.preferredPx, Math.min(input.decisionsPx, input.ceilingPx));
+}
+
+/**
  * The one anatomy of an in-transcript request for the person's decision: a shield, what is asked and
  * by whom, the exact facts it decides, then the decision. Every approval prompt card (Session permissions,
  * Action approvals, Session Action confirmations, Project setup consent) draws through this chrome; each owns only its

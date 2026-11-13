@@ -9,7 +9,7 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 
-const { shareApprovalPromptRoom } = await import('./ApprovalPromptChrome');
+const { resolveApprovalPromptTrayMaxHeight, shareApprovalPromptRoom } = await import('./ApprovalPromptChrome');
 
 describe('shareApprovalPromptRoom', () => {
     it('shows a short request whole and lets the long one scroll its facts', () => {
@@ -39,5 +39,22 @@ describe('shareApprovalPromptRoom', () => {
     it('never gives a request less than its head and decision, nor more than the tray can show', () => {
         const bounds = shareApprovalPromptRoom(150, new Map([['a', { natural: 400, minimum: 110 }], ['b', { natural: 500, minimum: 110 }]]));
         expect([bounds.get('a'), bounds.get('b')]).toEqual([150, 150]);
+    });
+});
+
+describe('resolveApprovalPromptTrayMaxHeight', () => {
+    it('grows a phone tray so the shown card keeps its whole decision above the input (R144-A: 70 px rule, Stop under the composer)', () => {
+        // The tray's usual share is 160; the card's head and three actions need 230; the composer leaves 420.
+        expect(resolveApprovalPromptTrayMaxHeight({ preferredPx: 160, decisionsPx: 230, ceilingPx: 420 })).toBe(230);
+    });
+    it('keeps its usual share when the decisions already fit', () => {
+        expect(resolveApprovalPromptTrayMaxHeight({ preferredPx: 160, decisionsPx: 120, ceilingPx: 420 })).toBe(160);
+    });
+    it('never grows past the room the composer leaves; the tray scrolls instead', () => {
+        expect(resolveApprovalPromptTrayMaxHeight({ preferredPx: 160, decisionsPx: 500, ceilingPx: 300 })).toBe(300);
+    });
+    it('stays at its share until the cards and the composer are measured', () => {
+        expect(resolveApprovalPromptTrayMaxHeight({ preferredPx: 160, decisionsPx: null, ceilingPx: 420 })).toBe(160);
+        expect(resolveApprovalPromptTrayMaxHeight({ preferredPx: 160, decisionsPx: 230, ceilingPx: null })).toBe(160);
     });
 });

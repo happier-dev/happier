@@ -8,7 +8,7 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Text } from '@/components/ui/text/Text';
 import { PermissionPromptCard } from '@/components/tools/shell/permissions/PermissionPromptCard';
 import { ApprovalPromptCard } from '@/components/tools/shell/approvals/ApprovalPromptCard';
-import { ApprovalPromptRoomContext, shareApprovalPromptRoom, type ApprovalPromptCardHeights, type ApprovalPromptRoom } from '@/components/tools/shell/approvals/ApprovalPromptChrome';
+import { ApprovalPromptRoomContext, resolveApprovalPromptTrayMaxHeight, shareApprovalPromptRoom, type ApprovalPromptCardHeights, type ApprovalPromptRoom } from '@/components/tools/shell/approvals/ApprovalPromptChrome';
 import { Typography } from '@/constants/Typography';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
@@ -88,6 +88,8 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
     canApprovePermissions: boolean;
     disabledReason?: TranscriptPermissionDisabledReason;
     maxHeightPx: number;
+    /** The room the rest of the composer leaves; the tray grows into it to keep its decisions whole. Null until measured. */
+    maxHeightCeilingPx?: number | null;
     /**
      * `shared` (wide layouts): every request shares the tray so each decision is in view at once.
      * `oneAtATime` (a phone): the tray shows the first request whole, with a pager to the others, so a stack
@@ -121,10 +123,21 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
         const item = attentionRequests[index];
         if (item) setCurrent({ key: getAttentionRequestKey(item), index });
     }, [attentionRequests]);
-    const scrollStyle = React.useMemo(() => ({ maxHeight: props.maxHeightPx }), [props.maxHeightPx]);
     // The requests share the tray: each card reports the height it wants, and the room is divided so every
     // card's decision is in view at once (the shortest keep their height; the rest split what is left).
     const [cardHeights, setCardHeights] = React.useState<ReadonlyMap<string, ApprovalPromptCardHeights>>(() => new Map());
+    // The tray grows to hold every shown card's head and decision whole, within what the composer leaves.
+    const trayMaxHeightPx = React.useMemo(() => {
+        let decisionsPx: number | null = null;
+        if (cardHeights.size === shownRequests.length && shownRequests.length > 0) {
+            decisionsPx = TRAY_BOTTOM_INSET_PX + (shownRequests.length - 1) * TRAY_DIVIDER_PX;
+            for (const [, card] of cardHeights) decisionsPx += card.minimum;
+        }
+        return resolveApprovalPromptTrayMaxHeight({
+            preferredPx: props.maxHeightPx, decisionsPx, ceilingPx: props.maxHeightCeilingPx ?? null,
+        });
+    }, [cardHeights, props.maxHeightCeilingPx, props.maxHeightPx, shownRequests.length]);
+    const scrollStyle = React.useMemo(() => ({ maxHeight: trayMaxHeightPx }), [trayMaxHeightPx]);
     const reportCardHeights = React.useCallback((cardId: string, heights: ApprovalPromptCardHeights | null) => setCardHeights((current) => {
         const previous = current.get(cardId);
         if (heights === null ? !previous : previous?.natural === heights.natural && previous.minimum === heights.minimum) return current;
@@ -133,14 +146,14 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
         return next;
     }), []);
     const room = React.useMemo<ApprovalPromptRoom>(() => {
-        const available = props.maxHeightPx - TRAY_BOTTOM_INSET_PX - (shownRequests.length - 1) * TRAY_DIVIDER_PX;
+        const available = trayMaxHeightPx - TRAY_BOTTOM_INSET_PX - (shownRequests.length - 1) * TRAY_DIVIDER_PX;
         // Until every card has reported, each gets an even part, so no decision starts out of view.
         const bounds = cardHeights.size === shownRequests.length ? shareApprovalPromptRoom(available, cardHeights) : new Map<string, number>();
         return {
             boundFor: (cardId) => bounds.get(cardId) ?? Math.floor(available / Math.max(1, shownRequests.length)),
             report: reportCardHeights,
         };
-    }, [shownRequests.length, cardHeights, props.maxHeightPx, reportCardHeights]);
+    }, [shownRequests.length, cardHeights, trayMaxHeightPx, reportCardHeights]);
 
     if (attentionRequests.length === 0) {
         return null;
