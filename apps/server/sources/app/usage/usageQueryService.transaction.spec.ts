@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, UsageAnalyticsQueryBatchResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryBatchResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { createDbMocks, createDbTransactionMock, installDbModuleMock, inTxPostgresControlStatementMock } from '@/app/api/testkit/dbMocks';
 import { restoreEnv, snapshotEnv } from '@/testkit/env';
 import type { ScopedUsageEventDbRow } from './query/scopedUsageEventRow';
@@ -76,6 +76,7 @@ const { createAuthenticatedTestApp, withAuthenticatedTestApp } = await import('@
 const { queryUsageAnalytics } = await import('./usageQueryService');
 const { captureUsageAnalyticsBatch, projectUsageAnalyticsBatch } = await import('./query/readUsageAnalyticsBatch');
 const { registerAccountUsageRoutes } = await import('@/app/api/routes/account/registerAccountUsageRoutes');
+const { queryUsageAnalyticsBatch } = await import('./query/queryUsageAnalyticsBatch');
 
 describe('Usage snapshot transaction lifetime', () => {
     const env = snapshotEnv();
@@ -106,6 +107,252 @@ describe('Usage snapshot transaction lifetime', () => {
         });
     });
     afterEach(() => { restoreEnv(env); boundary.reset(); usageEventRawRead.mockReset(); });
+
+    it('shares identical running batch accounting and projection across independent JSON and NDJSON deliveries', async () => {
+        let releaseCapture = () => {};
+        const captured = new Promise<void>(resolve => { releaseCapture = resolve; });
+        let capturedStarted = () => {};
+        const started = new Promise<void>(resolve => { capturedStarted = resolve; });
+        let held = true;
+        usageEventRawRead.mockImplementation(async () => {
+            const event = eventForAttempt(++accountingRead);
+            capturedStarted();
+            if (held) await captured;
+            return [event];
+        });
+        await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async app => {
+            const payload = { queries: [{}], includeContributions: true };
+            const json = app.inject({ method: 'POST', url: '/v2/usage/query-batch',
+                headers: { 'x-test-user-id': 'account' }, payload }).then(response => response);
+            await started;
+            const lines = app.inject({ method: 'POST', url: '/v2/usage/query-batch',
+                headers: { 'x-test-user-id': 'account', accept: 'application/x-ndjson' },
+                payload: { includeContributions: true, queries: [{ includeSeries: true }] } }).then(response => response);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            held = false;
+            releaseCapture();
+            const [jsonResponse, linesResponse] = await Promise.all([json, lines]);
+            expect(jsonResponse.statusCode, jsonResponse.body).toBe(200);
+            expect(linesResponse.statusCode, linesResponse.body).toBe(200);
+            const jsonBatch = UsageAnalyticsQueryBatchResponseSchema.parse(jsonResponse.json());
+            const lineBatches = linesResponse.body.trim().split('\n').map(line =>
+                UsageAnalyticsQueryBatchResponseSchema.parse(JSON.parse(line)));
+            expect(usageEventRawRead, 'overlapping readers must share the accounting acquisition').toHaveBeenCalledTimes(1);
+            expect(lineBatches.flatMap(batch => batch.results)).toEqual(jsonBatch.results);
+            expect(jsonBatch.results[0]).toHaveProperty('value.totals.tokens.total', 7);
+            const fresh = await app.inject({ method: 'POST', url: '/v2/usage/query-batch',
+                headers: { 'x-test-user-id': 'account' }, payload });
+            expect(fresh.statusCode, fresh.body).toBe(200);
+            expect(fresh.json()).toHaveProperty('results.0.value.totals.tokens.total', 14);
+            expect(usageEventRawRead, 'finished results must never be retained').toHaveBeenCalledTimes(2);
+        });
+    });
+
+    it.each([
+        { label: 'Account', account: 'other-account', baseline: { queries: [{}] }, body: { queries: [{}] } },
+        { label: 'query demand', account: 'account', baseline: { queries: [{}] },
+            body: { queries: [{ dateRange: { startMs: 0, endMs: 200 } }] } },
+        { label: 'contribution flag', account: 'account', baseline: { queries: [{}] }, body: { queries: [{}], includeContributions: true } },
+        { label: 'summary delivery', account: 'account', baseline: { queries: [{}] }, body: { queries: [{}], contributionQueries: [] } },
+        { label: 'detail selectors', account: 'account', baseline: { queries: [{}], contributionQueries: [] },
+            body: { queries: [{}], contributionQueries: [{}] } },
+        { label: 'Session selectors', account: 'account', baseline: { queries: [{}], contributionQueries: [] },
+            body: { queries: [{}], contributionQueries: [], sessionQueries: [{}] } },
+        { label: 'detail continuation', account: 'account', baseline: { queries: [{}], contributionQueries: [{}] },
+            body: { queries: [{}], contributionQueries: [{}], contributionOffset: 1 } },
+    ])('separates overlapping batch work by $label', async ({ account, baseline, body }) => {
+        let releaseCapture = () => {};
+        const held = new Promise<void>(resolve => { releaseCapture = resolve; });
+        let captureStarted = () => {};
+        const started = new Promise<void>(resolve => { captureStarted = resolve; });
+        usageEventRawRead.mockImplementation(async () => {
+            const event = eventForAttempt(++accountingRead);
+            captureStarted();
+            await held;
+            return [event];
+        });
+        await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async app => {
+            const original = app.inject({ method: 'POST', url: '/v2/usage/query-batch',
+                headers: { 'x-test-user-id': 'account' }, payload: baseline }).then(response => response);
+            await started;
+            const distinct = app.inject({ method: 'POST', url: '/v2/usage/query-batch',
+                headers: { 'x-test-user-id': account }, payload: body }).then(response => response);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            releaseCapture();
+            const responses = await Promise.all([original, distinct]);
+            expect(responses.map(response => response.statusCode)).toEqual([200, 200]);
+            expect(usageEventRawRead).toHaveBeenCalledTimes(2);
+            expect(responses[0]!.json()).toHaveProperty('results.0.value.totals.tokens.total', 7);
+            expect(responses[1]!.json()).toHaveProperty('results.0.value.totals.tokens.total', 14);
+        });
+    });
+
+    it('keeps feature admission specific to each reader before joining batch work', async () => {
+        let releaseCapture = () => {};
+        const held = new Promise<void>(resolve => { releaseCapture = resolve; });
+        let captureStarted = () => {};
+        const started = new Promise<void>(resolve => { captureStarted = resolve; });
+        usageEventRawRead.mockImplementation(async () => {
+            const event = eventForAttempt(++accountingRead);
+            captureStarted();
+            await held;
+            return [event];
+        });
+        process.env.HAPPIER_FEATURE_ACCOUNT_PUBLIC_PROFILES__ENABLED = '1';
+        await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async app => {
+            const payload = { queries: [{ population: 'public_eligible_personal' }, {}] };
+            const admitted = app.inject({ method: 'POST', url: '/v2/usage/query-batch',
+                headers: { 'x-test-user-id': 'account' }, payload }).then(response => response);
+            await started;
+            process.env.HAPPIER_FEATURE_ACCOUNT_PUBLIC_PROFILES__ENABLED = '0';
+            const denied = app.inject({ method: 'POST', url: '/v2/usage/query-batch',
+                headers: { 'x-test-user-id': 'account' }, payload }).then(response => response);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            releaseCapture();
+            const [allowed, refused] = await Promise.all([admitted, denied]);
+            expect(allowed.statusCode, allowed.body).toBe(200);
+            expect(refused.statusCode, refused.body).toBe(200);
+            expect(allowed.json().results[0]).toHaveProperty('value');
+            expect(refused.json().results[0]).toMatchObject({ error: 'not_found' });
+            expect(refused.json().results[1]).toHaveProperty('value.totals.tokens.total', 14);
+            expect(usageEventRawRead).toHaveBeenCalledTimes(2);
+        });
+    });
+
+    it('retires failed shared batch work so a new reader can acquire fresh facts', async () => {
+        const body = UsageAnalyticsQueryBatchRequestSchema.parse({ queries: [{}] });
+        let releaseCapture = () => {};
+        const held = new Promise<void>(resolve => { releaseCapture = resolve; });
+        let captureStarted = () => {};
+        const started = new Promise<void>(resolve => { captureStarted = resolve; });
+        usageEventRawRead.mockImplementationOnce(async () => {
+            captureStarted();
+            await held;
+            throw new Error('database read failed');
+        });
+        const first = queryUsageAnalyticsBatch('account', body, body.queries, () => false);
+        await started;
+        const second = queryUsageAnalyticsBatch('account', body, body.queries, () => false);
+        releaseCapture();
+        const settled = await Promise.allSettled([first, second]);
+        expect(settled.map(result => result.status)).toEqual(['rejected', 'rejected']);
+        for (const result of settled) if (result.status === 'rejected') {
+            expect(result.reason).toBeInstanceOf(Error);
+            expect(result.reason.message).toBe('database read failed');
+        }
+        expect(usageEventRawRead).toHaveBeenCalledTimes(1);
+        const recovered = await queryUsageAnalyticsBatch('account', body, body.queries, () => false);
+        expect(recovered).toHaveProperty('results.0.value.totals.tokens.total', 7);
+        expect(usageEventRawRead).toHaveBeenCalledTimes(2);
+    });
+
+    it('projects one captured population for four simultaneous readers', async () => {
+        const body = UsageAnalyticsQueryBatchRequestSchema.parse({ queries: [{ includeSeries: true }] });
+        usageEventRawRead.mockImplementation(async () => Array.from({ length: 64 }, (_, index) => ({
+            ...eventForAttempt(1), id: `event-${index}`, turnId: `turn-${index}`,
+        })));
+        let clockMs = 0;
+        const clock = vi.spyOn(performance, 'now').mockImplementation(() => clockMs += 25);
+        let yields = 0;
+        schedulerBoundary.onYield = () => { yields++; };
+        try {
+            const baseline = await queryUsageAnalyticsBatch('account', body, body.queries, () => false);
+            const oneProjectionYields = yields;
+            yields = 0;
+            const joined = await Promise.all(Array.from({ length: 4 }, () =>
+                queryUsageAnalyticsBatch('account', body, body.queries, () => false)));
+            expect(joined).toEqual([baseline, baseline, baseline, baseline]);
+            expect(oneProjectionYields).toBeGreaterThan(0);
+            expect(yields, 'four readers must advance only one projection workload').toBe(oneProjectionYields);
+            expect(usageEventRawRead, 'baseline plus one shared four-reader capture').toHaveBeenCalledTimes(2);
+        } finally {
+            schedulerBoundary.onYield = () => {};
+            clock.mockRestore();
+        }
+    });
+
+    it('continues shared projection while one admitted reader remains open', async () => {
+        const body = UsageAnalyticsQueryBatchRequestSchema.parse({ queries: [{}] });
+        let releaseCapture = () => {};
+        const held = new Promise<void>(resolve => { releaseCapture = resolve; });
+        let captureStarted = () => {};
+        const started = new Promise<void>(resolve => { captureStarted = resolve; });
+        usageEventRawRead.mockImplementation(async () => {
+            captureStarted();
+            await held;
+            return [eventForAttempt(1)];
+        });
+        let closed = false;
+        const first = queryUsageAnalyticsBatch('account', body, body.queries, () => closed);
+        await started;
+        const survivor = queryUsageAnalyticsBatch('account', body, body.queries, () => false);
+        closed = true;
+        releaseCapture();
+        const [abandoned, visible] = await Promise.all([first, survivor]);
+        expect(visible).toHaveProperty('results.0.value.totals.tokens.total', 7);
+        expect(abandoned).toBe(visible);
+        expect(usageEventRawRead).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops shared projection after every reader closes and releases the running entry', async () => {
+        const body = UsageAnalyticsQueryBatchRequestSchema.parse({ queries: [{}] });
+        let closed = false;
+        let projectionYields = 0;
+        schedulerBoundary.onYield = () => { projectionYields++; closed = true; };
+        try {
+            const readers = Array.from({ length: 2 }, () =>
+                queryUsageAnalyticsBatch('account', body, body.queries, () => closed));
+            const settled = await Promise.allSettled(readers);
+            expect(settled.map(result => result.status)).toEqual(['rejected', 'rejected']);
+            for (const result of settled) if (result.status === 'rejected') {
+                expect(result.reason).toBeInstanceOf(Error);
+                expect(result.reason.message).toBe('Usage reader closed');
+            }
+            expect(projectionYields).toBe(1);
+            schedulerBoundary.onYield = () => {};
+            const fresh = await queryUsageAnalyticsBatch('account', body, body.queries, () => false);
+            expect(fresh).toHaveProperty('results.0.value.totals.tokens.total', 14);
+            expect(usageEventRawRead).toHaveBeenCalledTimes(2);
+        } finally { schedulerBoundary.onYield = () => {}; }
+    });
+
+    it('does not revive abandoned work or let its settlement evict a replacement', async () => {
+        const body = UsageAnalyticsQueryBatchRequestSchema.parse({ queries: [{}] });
+        let releaseOriginal = () => {};
+        let releaseReplacement = () => {};
+        const originalHeld = new Promise<void>(resolve => { releaseOriginal = resolve; });
+        const replacementHeld = new Promise<void>(resolve => { releaseReplacement = resolve; });
+        let originalStarted = () => {};
+        let replacementStarted = () => {};
+        const originalReady = new Promise<void>(resolve => { originalStarted = resolve; });
+        const replacementReady = new Promise<void>(resolve => { replacementStarted = resolve; });
+        usageEventRawRead.mockImplementation(async () => {
+            const attempt = ++accountingRead;
+            if (attempt === 1) { originalStarted(); await originalHeld; }
+            else { replacementStarted(); await replacementHeld; }
+            return [eventForAttempt(attempt)];
+        });
+        let closed = false;
+        const original = queryUsageAnalyticsBatch('account', body, body.queries, () => closed);
+        const originalFailure = expect(original).rejects.toThrow('Usage reader closed');
+        try {
+            await originalReady;
+            closed = true;
+            const replacement = queryUsageAnalyticsBatch('account', body, body.queries, () => false);
+            await replacementReady;
+            releaseOriginal();
+            await originalFailure;
+            const joining = queryUsageAnalyticsBatch('account', body, body.queries, () => false);
+            releaseReplacement();
+            const [first, second] = await Promise.all([replacement, joining]);
+            expect(first).toBe(second);
+            expect(first).toHaveProperty('results.0.value.totals.tokens.total', 14);
+            expect(usageEventRawRead).toHaveBeenCalledTimes(2);
+        } finally {
+            releaseOriginal();
+            releaseReplacement();
+        }
+    });
 
     it('yields for slow batch projection only after releasing the snapshot transaction', async () => {
         let clockMs = 0;

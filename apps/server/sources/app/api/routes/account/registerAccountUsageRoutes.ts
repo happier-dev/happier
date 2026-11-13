@@ -14,7 +14,7 @@ import { readUsageModelPriceCatalog, refreshUsageModelPriceCatalog } from '@/app
 import { readCurrentSessionIdsInTx } from '@/app/session/access/sessionReadAdmission';
 import { readSessionAccessAuthenticationFromRequest, type SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { isServerFeatureEnabledForHome } from '@/app/features/catalog/serverFeatureGate';
-import { captureUsageAnalyticsBatch, projectUsageAnalyticsBatch } from '@/app/usage/query/readUsageAnalyticsBatch';
+import { queryUsageAnalyticsBatch } from '@/app/usage/query/queryUsageAnalyticsBatch';
 import { Readable } from 'node:stream';
 import { collectUsageAnalyticsBatchDelivery, encodeUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery,
     readUsageContributionEncoding, readUsageContributionProjection } from '@happier-dev/protocol/usage/usageCost';
@@ -150,28 +150,22 @@ export function registerAccountUsageRoutes(app: Fastify): void {
         const queries = [...new Map(request.body.queries.map(query => [getUsageAnalyticsQueryRequestKey(query), query])).values()];
         const publicEnabled = queries.some(query => query.population === 'public_eligible_personal')
             ? await isServerFeatureEnabledForHome('account.publicProfiles', { request }) : false;
-        const captured = await (async () => {
+        const admitted = await (async () => {
             const sessionIds = [...new Set(queries.flatMap(query => query.filters?.sessionIds ?? []))];
             const readable = sessionIds.length ? await inReadSnapshot(tx => readCurrentSessionIdsInTx(tx, { accountId: request.userId,
                 sessionIds, authentication: readSessionAccessAuthenticationFromRequest(request) })) : new Set<string>();
-            const admitted = queries.filter(query => (query.population !== 'public_eligible_personal' || publicEnabled)
+            return queries.filter(query => (query.population !== 'public_eligible_personal' || publicEnabled)
                 && (query.filters?.sessionIds ?? []).every(id => readable.has(id)));
-            const readStart = performance.now();
-            try {
-                return { admitted, snapshot: admitted.length ? await captureUsageAnalyticsBatch(request.userId, admitted,
-                    () => reply.raw.destroyed, request.body) : undefined };
-            } finally { timing.durations.read += performance.now() - readStart; }
         })().catch(error => {
             if (reply.raw.destroyed) { reply.hijack(); return null; }
             throw error;
         });
-        if (!captured) return;
-        // Authentication, validation, feature/session admission and transaction acquisition/commit.
-        timing.durations.auth = performance.now() - timing.startedAt - timing.durations.read;
+        if (!admitted) return;
+        // Authentication, validation and feature/Session admission remain request-local.
+        timing.durations.auth = performance.now() - timing.startedAt;
         if (reply.raw.destroyed) { reply.hijack(); return; }
-        const projected = captured.snapshot ? await projectUsageAnalyticsBatch(captured.snapshot, captured.admitted,
-            request.body.includeContributions || request.body.contributionQueries !== undefined,
-            request.body.contributionQueries !== undefined, timing, request.body, () => reply.raw.destroyed).catch(error => {
+        const projected = admitted.length ? await queryUsageAnalyticsBatch(request.userId, request.body, admitted,
+            () => reply.raw.destroyed, timing).catch(error => {
                 if (reply.raw.destroyed) { reply.hijack(); return undefined; }
                 throw error;
             }) : undefined;

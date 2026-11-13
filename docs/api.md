@@ -3372,6 +3372,15 @@ queries are returned once. One ordinary capture supplies the common accounting
 population, and the batch shares captured tariff inputs; each query keeps its own range, filters, publication-bounded message
 counts and Session access admission. An unreadable Session selection returns
 `{ query, error: 'not_found' }` without withholding readable siblings.
+In 0.3 development, identical overlapping batch requests from the same Account
+share running capture and projection through `queryUsageAnalyticsBatch`.
+Authentication and feature/Session admission still run for each request; the
+sharing key includes the normalized body and its admitted queries, including
+delivery selectors and continuation. JSON and NDJSON encoding remain specific
+to each reader. Closing one reader leaves other readers running; closing all
+readers releases the entry and stops work at the next cooperative boundary.
+Success and failure both release the entry, so a later request captures fresh
+facts rather than reusing a finished response.
 Raw contributions default to omitted. Presence of `contributionQueries` opts into
 compact slice delivery: an empty list requests no raw rows; a subset of `queries`
 requests detail only for those slices. Each compact result retains its rendered
