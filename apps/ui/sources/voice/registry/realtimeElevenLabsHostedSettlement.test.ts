@@ -163,7 +163,7 @@ describe('hosted ElevenLabs settlement through host teardown', () => {
     const results = sent.filter((value) => (value as { type?: unknown }).type === 'client_tool_result');
     expect(results).toEqual([expect.objectContaining({
       tool_call_id: 'r126-effect-call', is_error: true,
-      result: expect.stringContaining('invalid_parameters'),
+      result: expect.stringContaining('invalid_tool_call'),
     })]);
     await incoming(structuredClone(event));
     expect(sent.filter((value) => (value as { type?: unknown }).type === 'client_tool_result')).toEqual([

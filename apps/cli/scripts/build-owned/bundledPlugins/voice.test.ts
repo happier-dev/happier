@@ -9,6 +9,35 @@ import { expect, it } from 'vitest';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
 import { renderBundledVoiceRuntimeEntriesTs } from './voice';
 
+it('loads the actual generated Voice declarations through the strict consumer and default registry', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'happier-voice-declarations-'));
+  try {
+    const uiRoot = fileURLToPath(new URL('../../../../ui/sources/', import.meta.url));
+    const entry = join(root, 'entry.ts');
+    writeFileSync(entry, `
+      import assert from 'node:assert/strict';
+      import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
+      import { BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS as declarations } from ${JSON.stringify(join(uiRoot, 'voice/registry/generatedBundledVoiceEntries.ts'))};
+      import { createDefaultVoiceProviderRegistry } from ${JSON.stringify(join(uiRoot, 'voice/registry/defaultRegistry.ts'))};
+      assert.ok(declarations.length > 0);
+      const registry = createDefaultVoiceProviderRegistry();
+      for (const { declaration, providerId } of declarations) {
+        VoiceProviderContributionSchema.parse(declaration);
+        assert.equal(registry.get(providerId)?.providerId, providerId);
+      }
+      assert.ok(registry.list().length >= declarations.length);
+    `);
+    const output = join(root, 'consumer.cjs');
+    await build({ entryPoints: [entry], outfile: output, bundle: true, platform: 'node', format: 'cjs',
+      absWorkingDir: fileURLToPath(new URL('../../../../../', import.meta.url)),
+      alias: { '@': uiRoot }, conditions: ['happier-source'], nodePaths: [join(process.cwd(), 'node_modules')] });
+    const loaded = spawnSync(process.execPath, [output], { encoding: 'utf8' });
+    expect(loaded.status, loaded.stderr).toBe(0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 it.each([
   { host: 'web', projection: 'web', format: 'esm' },
   { host: 'Hermes iOS', projection: 'ios', format: 'cjs' },

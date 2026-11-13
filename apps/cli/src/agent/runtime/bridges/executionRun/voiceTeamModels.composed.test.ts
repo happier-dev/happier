@@ -20,12 +20,23 @@ import type { ExecutionRunState } from './executionRunTypes';
 
 describe('Voice Team model launch composition', () => {
   it('opens independent brokered chat and commit bindings and retains both exact selections', async () => {
-    const worker = await createManagedRunLaunchFixture();
-    const endpoint = createServer((request, response) => {
+    const worker = await createManagedRunLaunchFixture({ readUpstreamAnswer: true,
+      catalogModels: [{ id: 'model-a' }, { id: 'model-b' }] });
+    const endpoint = createServer(async (request, response) => {
       if (request.url === PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH) {
         response.writeHead(204, { [PROVIDER_BROKER_ENDPOINT_PATH_HEADER]: '/v1' });
         response.end();
-      } else response.end('{}');
+      } else {
+        let body = '';
+        for await (const chunk of request) body += String(chunk);
+        const input: unknown = JSON.parse(body);
+        if (!input || typeof input !== 'object' || !('model' in input)) {
+          response.writeHead(400).end();
+          return;
+        }
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ output_text: `Answer from ${input.model}` }));
+      }
     });
     await new Promise<void>(resolve => endpoint.listen(0, '127.0.0.1', resolve));
     const address = endpoint.address();
@@ -36,7 +47,7 @@ describe('Voice Team model launch composition', () => {
     const chat: TeamCredentialProviderModelSelectionV1 = { kind: 'team_credential_provider_model',
       resourceId: 'chat-resource', teamId: 'team', expectedResourceRevision: 3,
       agentTargetKey: worker.agentTargetKey, modelId: 'model-a', deliveryMode: 'brokered' };
-    const commit: TeamCredentialProviderModelSelectionV1 = { ...chat, resourceId: 'commit-resource' };
+    const commit: TeamCredentialProviderModelSelectionV1 = { ...chat, resourceId: 'commit-resource', modelId: 'model-b' };
     const application = { agentTargetKey: worker.agentTargetKey,
       implementationIdentity: { pluginId: 'acme.managed-run', localId: 'gateway' },
       endpointTemplateId: template.id, protocol: template.protocol };
@@ -44,7 +55,7 @@ describe('Voice Team model launch composition', () => {
       sourceRevision: 'source-v1', availability: 'available' as const, application,
       sourceFacts: ProviderModelBindingSourceV1Schema.parse({ endpoint: { id: template.id, protocol: template.protocol, capabilities: template.capabilities },
         credential: source.credential, compatibilityOverrides: source.compatibilityOverrides }) }));
-    const opened: string[] = [];
+    const opened: Array<{ resourceId: string; modelId: string }> = [];
     const runs = new Map<string, ExecutionRunState>();
     const controllers = new Map<string, ExecutionRunController>();
     const manager = new VoiceAgentManager({ createRuntime: () => { throw new Error('Expected launch-bound factory'); } });
@@ -65,7 +76,7 @@ describe('Voice Team model launch composition', () => {
         prepareRunTeamCredentialProviderBinding: async input => {
           const selection = input.selection;
           if (!selection) throw new Error('Explicit Voice role selection was lost');
-          opened.push(selection.resourceId);
+          opened.push({ resourceId: selection.resourceId, modelId: selection.modelId });
           return openSessionTeamCredentialProviderBinding({
             sessionId: 'parent', consumer: { kind: 'execution_run', executionRunId: input.runId },
             machineId: worker.machineId, agentId: worker.agentId, agentTargetKey: selection.agentTargetKey,
@@ -109,10 +120,11 @@ describe('Voice Team model launch composition', () => {
         send: async () => ({ ok: true }), voiceAgentManager: manager,
       });
       expect(runs.get(started.runId)?.error).toBeUndefined();
-      expect(opened).toEqual(['chat-resource']);
-      expect(await manager.sendTurn({ voiceAgentId: started.runId, userText: 'Hello' })).toMatchObject({ assistantText: 'Managed Run completed' });
-      expect(await manager.commit({ voiceAgentId: started.runId })).toMatchObject({ commitText: 'Managed Run completed' });
-      expect(opened).toEqual(['chat-resource', 'commit-resource']);
+      expect(opened).toEqual([{ resourceId: 'chat-resource', modelId: 'model-a' }]);
+      expect(await manager.sendTurn({ voiceAgentId: started.runId, userText: 'Hello' })).toMatchObject({ assistantText: 'Answer from model-a' });
+      expect(await manager.commit({ voiceAgentId: started.runId })).toMatchObject({ commitText: 'Answer from model-b' });
+      expect(opened).toEqual([{ resourceId: 'chat-resource', modelId: 'model-a' },
+        { resourceId: 'commit-resource', modelId: 'model-b' }]);
       const resumeHandle = manager.getResumeHandle(started.runId);
       await manager.stop({ voiceAgentId: started.runId });
       const retained = projectRetainedExecutionRunState({ ...runs.get(started.runId)!, status: 'cancelled', resumeHandle });

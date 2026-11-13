@@ -29,7 +29,7 @@ function message(id: string, text: string, createdAt: number): Message {
 }
 
 describe('History through the default Action composition', () => {
-  it('discovers and reopens the realtime transcript-history carrier after a cold refresh without a Voice attempt', async () => {
+  it.each(['active', 'archived'] as const)('discovers and reopens the %s realtime transcript-history carrier after a cold refresh without a Voice attempt', async page => {
     const account = await createVoiceSettingsAccountTestHarness(settingsParse({}));
     onTestFinished(account.dispose);
     const { storage } = await import('@/sync/domains/state/storage');
@@ -46,8 +46,8 @@ describe('History through the default Action composition', () => {
     let metadataReads = 0;
     account.request.mockImplementation(createSessionReadBatchFetchBoundary(async (input, init) => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-      if (path === '/v2/sessions') return Response.json({ sessions: [row], nextCursor: null, hasNext: false });
-      if (path === '/v2/sessions/archived') return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+      if (path === '/v2/sessions') return Response.json({ sessions: page === 'active' ? [row] : [], nextCursor: null, hasNext: false });
+      if (path === '/v2/sessions/archived') return Response.json({ sessions: page === 'archived' ? [row] : [], nextCursor: null, hasNext: false });
       if (path.endsWith('/messages')) bodyReads += 1;
       if (path === `/v2/sessions/${session.id}` && (init?.method ?? 'GET') === 'GET') {
         metadataReads += 1;

@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ActionsSettingsV1Schema, AccountSettingsV2UpdateRequestSchema, accountSettingsParse } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema, AccountSettingsV2UpdateRequestSchema, accountSettingsParse, ingestPluginManifestV2 } from '@happier-dev/protocol';
 import type { AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol';
 import { ACCOUNT_SETTING_DECLARATIONS_V1 } from '@happier-dev/protocol/actions/accountSettingDeclarations';
 import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
@@ -82,21 +82,50 @@ describe('CLI declared Account settings', () => {
   const user = { surface: 'cli', authority: 'present_user', actionsSettings,
     presentUserConfirmation: { actionId: 'settings.set' } } as const;
 
-  it('lists the same declarations as the UI for the same loaded provider registry', async () => {
+  it.each(['bundled', 'external'] as const)('lists the same declarations as the UI for the same loaded %s provider registry', async variant => {
     const { createDefaultVoiceProviderRegistry } = await import('../../../../ui/sources/voice/registry/defaultRegistry');
     const { getVoiceContributedSettingsDeclarations } = await import('../../../../ui/sources/voice/settings/voiceContributedSettingsDeclarations');
     const { voiceSettingsOwner } = await import('../../../../ui/sources/sync/domains/settings/voiceSettings');
     const { BUILT_IN_SETTINGS_DECLARATIONS_V1 } = await import('@happier-dev/protocol/actions/settings/settingsDeclarations');
     const { createCliSettingsDeclarationActionFixture } = await import('./settingsDeclarationAction.test-support');
-    const registry = createDefaultVoiceProviderRegistry();
-    const action = createCliSettingsDeclarationActionFixture({ voiceBindingContext: { registry, owner: voiceSettingsOwner } });
-    const result = await action({ actionId: 'settings.list', input: {}, context: user });
-    const listed = SettingsDeclarationActionOutputSchemasV1['settings.list'].parse(result);
-    const uiAnchors = new Set([
-      ...BUILT_IN_SETTINGS_DECLARATIONS_V1.map(row => row.anchor),
-      ...getVoiceContributedSettingsDeclarations(registry).flatMap(page => Object.values(page.settings).map(ref => ref.anchor)),
-    ]);
-    expect(listed.items.map(row => row.anchor).sort()).toEqual([...uiAnchors].sort());
+    const { projectExternalConversationVoiceDescriptor } = await import('../../../../ui/sources/voice/registry/providerRegistry');
+    const { commitExternalVoiceProviderRegistration, removeExternalVoiceProviderRegistration } = await import('../../../../ui/sources/voice/registry/externalVoiceProviderRegistrations');
+    const token = {};
+    const manifest = ingestPluginManifestV2({ schemaVersion: 2, id: 'acme.voice', version: '1.0.0', displayName: 'External Voice',
+      runtime: { apiVersion: 1 }, contributes: { voiceProviders: [{ id: 'conversation', title: 'Conversation',
+        kind: 'conversation', roles: ['realtime_conversation'], platforms: ['web'],
+        capabilities: { turn: { cancelResponse: false, bargeIn: false } },
+        client: { artifactId: 'voice-runtime', exportName: 'activate' },
+        settings: { schemaVersion: 1, fields: [{ id: 'model', title: 'Model', schema: { type: 'string', maxLength: 128 },
+          default: 'external-model', presentation: { control: 'text' } }] },
+      }] } });
+    if (!manifest.ok) throw new Error(JSON.stringify(manifest.diagnostics));
+    const declaration = manifest.manifest.contributes.voiceProviders[0]!;
+    if (declaration.kind !== 'conversation') throw new Error('Expected conversation declaration');
+    if (variant === 'external') {
+      const descriptor = projectExternalConversationVoiceDescriptor({ pluginId: manifest.manifest.id, declaration, recipientContract: null });
+      commitExternalVoiceProviderRegistration({ token, pluginId: manifest.manifest.id, localId: declaration.id,
+        providerId: descriptor.providerId, descriptor, adapter: null });
+    }
+    try {
+      const registry = createDefaultVoiceProviderRegistry();
+      const action = createCliSettingsDeclarationActionFixture({ voiceBindingContext: { registry, owner: voiceSettingsOwner },
+        credentials: { token: 'settings-parity-test', encryption: null },
+        serverId: 'settings-home', serverHttpBaseUrl: 'https://settings-home.test' });
+      const result = await action({ actionId: 'settings.list', input: {}, context: user });
+      const listed = SettingsDeclarationActionOutputSchemasV1['settings.list'].parse(result);
+      const uiAnchors = new Set([
+        ...BUILT_IN_SETTINGS_DECLARATIONS_V1.map(row => row.anchor),
+        ...getVoiceContributedSettingsDeclarations(registry).flatMap(page => Object.values(page.settings).map(ref => ref.anchor)),
+      ]);
+      expect(listed.items.map(row => row.anchor).sort()).toEqual([...uiAnchors].sort());
+      if (variant === 'external') {
+        const anchor = 'voiceConversations.provider.acme.voice/conversation.model';
+        expect(uiAnchors.has(anchor)).toBe(true);
+        expect(await action({ actionId: 'settings.get', input: { anchor }, context: user }))
+          .toMatchObject({ value: 'external-model' });
+      }
+    } finally { removeExternalVoiceProviderRegistration(token); }
   });
 
   it('reads a plugin-contributed field through the CLI Action and keeps credential fields redacted', async () => {

@@ -11,7 +11,7 @@ import { DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT} from '@happier-dev/protoc
 import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import {
     MachineLiveStreamRelayCapsV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
-import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createPlainMachineReadHttpResponseFixture, createHydratedPlainMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { DaemonVoiceInferenceSttStreamStartRequestSchema, DaemonVoiceInferenceSttStreamChunkRequestSchema,
     DaemonVoiceInferenceSttStreamStartResponseSchema, DaemonVoiceInferenceSttStreamChunkResponseSchema,
     DaemonVoiceInferenceSttStreamFinishResponseSchema, DaemonVoiceInferenceSttStreamCancelResponseSchema,
@@ -186,7 +186,6 @@ async function installDaemonCaptureBoundary() {
     const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
     const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
     const { createPlainArtifactHomeFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
-    const { createMachineFixture } = await import('@/dev/testkit');
     const { voiceSettingsParse, readLocalConversationVoiceSettings, writeLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
     const { VoiceLocalSttSchema } = await import('@/sync/domains/settings/voiceLocalSttSettings');
     const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
@@ -203,8 +202,9 @@ async function installDaemonCaptureBoundary() {
     const account = await createPlainArtifactHomeFixture(serverUrl, { serverFeatures: features,
         handleRequest: async (path, init) => createPlainMachineReadHttpResponseFixture(path, init),
     });
-    const machine = createMachineFixture({ id: 'capture-machine', activeAt: Date.now() });
-    storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [account.home.id]: [machine] } });
+    const machine = createHydratedPlainMachineFixture({ id: 'capture-machine', accountId: 'artifact-account',
+        machine: { activeAt: Date.now() } });
+    storage.getState().applyMachines([machine], true, { sourceServerId: account.home.id });
     const voice = voiceSettingsParse({ providerId: 'local_conversation',
         executionMachine: { mode: 'fixed', machineId: machine.id } });
     const configuredVoice = writeLocalConversationVoiceSettings(voice, {
@@ -839,8 +839,7 @@ describe('createLocalVoiceCaptureOwner', () => {
             // Refresh its OS/network observation after advancing the clock.
             const { storage } = await import('@/sync/domains/state/storage');
             const onlineMachine = { ...machine, activeAt: Date.now() };
-            storage.setState(state => ({ machines: { ...state.machines, [machine.id]: onlineMachine },
-                machineListByServerId: { ...state.machineListByServerId, [account.home.id]: [onlineMachine] } }));
+            storage.getState().applyMachines([onlineMachine], true, { sourceServerId: account.home.id });
             boundary.finalText = 'after unmute';
             await owner.setMuted({ sessionId: 'buffered-input', muted: false });
             nativeAudio.emit();

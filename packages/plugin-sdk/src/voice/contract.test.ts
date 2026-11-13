@@ -503,9 +503,16 @@ describe('Voice author source contract', () => {
     type ConnectionInput = Parameters<RealtimeVoiceProviderRuntime['createConnection']>[0];
     type PreparedSession = Extract<VoiceRealtimePreparation, { kind: 'prepared' }>['session'];
 
-    expectTypeOf<keyof ConnectionInput>().toEqualTypeOf<
-      'session' | 'attemptId' | 'mic' | 'interruption' | 'levels' | 'media' | 'tools' | 'ui' | 'signal' | 'execution' | 'credentials' | 'onSyntheticResponseRequested'
-    >();
+    // A provider consumes the public input structurally. Optional host additions
+    // must not require existing providers to enumerate a new key.
+    const connect = (runtime: RealtimeVoiceProviderRuntime, input: ConnectionInput) => runtime.createConnection({
+      session: input.session, attemptId: input.attemptId, mic: input.mic,
+      interruption: input.interruption, levels: input.levels, media: input.media,
+      tools: input.tools, ui: input.ui, signal: input.signal,
+      execution: input.execution, credentials: input.credentials,
+    });
+    expectTypeOf<ReturnType<typeof connect>>()
+      .toEqualTypeOf<ReturnType<RealtimeVoiceProviderRuntime['createConnection']>>();
     expectTypeOf<ConnectionInput['signal']>().toEqualTypeOf<AbortSignal>();
     expectTypeOf<ConnectionInput['session']>().toEqualTypeOf<PreparedSession>();
     expectTypeOf<keyof PreparedSession>()
