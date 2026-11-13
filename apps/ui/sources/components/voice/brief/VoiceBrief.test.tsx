@@ -1014,6 +1014,63 @@ describe('mounted Voice Brief request', () => {
         vi.mocked(router.push).mockReset();
     });
 
+    it.each([false, true])('parks the spoken Brief before Home mounts and replays only for the same Account (switch=%s)', async (switchAccount) => {
+        const speech = await installTransport();
+        await selectService();
+        const { router } = await import('expo-router');
+        setActionPolicy({ v: 1, approvalWaivedSurfaces: { 'ui.voice_global.brief.request': ['voice'] } });
+        const handlers = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: account!.home.id });
+        // Navigation completes before React mounts Home: this exercises the parked
+        // request, rather than the already-mounted Home's Inbox retirement path.
+        vi.mocked(router.push).mockImplementation(() => {});
+        screen = await renderScreen(<AuthProvider initialCredentials={account!.credentials}>{null}</AuthProvider>);
+        let replacement: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+        try {
+            await act(async () => {
+                expect(JSON.parse(await handlers.requestVoiceBrief!({}, { turnOrigin: 'person' }))).toMatchObject({ ok: true });
+            });
+            expect(router.push).toHaveBeenCalledWith('/');
+            expect(speech.starts).toHaveLength(0);
+            if (switchAccount) {
+                const settings = createAccountSettingsHttpBoundary({ serverUrl: account!.home.serverUrl,
+                    initialAccounts: [{ accountId: 'account-b', snapshot: { version: 1,
+                        content: { t: 'plain', v: { voice: { providerId: 'off' } } } } }] });
+                replacement = await restoreServerAccountForTest({ serverUrl: account!.home.serverUrl,
+                    accountId: 'account-b', activation: 'switch', credentialScope: 'restored-home',
+                    additionalRequestOrigins: ['https://api.openai.com'], request: async (url, init) => {
+                        const path = new URL(String(url)).pathname;
+                        if (path === '/v1/account/profile') {
+                            return Response.json(AccountProfileSchema.parse({ id: 'account-b' }));
+                        }
+                        if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(buildServerFeaturesResponse({ voiceEnabled: true }));
+                        if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+                        if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                        return settings.handle(url, init) ?? createEmptyAccountBootstrapHttpResponse(path, init);
+                    } });
+                await waitForTestEvent(storage.subscribe, () => expect(getActiveServerAccountScope()?.accountId).toBe('account-b'));
+            }
+            await screen.update(<AuthProvider initialCredentials={(replacement ?? account)!.credentials}><BriefHome available /></AuthProvider>);
+            if (switchAccount) {
+                // No presentation demand means B's Inbox cannot enter the Brief,
+                // even if B's Voice configuration would independently refuse media.
+                expect(screen.findByTestId('home-brief-me')).not.toBeNull();
+                expect(screen.findByTestId('voice-brief')).toBeNull();
+                expect(speech.starts).toHaveLength(0);
+                expect(speech.spoken).toHaveLength(0);
+            } else {
+                await speech.waitForStart();
+                await act(async () => speech.connect());
+                await speech.waitForSpoken();
+                expect(speech.context.at(-1)).toContain('INBOX BRIEF');
+                expect(speech.spoken).toEqual([t('voiceMoments.briefMe')]);
+            }
+        } finally {
+            await screen?.unmount(); screen = null;
+            await replacement?.dispose();
+            vi.mocked(router.push).mockReset();
+        }
+    });
+
     it('opens the demand-mounted Inbox from the Home Action and reports unavailable without a current Home', async () => {
         const speech = await installTransport();
         await selectService();
