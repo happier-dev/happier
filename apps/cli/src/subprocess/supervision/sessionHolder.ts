@@ -43,12 +43,14 @@ import { connectSessionTarget, createTargetHolderSocketPath, readSessionTargetPl
 const FRAME_HEADER_BYTES = 5;
 
 /**
- * Each Session's local holders, by the Session's hosted scope (one process can host several
- * Sessions). A Session's Agent tree is its holders' children: the Agent leads its own process
- * group under the holder. The Session MCP endpoint admits only peers inside that tree.
+ * Each Session's local Agent-tree roots, by the Session's hosted scope (one process can host
+ * several Sessions): its holders, whose children are the Agents (each leads its own process group
+ * under the holder), and the Session-owned managed service processes an Agent runs through (for
+ * example an Agent server). The Session MCP endpoint admits only peers inside that tree.
  */
+type SessionAgentTreeRoot = Readonly<{ holderPid?: number; pid?: number }>;
 const processHolderScope = {};
-const heldProcessesByScope = new WeakMap<object, Set<SessionHolderChild>>();
+const heldProcessesByScope = new WeakMap<object, Set<SessionAgentTreeRoot>>();
 
 /** The current Session's key for `readSessionAgentTreeRoots` (the process itself outside a session host). */
 export function currentSessionHolderScope(): object {
@@ -64,16 +66,47 @@ export function readSessionAgentTreeRoots(scope: object): Readonly<{ holderPids:
     };
 }
 
+/**
+ * A managed process this Session owns (its custody owner names the Session) roots part of the
+ * Session's Agent tree until it exits, like a held Agent.
+ */
+export function trackSessionManagedProcess(child: Readonly<{ pid?: number }> & Pick<NodeJS.EventEmitter, 'once'>): void {
+    if (child.pid === undefined) return;
+    trackSessionAgentTreeRoot(Object.freeze({ pid: child.pid }), child);
+}
+
 function trackSessionHeldProcess(child: SessionHolderChild): void {
     // A target's pids are not this Machine's; its Agents cannot reach this endpoint.
     if (child.target) return;
+    trackSessionAgentTreeRoot(child, child);
+}
+
+function trackSessionAgentTreeRoot(root: SessionAgentTreeRoot, lifetime: Pick<NodeJS.EventEmitter, 'once'>): void {
     const scope = currentSessionHolderScope();
     let children = heldProcessesByScope.get(scope);
     if (!children) heldProcessesByScope.set(scope, children = new Set());
-    children.add(child);
-    const forget = () => { children.delete(child); };
-    child.once('exit', forget);
-    child.once('error', forget);
+    children.add(root);
+    const forget = () => { children.delete(root); };
+    lifetime.once('exit', forget);
+    lifetime.once('error', forget);
+}
+
+/**
+ * A Session MCP relay an Agent in a target started (`holder serve --session-mcp`):
+ * the holder admitted it from its Agent tree, answered its upgrade and carries
+ * the connection as stream `relay` (stdout = relay → endpoint, stdin = endpoint → relay).
+ */
+export type SessionMcpRelayAcceptor = (relay: SessionHolderStreamProcess, options: Readonly<{ toolNameMaxLength?: number }>) => void;
+
+/** Each Session's MCP endpoints that serve held relays, by hosted scope; the first registered (the Session's own) serves. */
+const sessionMcpRelayAcceptorsByScope = new WeakMap<object, Set<SessionMcpRelayAcceptor>>();
+
+/** Registers the Session MCP endpoint of `scope` for relays its target holders carry; returns the unregistration. */
+export function registerSessionMcpRelayAcceptor(scope: object, acceptor: SessionMcpRelayAcceptor): () => void {
+    let acceptors = sessionMcpRelayAcceptorsByScope.get(scope);
+    if (!acceptors) sessionMcpRelayAcceptorsByScope.set(scope, acceptors = new Set());
+    acceptors.add(acceptor);
+    return () => { acceptors.delete(acceptor); };
 }
 
 export type SessionHolderHello = Readonly<{ protocol: number; holderPid: number; agentPid: number; replayFrom: number;
@@ -207,6 +240,14 @@ export function requireSessionHolderExecutablePath(): string {
         });
     }
     return executablePath;
+}
+
+/**
+ * The holder executable as the Session's Agents can run it (the Session MCP relay
+ * an Agent launches): in a placed Session the copy the daemon placed in the target.
+ */
+export function resolveAgentSessionHolderExecutablePath(): string {
+    return readSessionTargetPlacement(sessionProcessEnvironment())?.holderPath ?? requireSessionHolderExecutablePath();
 }
 
 /**
@@ -438,6 +479,8 @@ export class SessionHolderChild extends ChildProcess {
     /** Stream frames that arrived before their `spawn` reply named the stream. */
     private readonly unclaimedStreamFrames = new Map<number, Array<['O' | 'E' | 'X', Buffer]>>();
     private nextReplyId = 1;
+    /** The Session this client serves (its Session MCP endpoint takes the relays the holder carries). */
+    private readonly holderScope = currentSessionHolderScope();
 
     constructor(socketPath: string, role: SessionHolderRole = 'auxiliary', target?: SessionHolderTarget) {
         super();
@@ -693,6 +736,7 @@ export class SessionHolderChild extends ChildProcess {
             else if (kind === 'e') this.stderrStream.push(Buffer.from(body));
             else if (kind === 'x') this.observeExit(JSON.parse(body.toString('utf8')) as { code: number | null; signal: number | null });
             else if (kind === 'z') this.observeStreamsClosed();
+            else if (kind === 'M') this.acceptSessionMcpRelay(body.readUInt32BE(0), body.subarray(4));
             else if (kind === 'O' || kind === 'E' || kind === 'X') {
                 const stream = body.readUInt32BE(0);
                 const data = Buffer.from(body.subarray(4));
@@ -707,6 +751,23 @@ export class SessionHolderChild extends ChildProcess {
             }
         }
         this.acknowledgeDelivered();
+    }
+
+    /** A relay the holder admitted (`M`): its stream goes to the Session's MCP endpoint, or is closed when none serves. */
+    private acceptSessionMcpRelay(stream: number, body: Buffer): void {
+        const relay = new SessionHolderStreamProcess(this);
+        relay.streamId = stream;
+        this.streams.set(stream, relay);
+        relay.once('exit', () => this.streams.delete(stream));
+        const [acceptor] = sessionMcpRelayAcceptorsByScope.get(this.holderScope) ?? [];
+        let options: { toolNameMaxLength?: unknown } = {};
+        try { options = JSON.parse(body.toString('utf8')) as typeof options; } catch { /* no budget */ }
+        const toolNameMaxLength = typeof options.toolNameMaxLength === 'number' ? options.toolNameMaxLength : undefined;
+        if (acceptor) acceptor(relay, toolNameMaxLength === undefined ? {} : { toolNameMaxLength });
+        else {
+            logger.debug('[SessionHolder] Session MCP relay closed: no Session MCP endpoint in this runner');
+            relay.stdin.end();
+        }
     }
 
     /**
@@ -881,7 +942,8 @@ function spawnTargetSessionHolderChild(launch: SessionHolderLaunch & Readonly<{ 
     const ready = `${launch.socketPath}.ready`;
     const command = ['umask 077', `rm -f ${q(ready)}`, `mkfifo ${q(ready)}`,
         ...(prepared.cwd ? [`cd ${q(prepared.cwd)}`] : []),
-        `nohup ${q(target.holderPath)} serve --socket ${q(launch.socketPath)} -- ${argv.map(q).join(' ')} >${q(ready)} 2>/dev/null </dev/null &`,
+        // The primary Agent's Session MCP relays reach this Machine through its holder (`--session-mcp`).
+        `nohup ${q(target.holderPath)} serve --socket ${q(launch.socketPath)}${launch.role === 'primary' ? ' --session-mcp' : ''} -- ${argv.map(q).join(' ')} >${q(ready)} 2>/dev/null </dev/null &`,
         `head -n 1 ${q(ready)}`, `rm -f ${q(ready)}`].join('\n');
     void target.exec(command).then((result) => {
         const line = result.stdout.split('\n')[0] ?? '';

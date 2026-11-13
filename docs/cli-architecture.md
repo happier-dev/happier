@@ -5745,7 +5745,9 @@ config override on its own command line). As a labeled Windows mitigation the
 Session message writer (`buildOutboundSessionMessagePayload`) redacts the live
 loopback bearer by exact value before storage; the follow-up is a Windows
 named-pipe transport with peer proof. Plugin-hosted loopback MCP servers' bearers
-ride the private remote-bridge config written by the MCP materializer. No bearer
+ride only the private remote-bridge config written by the MCP materializer (its
+path, not the bearer, is in the bridge's MCP config env), and the same transcript
+redactor covers them while they are live. No bearer
 is logged.
 
 Agents launch the Session MCP as `happier-session-holder mcp-relay` (the shipped
@@ -5761,9 +5763,11 @@ tool-name aliases resolve in the host (`mcp/bridges/forwardingMcpServer.ts`, als
 used by the public `happier-mcp --url` bridge). On Unix the endpoint admits a
 bearer-less relay or HTTP client (the `happier` CLI in the Agent's shell) only when its kernel-proven peer (SO_PEERCRED / LOCAL_PEERPID through the
 process-custody helper) runs as the Session's Agent uid and is in the process group
-of one of that Session's held Agents or descends from one of its holders
+of one of that Session's held Agents or descends from one of its holders or from a
+managed process whose custody owner names the Session (an Agent server such as
+OpenCode's, registered at its managed Exec spawn in `subprocess/supervision/sessionHolder.ts`)
 (`mcp/runtime/sessionMcpAgentPeer.ts`), once per connection, so another
-Session's Agent is refused. The Windows loopback endpoint stays bearer-only. Relay memory
+Session's Agent and a managed process no Session owns are refused. The Windows loopback endpoint stays bearer-only. Relay memory
 (Linux x64, static-pie): about 0.17 MiB USS / 0.33 MiB PSS per Session. Standard MCP source metadata is
 handled by the existing tool-handler decoration owner and delegates selected
 custom profiles to `resolveRunnerMcpServers` and its permission/currentness

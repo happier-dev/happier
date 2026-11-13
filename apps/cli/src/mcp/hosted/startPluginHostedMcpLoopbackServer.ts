@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net';
 import type { PluginHostedMcpServerSpec } from './runtimeTypes';
 import type { HostedMcpRuntimeEndpoint } from '../runtimeTypes';
 import { createLocalMcpBearer } from '../runtime/localMcpBearer';
+import { registerTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 export type PluginHostedMcpLoopbackServer = Readonly<{
     endpoint: Extract<HostedMcpRuntimeEndpoint, Readonly<{ kind: 'loopbackHttp' }>>;
@@ -34,8 +35,11 @@ export async function startPluginHostedMcpLoopbackServer(params: Readonly<{
     ]);
     assertHostedMcpHandlerSpec(params);
     const requestCleanups = new Set<() => Promise<void>>();
-    // Any local process or OS user can reach 127.0.0.1; only the Session's launch material holds this bearer.
+    // Any local process or OS user can reach 127.0.0.1; only the Agent's private bridge config
+    // (runner-written MCP client launch material) holds this bearer. Loopback has no peer proof,
+    // so the transcript writer redacts it while it is live.
     const bearer = createLocalMcpBearer();
+    const unregisterTranscriptSecret = registerTranscriptSecret(bearer.token);
     const authorization = bearer.authorization;
     const server = createServer(async (req, res) => {
         if (!bearer.authenticate(req.headers.authorization)) {
@@ -105,6 +109,7 @@ export async function startPluginHostedMcpLoopbackServer(params: Readonly<{
         server.once('listening', onListening);
         server.listen(0, '127.0.0.1');
     }).catch((error: unknown) => {
+        unregisterTranscriptSecret();
         bearer.retire();
         throw error;
     });
@@ -115,6 +120,7 @@ export async function startPluginHostedMcpLoopbackServer(params: Readonly<{
             return;
         }
         disposed = true;
+        unregisterTranscriptSecret();
         bearer.retire();
         await Promise.all([...requestCleanups].map((cleanup) => cleanup()));
         await closeHttpServer(server);

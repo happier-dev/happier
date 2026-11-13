@@ -33,7 +33,8 @@ import {
     type SupervisedPluginGracefulStop,
 } from '../../exec/processSupervisor';
 import type { ProcessCustodySpawnSpec } from '@/subprocess/supervision/processCustody';
-import { resolveAgentSessionHolderLaunch, type SessionHolderRole } from '@/subprocess/supervision/sessionHolder';
+import { resolveAgentSessionHolderLaunch, trackSessionManagedProcess, type SessionHolderRole } from '@/subprocess/supervision/sessionHolder';
+import { resolveSessionHostCwd } from '@/subprocess/supervision/sessionTargetRelay';
 import { createSessionHolderAdoption, JSON_RPC_INITIALIZE_HANDSHAKE, JSON_STREAM_ADOPT_HANDSHAKES } from '@/subprocess/supervision/sessionHolderAdoption';
 import {
     PluginExecClientError,
@@ -289,6 +290,8 @@ type ManagedPluginExecCustodyForHost = Readonly<{
     processCustody: ProcessCustodySpawnSpec | null;
     lifetime?: ManagedPluginExecLifetimeForHost;
     processOwnerTag?: string;
+    /** The custody owner names a Session: the process roots part of that Session's Agent tree. */
+    sessionOwned?: true;
 }>;
 
 const INTERNAL_MANAGED_PROCESS_CUSTODY = new WeakMap<
@@ -327,6 +330,7 @@ export function installManagedProcessCustodyForHost(
         processCustody,
         ...(lifetime ? { lifetime } : {}),
         ...(processOwner ? { processOwnerTag: formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir, owner: processOwner }) } : {}),
+        ...(processOwner && 'sessionId' in processOwner && processOwner.sessionId ? { sessionOwned: true as const } : {}),
     });
     authorizations.set(request, custody);
     return Object.freeze({
@@ -1644,7 +1648,7 @@ export function createStablePluginExecService(params: Readonly<{
                     // application environment or a new ambient environment.
                     const original = authorized.detachDeploymentEnvironmentForObservation?.() ?? authorized;
                     return Object.freeze({ ...original, secretRedactionLease: redaction, deploymentSecretRefs: refs,
-                        deploymentReferenceAddresses: consumed.referenceAddresses, release });
+                        deploymentReferenceAddresses: [...consumed.referenceAddresses], release });
                 },
                 release });
             material = undefined;
@@ -1686,6 +1690,9 @@ export function createStablePluginExecService(params: Readonly<{
             return fail('plugin_exec_managed_launch_authorization_unavailable', 'Physical process launch authorization is unavailable');
         }
         validateExecLaunchInput(request);
+        // A placed Session's Agent names its workspace by the target path; this
+        // Machine's admission resolves and authorizes the Session path instead.
+        const hostCwd = typeof request.cwd === 'string' ? resolveSessionHostCwd(request.cwd) : undefined;
         const hostNativeSystemTool = params.executionKind === 'machine_native'
             && request.executable.kind === 'systemTool' && request.cwd === undefined;
         if (projectLaunch?.status === 'refused') {
@@ -1697,7 +1704,7 @@ export function createStablePluginExecService(params: Readonly<{
                 return fail('plugin_project_launch_admission_unavailable', 'Project effects must be produced by the target host');
             }
             const launch = await params.authorizeLaunch(
-                request,
+                hostCwd === undefined || hostCwd === request.cwd ? request : { ...request, cwd: hostCwd },
                 agentNativeLaunch ? { ...(options?.signal ? { signal: options.signal } : {}), agentNativeLaunch: true,
                     sessionMcpContext: nativeLaunch ? INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch)?.() : undefined,
                     mcpLaunchMaterial: nativeLaunch ? INTERNAL_NATIVE_MCP_MATERIAL.get(nativeLaunch)?.() : undefined }
@@ -1711,7 +1718,7 @@ export function createStablePluginExecService(params: Readonly<{
             }
             return hostAgentIsolation || params.agentIsolation ? await finalizeHostExecLaunch({
                 launch: { ...launch, ...(request.requiredFiles ? { requiredFiles: request.requiredFiles } : {}) },
-                ...(typeof request.cwd === 'string' ? { requestedCwd: request.cwd } : {}),
+                ...(hostCwd !== undefined ? { requestedCwd: hostCwd } : {}),
                 agentIsolation: hostAgentIsolation ?? params.agentIsolation, agentNativeLaunch,
                 ...(nativeLaunch ? { sessionMcpContext: INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch)?.(),
                     mcpLaunchMaterial: INTERNAL_NATIVE_MCP_MATERIAL.get(nativeLaunch)?.() } : {}),
@@ -1769,7 +1776,7 @@ export function createStablePluginExecService(params: Readonly<{
         }
         let cwd: string | undefined;
         try {
-            cwd = typeof request.cwd === 'string' ? await realpath(request.cwd)
+            cwd = typeof request.cwd === 'string' ? await realpath(hostCwd ?? request.cwd)
                 : request.cwd ? await params.resolvePath(request.cwd)
                 : params.defaultCwd ? await realpath(params.defaultCwd) : undefined;
         } catch (error) {
@@ -1811,7 +1818,7 @@ export function createStablePluginExecService(params: Readonly<{
             signal,
             assertCurrent,
             projectLaunch,
-            ...(typeof request.cwd === 'string' ? { requestedCwd: request.cwd } : {}),
+            ...(hostCwd !== undefined ? { requestedCwd: hostCwd } : {}),
             agentIsolation: hostAgentIsolation ?? params.agentIsolation,
             agentNativeLaunch,
             ...(nativeLaunch ? { sessionMcpContext: INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch)?.(),
@@ -1969,6 +1976,9 @@ export function createStablePluginExecService(params: Readonly<{
                 && options.descendantDisposition !== 'preserve-on-success'
                 ? { sessionHolder: readAgentNativeLaunchHolderRoleForHost(options.nativeLaunch) } : {}),
         });
+        // A Session-owned managed process (an Agent server such as OpenCode's) launches that
+        // Session's MCP relay as its own child; the Session MCP endpoint admits it by peer proof.
+        if (managedCustody?.sessionOwned) trackSessionManagedProcess(supervised.child);
         logger.infoFile('[PluginExec] Launch preparation phase', {
             phase: 'spawn_requested', executableKind: request.executable.kind, pid: supervised.child.pid,
             authorizationDurationMs: Math.round(authorizedAt - launchStartedAt),
