@@ -622,6 +622,17 @@ export function createBrowserSidecarCdpControlAdapter(
         }
     }
 
+    function openObservationFailure(
+        command: Readonly<{ commandId: string; browserSessionId: string; viewId: string }>,
+        completion: 'known' | 'unknown',
+    ): BrowserCommandDispatchResultV1 | undefined {
+        const failure = input.resolveInputControl?.(command)?.getObservationFailure('agent');
+        if (!failure) return undefined;
+        return failure === 'observation_held'
+            ? failed(command, 'permission_denied', 'This Browser page is confidential. Close it before replacing it with another page.', false, completion)
+            : cdpFailure(command, completion);
+    }
+
     async function openView(
         command: Readonly<{ commandId: string; browserSessionId: string; viewId: string; target: SidecarViewTarget; platform: BrowserPlatformV1; focus?: boolean }>,
         url: string,
@@ -632,17 +643,19 @@ export function createBrowserSidecarCdpControlAdapter(
             return failed(command, 'unsupported_command', 'Browser sidecar does not own this browser session.');
         }
         const currentUrl = BrowserHttpUrlV1Schema.safeParse(url);
-        if (input.resolveInputControl?.(command)?.isObservationHeld()) return cdpFailure(command, 'known');
+        const observationFailure = openObservationFailure(command, 'known');
+        if (observationFailure) return observationFailure;
         try {
             const page = await input.transport.openPage({
                 ...scope,
                 url,
                 focus: command.focus ?? true,
             });
-            if (disposed || input.resolveInputControl?.(command)?.isObservationHeld()) {
+            const lateFailure = disposed ? cdpFailure(command) : openObservationFailure(command, 'unknown');
+            if (lateFailure) {
                 try { await input.transport.dispatchBrowserCommand({ method: 'Target.closeTarget', params: { targetId: page.targetId } }); }
                 catch { /* The existing confidential binding remains retained on transport loss. */ }
-                return cdpFailure(command);
+                return lateFailure;
             }
             const previous = boundViews.get(browserViewKey(command));
             boundViews.set(browserViewKey(command), {

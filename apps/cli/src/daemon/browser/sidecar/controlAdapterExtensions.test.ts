@@ -1,10 +1,55 @@
 import { PassThrough } from 'node:stream';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { BrowserCommandDispatchResultV1Schema } from '@happier-dev/protocol/browser/control/v1';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createBrowserSidecarCdpControlAdapterFactory } from './controlAdapterFactory';
+import { createSurfaceInputControl } from '../../surfaces/inputControl';
+import { createBrowserExtensionService } from '../extensions/service';
+import { createBrowserProfileStore } from '../profiles/store';
+import { createBrowserStoragePartitionOwner } from '../storage/partitions';
 
 describe('browser sidecar extension views', () => {
+    it.each(['browser.extensions.openActionPopup', 'browser.extensions.openOptions'] as const)(
+        'preserves the confidential page and reports a non-retryable permission refusal through %s', async actionId => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-confidential-extension-'));
+        const profiles = createBrowserProfileStore({ storageRootDirectory: root,
+            partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: root }) });
+        const control = createSurfaceInputControl();
+        const transport = {
+            openPage: vi.fn(async () => ({ targetId: 'content-target', sessionId: 'content-session' })),
+            dispatchPageCommand: vi.fn(async () => ({})),
+            dispatchBrowserCommand: vi.fn(async () => ({ success: true })),
+        };
+        const factory = createBrowserSidecarCdpControlAdapterFactory({ browserSessionId: 'browser', sidecarId: 'sidecar',
+            pipe: { readable: new PassThrough(), writable: new PassThrough() },
+            connectTransport: async () => ({ transport }) });
+        const runtime = await factory({ machineId: 'machine', resolveInputControl: () => control });
+        if (!runtime.ok) throw new Error('Factory did not connect');
+        try {
+            await profiles.registerPersistentProfile({ profileId: 'profile', storageMode: 'user', owner: { kind: 'user', id: 'profile' } });
+            const extension = { id: 'a'.repeat(32), name: 'Installed extension', version: '1.0', enabled: true,
+                source: { kind: 'unpacked' as const, directory: '/fixture' }, directory: '/owned/fixture', permissions: [], hostPermissions: [],
+                actionPopup: 'popup.html', optionsPage: 'options.html' };
+            await profiles.setExtension('profile', extension);
+            const view = { browserSessionId: 'browser', viewId: 'content' };
+            expect(await runtime.adapter.dispatchCommand({ ...view, kind: 'openView', commandId: 'content-open', platform: 'web',
+                target: { kind: 'externalUrl', targetId: 'content', url: 'https://example.test' } }))
+                .toMatchObject({ status: 'dispatched' });
+            await control.beginConfidentialityHold();
+            const service = createBrowserExtensionService({ profileStore: profiles, runtime: runtime.extensions });
+            const result = await service.execute(actionId, { ...view, machineId: 'machine', commandId: 'extension-open',
+                profileId: 'profile', extensionId: extension.id });
+            expect(BrowserCommandDispatchResultV1Schema.parse(result)).toMatchObject({ status: 'failed', completion: 'known',
+                error: { code: 'permission_denied', retryable: false } });
+            expect(transport.openPage).toHaveBeenCalledTimes(1);
+            expect(control.hasConfidentialityHold()).toBe(true);
+            expect(runtime.contextCapture?.resolvePageHandle(view)).toEqual({ targetId: 'content-target', sessionId: 'content-session' });
+        } finally { await runtime.dispose?.(); await rm(root, { recursive: true, force: true }); }
+    });
+
     it.each([
         { kind: 'actionPopup', browserSessionId: 'browser', viewId: 'extension-view' },
         { kind: 'optionsPage', browserSessionId: 'browser', viewId: 'extension-view' },

@@ -173,14 +173,16 @@ describe('browser sidecar CDP control adapter', () => {
         const replacement = adapter.dispatchCommand(externalOpenViewCommand());
         await control.beginConfidentialityHold();
         finishOpen({ targetId: 'replacement_target', sessionId: 'replacement_session' });
-        expect(await replacement).toMatchObject({ status: 'failed' });
+        expect(await replacement).toMatchObject({ status: 'failed', completion: 'unknown',
+            error: { code: 'permission_denied', retryable: false } });
         expect(adapter.resolvePageHandle({ browserSessionId: 'browser_session_1', viewId: 'view_1' })).toEqual({
             targetId: 'cdp_target_secret', sessionId: 'cdp_session_secret',
         });
         expect(transport.dispatchBrowserCommand).toHaveBeenCalledWith(expect.objectContaining({
             method: 'Target.closeTarget', params: { targetId: 'replacement_target' },
         }));
-        expect(await adapter.dispatchCommand(externalOpenViewCommand())).toMatchObject({ status: 'failed' });
+        expect(await adapter.dispatchCommand(externalOpenViewCommand())).toMatchObject({ status: 'failed', completion: 'known',
+            error: { code: 'permission_denied', retryable: false } });
         expect(transport.openPage).toHaveBeenCalledTimes(2);
         adapter.dispose();
     });
