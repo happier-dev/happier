@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { lstatSync, readFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
-import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { Agent, createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer as createNetServer, type Server as NetServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { readAuthTokenProvenance, type AuthTokenKind } from '@happier-dev/protocol/auth/authToken';
@@ -19,6 +20,8 @@ import { decodeJwtPayload, readAccountIdFromToken } from '@/cloud/decodeJwtPaylo
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { createOwnerOnlyLocalEndpoint, type OwnerOnlyLocalEndpoint } from '@/utils/ipc/ownerOnlyLocalEndpoint';
+import { observeLocalIpcPeerIdentity, resolveProcessCustodyPeerIdentityExecutable,
+  type ProcessCustodyPeerIdentity } from '@/subprocess/supervision/processCustody';
 
 /**
  * Same-machine Session RPC channel.
@@ -67,6 +70,11 @@ export type LocalSessionRpcTarget = Readonly<{
   /** The Session's existing RPC admission and handlers (`RpcHandlerManager.handleRequest` with source `local_session_channel`). */
   handleRequest(request: SocketRpcRequestPayload): Promise<unknown>;
   cancelRequest(requestId: string): void;
+  /**
+   * The pid of the daemon that spawned or adopted this host (its current published state). Only a
+   * connection whose kernel-proven peer is that process, under this OS user, may call.
+   */
+  readTrustedCallerPid(): Promise<number | null>;
 }>;
 
 type RegisteredTarget = Readonly<{
@@ -78,9 +86,13 @@ type RegisteredTarget = Readonly<{
 
 type Ingress = {
   readonly server: Server;
+  front?: NetServer;
+  readonly sockets: Set<Socket>;
   readonly endpoint: OwnerOnlyLocalEndpoint;
   readonly directory: string | null;
   readonly targets: Map<string, RegisteredTarget>;
+  /** Set while this process is a session host: its daemon adds and ends Sessions here. */
+  host?: LocalSessionHostAdmission;
 };
 
 let ingress: Promise<Ingress> | null = null;
@@ -126,6 +138,26 @@ function readBody(stream: IncomingMessage): Promise<string> {
   });
 }
 
+const LOCAL_SESSION_PEER_REFUSED = 'local_session_peer_refused';
+const peerIdentities = new WeakMap<Socket, ProcessCustodyPeerIdentity | null>();
+
+async function observeCallerPeer(socket: Socket): Promise<ProcessCustodyPeerIdentity | null> {
+  const executablePath = resolveProcessCustodyPeerIdentityExecutable(process.platform);
+  if (!executablePath) return null;
+  return await observeLocalIpcPeerIdentity({ socket, executablePath }).catch(() => null);
+}
+
+/** The caller is the host's own daemon (kernel-proven pid) under this OS user; anything unprovable is refused. */
+async function isTrustedCaller(
+  owner: Readonly<{ readTrustedCallerPid(): Promise<number | null> }>,
+  request: IncomingMessage,
+): Promise<boolean> {
+  const identity = peerIdentities.get(request.socket as Socket);
+  if (!identity || identity.uid !== process.getuid?.()) return false;
+  const trusted = await owner.readTrustedCallerPid().catch(() => null);
+  return trusted !== null && identity.pid === trusted;
+}
+
 function reply(response: ServerResponse, status: number, body: unknown): void {
   if (response.writableEnded || response.destroyed) return;
   const text = JSON.stringify(body);
@@ -166,6 +198,11 @@ function admitLocalPacket(current: Ingress, body: unknown): Readonly<{ registere
 }
 
 async function handleIngressRequest(current: Ingress, request: IncomingMessage, response: ServerResponse): Promise<void> {
+  if (request.method === 'POST' && (request.url === HOST_ADD_PATH || request.url === HOST_END_PATH || request.url === HOST_WATCH_PATH
+    || request.url === HOST_HANDOVER_PATH)) {
+    await handleSessionHostRequest(current, request, response);
+    return;
+  }
   if (request.method !== 'POST' || (request.url !== CALL_PATH && request.url !== CANCEL_PATH)) {
     reply(response, 404, { error: 'Not found', errorCode: 'local_session_unavailable' });
     return;
@@ -183,7 +220,7 @@ async function handleIngressRequest(current: Ingress, request: IncomingMessage, 
     const parsed = SocketRpcCancellationPayloadSchema.safeParse(body && typeof body === 'object' ? (body as { cancel?: unknown }).cancel : undefined);
     const sessionId = body && typeof body === 'object' ? (body as { sessionId?: unknown }).sessionId : undefined;
     const registered = typeof sessionId === 'string' ? current.targets.get(sessionId) : undefined;
-    if (parsed.success && registered) registered.target.cancelRequest(parsed.data.requestId);
+    if (parsed.success && registered && await isTrustedCaller(registered.target, request)) registered.target.cancelRequest(parsed.data.requestId);
     reply(response, 200, { ok: true });
     return;
   }
@@ -193,6 +230,10 @@ async function handleIngressRequest(current: Ingress, request: IncomingMessage, 
     return;
   }
   const { registered, request: packet } = admitted;
+  if (!await isTrustedCaller(registered.target, request)) {
+    reply(response, 403, { error: 'Only the daemon of this host may call it', errorCode: LOCAL_SESSION_PEER_REFUSED });
+    return;
+  }
   // A caller that disconnects before the reply has the same meaning as a Socket.IO caller cancel.
   const onClose = () => {
     if (!response.writableEnded && typeof packet.requestId === 'string') registered.target.cancelRequest(packet.requestId);
@@ -210,7 +251,7 @@ async function handleIngressRequest(current: Ingress, request: IncomingMessage, 
 
 async function startIngress(): Promise<Ingress> {
   const isWindows = process.platform === 'win32';
-  const directory = isWindows ? null : await mkdtemp(join(resolveEndpointRoot(), 'happier-srpc-'));
+  const directory = isWindows ? null : await mkdtemp(join(await resolveEndpointRoot(), 'happier-srpc-'));
   try {
     if (directory) await chmod(directory, 0o700);
     const endpoint = createOwnerOnlyLocalEndpoint({
@@ -218,17 +259,29 @@ async function startIngress(): Promise<Ingress> {
       windowsPipePrefix: 'happier-session-rpc-',
     });
     const server = createServer();
-    const current: Ingress = { server, endpoint, directory, targets: new Map() };
+    const current: Ingress = { server, endpoint, directory, targets: new Map(), sockets: new Set() };
+    // Kernel-proven peer of each accepted connection (SO_PEERCRED / LOCAL_PEERPID+LOCAL_PEERCRED via
+    // the shipped process-custody helper), observed once per connection before HTTP parsing starts.
+    const front = createNetServer(socket => {
+      current.sockets.add(socket);
+      socket.once('close', () => current.sockets.delete(socket));
+      void observeCallerPeer(socket).then(identity => {
+        if (socket.destroyed) return;
+        peerIdentities.set(socket, identity);
+        server.emit('connection', socket);
+      }, () => socket.destroy());
+    });
+    current.front = front;
     server.on('request', (request, response) => {
       void handleIngressRequest(current, request, response).catch(error => {
         logger.warnLocalFile('[SESSION LOCAL RPC] request failed', { error: error instanceof Error ? error.message : String(error) });
         reply(response, 500, { error: 'Local Session RPC failed', errorCode: 'local_session_unavailable' });
       });
     });
-    await endpoint.listen(server);
+    await endpoint.listen(front);
     await endpoint.secure();
     // The hosted Sessions own the process lifetime; an idle listener never holds it open.
-    server.unref();
+    front.unref();
     return current;
   } catch (error) {
     if (directory) await rm(directory, { recursive: true, force: true });
@@ -236,16 +289,29 @@ async function startIngress(): Promise<Ingress> {
   }
 }
 
-/** The per-user runtime directory when the platform provides one ($XDG_RUNTIME_DIR, 0700), else the user's temp dir. */
-function resolveEndpointRoot(): string {
+/** unix-domain socket paths are limited to 104 bytes on macOS (108 on Linux), including the NUL. */
+const MAX_SOCKET_PATH_BYTES = 103;
+
+/**
+ * Per-user root for the endpoint directory: $XDG_RUNTIME_DIR (0700, ours) when present; else the
+ * Happier home's private `run/` directory when the socket path fits; else the user's temp dir, which
+ * callers accept only under a sticky or owner-only parent.
+ */
+async function resolveEndpointRoot(): Promise<string> {
   const runtime = process.env.XDG_RUNTIME_DIR;
   try {
     if (runtime && isOwnerOnly(runtime)) return runtime;
   } catch { /* unavailable: fall through */ }
+  const home = join(configuration.happyHomeDir, 'run');
+  if (Buffer.byteLength(join(home, 'happier-srpc-XXXXXX', 'rpc.sock')) <= MAX_SOCKET_PATH_BYTES) {
+    await mkdir(home, { recursive: true, mode: 0o700 });
+    await chmod(home, 0o700);
+    if (isOwnerOnly(home)) return home;
+  }
   return tmpdir();
 }
 
-async function writeDescriptor(path: string, descriptor: LocalSessionRpcDescriptorV1): Promise<void> {
+async function writeDescriptor(path: string, descriptor: LocalSessionRpcDescriptorV1 | LocalSessionHostDescriptorV1): Promise<void> {
   const directory = resolveDescriptorDirectory();
   await mkdir(directory, { recursive: true, mode: 0o700 });
   if (process.platform !== 'win32') await chmod(directory, 0o700);
@@ -262,6 +328,10 @@ export async function registerLocalSessionRpcTarget(target: LocalSessionRpcTarge
   // Callers cannot yet verify a Windows pipe server's user SID, so they never route there; serving
   // a pipe nobody may use would only add a listener.
   if (process.platform === 'win32') return async () => {};
+  // Only a host holding a full Account/terminal credential of the Session owner serves locally; a
+  // restricted host (ephemeral runner, API token) keeps every call on the server's admission.
+  const hostKind = readCredentialKind(target.credentialToken);
+  if (!hostKind || !LOCAL_ROUTE_CREDENTIAL_KINDS.has(hostKind)) return async () => {};
   const accountId = readAccountIdFromToken(target.credentialToken);
   if (!accountId) throw new Error('Local Session RPC requires the Session Account credential');
   ingress ??= startIngress().catch(error => { ingress = null; throw error; });
@@ -288,13 +358,19 @@ export async function registerLocalSessionRpcTarget(target: LocalSessionRpcTarge
     if (current.targets.get(target.sessionId) !== registered) return;
     current.targets.delete(target.sessionId);
     await removeOwnDescriptor(target.sessionId, process.pid, current.endpoint.endpointPath);
-    if (current.targets.size > 0 || ingress === null || await ingress !== current) return;
-    ingress = null;
-    current.server.closeAllConnections();
-    await new Promise<void>(resolve => current.server.close(() => resolve()));
-    await current.endpoint.remove();
-    if (current.directory) await rm(current.directory, { recursive: true, force: true });
+    await closeIngressWhenIdle(current);
   };
+}
+
+/** Close this process's endpoint once it serves neither a Session nor a session host. */
+async function closeIngressWhenIdle(current: Ingress): Promise<void> {
+  if (current.targets.size > 0 || current.host || ingress === null || await ingress !== current) return;
+  ingress = null;
+  // Kept-alive caller connections would otherwise hold the listener open until they idle out.
+  for (const socket of current.sockets) socket.destroy();
+  await new Promise<void>(resolve => current.front ? current.front.close(() => resolve()) : resolve());
+  await current.endpoint.remove();
+  if (current.directory) await rm(current.directory, { recursive: true, force: true });
 }
 
 /** Delete a descriptor only while it still names this host (a successor may have replaced it). */
@@ -305,8 +381,19 @@ async function removeOwnDescriptor(sessionId: string, pid: number, endpointPath?
   return true;
 }
 
+/** One kept-alive connection pool per host endpoint, so the host proves our peer identity once per connection. */
+const endpointAgents = new Map<string, Agent>();
+function keepAliveAgent(endpointPath: string): Agent {
+  let agent = endpointAgents.get(endpointPath);
+  if (!agent) {
+    agent = new Agent({ keepAlive: true });
+    endpointAgents.set(endpointPath, agent);
+  }
+  return agent;
+}
+
 /** Same-machine calls in flight from this process, by sessionId, so the liveness owner can end them. */
-const inFlightLocalCalls = new Map<string, Set<() => void>>();
+const inFlightLocalCalls = new Map<string, Set<Readonly<{ pid: number; abort: () => void }>>>();
 
 /**
  * The daemon's runner-liveness owner (session marker removal) reports that the host process `pid`
@@ -314,8 +401,14 @@ const inFlightLocalCalls = new Map<string, Set<() => void>>();
  * in-flight local calls to it (outcome unknown, exactly like a lost Socket.IO target).
  */
 export async function retireGoneLocalSessionRpcHost(input: Readonly<{ sessionId: string; pid: number }>): Promise<void> {
-  for (const abort of inFlightLocalCalls.get(input.sessionId) ?? []) abort();
+  // Only calls to that host process: a successor already serving the Session keeps its calls.
+  for (const call of inFlightLocalCalls.get(input.sessionId) ?? []) if (call.pid === input.pid) call.abort();
   if (process.platform === 'win32') return;
+  const descriptor = readDescriptor(input.sessionId);
+  if (descriptor?.pid === input.pid) {
+    endpointAgents.get(descriptor.endpoint.path)?.destroy();
+    endpointAgents.delete(descriptor.endpoint.path);
+  }
   await removeOwnDescriptor(input.sessionId, input.pid).catch(() => false);
 }
 
@@ -327,20 +420,34 @@ function isOwnerOnly(path: string): boolean {
   return entry.uid === uid && (entry.mode & 0o077) === 0 && !entry.isSymbolicLink();
 }
 
-function readDescriptor(sessionId: string): LocalSessionRpcDescriptorV1 | null {
-  const path = resolveDescriptorPath(sessionId);
+function isStickyOrOwnerOnly(path: string): boolean {
+  const entry = lstatSync(path);
+  if (entry.isSymbolicLink()) return false;
+  return (entry.mode & 0o1000) !== 0 || (entry.uid === process.getuid?.() && (entry.mode & 0o022) === 0);
+}
+
+/** An owner-only descriptor file naming an endpoint whose directory is still ours, or null. */
+function readVerifiedDescriptorFile(path: string): Record<string, unknown> | null {
   try {
     if (!isOwnerOnly(resolveDescriptorDirectory()) || !isOwnerOnly(path)) return null;
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<LocalSessionRpcDescriptorV1>;
-    if (parsed.v !== DESCRIPTOR_VERSION || parsed.sessionId !== sessionId || typeof parsed.accountId !== 'string'
-      || !parsed.endpoint || typeof parsed.endpoint.path !== 'string' || parsed.endpoint.kind !== 'unix') return null;
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown> | null;
+    const endpoint = parsed?.endpoint as Partial<LocalSessionRpcDescriptorV1['endpoint']> | undefined;
+    if (!parsed || parsed.v !== DESCRIPTOR_VERSION || !endpoint || typeof endpoint.path !== 'string' || endpoint.kind !== 'unix') return null;
     // The endpoint's own directory must still be ours: a crashed host's temp directory can be
-    // recreated by another OS user (sticky /tmp keeps an owned directory ours, so no TOCTOU).
-    if (!isOwnerOnly(dirname(parsed.endpoint.path))) return null;
-    return parsed as LocalSessionRpcDescriptorV1;
+    // recreated by another OS user. Its parent must be sticky or ours, or another user could swap the
+    // owned leaf between this check and connect (non-sticky world-writable TMPDIR).
+    const endpointDir = dirname(endpoint.path);
+    if (!isOwnerOnly(endpointDir) || !isStickyOrOwnerOnly(dirname(endpointDir))) return null;
+    return parsed;
   } catch {
     return null;
   }
+}
+
+function readDescriptor(sessionId: string): LocalSessionRpcDescriptorV1 | null {
+  const parsed = readVerifiedDescriptorFile(resolveDescriptorPath(sessionId));
+  if (!parsed || parsed.sessionId !== sessionId || typeof parsed.accountId !== 'string') return null;
+  return parsed as LocalSessionRpcDescriptorV1;
 }
 
 /** The host refused or was unreachable before any handler ran: the packet was provably not dispatched. */
@@ -356,11 +463,11 @@ function postJson(descriptor: LocalSessionRpcDescriptorV1, path: string, body: u
       reject(new LocalSessionRpcBodyTooLargeError('Local Session RPC body exceeds the transport budget'));
       return;
     }
-    const calls = inFlightLocalCalls.get(descriptor.sessionId) ?? new Set<() => void>();
+    const calls = inFlightLocalCalls.get(descriptor.sessionId) ?? new Set<Readonly<{ pid: number; abort: () => void }>>();
     inFlightLocalCalls.set(descriptor.sessionId, calls);
-    const settle = () => { calls.delete(abort); if (calls.size === 0 && inFlightLocalCalls.get(descriptor.sessionId) === calls) inFlightLocalCalls.delete(descriptor.sessionId); };
+    const settle = () => { calls.delete(entry); if (calls.size === 0 && inFlightLocalCalls.get(descriptor.sessionId) === calls) inFlightLocalCalls.delete(descriptor.sessionId); };
     const outgoing = httpRequest({
-      socketPath: descriptor.endpoint.path, path, method: 'POST',
+      socketPath: descriptor.endpoint.path, path, method: 'POST', agent: keepAliveAgent(descriptor.endpoint.path),
       headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text) },
     }, incoming => {
       readBody(incoming).then(raw => {
@@ -368,8 +475,8 @@ function postJson(descriptor: LocalSessionRpcDescriptorV1, path: string, body: u
         try { resolve({ status: incoming.statusCode ?? 0, body: JSON.parse(raw) }); } catch (error) { reject(error); }
       }, error => { settle(); reject(error); });
     });
-    const abort = () => outgoing.destroy(new Error('Local Session host is gone'));
-    calls.add(abort);
+    const entry = { pid: descriptor.pid, abort: () => outgoing.destroy(new Error('Local Session host is gone')) };
+    calls.add(entry);
     outgoing.once('error', (error: NodeJS.ErrnoException) => {
       settle();
       // Connect-phase failures: no host is listening, so nothing was dispatched.
@@ -378,6 +485,12 @@ function postJson(descriptor: LocalSessionRpcDescriptorV1, path: string, body: u
     });
     outgoing.end(text);
   });
+}
+
+let localSessionRpcCallerEnabled = false;
+/** The daemon process (the only caller its Session hosts admit) opts its router into the local channel. */
+export function enableLocalSessionRpcCalls(): void {
+  localSessionRpcCallerEnabled = true;
 }
 
 export type LocalSessionRpcRoute = Readonly<{ socket: SocketRpcSocket }>;
@@ -396,6 +509,8 @@ export function resolveLocalSessionRpcRoute(input: Readonly<{
 }>): LocalSessionRpcRoute | null {
   // Windows: callers cannot yet verify the pipe server's user SID (relay follow-up), so never local.
   if (process.platform === 'win32') return null;
+  // Hosts admit only their daemon (kernel peer identity); other processes keep the server path.
+  if (!localSessionRpcCallerEnabled) return null;
   if (!resolveSocketRpcSameAccountSessionAuthorizationV1(input.method, input.sessionId)) return null;
   // Only credentials whose server admission is exactly "Account + Session access" go local. Restricted
   // kinds (ephemeral Session runners, API tokens) keep the server's extra principal checks.
@@ -415,8 +530,308 @@ export function resolveLocalSessionRpcRoute(input: Readonly<{
       const response = await postJson(descriptor, CALL_PATH, { packet, callerAuthority });
       if (response.status === 200) return response.body;
       if (response.status === 404) throw new LocalSessionRpcUnavailableError('Session is not hosted on this local channel');
+      if (response.status === 403 && (response.body as { errorCode?: unknown } | null)?.errorCode === LOCAL_SESSION_PEER_REFUSED) {
+        throw new LocalSessionRpcUnavailableError('Local Session host refused this caller');
+      }
       return response.body;
     },
   };
   return { socket };
+}
+
+// Session host admission. One session host process per daemon runs many daemon-started Sessions;
+// its daemon adds and ends them on this same owner-only, peer-checked endpoint.
+
+const HOST_ADD_PATH = '/v1/session-host/add';
+const HOST_END_PATH = '/v1/session-host/end';
+/** A restarted daemon re-observes a running Session's end (the add request's body, re-attached). */
+const HOST_WATCH_PATH = '/v1/session-host/watch';
+/** A newer daemon moves this host's Sessions to a current host: the host hands over and exits. */
+const HOST_HANDOVER_PATH = '/v1/session-host/handover';
+const SESSION_HOST_CLOSING = 'session_host_closing';
+const SESSION_NOT_HOSTED = 'session_not_hosted';
+/**
+ * A host handing its Sessions to a newer host exits with this code, leaving each Session's Agent in
+ * its holder: like a crash, every Session's end is unexpected, so each is respawned and adopts.
+ */
+export const SESSION_HOST_HANDOVER_EXIT_CODE = 75;
+/** First stdout line of a ready session host; its daemon waits for it before adding Sessions. */
+export const SESSION_HOST_READY_LINE = 'happier-session-host-ready';
+
+type LocalSessionHostDescriptorV1 = Readonly<{
+  v: typeof DESCRIPTOR_VERSION;
+  kind: 'session_host';
+  endpoint: Readonly<{ kind: 'unix' | 'named_pipe'; path: string }>;
+  pid: number;
+}>;
+
+export type SessionHostAddRequest = Readonly<{
+  /** The daemon's tracking key for this Session (echoed by its session-started report). */
+  trackingKey: string;
+  /** The runner command line for this Session; the host never reads its own argv for it. */
+  argv: readonly string[];
+  /** The Session's process environment (what a runner would have received). */
+  env: Readonly<Record<string, string>>;
+  cwd: string;
+}>;
+
+/** The host no longer admits Sessions (it is ending); the daemon starts a new host. */
+export class SessionHostClosingError extends Error {
+  readonly code = SESSION_HOST_CLOSING;
+}
+
+export type LocalSessionHostEndResult = Readonly<{
+  status: 'termination_requested' | 'not_hosted' | 'termination_unavailable' | 'peer_refused' | 'host_unavailable';
+}>;
+
+export type LocalSessionHostAdmission = Readonly<{
+  /**
+   * Start one Session. Throws `SessionHostClosingError` synchronously when the host no longer
+   * admits; otherwise resolves with the Session's exit code when that Session ends.
+   */
+  addSession(request: SessionHostAddRequest): Promise<Readonly<{ exitCode: number }>>;
+  /** Ask one hosted Session to end, distinguishing absence from unavailable termination. */
+  endSession(trackingKey: string): LocalSessionHostEndResult;
+  /** This running Session's end (same result as its add), or null when this host does not run it. */
+  watchSession(trackingKey: string): Promise<Readonly<{ exitCode: number }>> | null;
+  /**
+   * Stop admitting, leave every Session's Agent in its holder and exit with
+   * `SESSION_HOST_HANDOVER_EXIT_CODE`; false when the host is already ending.
+   */
+  handOver(): boolean;
+  /** The daemon that launched this host (or adopted it after a restart): the only caller admitted. */
+  readTrustedCallerPid(): Promise<number | null>;
+}>;
+
+/**
+ * One descriptor per host process: a host started before a CLI update keeps serving its Sessions
+ * while the updated daemon starts a current host for new ones.
+ */
+function resolveHostDescriptorPath(hostPid: number): string {
+  return join(resolveDescriptorDirectory(), `session-host-${hostPid}.json`);
+}
+
+function parseSessionHostAddRequest(body: unknown): SessionHostAddRequest | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const { trackingKey, argv, env, cwd } = body as Record<string, unknown>;
+  if (typeof trackingKey !== 'string' || !trackingKey || typeof cwd !== 'string' || !cwd) return null;
+  if (!Array.isArray(argv) || argv.length === 0 || argv.some(arg => typeof arg !== 'string')) return null;
+  if (!env || typeof env !== 'object' || Array.isArray(env)
+    || Object.values(env).some(value => typeof value !== 'string')) return null;
+  return { trackingKey, argv: argv as string[], env: env as Record<string, string>, cwd };
+}
+
+async function handleSessionHostRequest(current: Ingress, request: IncomingMessage, response: ServerResponse): Promise<void> {
+  const host = current.host;
+  if (!host) {
+    reply(response, 404, { error: 'No session host on this endpoint', errorCode: 'local_session_unavailable' });
+    return;
+  }
+  let body: unknown;
+  try { body = JSON.parse(await readBody(request)); } catch {
+    reply(response, 400, { error: 'Invalid session host request', errorCode: 'RPC_FORBIDDEN' });
+    return;
+  }
+  if (!await isTrustedCaller(host, request)) {
+    reply(response, 403, { error: 'Only the daemon of this host may call it', errorCode: LOCAL_SESSION_PEER_REFUSED });
+    return;
+  }
+  const trackingKey = (body as { trackingKey?: unknown } | null)?.trackingKey;
+  if (request.url === HOST_END_PATH) {
+    reply(response, 200, typeof trackingKey === 'string' ? host.endSession(trackingKey) : { status: 'not_hosted' });
+    return;
+  }
+  if (request.url === HOST_HANDOVER_PATH) {
+    reply(response, 200, { handingOver: host.handOver() });
+    return;
+  }
+  let ended: Promise<Readonly<{ exitCode: number }>>;
+  if (request.url === HOST_WATCH_PATH) {
+    const watched = typeof trackingKey === 'string' ? host.watchSession(trackingKey) : null;
+    if (!watched) {
+      reply(response, 404, { error: 'This host does not run that Session', errorCode: SESSION_NOT_HOSTED });
+      return;
+    }
+    ended = watched;
+  } else {
+    const add = parseSessionHostAddRequest(body);
+    if (!add) {
+      reply(response, 400, { error: 'Invalid session host request', errorCode: 'RPC_FORBIDDEN' });
+      return;
+    }
+    try {
+      ended = host.addSession(add);
+    } catch (error) {
+      if (!(error instanceof SessionHostClosingError)) throw error;
+      reply(response, 503, { error: error.message, errorCode: SESSION_HOST_CLOSING });
+      return;
+    }
+  }
+  // Admitted: the headers say so now; the body is the Session's exit code when it ends. A daemon
+  // that disconnects meanwhile (restart) does not end the Session.
+  response.writeHead(200, { 'content-type': 'application/json' });
+  response.flushHeaders();
+  const { exitCode } = await ended;
+  if (!response.writableEnded && !response.destroyed) response.end(JSON.stringify({ exitCode }));
+}
+
+/**
+ * Serve this process as its daemon's session host and publish the host descriptor. Returns the
+ * retirement that stops admitting Sessions (and closes the endpoint when nothing else is served).
+ */
+export async function serveLocalSessionHost(admission: LocalSessionHostAdmission): Promise<() => Promise<void>> {
+  // Windows callers cannot yet verify a pipe server's user SID (see the Session RPC router).
+  if (process.platform === 'win32') throw new Error('A session host needs a peer-verified local endpoint');
+  ingress ??= startIngress().catch(error => { ingress = null; throw error; });
+  const current = await ingress;
+  if (current.host) throw new Error('This process already serves a session host');
+  current.host = admission;
+  const endpointPath = current.endpoint.endpointPath;
+  try {
+    await writeDescriptor(resolveHostDescriptorPath(process.pid), {
+      v: DESCRIPTOR_VERSION, kind: 'session_host', endpoint: { kind: current.endpoint.kind, path: endpointPath }, pid: process.pid,
+    });
+  } catch (error) {
+    current.host = undefined;
+    await closeIngressWhenIdle(current);
+    throw error;
+  }
+  return async () => {
+    if (current.host !== admission) return;
+    current.host = undefined;
+    const descriptor = readHostDescriptor(process.pid);
+    if (descriptor?.endpoint.path === endpointPath) {
+      await rm(resolveHostDescriptorPath(process.pid), { force: true });
+    }
+    await closeIngressWhenIdle(current);
+  };
+}
+
+/** The daemon observed host `hostPid` exit: a host that died without retiring leaves its descriptor. */
+export async function removeExitedSessionHostDescriptor(hostPid: number): Promise<void> {
+  await rm(resolveHostDescriptorPath(hostPid), { force: true });
+}
+
+function readHostDescriptor(hostPid: number): LocalSessionHostDescriptorV1 | null {
+  const parsed = readVerifiedDescriptorFile(resolveHostDescriptorPath(hostPid));
+  if (!parsed || parsed.kind !== 'session_host' || parsed.pid !== hostPid) return null;
+  return parsed as LocalSessionHostDescriptorV1;
+}
+
+/**
+ * A hosted Session's end as its daemon observes it: the exit code, or null when the request was
+ * refused (`closing`: the host no longer admits; `notHosted`: the live host does not run that
+ * Session) or the connection broke.
+ */
+export type LocalSessionHostSessionEnd = Readonly<{ exitCode: number | null; closing: boolean; notHosted: boolean }>;
+
+/** A Session added to a session host, as its daemon observes it. */
+export type LocalSessionHostSession = Readonly<{
+  /** True once the host admitted the Session; false when it refused or was unreachable (nothing started). */
+  admitted: Promise<boolean>;
+  /** The Session's end: its exit code, or null when the host connection broke (the host is gone). */
+  ended: Promise<LocalSessionHostSessionEnd>;
+}>;
+
+/** Add one Session to the session host `hostPid` (this daemon launched it). */
+export function addLocalSessionHostSession(input: Readonly<{ hostPid: number; request: SessionHostAddRequest }>): LocalSessionHostSession {
+  return openLocalSessionHostSession({ hostPid: input.hostPid, path: HOST_ADD_PATH, body: input.request });
+}
+
+/**
+ * Re-observe a Session that runs in the session host `hostPid` (a restarted daemon adopting the
+ * host). Not admitted when the host does not run it (any more).
+ */
+export function watchLocalSessionHostSession(input: Readonly<{ hostPid: number; trackingKey: string }>): LocalSessionHostSession {
+  return openLocalSessionHostSession({ hostPid: input.hostPid, path: HOST_WATCH_PATH, body: { trackingKey: input.trackingKey } });
+}
+
+/** One Session's request on the host: admitted by its headers, ended by its body (the Session's exit code). */
+function openLocalSessionHostSession(input: Readonly<{ hostPid: number; path: string; body: unknown }>): LocalSessionHostSession {
+  let resolveAdmitted!: (admitted: boolean) => void;
+  let resolveEnded!: (end: LocalSessionHostSessionEnd) => void;
+  const admitted = new Promise<boolean>(resolve => { resolveAdmitted = resolve; });
+  const ended = new Promise<LocalSessionHostSessionEnd>(resolve => { resolveEnded = resolve; });
+  const refuse = (closing: boolean, notHosted = false) => {
+    resolveAdmitted(false);
+    resolveEnded({ exitCode: null, closing, notHosted });
+  };
+  const descriptor = readHostDescriptor(input.hostPid);
+  const text = JSON.stringify(input.body);
+  if (Buffer.byteLength(text) > EXTERNAL_ACTION_SOCKET_MIN_BUFFER_BYTES_V2) {
+    refuse(false);
+    return { admitted, ended };
+  }
+  if (!descriptor) {
+    // That host no longer publishes its endpoint: it ended (or is ending); a new host takes the Session.
+    refuse(true);
+    return { admitted, ended };
+  }
+  // Its own connection: the request lives as long as the Session.
+  const outgoing = httpRequest({
+    socketPath: descriptor.endpoint.path, path: input.path, method: 'POST', agent: false,
+    headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text) },
+  }, incoming => {
+    if (incoming.statusCode !== 200) {
+      void readBody(incoming).then(raw => {
+        let errorCode: unknown;
+        try { errorCode = (JSON.parse(raw) as { errorCode?: unknown } | null)?.errorCode; } catch { errorCode = undefined; }
+        refuse(errorCode === SESSION_HOST_CLOSING, errorCode === SESSION_NOT_HOSTED);
+      }, () => refuse(false));
+      return;
+    }
+    resolveAdmitted(true);
+    readBody(incoming).then(raw => {
+      const exitCode = (JSON.parse(raw) as { exitCode?: unknown }).exitCode;
+      resolveEnded({ exitCode: typeof exitCode === 'number' ? exitCode : null, closing: false, notHosted: false });
+    }).catch(() => resolveEnded({ exitCode: null, closing: false, notHosted: false }));
+  });
+  outgoing.once('error', () => {
+    // Before admission nothing was started; after it, the host connection broke.
+    refuse(false);
+  });
+  outgoing.end(text);
+  return { admitted, ended };
+}
+
+/** Ask the session host to end one Session, retaining its refusal or transport outcome. */
+export async function endLocalSessionHostSession(input: Readonly<{ hostPid: number; trackingKey: string }>): Promise<LocalSessionHostEndResult> {
+  const result = await callLocalSessionHost(input.hostPid, HOST_END_PATH, { trackingKey: input.trackingKey });
+  if (result?.errorCode === LOCAL_SESSION_PEER_REFUSED) return { status: 'peer_refused' };
+  const status = result?.status;
+  if (status === 'termination_requested' || status === 'not_hosted' || status === 'termination_unavailable') return { status };
+  return { status: 'host_unavailable' };
+}
+
+/**
+ * Ask the session host `hostPid` (an older runtime) to hand its Sessions over: it exits and each of
+ * its Sessions ends unexpectedly, so the daemon respawns them into its current host, where they
+ * adopt their held Agents. False when that host is unreachable or already ending.
+ */
+export async function handOverLocalSessionHost(input: Readonly<{ hostPid: number }>): Promise<boolean> {
+  return (await callLocalSessionHost(input.hostPid, HOST_HANDOVER_PATH, {}))?.handingOver === true;
+}
+
+/** One short request on the host endpoint; null when the host is unreachable or refused it. */
+async function callLocalSessionHost(hostPid: number, path: string, body: unknown): Promise<Record<string, unknown> | null> {
+  const descriptor = readHostDescriptor(hostPid);
+  if (!descriptor) return null;
+  const text = JSON.stringify(body);
+  return await new Promise<Record<string, unknown> | null>(resolve => {
+    const outgoing = httpRequest({
+      socketPath: descriptor.endpoint.path, path, method: 'POST', agent: false,
+      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text) },
+    }, incoming => {
+      readBody(incoming).then(raw => {
+        try {
+          const parsed: unknown = JSON.parse(raw);
+          resolve(parsed && typeof parsed === 'object' && (incoming.statusCode === 200
+            || (incoming.statusCode === 403 && (parsed as Record<string, unknown>).errorCode === LOCAL_SESSION_PEER_REFUSED))
+            ? parsed as Record<string, unknown> : null);
+        } catch { resolve(null); }
+      }, () => resolve(null));
+    });
+    outgoing.once('error', () => resolve(null));
+    outgoing.end(text);
+  });
 }

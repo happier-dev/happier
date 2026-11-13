@@ -1,0 +1,134 @@
+import type { EventEmitter } from 'node:events';
+
+import { logger } from '@/ui/logger';
+import {
+  serveLocalSessionHost,
+  SESSION_HOST_HANDOVER_EXIT_CODE,
+  SessionHostClosingError,
+  type SessionHostAddRequest,
+  type LocalSessionHostEndResult,
+} from '@/session/transport/rpc/localSessionRpcChannel';
+import { handOverSessionHolderClients, pauseSessionHolderDelivery } from '@/subprocess/supervision/sessionHolder';
+
+import { readHostedSessionScope, runAddedHostedSession, saveHostedSessionForHandover, type HostedSessionScope } from './hostedSessionScope';
+import { registerRunnerTerminationHandlers, requestHostedSessionTermination } from './runnerTerminationHandlers';
+
+export { SESSION_HOST_READY_LINE } from '@/session/transport/rpc/localSessionRpcChannel';
+
+export type SessionHost = Readonly<{
+  /** Same contract as the daemon's add call: resolves with the Session's exit code when it ends. */
+  addSession(request: SessionHostAddRequest): Promise<Readonly<{ exitCode: number }>>;
+  endSession(trackingKey: string): LocalSessionHostEndResult;
+  /** This running Session's end, for a daemon that re-observes it after a restart. */
+  watchSession(trackingKey: string): Promise<Readonly<{ exitCode: number }>> | null;
+  /** Hand every Session to a newer host (see `LocalSessionHostAdmission.handOver`). */
+  handOver(): boolean;
+  /** Settles when the host stopped admitting: after its last Session ended, or on a process signal. */
+  whenEnded: Promise<void>;
+}>;
+
+/**
+ * One process that runs many daemon-started Sessions. Each added Session runs the ordinary runner
+ * command (its own argv, environment and working directory) inside its own hosted Session scope; a
+ * Session that fails or is stopped ends only itself. The host holds its own registration with the
+ * process termination owner, so the process lives while the host runs and signals still fan out to
+ * every Session. The host ends when its last Session has ended (the daemon starts a new one for the
+ * next Session).
+ */
+export async function startSessionHost(params: Readonly<{
+  /** Runs one Session's runner command line (the CLI dispatch in production). */
+  runSessionCommand: (argv: readonly string[]) => Promise<void>;
+  /** The daemon that launched this host: the only caller admitted on its endpoint. */
+  readTrustedCallerPid: () => Promise<number | null>;
+  process?: Pick<EventEmitter, 'on' | 'removeListener'>;
+  exit?: (code: number) => void;
+}>): Promise<SessionHost> {
+  const sessions = new Map<string, { scope: HostedSessionScope | null; ended: Promise<Readonly<{ exitCode: number }>> }>();
+  let closing = false;
+  let retireEndpoint: (() => Promise<void>) | null = null;
+  const exit = params.exit ?? ((code: number) => process.exit(code));
+  const termination = registerRunnerTerminationHandlers({
+    process: params.process ?? process,
+    exit,
+    onTerminate: async () => {
+      closing = true;
+      await retireEndpoint?.();
+    },
+  });
+  const endWhenIdle = (): void => {
+    if (sessions.size > 0 || closing) return;
+    closing = true;
+    termination.requestTermination({ kind: 'exit', code: 0 });
+  };
+
+  const addSession = (request: SessionHostAddRequest): Promise<Readonly<{ exitCode: number }>> => {
+    if (closing) throw new SessionHostClosingError('The session host is ending');
+    if (sessions.has(request.trackingKey)) throw new Error('This Session is already hosted');
+    let resolveEnded!: (end: Readonly<{ exitCode: number }>) => void;
+    const session = {
+      scope: null as HostedSessionScope | null,
+      ended: new Promise<Readonly<{ exitCode: number }>>((resolve) => { resolveEnded = resolve; }),
+    };
+    sessions.set(request.trackingKey, session);
+    let ended = false;
+    const end = (exitCode: number): void => {
+      if (ended) return;
+      ended = true;
+      sessions.delete(request.trackingKey);
+      resolveEnded({ exitCode });
+      endWhenIdle();
+    };
+    void runAddedHostedSession({ environment: { ...request.env }, workingDirectory: request.cwd, end }, async () => {
+      session.scope = readHostedSessionScope() ?? null;
+      await params.runSessionCommand(request.argv);
+    }).then(() => end(0), (error: unknown) => {
+      logger.warn('[session-host] Session command failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      end(1);
+    });
+    return session.ended;
+  };
+  const endSession = (trackingKey: string): LocalSessionHostEndResult => {
+    const scope = sessions.get(trackingKey)?.scope;
+    if (!scope) return { status: 'not_hosted' };
+    return { status: requestHostedSessionTermination(scope, { kind: 'signal', signal: 'SIGTERM' })
+      ? 'termination_requested' : 'termination_unavailable' };
+  };
+  const watchSession = (trackingKey: string) => sessions.get(trackingKey)?.ended ?? null;
+  // Update: the same path as a crash, without the loss. No Session is ended (ending one would end its
+  // Agent); the host stops admitting, writes its holder acknowledgements and exits, and the newer
+  // host adopts every holder, which replays only the output this host never delivered.
+  const handOver = (): boolean => {
+    if (closing) return false;
+    closing = true;
+    void (async () => {
+      await retireEndpoint?.();
+      // Agent output this host took is already acknowledged, so the newer host never replays it:
+      // stop taking more (it stays in the holders for the newer host), then save what was taken.
+      pauseSessionHolderDelivery();
+      await Promise.all([...sessions.values()].map(async session => {
+        if (session.scope) await saveHostedSessionForHandover(session.scope);
+      }));
+      await handOverSessionHolderClients();
+    })().catch((error: unknown) => {
+      logger.warn('[session-host] Handover flush failed', { error: error instanceof Error ? error.message : String(error) });
+    }).finally(() => exit(SESSION_HOST_HANDOVER_EXIT_CODE));
+    return true;
+  };
+
+  try {
+    retireEndpoint = await serveLocalSessionHost({ addSession, endSession, watchSession, handOver, readTrustedCallerPid: params.readTrustedCallerPid });
+  } catch (error) {
+    closing = true;
+    termination.dispose();
+    throw error;
+  }
+  return {
+    addSession,
+    endSession,
+    watchSession,
+    handOver,
+    whenEnded: termination.whenTerminated.then(() => undefined),
+  };
+}

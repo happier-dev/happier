@@ -88,7 +88,12 @@ function createHostedSessionHandle(host: RunningHost, trackingKey: string, sessi
       const exit = host.exited ? await host.exited : null;
       return { exitCode: exit?.code ?? null, signal: exit?.signal ?? null, hostLost: true };
     }),
-    end: () => endLocalSessionHostSession({ hostPid: host.pid, trackingKey }),
+    end: async () => {
+      const result = await endLocalSessionHostSession({ hostPid: host.pid, trackingKey });
+      if (result.status === 'termination_requested') return true;
+      logger.warn('[DAEMON STOP] Hosted Session end refused', { hostPid: host.pid, trackingKey, status: result.status });
+      return false;
+    },
   };
 }
 
