@@ -1345,6 +1345,66 @@ test('extractArchivePayloadToDirectory can skip tar links for a verified runtime
   }
 });
 
+test('extractArchivePayloadToDirectory can materialize tar hardlinks to earlier regular files in the same archive', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-hardlinks-'));
+  const archivePath = join(rootDir, 'payload.tar.gz');
+  const extractDir = join(rootDir, 'extract');
+  try {
+    // Published runtime archives (for example pnpm's Linux tarball) deduplicate
+    // identical files as hardlinks; the linked files are load-bearing.
+    await writeFile(archivePath, createTarGzip([
+      { name: 'dist/esm/package.json', contents: '{"type":"module"}' },
+      { name: 'dist/other/esm/package.json', type: '1', linkpath: 'dist/esm/package.json' },
+    ]));
+
+    await extractArchivePayloadToDirectory({
+      archiveName: 'payload.tar.gz',
+      archivePath,
+      extractDir,
+      tarLinkPolicy: 'allow-hard-links',
+    });
+
+    assert.equal(await readFile(join(extractDir, 'dist', 'other', 'esm', 'package.json'), 'utf8'), '{"type":"module"}');
+    assert.equal(await readFile(join(extractDir, 'dist', 'esm', 'package.json'), 'utf8'), '{"type":"module"}');
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('extractArchivePayloadToDirectory still rejects unsafe tar links when hardlinks are allowed', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-hardlinks-unsafe-'));
+  try {
+    const cases = [
+      { label: 'symlink', entries: [{ name: 'target', contents: 'x' }, { name: 'link', type: '2', linkpath: 'target' }] },
+      { label: 'parent traversal', entries: [{ name: 'link', type: '1', linkpath: '../outside' }] },
+      { label: 'absolute target', entries: [{ name: 'link', type: '1', linkpath: '/etc/passwd' }] },
+      { label: 'later target', entries: [{ name: 'link', type: '1', linkpath: 'target' }, { name: 'target', contents: 'x' }] },
+      { label: 'missing target', entries: [{ name: 'target', contents: 'x' }, { name: 'link', type: '1', linkpath: 'absent' }] },
+      { label: 'directory target', entries: [{ name: 'dir/', type: '5' }, { name: 'link', type: '1', linkpath: 'dir' }] },
+      { label: 'self target', entries: [{ name: 'link', type: '1', linkpath: 'link' }] },
+    ];
+    for (const { label, entries } of cases) {
+      const archivePath = join(rootDir, `${label.replaceAll(' ', '-')}.tar.gz`);
+      const extractDir = join(rootDir, `extract-${label.replaceAll(' ', '-')}`);
+      await writeFile(archivePath, createTarGzip(entries));
+      await assert.rejects(
+        extractArchivePayloadToDirectory({
+          archiveName: 'payload.tar.gz',
+          archivePath,
+          extractDir,
+          tarLinkPolicy: 'allow-hard-links',
+        }),
+        /link|path/iu,
+        label,
+      );
+      await assert.rejects(stat(extractDir), { code: 'ENOENT' }, label);
+    }
+    assert.deepEqual((await readdir(rootDir)).filter((name) => name.includes('.extract-')), []);
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
 test('extractFirstPartyReleaseArchiveToDirectory skips links from checksum-verified release payloads', async () => {
   const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-first-party-links-'));
   const payloadDir = join(rootDir, 'payload');

@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { gzipSync } from 'node:zlib';
 import * as tar from 'tar';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime';
 import { ensureManagedPnpmCommand, managedPnpmBinPath, managedPnpmInstallDir } from './managedPnpm.js';
@@ -281,6 +282,37 @@ describe('managedPnpm bootstrap race protection', () => {
     expect(command).toBe(managedPnpmBinPath(testEnv));
     await expect(readFile(managedPnpmBinPath(testEnv), 'utf8')).resolves.toBe('managed-pnpm-extracted');
     await expect(readFile(join(dirname(managedPnpmBinPath(testEnv)), 'dist', 'index.js'), 'utf8')).resolves.toBe('managed-pnpm-support');
+  });
+
+  it.skipIf(process.platform === 'win32')('extracts a POSIX pnpm archive whose support files are stored as hardlinks', async () => {
+    // pnpm's published Linux tarball (v12.18.0) stores 19 identical files as hardlinks,
+    // including dist/node_modules/*/dist/{esm,commonjs}/package.json module-type markers.
+    const entry = (path: string, contents: string | null, linkpath?: string): Buffer[] => {
+      const body = Buffer.from(contents ?? '', 'utf8');
+      const header = new tar.Header({
+        path, mode: 0o755, size: body.length, mtime: new Date(0),
+        type: linkpath ? 'Link' : 'File', ...(linkpath ? { linkpath } : {}),
+      });
+      header.encode();
+      return [header.block!, body, Buffer.alloc((512 - (body.length % 512)) % 512)];
+    };
+
+    const command = await ensureManagedPnpmCommand(testEnv, {
+      ...createManagedPnpmBoundaryDeps(),
+      downloadGitHubReleaseAsset: async ({ destinationPath }: Readonly<{ destinationPath: string }>) => {
+        await mkdir(dirname(destinationPath), { recursive: true });
+        await writeFile(destinationPath, gzipSync(Buffer.concat([
+          ...entry('pnpm', 'managed-pnpm-extracted'),
+          ...entry('dist/node_modules/fs-minipass/dist/esm/package.json', '{"type":"module"}'),
+          ...entry('dist/node_modules/tar/dist/esm/package.json', null, 'dist/node_modules/fs-minipass/dist/esm/package.json'),
+          Buffer.alloc(1024),
+        ])));
+      },
+    });
+
+    expect(command).toBe(managedPnpmBinPath(testEnv));
+    await expect(readFile(join(dirname(managedPnpmBinPath(testEnv)), 'dist', 'node_modules', 'tar', 'dist', 'esm', 'package.json'), 'utf8'))
+      .resolves.toBe('{"type":"module"}');
   });
 
   it('extracts Windows zip assets in-process without requiring tar', async () => {

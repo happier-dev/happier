@@ -326,6 +326,7 @@ function createArchiveEntryValidator(
 
 type TarArchiveEntry = Readonly<{
   gid?: number | null;
+  linkpath?: string;
   meta: boolean;
   mode?: number | null;
   path: string;
@@ -339,7 +340,7 @@ type TarEntryValidator = Readonly<{
   assertValid: () => void;
 }>;
 
-type TarLinkPolicy = 'reject' | 'skip';
+type TarLinkPolicy = 'reject' | 'skip' | 'allow-hard-links';
 
 function createTarEntryValidator(
   linkPolicy: TarLinkPolicy,
@@ -349,6 +350,7 @@ function createTarEntryValidator(
   onEntry?: (entry: InspectedTarArchiveEntry) => void,
 ): TarEntryValidator {
   const validatePath = createArchiveEntryValidator(allowedEntryRoots);
+  const acceptedFilePaths = new Set<string>();
   let firstError: Error | null = null;
   return {
     accept: (entry) => {
@@ -372,6 +374,7 @@ function createTarEntryValidator(
           budget.account('file', entry.size ?? Number.NaN);
           const path = validatePath(entry.path, 'file');
           if (path !== null) {
+            acceptedFilePaths.add(path);
             onEntry?.({
               path,
               kind: 'file',
@@ -380,6 +383,32 @@ function createTarEntryValidator(
               gid: entry.gid ?? null,
             });
           }
+          return true;
+        }
+        if (linkPolicy === 'allow-hard-links' && entry.type === 'Link') {
+          // Some published archives (pnpm's Linux tarball) store identical files as
+          // hardlinks, and the linked files are load-bearing. Extraction runs with
+          // preservePaths, so the target is validated here: it must be a regular file
+          // this archive already extracted, which keeps the link inside the staging tree.
+          const target = normalizeArchiveEntryPath(entry.linkpath ?? '', 'file');
+          if (target === null || !acceptedFilePaths.has(target)) {
+            throw new Error(
+              `[release-runtime] archive hardlink target is not an earlier regular file: ${entry.path} -> ${entry.linkpath ?? ''}`,
+            );
+          }
+          budget.account('file', 0);
+          const path = validatePath(entry.path, 'file');
+          if (path === null) {
+            throw new Error(`[release-runtime] archive hardlink has an empty path: ${entry.path}`);
+          }
+          acceptedFilePaths.add(path);
+          onEntry?.({
+            path,
+            kind: 'file',
+            mode: entry.mode ?? null,
+            uid: entry.uid ?? null,
+            gid: entry.gid ?? null,
+          });
           return true;
         }
         if (linkPolicy === 'skip' && (entry.type === 'SymbolicLink' || entry.type === 'Link')) {
@@ -800,7 +829,8 @@ async function extractTarArchiveToDirectory(params: Readonly<{
     // Every accepted path and entry type has already passed the canonical
     // archive validator, and extraction targets a fresh private staging tree.
     // Let node-tar use recursive mkdir instead of re-statting every parent for
-    // every file; link entries never reach the filesystem.
+    // every file. Symlinks never reach the filesystem; hardlinks do only under
+    // 'allow-hard-links', after their target passed the validator above.
     preservePaths: true,
     preserveOwner: false,
     strict: true,
