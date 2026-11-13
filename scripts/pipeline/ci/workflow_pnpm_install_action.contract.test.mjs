@@ -63,6 +63,51 @@ test('Gate unit shell invokes one selected project suite and fails closed on nat
   const ui = runShellStep(step, workspace, runnerTemp, { ...env, GATE_PACKAGES: 'ui' });
   assert.equal(ui.status, 0, ui.stderr);
   assert.match(fs.readFileSync(calls, 'utf8').trim().split('\n').at(-1), /^2\|--filter @happier-dev\/app run test:unit\b/);
+  fs.unlinkSync(calls);
+  const stack = runShellStep(step, workspace, runnerTemp, { ...env, GATE_PACKAGES: 'stack server' });
+  assert.equal(stack.status, 0, stack.stderr);
+  assert.deepEqual(fs.readFileSync(calls, 'utf8').trim().split('\n'), ['1|--dir apps/stack run test:unit', '2|run test:gate-unit server']);
+});
+
+test('Gate integration shell derives selected scripts from manifests and preserves failures across packages', (t) => {
+  const { root, workspace, runnerTemp } = fixture(t);
+  const workflow = yaml.load(fs.readFileSync(path.join(workflowsDir, 'tests.yml'), 'utf8'));
+  const step = workflow.jobs['gate-unit'].steps.find((entry) => entry.name === 'Run affected package integration suites');
+  assert.ok(step, 'selected packages must run their owning integration scripts');
+  const expression = step.if.replace(/^\$\{\{\s*|\s*\}\}$/g, '').replaceAll('steps.gate-unit-install', "steps['gate-unit-install']");
+  const admitted = Function('matrix', 'steps', 'cancelled', `return (${expression});`);
+  for (const part of [1, 2, 8]) {
+    assert.equal(admitted({ part }, { 'gate-unit-install': { outcome: 'success' } }, () => false), part === 1);
+  }
+  // Use the real workspace discovery and package-label owners; pnpm is the process boundary.
+  fs.cpSync(path.join(repoRoot, 'scripts'), path.join(workspace, 'scripts'), { recursive: true, filter: (source) => !source.includes('node_modules') });
+  fs.cpSync(path.join(repoRoot, 'apps/stack/scripts/utils'), path.join(workspace, 'apps/stack/scripts/utils'), { recursive: true });
+  write(workspace, 'package.json', '{}');
+  write(workspace, 'pnpm-workspace.yaml', 'packages:\n  - apps/*\n  - packages/*\n');
+  for (const name of ['server', 'cli', 'ui', 'stack']) {
+    write(workspace, `apps/${name}/package.json`, JSON.stringify({ name: `fixture-${name}`, scripts: { 'test:integration': 'fixture' } }));
+  }
+  write(workspace, 'packages/protocol/package.json', JSON.stringify({ name: 'fixture-protocol' }));
+  const calls = path.join(root, 'integration-calls');
+  write(root, 'bin/pnpm', '#!/bin/sh\nprintf "%s\\n" "$*" >> "$GATE_CALLS"\nif [ "$2" = "apps/cli" ]; then exit "${GATE_CHILD_STATUS:-0}"; fi\n', 0o755);
+  const env = { PATH: `${path.join(root, 'bin')}:${process.env.PATH}`, GATE_CALLS: calls,
+    GATE_PACKAGES: 'cli protocol server stack', CLI_PREPARATION_OUTCOMES: 'success success' };
+  const succeeded = runShellStep(step, workspace, runnerTemp, env);
+  assert.equal(succeeded.status, 0, succeeded.stderr);
+  const expected = ['--dir apps/cli run test:integration', '--dir apps/server run test:integration', '--dir apps/stack run test:integration'];
+  assert.deepEqual(fs.readFileSync(calls, 'utf8').trim().split('\n'), expected);
+  fs.unlinkSync(calls);
+  const failed = runShellStep(step, workspace, runnerTemp, { ...env, GATE_CHILD_STATUS: '7' });
+  assert.notEqual(failed.status, 0);
+  assert.deepEqual(fs.readFileSync(calls, 'utf8').trim().split('\n'), expected);
+  fs.unlinkSync(calls);
+  const refused = runShellStep(step, workspace, runnerTemp, { ...env, CLI_PREPARATION_OUTCOMES: 'success failure' });
+  assert.notEqual(refused.status, 0);
+  assert.deepEqual(fs.readFileSync(calls, 'utf8').trim().split('\n'), expected.slice(1));
+  fs.unlinkSync(calls);
+  const ui = runShellStep(step, workspace, runnerTemp, { ...env, GATE_PACKAGES: 'ui' });
+  assert.equal(ui.status, 0, ui.stderr);
+  assert.equal(fs.readFileSync(calls, 'utf8').trim(), '--dir apps/ui run test:integration');
 });
 
 test('the shared install action caches the pnpm store and always installs on a cache hit', () => {

@@ -19,6 +19,7 @@ test('gate selection includes changed workspace consumers, including peer consum
   await writeManifest('apps/cli', { name: '@happier-dev/cli', dependencies: { '@happier-dev/shared': '*' } });
   await writeManifest('apps/ui', { name: '@happier-dev/app', peerDependencies: { '@happier-dev/shared': '*' } });
   await writeManifest('apps/server', { name: '@happier-dev/server' });
+  await writeManifest('apps/stack', { name: '@happier-dev/stack' });
   await writeManifest('packages/shared', { name: '@happier-dev/shared', dependencies: { '@happier-dev/protocol': '*' } });
   await writeManifest('packages/protocol', { name: '@happier-dev/protocol' });
   await writeManifest('packages/plugins/agent', { name: '@happier-dev/plugins-agent', dependencies: { '@happier-dev/protocol': '*' } });
@@ -26,8 +27,9 @@ test('gate selection includes changed workspace consumers, including peer consum
   assert.deepEqual(await selectAffectedGatePackages({ rootDir, changedPaths: ['packages/shared/src/value.ts'] }), ['cli', 'ui']);
   assert.deepEqual(await selectAffectedGatePackages({ rootDir, changedPaths: ['packages/protocol/src/wire.ts'] }), ['cli', 'plugins', 'protocol', 'ui']);
   assert.deepEqual(await selectAffectedGatePackages({ rootDir, changedPaths: ['apps/server/sources/route.ts'] }), ['server']);
-  assert.deepEqual(await selectAffectedGatePackages({ rootDir, changedPaths: ['packages/plugins/deleted/package.json'] }), ['cli', 'plugins', 'protocol', 'server', 'ui']);
-  assert.deepEqual(await selectAffectedGatePackages({ rootDir, changedPaths: ['pnpm-lock.yaml'] }), ['cli', 'plugins', 'protocol', 'server', 'ui']);
+  assert.deepEqual(await selectAffectedGatePackages({ rootDir, changedPaths: ['apps/stack/scripts/value.mjs'] }), ['stack']);
+  assert.deepEqual(await selectAffectedGatePackages({ rootDir, changedPaths: ['packages/plugins/deleted/package.json'] }), ['cli', 'plugins', 'protocol', 'server', 'stack', 'ui']);
+  assert.deepEqual(await selectAffectedGatePackages({ rootDir, changedPaths: ['pnpm-lock.yaml'] }), ['cli', 'plugins', 'protocol', 'server', 'stack', 'ui']);
   assert.deepEqual(await selectAffectedGatePackages({ rootDir, changedPaths: ['docs/testing.md', '.project/plans/lane.md'] }), []);
 
   const output = join(rootDir, 'github-output');
@@ -62,12 +64,12 @@ test('gate selection includes changed workspace consumers, including peer consum
   assert.ok(matrixLine, 'the gate must emit runnable unit partitions, not one unpartitioned UI job');
   const { include } = JSON.parse(matrixLine.slice('unit_matrix='.length));
   const selectedPackages = JSON.parse(unitLines.split('\n').find((line) => line.startsWith('packages=')).slice('packages='.length));
-  assert.deepEqual(selectedPackages, ['cli', 'plugins', 'protocol', 'server', 'ui']);
+  assert.deepEqual(selectedPackages, ['cli', 'plugins', 'protocol', 'server', 'stack', 'ui']);
   assert.match(unitLines, /^server_db_contract=true$/m);
   const automaticJobs = include.length + 1; // preparation owns compiler/artifacts; host units also own the selected DB contract
   assert.ok(automaticJobs <= 10, `the automatic v0.3 gate must use at most 10 jobs, received ${automaticJobs}`);
   assert.deepEqual(include.filter((row) => row.package !== 'ui'), [
-    { package: 'group', packages: ['cli', 'plugins', 'protocol', 'server'], part: 1, parts: 1 },
+    { package: 'group', packages: ['cli', 'plugins', 'protocol', 'server', 'stack'], part: 1, parts: 1 },
   ]);
   assert.deepEqual([...new Set(include.flatMap((row) => row.packages))].sort(), selectedPackages,
     'partitioning must retain every selected package suite');

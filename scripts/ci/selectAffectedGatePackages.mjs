@@ -8,7 +8,7 @@ import {
   collectAdmittedInternalWorkspacePeerDependencyNames,
 } from '../workspaces/workspacePackageDependencies.mjs';
 
-const gatePackages = ['cli', 'plugins', 'protocol', 'server', 'ui'];
+const gatePackages = ['cli', 'plugins', 'protocol', 'server', 'stack', 'ui'];
 
 export function resolveGatePackageForWorkspaceDirectory(directory) {
   if (directory.startsWith('packages/plugins/')) return 'plugins';
@@ -16,6 +16,7 @@ export function resolveGatePackageForWorkspaceDirectory(directory) {
   if (directory === 'apps/cli') return 'cli';
   if (directory === 'apps/ui') return 'ui';
   if (directory === 'apps/server') return 'server';
+  if (directory === 'apps/stack') return 'stack';
   return null;
 }
 

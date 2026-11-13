@@ -555,7 +555,7 @@ jobs:
           pnpm run test:release:contracts
           node scripts/pipeline/run.mjs release-sync-installers --check
   gate-unit:
-    name: Gate — ${{ matrix.package }} unit (${{ matrix.part }}/${{ matrix.parts }})
+    name: Gate — ${{ matrix.package }} tests (${{ matrix.part }}/${{ matrix.parts }})
     needs: [gate-prepare]
     if: ${{ needs.gate-prepare.outputs.packages != '[]' }}
     runs-on: ubuntu-24.04
@@ -597,6 +597,16 @@ jobs:
         if: ${{ contains(matrix.packages, 'cli') && steps.gate-unit-install.outcome == 'success' }}
         continue-on-error: true
         run: pnpm --filter @happier-dev/iroh-native run verify:native --package-root "$GITHUB_WORKSPACE/apps/cli/node_modules/@happier-dev/iroh-native"
+      - name: Prepare CLI integration system dependencies and environment
+        if: ${{ contains(matrix.packages, 'cli') }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends tmux
+          tmux -V
+          if [ -f apps/cli/.env.integration-test ]; then
+            sed -i 's/^DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING=.*/DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING=/' apps/cli/.env.integration-test
+            sed -i 's/^DEBUG=.*/DEBUG=/' apps/cli/.env.integration-test
+          fi
       - name: Run affected package unit suite
         if: ${{ !cancelled() && steps.gate-unit-install.outcome == 'success' }}
         env:
@@ -616,6 +626,8 @@ jobs:
               if [ "$gate_package" = 'cli' ] && [ "$CLI_PREPARATION_OUTCOMES" != 'success success' ]; then
                   echo "::error::CLI preparation failed or is unavailable: $CLI_PREPARATION_OUTCOMES"
                   gate_status=1
+              elif [ "$gate_package" = 'stack' ]; then
+                pnpm --dir apps/stack run test:unit || gate_status=1
               else
                 gate_projects+=("$gate_package")
               fi
@@ -624,6 +636,45 @@ jobs:
               HAPPIER_VITEST_MAX_WORKERS="$GATE_VITEST_MAX_WORKERS" pnpm run test:gate-unit "${gate_projects[@]}" || gate_status=1
             fi
           fi
+          exit "$gate_status"
+      - name: Run affected package integration suites
+        # UI integration configs are not sharded: run them once, on its first partition.
+        if: ${{ !cancelled() && matrix.part == 1 && steps.gate-unit-install.outcome == 'success' }}
+        env:
+          GATE_PACKAGES: ${{ join(matrix.packages, ' ') }}
+          CLI_PREPARATION_OUTCOMES: ${{ steps.gate-unit-install.outcome }} ${{ steps.cli-native-load.outcome }}
+          GH_TOKEN: ${{ github.token }}
+          HAPPIER_GITHUB_TOKEN: ${{ github.token }}
+          HAPPIER_CLI_TMUX_INTEGRATION: "1"
+          HAPPIER_CLI_DAEMON_REATTACH_INTEGRATION: "1"
+          HAPPIER_NO_BROWSER_OPEN: "1"
+          TMPDIR: /tmp
+        run: |
+          set -euo pipefail
+          integration_workspaces="$(node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises';
+          import { dirname, relative } from 'node:path';
+          import { collectWorkspacePackageJsonPaths } from './apps/stack/scripts/utils/proc/workspace_package_manifests.mjs';
+          import { resolveGatePackageForWorkspaceDirectory } from './scripts/ci/selectAffectedGatePackages.mjs';
+          const selected = new Set(process.env.GATE_PACKAGES.split(' '));
+          for (const path of await collectWorkspacePackageJsonPaths(process.cwd())) {
+            const directory = relative(process.cwd(), dirname(path)).replaceAll('\\', '/');
+            if (!selected.has(resolveGatePackageForWorkspaceDirectory(directory))) continue;
+            const manifest = JSON.parse(await readFile(path, 'utf8'));
+            if (manifest.scripts?.['test:integration']) console.log(directory);
+          }
+          NODE
+          )"
+          gate_status=0
+          while IFS= read -r workspace; do
+            [ -n "$workspace" ] || continue
+            if [ "$workspace" = 'apps/cli' ] && [ "$CLI_PREPARATION_OUTCOMES" != 'success success' ]; then
+              echo "::error::CLI integration preparation failed or is unavailable: $CLI_PREPARATION_OUTCOMES"
+              gate_status=1
+            else
+              pnpm --dir "$workspace" run test:integration || gate_status=1
+            fi
+          done <<< "$integration_workspaces"
           exit "$gate_status"
       - name: Upload CLI unit bundled-plugin preparation diagnostics
         if: ${{ always() && contains(matrix.packages, 'cli') }}
