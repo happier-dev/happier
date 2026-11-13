@@ -5281,3 +5281,49 @@ for (const entry of ['names', 'component']) for (const recurring of [false, true
     assert.equal(attempts, 2, 'the existing convergence owner allows exactly one trailing phase');
   });
 }
+
+for (const entry of ['names', 'component']) for (const recurring of [false, true]) {
+  test(`workspace preparation recaptures dependency publication drift via ${entry} recurring=${recurring}`, async t => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-workspace-dependency-recapture-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    writePnpmWorkspaceFixture(root, { workspaces: ['apps/*', 'packages/*'] });
+    for (const app of ['cli', 'ui', 'server']) {
+      mkdirSync(join(root, 'apps', app), { recursive: true });
+      writeFileSync(join(root, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}`,
+        dependencies: { '@happier-dev/recapture': 'workspace:*' } }));
+    }
+    const dir = join(root, 'packages/recapture');
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    writeFileSync(join(dir, 'src/index.ts'), 'export const value = 1;');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: '@happier-dev/recapture',
+      main: './dist/index.js', types: './dist/index.d.ts', scripts: { build: 'fixture-build' } }));
+    const env = { ...process.env, HAPPIER_STACK_HOME_DIR: join(root, 'home') };
+    const { resolveDependencyRefreshLockPath } = await import('../../apps/stack/scripts/utils/proc/dependency_refresh.mjs');
+    const generation = `${resolveDependencyRefreshLockPath(root, env)}.generation`;
+    mkdirSync(dirname(generation), { recursive: true });
+    writeFileSync(generation, JSON.stringify({ generation: 'initial', completedGeneration: 'initial' }));
+    let attempts = 0;
+    const options = { env, quiet: true, buildMode: 'strict', workspaceBuildBoundary: {
+      prepareEnv: async (_dir, value) => ({ ...value }),
+      runPackageBuild: async (_dir, { env: buildEnv }) => {
+        attempts++;
+        if (recurring || attempts === 1) writeFileSync(generation,
+          JSON.stringify({ generation: String(attempts), completedGeneration: String(attempts) }));
+        mkdirSync(buildEnv.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, { recursive: true });
+        writeFileSync(join(buildEnv.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'), 'export const value = 1;');
+        writeFileSync(join(buildEnv.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.d.ts'), 'export declare const value: number;');
+      },
+    } };
+    const build = () => entry === 'names'
+      ? ensureWorkspacePackagesBuiltByName(root, ['@happier-dev/recapture'], options)
+      : ensureWorkspacePackagesBuiltForComponent(join(root, 'apps/cli'), options);
+    if (recurring) {
+      await assert.rejects(build(), { code: 'BUILD_INPUTS_CHANGED', trailingPassExhausted: true });
+      assert.equal(existsSync(join(dir, 'dist/index.js')), false, 'a drifting artifact is never published');
+    } else {
+      assert.equal((await build()).ok, true);
+      assert.match(readFileSync(join(dir, 'dist/index.js'), 'utf8'), /value = 1/);
+    }
+    assert.equal(attempts, 2, 'the existing convergence owner allows exactly one trailing phase');
+  });
+}
