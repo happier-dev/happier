@@ -1816,10 +1816,14 @@ async function executeActionBlock(
   }
   const fail = async (code: string, state: 'failed' | 'outcome_uncertain' = 'failed', collectable = false,
     result?: WorkflowJsonValue, failureCause?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['failureCause'], message?: string) => {
-    await context.deps.store.commitFact({ key: row!.key, lifecycle: state, reason: code,
+    row = await context.deps.store.commitFact({ key: row!.key, lifecycle: state, reason: code,
       ...(result === undefined ? {} : { result }), ...(failureCause === undefined ? {} : { failureCause }),
       ...(message === undefined ? {} : { reasonMessage: message }) });
-    throw new WorkflowLeafFailure(state, code, collectable);
+    // An admitted Action keeps its failed leaf for exact invocation recovery,
+    // just like an admitted Session step; terminal Run failure forbids retry.
+    const parentState = state === 'failed' && row.execution?.kind === 'action'
+      ? persistedFailure(row)!.state : state;
+    throw new WorkflowLeafFailure(parentState, code, collectable);
   };
   let completionState: ActionCompletionStateV1 | undefined = row.execution?.kind === 'action'
     && (row.execution.awaitedRuns || row.execution.awaitedOperations) && row.execution.output !== undefined

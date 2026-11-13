@@ -3050,9 +3050,13 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           if (failure !== undefined) throw failure;
         }
         if (raw.observation === 'changed') continue;
+        const run = record(raw.run);
+        const pendingCombinedSettlement = combined !== undefined && raw.observation === 'needs_attention'
+          && run.state !== 'interrupted' && (run.workflowCustodyState !== 'settled'
+            || !(typeof run.state === 'string' && isTerminalAutomationRunStateV3(run.state)));
         // A passive observer does not settle when a condition or terminal state
         // is seen. Keep the same feed until its cancellation/authored deadline.
-        if (!args.context.onWaitSnapshot && raw.observation !== 'waiting') break;
+        if (!args.context.onWaitSnapshot && raw.observation !== 'waiting' && !pendingCombinedSettlement) break;
         if (deadline !== undefined && Date.now() >= deadline) {
           stored = { observation: 'timeout', run: raw.run };
           break;
@@ -3170,7 +3174,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
   }, waitCombined: async (request, ingressContext) => {
     deps.assertCurrent?.();
     try {
-      return await execute({ actionId: 'workflow.run.wait', input: { runId: request.start.runId, conditions: ['terminal'] },
+      return await execute({ actionId: 'workflow.run.wait', input: { runId: request.start.runId, conditions: ['terminal', 'attention'] },
         context: request.context }, ingressContext, request);
     } finally {
       deps.assertCurrent?.();

@@ -14,6 +14,7 @@ import {
 import { selectMachineSetupRecipeItemsV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { MachineSetupPlanResultV1, MachineSetupPlanReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
+import { ActionOperationCompletionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
@@ -318,8 +319,8 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
       const settled = WorkflowActionOutputSchemasV1['workflow.run.wait'].safeParse(observed);
       if (!settled.success) return uncertain({ ok: false,
         ...normalizeActionExecutorThrownError(settled.error, 'workflow.run.wait') });
-      if (settled.data.observation !== 'terminal') return uncertain();
-      if (settled.data.run.workflowCustodyState !== 'settled') return uncertain();
+      if (settled.data.observation !== 'terminal' && settled.data.observation !== 'needs_attention') return uncertain();
+      if (settled.data.run.workflowCustodyState !== 'settled' && settled.data.run.state !== 'interrupted') return uncertain();
       const succeeded = settled.data.run.state === 'succeeded';
       if (succeeded && !hasReceivers) return result;
       if (settled.data.run.state === 'cancelled') return withRecovery(failure('cancelled'));
@@ -343,15 +344,18 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
           if (progress.blockKind !== 'action') continue;
           if (succeeded) {
             if (!setupBlocks.has(progress.invocationPath.blockId) || progress.invocationPath.scope.length) continue;
-            const child = MachineSetupApplyResultV1Schema.safeParse(progress.result);
+            const completed = ActionOperationCompletionOutputV1Schema.safeParse(progress.result);
+            const child = MachineSetupApplyResultV1Schema.safeParse(completed.success ? completed.data.operation.result : progress.result);
             if (!child.success) return withRecovery(failure('invalid_action_output'));
             backupReceivers.push(...(child.data.backupReceivers ?? []));
             continue;
           }
           if (!progress.reason) continue;
+          const completed = ActionOperationCompletionOutputV1Schema.safeParse(progress.result);
+          const details = completed.success ? completed.data.operation.error?.details : progress.result;
           return withRecovery({ ok: false, errorCode: progress.reason.code, error: progress.reason.message ?? progress.reason.code,
             ...(progress.reason.failureCause ? { failureCause: progress.reason.failureCause } : {}),
-            ...(progress.result === undefined ? {} : { details: progress.result }) });
+            ...(details === undefined ? {} : { details }) });
         }
         cursor = page.data.nextCursor;
       } while (cursor);

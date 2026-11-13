@@ -74,6 +74,46 @@ describe('admitted Machine setup snapshot lifetime', () => {
       desiredRevision: 3, sources: [{ kind: 'direct', setup: { items: [replacement] } }],
     });
   });
+  it.each([['plain', false], ['plain', true], ['e2ee', false], ['e2ee', true]] as const)('continues the frozen reviewed Workflow setup after partial publication (%s, recipes %s)', async (accountEncryptionMode, withRecipes) => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode });
+    const target = { homeId: 'srv_home', machineId: fixture.machine.id };
+    const sources = [{ kind: 'direct' as const, setup: { ...(withRecipes ? { items: fixture.sources[0]!.setup.items } : {}), scripts: [
+      { body: 'printf FIRST', affects: 'none' as const }, { body: 'exit 23', affects: 'none' as const },
+      { body: 'printf THIRD', affects: 'none' as const },
+    ] } }];
+    const plan = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: { ...target, sources, mode: 'effects' }, context: fixture.context('machines.setup.plan'),
+    }));
+    const input = { ...target, desiredRevision: plan.desiredRevision, sources: plan.sources,
+      exclusions: plan.exclusions, recipePlans: plan.recipePlans ?? [] };
+    nativeTerminal.onLaunch = () => queueMicrotask(() =>
+      nativeTerminal.exit?.(nativeTerminal.launches.at(-1)?.args.at(-1) === 'exit 23' ? 23 : 0));
+    expect(await fixture.apply({ input, context: fixture.context('machines.setup.apply', 'first') }))
+      .toMatchObject({ ok: false, errorCode: 'machine_setup_setup_failed' });
+    const recipeEffects = fixture.rootLaunches.length;
+    expect(await fixture.apply({ input, context: fixture.context('machines.setup.apply', 'stale-ordinary') }))
+      .toMatchObject({ ok: false, errorCode: 'plan_changed' });
+    const retryContext = fixture.context('machines.setup.apply', 'retry');
+    const authorization = retryContext.externalActionExecutionAuthorization!;
+    retryContext.externalActionExecutionAuthorization = { ...authorization, binding: { ...authorization.binding,
+      workflowActionOrigin: { runId: 'retained-setup', requestId: 'retry' } } };
+    nativeTerminal.onLaunch = () => queueMicrotask(() => nativeTerminal.exit?.(0));
+    expect(await fixture.apply({ input, context: retryContext })).toMatchObject({ operationId: expect.any(String) });
+    expect(nativeTerminal.launches.map(launch => launch.args.at(-1)))
+      .toEqual(['printf FIRST', 'exit 23', 'exit 23', 'printf THIRD']);
+    expect(fixture.rootLaunches).toHaveLength(recipeEffects);
+    // A stale frozen input cannot replace a later deliberate desired edit.
+    const completed = await fixture.client.getMachineSetupDesiredSnapshot();
+    if (completed.status !== 'ready') throw new Error('Completed setup desired state unavailable');
+    await fixture.client.captureMachineSetupDesired().apply({
+      expectedDesiredRevision: completed.policy.revision,
+      sources: [{ kind: 'direct', setup: {} }], exclusions: [],
+    });
+    const editedContext = fixture.context('machines.setup.apply', 'after-edit');
+    editedContext.externalActionExecutionAuthorization = { ...authorization, binding: { ...authorization.binding,
+      requestId: 'after-edit', workflowActionOrigin: { runId: 'retained-setup', requestId: 'after-edit' } } };
+    expect(await fixture.apply({ input, context: editedContext })).toMatchObject({ ok: false, errorCode: 'plan_changed' });
+  });
   it.each([['plain', false], ['plain', true], ['e2ee', false], ['e2ee', true]] as const)('recovers only unfinished scripts after a confirmed failed step (%s, update %s)', async (accountEncryptionMode, update) => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode });
     const target = { homeId: 'srv_home', machineId: fixture.machine.id };

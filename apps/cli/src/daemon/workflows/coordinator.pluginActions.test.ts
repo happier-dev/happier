@@ -133,7 +133,7 @@ describe('workflow contributed Action leaves', () => {
     try {
       const result = await coordinator.run(run);
       expect(result, JSON.stringify(result)).toMatchObject({ state: review ? 'waiting_for_review'
-        : decision === 'approved' ? 'succeeded' : 'failed' });
+        : decision === 'approved' ? 'succeeded' : 'interrupted' });
       if (failed) expect(result).toMatchObject({ completedWithFailures: true });
       const expectedInput = published ? {
         routerBindingId: 'brief-router-id', audienceGroupId: 'brief',

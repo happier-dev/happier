@@ -4,7 +4,8 @@ import type { CliActionDepsParams } from './types';
 import type { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { ACTION_ID_FAMILIES_V1, isWorkspaceSyncRelationshipWriteActionId, isLocalServiceStopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { HandoffTargetReplacementPreflightV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
-import { ManagedMachineActionIdV1Schema, isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isOrdinaryMachineSetupNativeActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { isManagedControllerCodecActionV1, projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { decodeJwtPayload, readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -28,6 +29,15 @@ import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/execut
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 
 export { executionRunAuthorityCeiling } from '@/session/transport/rpc/machineRpc';
+
+/** A fresh Workflow native child is observed only after its signed ingress. */
+export function requiresWorkflowMachineActionAdmission(actionId: string, context?: Pick<ActionExecutorContext,
+  'actionCaller' | 'actionRequestId' | 'externalActionExecutionAuthorization'>): boolean {
+  const caller = context?.actionCaller;
+  const origin = context?.externalActionExecutionAuthorization?.binding.workflowActionOrigin;
+  return isOrdinaryMachineSetupNativeActionIdV1(actionId) && caller?.kind === 'workflowRun'
+    && (!origin || origin.runId !== caller.runId || origin.requestId !== context?.actionRequestId);
+}
 
 export type CliMachineActionCall = (input: Readonly<{
     processEnvironmentRead?: RpcLocalActionContext['processEnvironmentRead'];
@@ -186,11 +196,7 @@ export function createCliMachineActionTransport(
       if (!execution.ok) throw Object.assign(new RpcError(execution.error, execution.errorCode), execution);
       return execution.result;
     }
-    const workflowCaller = input.context?.actionCaller;
-    const workflowOrigin = input.context?.externalActionExecutionAuthorization?.binding.workflowActionOrigin;
-    if (input.context && workflowCaller?.kind === 'workflowRun'
-      && (!workflowOrigin || workflowOrigin.runId !== workflowCaller.runId || workflowOrigin.requestId !== input.context?.actionRequestId)
-      && input.effectActionId && ManagedMachineActionIdV1Schema.safeParse(input.effectActionId).success) {
+    if (input.context && input.effectActionId && requiresWorkflowMachineActionAdmission(input.effectActionId, input.context)) {
       const publisherMachineId = params.machineActionDirectTargetTransport?.machineId;
       if (!params.credentials || !publisherMachineId || !params.serverIdentityId
         || !params.externalActionMachineRequestPrivateKey || !params.externalActionMachineInstallationId
@@ -295,6 +301,9 @@ export function createCliMachineActionTransport(
     if (!requiresScmSessionIngress && direct?.machineId === input.machineId && (!externalRequest || admittedLocalRequesterAction || admittedProcessRead || admittedLocalManaged || admittedLocalDiscovery || admittedLocalAction)
       && (!authenticatedMachineIngressMethods.has(input.method) || admittedProcessRead || admittedLocalCommand || admittedLocalAction)) {
       const localActionContext: RpcLocalActionContext = {
+        ...(input.context?.presentUserApproval ? { presentUserApproval: input.context.presentUserApproval } : {}),
+        ...(input.context?.handoffTargetReplacementApproval
+          ? { handoffTargetReplacementApproval: input.context.handoffTargetReplacementApproval } : {}),
         ...(input.context?.originalActionEnvelope
           ? { originalActionEnvelope: input.context.originalActionEnvelope } : {}),
         ...(input.context?.authenticatedLocalRootCustody

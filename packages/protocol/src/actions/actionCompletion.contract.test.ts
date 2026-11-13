@@ -19,17 +19,21 @@ const declaration: ActionCompletionDeclaration = {
 };
 
 describe('generic Action completion seam', () => {
-  it.each(['machines.setup.updates.apply', 'machines.setup.updates.rollout'] as const)
+  it.each(['machines.setup.apply', 'machines.setup.remove', 'machines.setup.updates.apply', 'machines.setup.updates.rollout'] as const)
     ('joins %s through its retained Machine target on recovery', async actionId => {
       const target = { homeId: 'home', machineId: 'worker', scope: 'security', plan: { v: 1,
         basis: { kind: 'updates', machineId: 'worker', scope: 'security' }, steps: [], nativeFacts: [], planDigest: 'a'.repeat(64) } };
-      const input = actionId === 'machines.setup.updates.apply' ? target
-        : { homeId: 'home', machineId: 'controller', batches: [[target]], failurePolicy: 'fail_stop' };
+      const input = actionId === 'machines.setup.apply'
+        ? { homeId: 'home', machineId: 'worker', targets: [{ homeId: 'home', machineId: 'worker', sources: [{ kind: 'direct', setup: {} }], desiredRevision: 0, recipePlans: [] }] }
+        : actionId === 'machines.setup.remove'
+          ? { homeId: 'home', machineId: 'worker', sources: [{ kind: 'direct', setup: {} }], desiredRevision: 0, removeItemKeys: ['software:docker'], removalPlans: [] }
+          : actionId === 'machines.setup.updates.apply' ? target
+            : { homeId: 'home', machineId: 'controller', batches: [[target]], failurePolicy: 'fail_stop' };
       const completion = getActionSpec(actionId).completion;
-      if (!completion) throw new Error('Missing finite Machine update completion');
-      const phase = prepareActionCompletionV1(completion, { ok: true, result: { operationId: 'finite' } },
+      if (!completion) throw new Error('Missing finite Machine setup completion');
+      const phase = prepareActionCompletionV1(completion, { ok: true, result: { status: 'accepted', operationId: 'finite', machineId: input.machineId } },
         { serverId: 'home', input });
-      if (phase.kind !== 'awaiting') throw new Error('Machine update acceptance must remain pending');
+      if (phase.kind !== 'awaiting') throw new Error('Machine setup acceptance must remain pending');
       let observations = 0;
       const operation = { version: 1, operationId: 'finite', revision: 2, actionId, state: 'failed',
         scope: { accountId: 'requester', machineId: input.machineId }, title: 'Update', cancellation: 'unsupported',

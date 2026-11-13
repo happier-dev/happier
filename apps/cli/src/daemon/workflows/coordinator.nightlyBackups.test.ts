@@ -93,7 +93,7 @@ describe('Nightly backup occurrences', () => {
         if (noTarget) delete detail.environment.runtimeTargetLinkId;
         effects.length = 0;
         await expect(run('nightly-b')).resolves.toMatchObject(noTarget
-            ? { state: 'failed', reason: 'deployment_unavailable' } : { state: 'succeeded' });
+            ? { state: 'interrupted', reason: 'deployment_unavailable' } : { state: 'succeeded' });
         if (noTarget) expect(effects).toEqual([]);
         else for (const effect of effects) expect(effect.input).toMatchObject({ expectedRevision: 5,
             deploymentId: 'capture-b', configRevision: 2 });

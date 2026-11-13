@@ -7,6 +7,7 @@ import type { MachineActionDirectTargetTransport } from '../../session/actions/c
 import type { RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
 import type { prepareRequesterSessionBootstrap, RequesterSessionMachineAdmissionBoundary } from '../sessionEncryption/requesterSessionCredentials';
 import { readRequesterHomeWithinActionLifetime } from '../sessionEncryption/requesterCurrentness';
+import { requiresWorkflowMachineActionAdmission } from '../../session/actions/cliActionDeps/machineTransport';
 
 /** One claimed Workflow retains requester custody through its installed Machine transport. */
 export function createWorkflowRunMachineTransport(input: Readonly<{
@@ -61,6 +62,9 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
   };
   return {
     ...(input.runActionOperation ? { runActionOperation: async (request: Parameters<NonNullable<ActionExecutorDeps['runActionOperation']>>[0]) => {
+      // The signed receiver owns this child's Operation. Opening it here makes
+      // the receiver join the invocation that is waiting for its own response.
+      if (requiresWorkflowMachineActionAdmission(request.actionId, request.context)) return request.execute(request.context);
       const prepared = await prepare(request.context);
       if (!prepared) return { ok: false as const, errorCode: 'project_requester_credentials_unavailable' as const,
         error: 'Workflow requester authority unavailable' };

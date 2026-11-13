@@ -506,16 +506,15 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
         for (;;) {
           waitAttempts += 1;
           await params.onBeforeWait?.(waitAttempts);
+          const conditions = operation.conditions ?? ['terminal', 'attention', 'paused'];
+          if (conditions.includes('attention') && (state === 'interrupted' || requiresAttention())) {
+            return { observation: 'needs_attention', matchedCondition: 'attention', run: summary() };
+          }
           if (TERMINAL_RUN_STATES.some((candidate) => candidate === state)) {
-            return { observation: 'terminal', matchedCondition: 'terminal', run: summary(), ...(resultEnvelope ? { resultEnvelope } : {}) };
+            return { ...(conditions.includes('terminal') ? { observation: 'terminal', matchedCondition: 'terminal' }
+              : { observation: 'not_matched_terminal' }), run: summary(), ...(resultEnvelope ? { resultEnvelope } : {}) };
           }
-          if (state === 'paused') return { observation: 'paused', matchedCondition: 'paused', run: summary() };
-          if (state === 'interrupted') {
-            return { observation: 'needs_attention', matchedCondition: 'attention', run: summary() };
-          }
-          if ([...rows.values()].some((row) => ATTENTION_LIFECYCLES.some((candidate) => candidate === row.index.lifecycle))) {
-            return { observation: 'needs_attention', matchedCondition: 'attention', run: summary() };
-          }
+          if (state === 'paused' && conditions.includes('paused')) return { observation: 'paused', matchedCondition: 'paused', run: summary() };
           if (operation.afterRevision !== undefined && revision !== operation.afterRevision) {
             return { observation: 'changed', matchedCondition: 'change', run: summary() };
           }

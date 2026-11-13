@@ -46,7 +46,8 @@ export function createMachineUpdatesRolloutActionDeps(host: Readonly<{
     catch (error) { return { ...failure('outcome_uncertain', runId),
       failureCause: normalizeActionExecutorThrownError(error, 'workflow.run.wait').failureCause }; }
     const settled = WorkflowActionOutputSchemasV1['workflow.run.wait'].safeParse(observed);
-    if (!settled.success || settled.data.observation !== 'terminal' || settled.data.run.workflowCustodyState !== 'settled')
+    if (!settled.success || settled.data.observation !== 'terminal' && settled.data.observation !== 'needs_attention'
+      || settled.data.run.workflowCustodyState !== 'settled' && settled.data.run.state !== 'interrupted')
       return failure(context.signal?.aborted ? 'stop_unconfirmed' : 'outcome_uncertain', runId);
     return settled.data.run.state === 'succeeded' ? receipt
       : failure(settled.data.run.state === 'cancelled' ? 'cancelled' : 'machine_setup_child_failed', runId);

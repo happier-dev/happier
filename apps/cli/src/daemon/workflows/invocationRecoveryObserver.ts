@@ -579,11 +579,13 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
             const consent = readProjectSetupConsentHoldV1(execution.actionId, completion.value);
             const output = ProjectCommandActionOutputV1Schema.safeParse(completion.value);
             if (consent && output.success) return { kind: 'unresolved', code: consent.code, setupConsentOutput: output.data };
+            return { kind: 'failed', code: completion.errorCode,
+              ...(completion.value === undefined ? {} : { result: completion.value }),
+              ...(completion.error === undefined ? {} : { message: completion.error }),
+              ...(completion.failureCause ? { failureCause: completion.failureCause } : {}) };
           }
           return completion.kind === 'completed' ? { kind: 'completed', result: completion.value }
-            : { kind: completion.kind, code: completion.errorCode,
-              ...(completion.kind === 'failed' && completion.error !== undefined ? { message: completion.error } : {}),
-              ...(completion.kind === 'failed' && completion.failureCause ? { failureCause: completion.failureCause } : {}) };
+            : { kind: completion.kind, code: completion.errorCode };
         } catch { return { kind: 'unresolved', code: 'action_operation_observation_unavailable' }; }
       }
       if (!id.success || !execution.awaitedRuns?.length || execution.output === undefined || !input.frozenActionContract?.completion) {

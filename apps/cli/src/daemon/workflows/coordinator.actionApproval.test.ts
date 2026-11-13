@@ -222,7 +222,7 @@ describe('workflow built-in Action approval holds', () => {
         failureCause: { phase: 'workflow.trigger.write', errorClass: 'HttpStatusError', errorCode: 'database_transaction_timeout', httpStatus: 503 },
         reasonMessage: 'Receipt effect did not settle' };
     expect(await coordinator.run(input)).toMatchObject(settlement === 'executed'
-      ? { state: 'succeeded' } : { state: uncertain ? 'outcome_uncertain' : 'failed', reason: expected.reason });
+      ? { state: 'succeeded' } : { state: uncertain ? 'outcome_uncertain' : 'interrupted', reason: expected.reason });
     expect(store.list().find(value => value.blockId === leaf.id)).toMatchObject(expected);
     if (uncertain) {
       expect(await coordinator.run(input)).toMatchObject({ state: 'outcome_uncertain' });

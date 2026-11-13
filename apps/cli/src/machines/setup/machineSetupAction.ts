@@ -246,7 +246,19 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         const desired = params.apiMachine.captureMachineSetupDesired();
         const current = await desired.read();
         if (current.status !== 'ready') return fail(`machine_setup_content_${current.status}`);
-        if (current.policy.revision !== input.desiredRevision) return fail('plan_changed');
+        // A failed script publishes the approved sources and its unfinished
+        // ordinals. Exact Workflow retry keeps the frozen review, while the
+        // desired owner supplies that progress; ordinary stale reviews still fail.
+        const continuingScripts = mode === 'apply' && input.removeItemKeys === undefined
+          && current.policy.revision > input.desiredRevision
+          && context.externalActionExecutionAuthorization.binding.workflowActionOrigin !== undefined
+          && sameStrictJsonValue(current.policy.sources, input.sources)
+          && sameStrictJsonValue(current.policy.exclusions, input.exclusions ?? current.policy.exclusions)
+          && Object.values(current.policy.sourceFacts ?? {}).some(facts => facts.pendingScripts?.length);
+        if (current.policy.revision !== input.desiredRevision && !continuingScripts) return fail('plan_changed');
+        // Native recipes finish before scripts; a confirmed partial script
+        // publication therefore resumes scripts without replaying those effects.
+        const reviewedRecipePlans = continuingScripts ? [] : input.recipePlans;
         // Admission captured this desired snapshot and installed runtime once.
         // Finite stages consume it; only local cancellation retires this work.
         // Final publication still uses the desired owner's revision-aware CAS.
@@ -319,7 +331,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
           currentExclusions: current.policy.exclusions, sources,
           mode: input.removeItemKeys === undefined ? 'recovery' as const : 'update' as const };
         const prepared = mode === 'remove' ? undefined
-          : prepareMachineSetupStages(setups, input.recipePlans, exclusions, sourceChange);
+          : prepareMachineSetupStages(setups, reviewedRecipePlans, exclusions, sourceChange);
         let credentialSelection: AccessProviderSelectionV1 | undefined;
         const planned = await prepareMachineSetupPlanV1({ readAdminAccessObservation: administrator.observe,
           installationId: params.installation.installationId,
@@ -340,8 +352,8 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         if ('errorCode' in planned) return planned;
         if (mode === 'apply') {
           const recipePlans = planned.recipePlans ?? [];
-          if (recipePlans.length !== input.recipePlans.length || recipePlans.some((entry, index) => {
-            const reviewed = input.recipePlans[index];
+          if (recipePlans.length !== reviewedRecipePlans.length || recipePlans.some((entry, index) => {
+            const reviewed = reviewedRecipePlans[index];
             return !reviewed || entry.sourceIndex !== reviewed.sourceIndex || entry.itemIndex !== reviewed.itemIndex
               || entry.plan.planDigest !== reviewed.plan.planDigest;
           })) return fail('plan_changed');
@@ -378,7 +390,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         if (cancellationSignal.aborted) return fail('cancelled');
         const io = createProjectNativeIo({ ownerRemainder: params.ownerRemainder }).environmentIo.createInvocation({ signal: cancellationSignal, retainCapture: custody.retain });
         let elevation: Parameters<typeof applyMachineSetup>[0]['elevation'];
-        if (input.recipePlans.length || input.removalPlans?.length) {
+        if (reviewedRecipePlans.length || input.removalPlans?.length) {
           elevation = { ...administrator, installationId: params.installation.installationId, ...resolveMachineEffectCli(),
             verifyCurrent: isActive };
         }
@@ -392,7 +404,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
             receiverHostKeys = result.sshHostKeys ?? [];
             if (!result.initialPresence) return;
             const firstPresence = result.initialPresence;
-            const nativeSourceFacts = observeInitialPresence(sources, input.recipePlans.map(entry => ({ ...entry,
+            const nativeSourceFacts = observeInitialPresence(sources, reviewedRecipePlans.map(entry => ({ ...entry,
               initialPresence: firstPresence[plans.indexOf(entry.plan)] ?? 'unknown',
             })));
             for (const source of sources) {
@@ -422,7 +434,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
           plans: (planned.removalPlans ?? []).map(entry => entry.plan) })
           : applyMachineSetup({ ...nativeInput, ...(connectorSecretGrant && elevation ? {
             elevation: { ...elevation, connectorSecretGrant },
-          } : {}), setup: [...setups], recipePlans: input.recipePlans,
+          } : {}), setup: [...setups], recipePlans: reviewedRecipePlans,
             removalPlans: planned.removalPlans, exclusions, sourceChange,
             ...(secretEnvironment ? { secretEnvironment } : {}) }, prepared);
         };
@@ -443,7 +455,9 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         // owner; it is not a failed creation stage or permission to retry.
         if (!result.ok && (result.errorCode === 'outcome_uncertain' || result.errorCode === 'outcome_unknown' || result.errorCode === 'stop_unconfirmed'
           || result.errorCode === 'native_toolchain_termination_incomplete' || result.errorCode === 'plugin_exec_termination_incomplete')) return result;
-        if (result.ok || completedScripts.size > 0) {
+        // A confirmed script failure also proves recipes and toolchain finished,
+        // even when the first script failed before any completion callback.
+        if (result.ok || completedScripts.size > 0 || result.errorCode === 'machine_setup_setup_failed') {
           if (cancellationSignal.aborted) return fail('cancelled');
           if (mode === 'apply' && prepared?.ok) {
             let ordinal = 0;
@@ -462,8 +476,8 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
             const code = written.status === 'conflict' ? 'plan_changed' : `machine_setup_content_${written.status}`;
             throw Object.assign(new Error(code), { code });
           }
-          if (result.ok && mode === 'apply' && input.recipePlans.length) {
-            try { await params.apiMachine.publishMachineSetupApplied(input.recipePlans.map(entry => entry.plan)); }
+          if (result.ok && mode === 'apply' && reviewedRecipePlans.length) {
+            try { await params.apiMachine.publishMachineSetupApplied(reviewedRecipePlans.map(entry => entry.plan)); }
             catch (error) { logger.warn('[Machine setup] Applied inventory publication failed', error); }
           }
         }

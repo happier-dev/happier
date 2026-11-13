@@ -14,7 +14,7 @@ import { prepareWorkflowRunDataKeyV1, resolveWorkflowRunDataKeyV1 } from '../../
 import { validateWorkflowDefinition } from '../../workflows/workflowValidationV1.js';
 import { materializeWorkflowAcceptedSnapshotV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
 import { WorkflowRunGetResultV1Schema, WorkflowRunStartRequestV1Schema, WorkflowRunWaitRequestV1Schema, WorkflowRunListRequestV1Schema, WorkflowRunSummariesRequestV1Schema } from '../../workflows/actionsV1.js';
-import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
+import { projectWorkflowRunDisplaySummaryV1, sealWorkflowRunDisplaySummaryStoredEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
 import { WorkflowRunSummaryV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowProgressEnvelopeV1Schema } from '../../workflows/workflowProgressV1.js';
 import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
 import { SessionAgentSpawnPolicyV1StrictSchema } from '../../account/settings/sessionAgentSpawnPolicyV1.js';
@@ -501,7 +501,7 @@ describe('shared Account workflow run owner', () => {
     expect(opened.content.authorization.externalActionExecutionAuthorization).toEqual(original);
   });
 
-  it('retains authored producer-result operands in a reviewed Setup Run through the real combined start', async () => {
+  it.each(['succeeded', 'interrupted'] as const)('retains authored producer-result operands in a reviewed Setup Run through the real combined start and %s settlement', async settlement => {
     const parent = { actionId: 'machines.setup.apply' as const, input: { homeId: 'home', machineId: 'machine-a', targets: [
       { homeId: 'home', machineId: 'machine-a', desiredRevision: 0, recipePlans: [], sources: [{ kind: 'direct' as const, setup: {} }] },
     ] } };
@@ -536,9 +536,12 @@ describe('shared Account workflow run owner', () => {
       if (operation.operation === 'invocations.list') return { invocations: [] };
       if (operation.operation === 'wait') {
         if (!terminal) observedPending?.();
-        return { observation: terminal ? 'terminal' : 'waiting', ...(terminal ? { matchedCondition: 'terminal' } : {}),
-          run: { ...runSnapshot().run, state: terminal ? 'succeeded' : 'running',
-            workflowCustodyState: terminal ? 'settled' : 'pending' } };
+        const attention = operation.conditions?.includes('attention') && (!terminal || settlement === 'interrupted');
+        const completed = terminal && settlement === 'succeeded';
+        return { observation: attention ? 'needs_attention' : completed ? 'terminal' : 'waiting',
+          ...(attention ? { matchedCondition: 'attention' } : completed ? { matchedCondition: 'terminal' } : {}),
+          run: { ...runSnapshot().run, state: terminal ? settlement : 'running',
+            workflowCustodyState: terminal && settlement === 'succeeded' ? 'settled' : 'pending' } };
       }
       if (operation.operation !== 'admit') throw new Error(`unexpected_storage_operation:${operation.operation}`);
       acceptedEnvelope = String(operation.acceptedEnvelope);
@@ -587,7 +590,8 @@ describe('shared Account workflow run owner', () => {
     await pendingObserved;
     terminal = true;
     wake?.();
-    await expect(pending).resolves.toMatchObject({ observation: 'terminal', run: { state: 'succeeded' } });
+    await expect(pending).resolves.toMatchObject({ observation: settlement === 'succeeded' ? 'terminal' : 'needs_attention',
+      run: { state: settlement, workflowCustodyState: settlement === 'succeeded' ? 'settled' : 'pending' } });
     await expect(owner.waitCombined({ ...waiting, parent: { ...parent, input: { ...parent.input, machineId: 'different-machine' } } }))
       .rejects.toMatchObject({ code: 'run_access_denied' });
     await expect(owner.waitCombined({ ...waiting, start: { ...waiting.start, runId: '22222222-2222-4222-8222-222222222222' } }))
@@ -930,6 +934,50 @@ describe('shared Account workflow run owner', () => {
     metadata = { title: 'Reviewed name' };
     expect(await owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} }))
       .toMatchObject({ metadataByRunId: { [runId]: { kind: 'available', value: metadata } } });
+  });
+
+  it('lists a started Run from the display summary sealed at admission and a pre-summary Run from its snapshot', async () => {
+    if (!acceptedSnapshotResult.ok) throw new Error('snapshot_fixture_failed');
+    const admitted: Record<string, unknown> = {};
+    const operations: string[] = [];
+    const started = runSnapshot();
+    const legacyId = '33333333-3333-4333-8333-333333333333';
+    const legacyEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId: legacyId },
+      acceptedSnapshot: acceptedSnapshotResult.snapshot }));
+    const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
+      operations.push(String(operation.operation));
+      if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+      if (operation.operation === 'admit') { Object.assign(admitted, operation); return { kind: 'created', run: started.run }; }
+      if (operation.operation === 'list') return {
+        runs: [started.run, { ...started.run, id: legacyId }],
+        // The storage owner ships a summarized row's summary in place of its snapshot.
+        acceptedEnvelopesByRunId: { [legacyId]: legacyEnvelope },
+        displayEnvelopesByRunId: { [runId]: admitted.displayEnvelope },
+        keyCensusByRunId: { [runId]: started.keyCensus, [legacyId]: { ...started.keyCensus, runId: legacyId } },
+      };
+      throw new Error('unexpected_storage_operation');
+    } }), prepareWorkspace: async () => ({ ok: true, workspaceTarget: {
+      project: { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } } }),
+      resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+    });
+    await owner.execute({ actionId: 'workflow.run.start', input: WorkflowRunStartRequestV1Schema.parse({ runId,
+      source: { kind: 'inline', definition } }), context: { surface: 'ui', authority: 'present_user', callerPermissionMode: 'default',
+      externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } } });
+    expect(typeof admitted.displayEnvelope).toBe('string');
+    expect(String(admitted.displayEnvelope).length).toBeLessThan(String(admitted.acceptedEnvelope).length);
+    operations.length = 0;
+    const page = await owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} });
+    expect(page.metadataByRunId).toEqual({
+      [runId]: { kind: 'available', value: { title: 'work' } },
+      [legacyId]: { kind: 'available', value: { title: 'work' } },
+    });
+    expect(page.runs.map(run => [run.id, run.where, run.startedBy])).toEqual([
+      [runId, { machineId: 'machine-a', directory: '/repo' }, 'user'],
+      [legacyId, { machineId: 'machine-a', directory: '/repo' }, 'user'],
+    ]);
+    expect(page.supportsAnotherRoundByRunId).toEqual({ [runId]: false, [legacyId]: false });
+    expect(operations).toEqual(['list']);
   });
 
   it('names an unnamed Run from its frozen step without extra storage or mutable definition reads (FIN M3)', async () => {
@@ -1797,10 +1845,14 @@ describe('shared Account workflow run owner', () => {
   });
 
   it.each([
-    { nested: false, waitOnly: false },
-    { nested: true, waitOnly: false },
-    { nested: false, waitOnly: true },
-  ])('projects held step identity independently of its authored label ($nested, $waitOnly)', async ({ nested, waitOnly }) => {
+    { nested: false, waitOnly: false, carrier: 'snapshot' },
+    { nested: true, waitOnly: false, carrier: 'snapshot' },
+    { nested: false, waitOnly: true, carrier: 'snapshot' },
+    // An attention page ships row-sized display summaries; the held step's authored name travels in the summary.
+    { nested: false, waitOnly: false, carrier: 'summary' },
+    { nested: true, waitOnly: false, carrier: 'summary' },
+    { nested: false, waitOnly: true, carrier: 'summary' },
+  ] as const)('projects held step identity independently of its authored label ($nested, $waitOnly, $carrier)', async ({ nested, waitOnly, carrier }) => {
     if (!acceptedSnapshotResult.ok) throw new Error('snapshot_fixture_failed');
     const childResult = validateWorkflowDefinition({ version: 1, defaults: {}, blocks: waitOnly ? [{ kind: 'wait', id: 'review',
       document: { text: 'Review it', references: [], attachments: [] }, result: { kind: 'text' } }] : [{ kind: 'parallel', id: 'lanes', failurePolicy: 'collect_outcomes',
@@ -1829,7 +1881,11 @@ describe('shared Account workflow run owner', () => {
     let heldFact: unknown = { index, contentEnvelope };
     const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async operation => {
       if (operation.operation !== 'list') throw new Error('attention_must_not_read_per_run_detail');
-      return { runs: [{ ...snapshot.run, state: 'waiting_for_review', attentionRequired: true, invocationAttentionRequired: true, heldCount }], acceptedEnvelopesByRunId: { [runId]: snapshot.acceptedEnvelope },
+      return { runs: [{ ...snapshot.run, state: 'waiting_for_review', attentionRequired: true, invocationAttentionRequired: true, heldCount }],
+        acceptedEnvelopesByRunId: carrier === 'snapshot' ? { [runId]: snapshot.acceptedEnvelope } : {},
+        ...(carrier === 'summary' ? { displayEnvelopesByRunId: { [runId]: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowRunDisplaySummaryStoredEnvelopeV1({
+          mode: 'plain', binding: { v: 1, purpose: 'display_summary', accountId: 'account-1', runId },
+          displaySummary: projectWorkflowRunDisplaySummaryV1(accepted) })) } } : {}),
         keyCensusByRunId: { [runId]: snapshot.keyCensus }, heldProgressByRunId: { [runId]: heldFact } };
     } }));
     const result = await owner.execute({ actionId: 'workflow.run.list', input: { attention: 'required' }, context: {} });

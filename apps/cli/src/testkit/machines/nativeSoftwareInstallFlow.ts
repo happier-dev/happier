@@ -296,7 +296,8 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
         artifacts.set(id, { ...previous, ...input, id, headerVersion, bodyVersion });
         return { status: 200, data: { success: true, headerVersion, bodyVersion } };
       }
-      const actionIds = ['machines.setup.plan', 'machines.setup.apply', 'approval.request.decide', 'template.instantiate'] as const;
+      const actionIds = ['machines.setup.plan', 'machines.setup.apply', 'approval.request.decide', 'template.instantiate',
+        'workflow.run.invocations.get', 'workflow.run.invocations.retry'] as const;
       const verifyId = actionIds.find(id => path === bindExternalActionExecutionAuthorizationVerifyHttpPathV1(id));
       if (verifyId) {
         const verification = ExternalActionExecutionAuthorizationVerifyRequestV1Schema.parse(body);

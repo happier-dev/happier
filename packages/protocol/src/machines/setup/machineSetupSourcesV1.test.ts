@@ -32,6 +32,21 @@ function publicationPort(initial: unknown) {
 }
 
 describe('Machine setup saved-copy publication', () => {
+  it('retains completed recipe effects while resuming failed scripts, then permits an explicit full reapply', () => {
+    const item = { kind: 'softwareRecipe' as const, selection: {
+      ref: { pluginId: 'fixture.recipes', recipeId: 'package', revision: '1' }, inputs: {},
+    } };
+    const sources: MachineSetupSourceV1 = [{ kind: 'direct', setup: {
+      items: [item], scripts: [{ body: 'printf FIRST' }, { body: 'exit 23' }],
+    } }];
+    const merged = mergeMachineSetupsV1(sources.map(source => source.setup));
+    if (!merged.ok) throw new Error(merged.errorCode);
+    expect(projectMachineSetupSourceChangeExecutionV1(sources, sources, merged.setup, [], {
+      mode: 'recovery', currentSourceFacts: { direct: { pendingScripts: [1] } },
+    })).toMatchObject({ ok: true, sources: [{ items: [], scripts: [{ body: '' }, { body: 'exit 23' }] }] });
+    expect(projectMachineSetupSourceChangeExecutionV1(sources, sources, merged.setup, [], { mode: 'recovery' }))
+      .toMatchObject({ ok: true, sources: [{ items: [item], scripts: [{ body: 'printf FIRST' }, { body: 'exit 23' }] }] });
+  });
   it.each(['direct', 'accountPreset', 'bundledPreset'] as const)('projects confirmed script recovery for %s without changing saved copies', kind => {
     const setup = { scripts: [{ body: 'printf FIRST' }, { body: 'exit 23' }, { body: 'printf THIRD' }] };
     const source: MachineSetupSourceEntryV1 = kind === 'direct' ? { kind, setup }

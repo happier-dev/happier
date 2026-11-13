@@ -316,7 +316,7 @@ describe('finite Project command Workflow completion', () => {
       processes[1]!.exit(7);
     }
     const errorCode = failedPhase === 'setup' ? 'project_setup_step_failed' : 'project_command_step_failed';
-    expect(await executing).toMatchObject({ state: 'failed', reason: errorCode });
+    expect(await executing).toMatchObject({ state: 'interrupted', reason: errorCode });
     expect(await waiting).toMatchObject({ ok: true, result: { disposition: 'matched', snapshot: { state: 'failed',
       error: { errorCode }, domainRef: { kind: 'projectCommand', purpose: failedPhase, terminalId: expect.any(String) } } } });
     expect(downstream).toBe(false);

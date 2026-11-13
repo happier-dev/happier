@@ -2,6 +2,7 @@ import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isMachineSetupOperationActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionOperationDomainRefV1, ActionOperationSnapshotV1, ActionOperationDeclarationV1 } from '@happier-dev/protocol/actions';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
@@ -656,12 +657,14 @@ export async function runHostActionOperation(
     && !carriesNativeConfirmation(request.actionId, context)) return request.execute(context);
   if (context.operationAcceptance?.actionId === request.actionId) return request.execute(context);
   const resume = request.resume;
+  const workflowCaller = context.actionCaller?.kind === 'workflowRun'
+    || Boolean(context.externalActionExecutionAuthorization?.binding.workflowActionOrigin);
+  const workflowOperationReceipt = isMachineSetupOperationActionIdV1(request.actionId);
   return observeExecution({ actionId: request.actionId, input: request.input, rpcContext: rpcContext ?? context,
     ...((context.surface === 'agent' || context.surface === 'mcp') && !context.approvedActionReplay
-      // Workflow uses the Agent surface but consumes the child's declared
-      // result. Signed native ports retain that identity in the verified origin.
-      && context.actionCaller?.kind !== 'workflowRun'
-      && !context.externalActionExecutionAuthorization?.binding.workflowActionOrigin
+      // Setup completion retains this host receipt before observing terminal
+      // output. Other Workflow Actions retain their own declared result shape.
+      && (!workflowCaller || workflowOperationReceipt)
       ? { response: 'admission' as const } : {}),
     ...(request.resumeRetained ? { resumeRetained: true as const } : {}),
     ...(resume ? { resume: (operation: Parameters<HostActionOperationExecute>[0]) => resume({ ...context, ...operation }) } : {}),

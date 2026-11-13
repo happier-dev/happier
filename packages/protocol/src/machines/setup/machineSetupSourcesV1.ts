@@ -145,7 +145,10 @@ export function projectMachineSetupSourceChangeExecutionV1(currentSources: Machi
   const current = mergeMachineSetupsV1(currentSources.map(source => source.setup));
   if (!current.ok) return current;
   const scriptSources = projectMachineSetupScriptExecution(currentSources, proposedSources, options.currentSourceFacts, options.mode !== 'recovery');
-  if (options.mode === 'recovery') return { ok: true, sources: scriptSources,
+  // Scripts run after recipes and toolchain setup. Confirmed partial script
+  // progress therefore retains those completed effects, like an Update.
+  const recoveringScripts = Object.values(options.currentSourceFacts ?? {}).some(facts => facts.pendingScripts?.length);
+  if (options.mode === 'recovery' && !recoveringScripts) return { ok: true, sources: scriptSources,
     setup: { ...mergedSetup, scripts: scriptSources.flatMap(source => source.scripts ?? []) } };
   const unchangedToolchain = sameStrictJsonValue(current.setup.toolchain, mergedSetup.toolchain);
   const oldItems = new Set(selectMachineSetupRecipeItemsV1(currentSources.map(source => source.setup), currentExclusions)

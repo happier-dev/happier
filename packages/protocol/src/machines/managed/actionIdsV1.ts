@@ -91,6 +91,14 @@ export function isOrdinaryMachineSetupNativeActionIdV1(actionId: string): action
     || actionId === MACHINE_SETUP_REMOVE_ACTION_ID_V1 || actionId === 'machines.setup.updates.apply';
 }
 
+/** These setup effects complete through their receiving host Operation. */
+export function isMachineSetupOperationActionIdV1(actionId: string): actionId is
+  typeof MACHINE_SETUP_APPLY_ACTION_ID_V1 | typeof MACHINE_SETUP_REMOVE_ACTION_ID_V1
+  | typeof MACHINE_SETUP_UPDATES_APPLY_ACTION_ID_V1 | typeof MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 {
+  return isOrdinaryMachineSetupNativeActionIdV1(actionId) && actionId !== MACHINE_SETUP_PLAN_ACTION_ID_V1
+    || actionId === MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1;
+}
+
 export const MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 = 'machines.managed.bootstrap.retry';
 export const MANAGED_MACHINE_ACTION_IDS_V1 = [
   'machines.provisioners.list', 'machines.provisioners.check', 'machines.provisioners.options',

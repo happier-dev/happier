@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { createNativeSoftwareInstallFixture } from '@/testkit/machines/nativeSoftwareInstall';
-import { packageOs } from '@/testkit/machines/nativeSoftwareOs';
+import { packageOs, nativeTerminal } from '@/testkit/machines/nativeSoftwareOs';
 import { computeSshHostKeyFingerprint } from '@happier-dev/protocol/ssh/hostTrust';
 import { MachineSetupApplyResultV1Schema, MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createMachineSetupEffectPlan } from '@happier-dev/cli-common/machineSetup';
@@ -21,7 +21,7 @@ const selection = { ref: BACKUP_RECEIVER_RECIPE_REF_V1, inputs: {
 const identity = { machineId: 'receiver', installationId: 'installation-b' };
 
 describe('receiving daemon backup receiver result', () => {
-  it('returns public evidence from the admitted native Setup action after its child settles', async () => {
+  it.each([false, 'first', 'later'] as const)('returns the receiver result after native Setup settles (script recovery %s)', async recoverScript => {
     const root = await mkdtemp(join(tmpdir(), 'happier-receiver-action-'));
     onTestFinished(() => rm(root, { recursive: true, force: true }));
     const account = userInfo(), keyPath = join(root, 'host_ed25519'), policy = join(root, 'receiver.conf');
@@ -45,12 +45,35 @@ describe('receiving daemon backup receiver result', () => {
         ? `hostkey ${keyPath}\nforcecommand internal-sftp\n` : '' };
       return null;
     };
-    const sources = [{ kind: 'direct' as const, setup: { items: [{ kind: 'setupRecipe' as const, selection }] } }];
+    const sources = [{ kind: 'direct' as const, setup: { items: [{ kind: 'setupRecipe' as const, selection }],
+      ...(recoverScript ? { scripts: [...(recoverScript === 'later' ? [{ body: 'printf FIRST', affects: 'none' as const }] : []),
+        { body: 'exit 23', affects: 'none' as const }] } : {}) } }];
     const plan = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({ input: { homeId: 'srv_home',
       machineId: fixture.machine.id, sources, mode: 'effects' }, context: fixture.context('machines.setup.plan') }));
-    const result = await fixture.apply({ input: { homeId: 'srv_home', machineId: fixture.machine.id,
-      desiredRevision: plan.desiredRevision, sources: plan.sources, exclusions: plan.exclusions, recipePlans: plan.recipePlans ?? [] },
-      context: fixture.context('machines.setup.apply') });
+    const input = { homeId: 'srv_home', machineId: fixture.machine.id,
+      desiredRevision: plan.desiredRevision, sources: plan.sources, exclusions: plan.exclusions, recipePlans: plan.recipePlans ?? [] };
+    if (recoverScript) nativeTerminal.onLaunch = () => queueMicrotask(() =>
+      nativeTerminal.exit?.(nativeTerminal.launches.at(-1)?.args.at(-1) === 'exit 23' ? 23 : 0));
+    let result = await fixture.apply({ input, context: fixture.context('machines.setup.apply') });
+    if (recoverScript) {
+      expect(result).toMatchObject({ ok: false, errorCode: 'machine_setup_setup_failed',
+        details: { kind: 'finiteCommand', phase: 'setup', step: recoverScript === 'first' ? 0 : 1, exitCode: 23 } });
+      expect(await fixture.client.getMachineSetupDesiredSnapshot()).toMatchObject({ status: 'ready',
+        policy: { revision: plan.desiredRevision + 1,
+          sourceFacts: { direct: { pendingScripts: [recoverScript === 'first' ? 0 : 1] } } } });
+      const context = fixture.context('machines.setup.apply', 'receiver-retry');
+      const authorization = context.externalActionExecutionAuthorization!;
+      context.externalActionExecutionAuthorization = { ...authorization, binding: { ...authorization.binding,
+        workflowActionOrigin: { runId: 'receiver-setup', requestId: 'receiver-retry' } } };
+      const recipeEffects = fixture.rootLaunches.length;
+      nativeTerminal.onLaunch = () => queueMicrotask(() => nativeTerminal.exit?.(0));
+      result = await fixture.apply({ input, context });
+      expect(fixture.rootLaunches).toHaveLength(recipeEffects);
+      // A resumed script does not repeat the native SSH probe or claim old Plan evidence.
+      expect(result).toMatchObject({ backupReceivers: [{ status: 'unavailable', machineId: fixture.machine.id,
+        endpoint: selection.inputs.endpoint, reason: 'ssh_configuration_unavailable' }] });
+      return;
+    }
     expect(result).toMatchObject({ backupReceivers: [{ status: 'ready', machineId: fixture.machine.id,
       installationId: fixture.installation.installationId, endpoint: selection.inputs.endpoint, path: '/project/archive',
       hostKey: `[fd00::2]:2205 ${publicKey}`, fingerprint: evidence.fingerprint }] });

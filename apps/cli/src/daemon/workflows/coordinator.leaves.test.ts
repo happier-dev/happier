@@ -98,19 +98,14 @@ describe('workflow Action leaves', () => {
   });
 
   it.each(['native_effect_failed', 'action_failed'] as const)('preserves a scalar Action %s cause without changing its result payload', async errorCode => {
-    const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'setup', actionId: 'machines.setup.apply', input: {
+    const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'setup', actionId: 'machines.setup.plan', input: {
       homeId: { kind: 'literal', value: 'home' }, machineId: { kind: 'literal', value: workspace.machineId },
-      targets: { kind: 'literal', value: [{ homeId: 'home', machineId: workspace.machineId,
-        desiredRevision: 0, recipePlans: [], sources: [
-        { kind: 'accountPreset', presetId: 'preset', presetRevision: 1, setup: { scripts: [{ body: 'echo retained', affects: 'none' }],  } },
-        { kind: 'direct', setup: {} },
-      ] }] },
     } };
     const store = createInMemoryWorkflowCoordinatorStore();
     let effects = 0;
-    const failureCause = { phase: 'machines.setup.apply', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    const failureCause = { phase: 'machines.setup.plan', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
     const details = { phase: 'native_effect' };
-    const executor = createTestActionExecutor({ machineSetupApply: async () => {
+    const executor = createTestActionExecutor({ machineSetupPlan: async () => {
       effects++;
       // The native boundary supplies a closed diagnosis independently of result details.
       return { ok: false, errorCode, error: errorCode, failureCause, details };
@@ -122,7 +117,8 @@ describe('workflow Action leaves', () => {
     const input = { runId: 'scalar-unknown', definition: definition([leaf]), inputs: {}, executionTarget,
       authorization, materializedLeaves: [frozen(leaf)] };
     const lifecycle = errorCode === 'action_failed' ? 'outcome_uncertain' : 'failed';
-    expect(await coordinator.run(input)).toMatchObject({ state: lifecycle, reason: errorCode === 'action_failed' ? 'outcome_uncertain' : errorCode });
+    expect(await coordinator.run(input)).toMatchObject({ state: lifecycle === 'failed' ? 'interrupted' : lifecycle,
+      reason: errorCode === 'action_failed' ? 'outcome_uncertain' : errorCode });
     expect(store.list().find(row => row.blockId === leaf.id)).toMatchObject({ lifecycle, failureCause,
       ...(errorCode === 'action_failed' ? {} : { result: details }) });
     expect(effects).toBe(1);
@@ -210,7 +206,7 @@ describe('workflow Action leaves', () => {
         observeRun: async () => { throw new Error('Immediate Action has no awaited Runs'); } } });
     const outcome = await observedCoordinator.run({ runId: 'effect-run', definition: definition([leaf]), inputs: {},
       executionTarget, authorization, originSessionId: 'origin', materializedLeaves: [frozen(leaf)] });
-    expect(outcome.state).toBe('failed');
+    expect(outcome.state).toBe('interrupted');
     const row = store.list().find((entry) => entry.blockId === leaf.id)!;
     expect(row).toMatchObject({ lifecycle: 'failed', reason: 'command_failed', result: output });
     expect(contexts).toEqual([`effect-run/${row.logicalInvocationRecordId ?? row.recordId}/0`]);
@@ -294,7 +290,7 @@ describe('workflow Action leaves', () => {
     const outcome = await coordinator.run({ runId: 'invalid-action-output', definition: definition([leaf]),
       inputs: {}, executionTarget, authorization, originSessionId: 'origin', materializedLeaves: [{ ...materialized,
         actionContract: { ...materialized.actionContract!, outputSchema: { type: 'object', required: ['answer'] } } }] });
-    expect(outcome.state).toBe(pauseForReview ? 'waiting_for_review' : 'failed');
+    expect(outcome.state).toBe(pauseForReview ? 'waiting_for_review' : 'interrupted');
     expect(effects).toBe(1);
     expect(store.list().find((row) => row.blockId === leaf.id)).toMatchObject({
       lifecycle: pauseForReview ? 'waiting_for_review' : 'failed', reason: 'schema_mismatch',
@@ -588,7 +584,7 @@ describe('workflow Action leaves', () => {
     expect(await coordinator.run({ runId: 'schema-drift', definition: definition([goal]), inputs: {}, executionTarget,
       authorization, originSessionId: 'origin', materializedLeaves: [{ ...sidecar, actionContract: {
         ...sidecar.actionContract!, outputSchema: { type: 'object', required: ['acceptedAnswer'] },
-      } }] })).toMatchObject({ state: 'failed', reason: 'schema_mismatch' });
+      } }] })).toMatchObject({ state: 'interrupted', reason: 'schema_mismatch' });
     expect(store.list().find((row) => row.blockId === goal.id)).toMatchObject({ lifecycle: 'failed', reason: 'schema_mismatch' });
   });
   it('uses isolated inline Workflow frames for repeated children with colliding ids', async () => {

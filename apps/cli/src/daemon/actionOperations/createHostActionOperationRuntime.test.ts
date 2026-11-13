@@ -46,6 +46,19 @@ import { SessionSpawnNewResultV1Schema as preObservationSpawnResult } from '../.
 
 describe('finite host operation custody', () => {
 
+  it('preserves a Workflow deployment result instead of substituting setup admission', async () => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'machine', serverId: 'home',
+      resolveAccountId: async () => 'account', generateOperationId: () => 'workflow-deploy' });
+    const terminal = { ok: true as const, result: { ok: true, deploymentId: 'deployment', state: 'succeeded' } };
+    // The deployment adapter is the external effect; admission and result observation stay real.
+    const result = await runtime.runActionOperation({ actionId: 'deployments.deploy',
+      input: { serverId: 'home', environmentId: 'environment', sha: 'a'.repeat(40), requestKey: 'workflow-deploy' },
+      context: { surface: 'agent', actionRequestId: 'workflow-deploy', actionCaller: { kind: 'workflowRun', runId: 'run',
+        authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'yolo' } } },
+      execute: async () => terminal });
+    expect(result).toEqual(terminal);
+  });
+
   it('keeps an unconfirmed restore snapshot on the same receipt through exact replay and reviewed skip', async () => {
     const runtime = createHostActionOperationRuntime({ machineId: 'machine', serverId: 'home',
       resolveAccountId: async () => 'account', generateOperationId: () => 'held-restore' });

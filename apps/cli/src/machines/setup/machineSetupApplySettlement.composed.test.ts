@@ -7,6 +7,8 @@ import { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationGetV1ResponseSchema } f
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { WORKFLOW_RUN_STORAGE_HTTP_PATH } from '@/daemon/workflows/workflowRunStorageClient';
+import { MachineSetupSourceV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import { projectAutomationAccountCurrentnessWitnessV1, WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol';
 
 describe('Machine setup Apply settlement', () => {
   it.skipIf(process.platform === 'win32').each(['plain', 'e2ee'] as const)('settles a %s reviewed Apply through the installed daemon and native package effect', async mode => {
@@ -14,19 +16,28 @@ describe('Machine setup Apply settlement', () => {
   });
 
   it.skipIf(process.platform === 'win32').each([
-    { exitCode: 0, disconnectAfterWait: false },
-    { exitCode: 23, disconnectAfterWait: false },
-    { exitCode: 0, disconnectAfterWait: true },
-  ])('observes the signed Workflow child through exit $exitCode with observation disconnect=$disconnectAfterWait', async ({ exitCode, disconnectAfterWait }) => {
+    { exitCode: 0, disconnectAfterWait: false, retainedDesired: false },
+    { exitCode: 23, disconnectAfterWait: false, retainedDesired: false },
+    { exitCode: 0, disconnectAfterWait: true, retainedDesired: false },
+    { exitCode: 0, disconnectAfterWait: false, retainedDesired: true },
+  ])('settles admitted setup through running and terminal without cancel: exit $exitCode, disconnect=$disconnectAfterWait, retained=$retainedDesired', async ({ exitCode, disconnectAfterWait, retainedDesired }) => {
     await exercisePublicPackagePlanApply('native-confirm', false, async (fixture, _admitRoot, accountChannel) => {
       let disconnected = false;
-      if (disconnectAfterWait) {
+      const setupLifecycles: unknown[] = [];
+      let setupInvocationId: unknown;
+      {
         const homePost = vi.mocked(axios.post).getMockImplementation();
         if (!homePost) throw new Error('Native Home HTTP boundary required');
         vi.mocked(axios.post).mockImplementation(async (...args) => {
           const response = await homePost(...args);
           const [url, body] = args;
-          if (!disconnected && String(url).endsWith(WORKFLOW_RUN_STORAGE_HTTP_PATH)
+          if (String(url).endsWith(WORKFLOW_RUN_STORAGE_HTTP_PATH)
+            && body && typeof body === 'object' && 'operation' in body && body.operation === 'invocations.fact'
+            && 'lifecycle' in body && 'invocationId' in body) {
+            if (body.lifecycle === 'admitting') setupInvocationId ??= body.invocationId;
+            if (body.invocationId === setupInvocationId) setupLifecycles.push(body.lifecycle);
+          }
+          if (disconnectAfterWait && !disconnected && String(url).endsWith(WORKFLOW_RUN_STORAGE_HTTP_PATH)
             && body && typeof body === 'object' && 'operation' in body && body.operation === 'wait') {
             // Lose only the observation transport after Home authorized the
             // starter's read. No permission or encryption material changed.
@@ -43,12 +54,20 @@ describe('Machine setup Apply settlement', () => {
         { body: 'printf FIRST', affects: 'none' }, { body: `exit ${exitCode}`, affects: 'none' },
         { body: 'printf THIRD', affects: 'none' },
       ] } }];
+      if (retainedDesired) {
+        // Retained Home metadata crosses the real field CAS before this fresh
+        // review. Refresh must preserve its revision and use new child custody.
+        await fixture.client.captureMachineSetupDesired().apply({ expectedDesiredRevision: 0,
+          sources: MachineSetupSourceV1Schema.parse(sources), exclusions: [] });
+        expect(await fixture.client.getMachineSetupDesiredSnapshot()).toMatchObject({ status: 'ready', policy: { revision: 1 } });
+      }
       const planned = await fixture.publicExecutor.execute('machines.setup.plan', {
         homeId: 'srv_home', machineId: fixture.machine.id, mode: 'effects', sources,
       }, { ...context, actionRequestId: 'reviewed-script-plan' });
       expect(planned).toMatchObject({ ok: true });
       if (!planned.ok) throw new Error('Script Plan failed');
       const review = MachineSetupPlanResultV1Schema.parse(planned.result);
+      if (retainedDesired) expect(review.desiredRevision).toBe(1);
       const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_home', machineId: fixture.machine.id,
         targets: [{ homeId: 'srv_home', machineId: fixture.machine.id, sources: review.sources,
           desiredRevision: review.desiredRevision, recipePlans: review.recipePlans }] });
@@ -91,7 +110,11 @@ describe('Machine setup Apply settlement', () => {
             ...(exitCode === 0 ? {} : { error: { errorCode: 'machine_setup_setup_failed',
               details: { kind: 'finiteCommand', phase: 'setup', step: 1, exitCode } } }) },
         });
-        expect(fixture.workflowDiagnostic()).toMatchObject({ coordinateState: exitCode === 0 ? 'succeeded' : 'failed' });
+        expect(fixture.workflowDiagnostic()).toMatchObject({ coordinateState: exitCode === 0 ? 'succeeded' : 'interrupted' });
+        expect(setupLifecycles).toEqual(expect.arrayContaining(['admitting', 'running', exitCode === 0 ? 'completed' : 'failed']));
+        expect(setupLifecycles.indexOf('admitting')).toBeLessThan(setupLifecycles.indexOf('running'));
+        expect(setupLifecycles.indexOf('running')).toBeLessThan(setupLifecycles.indexOf(exitCode === 0 ? 'completed' : 'failed'));
+        expect(fixture.workflowDiagnostic()).toMatchObject({ custodyState: exitCode === 0 ? 'settled' : 'pending' });
         if (exitCode !== 0) expect(fixture.workflowDiagnostic().invocations).toContainEqual(expect.objectContaining({
           lifecycle: 'failed', reasonCode: 'machine_setup_setup_failed',
         }));
@@ -100,6 +123,36 @@ describe('Machine setup Apply settlement', () => {
         expect(desired).toMatchObject({ status: 'ready', policy: {
           ...(exitCode === 0 ? {} : { sourceFacts: { direct: { pendingScripts: [1, 2] } } }),
         } });
+        if (exitCode !== 0) {
+          const storage = fixture.workflowStorage();
+          if (!storage || !receipt.runId) throw new Error('Retained setup Run required for recovery');
+          const failed = storage.rows().find(row => row.index.parentRecordId && row.index.lifecycle === 'failed');
+          if (!failed) throw new Error('Failed setup child required for recovery');
+          const runExecutor = fixture.publicExecutor;
+          const get = await runExecutor.execute('workflow.run.invocations.get', {
+            runId: receipt.runId, invocationId: failed.index.id,
+          }, context);
+          expect(get, JSON.stringify({ get, workflow: fixture.workflowDiagnostic() })).toMatchObject({ ok: true });
+          if (!get.ok) throw new Error('Failed setup child is unreadable');
+          const detail = WorkflowActionOutputSchemasV1['workflow.run.invocations.get'].parse(get.result);
+          const retry = detail.invocation.recoveryAvailability?.retry;
+          expect(retry).toMatchObject({ kind: 'available' });
+          if (retry?.kind !== 'available') throw new Error('Failed setup child has no continuation');
+          const recovered = await runExecutor.execute('workflow.run.invocations.retry', {
+            runId: receipt.runId, expectedRevision: storage.run().revision, invocation: { recordId: failed.index.id },
+            causalInvocationIds: retry.causalInvocationIds, conversation: 'fresh_agent', input: { kind: 'original' },
+          }, { ...context, actionRequestId: 'recover-reviewed-script' });
+          expect(recovered).toMatchObject({ ok: true, result: { disposition: 'accepted' } });
+          nativeTerminal.onLaunch = () => { scriptCount++; queueMicrotask(() => nativeTerminal.exit?.(0)); };
+          await storage.execute({ operation: 'transition', runId: receipt.runId, parentAttempt: storage.run().attempt,
+            expectedRevision: storage.run().revision, state: 'claimed', checkpointEnvelope: storage.checkpointEnvelope()! });
+          await fixture.coordinateWorkflowClaim({ runId: receipt.runId, attempt: storage.run().attempt,
+            expectedRevision: storage.run().revision, acceptedEnvelope: storage.acceptedEnvelope()!,
+            accountCurrentness: projectAutomationAccountCurrentnessWitnessV1(fixture.accountEncryptionCurrentness)! });
+          expect(fixture.workflowDiagnostic()).toMatchObject({ coordinateState: 'succeeded', custodyState: 'settled' });
+          expect(storage.run().id).toBe(receipt.runId);
+          expect(scriptCount).toBe(4); // First succeeded script is not replayed; only failed + remaining scripts run.
+        }
       } finally {
         nativeTerminal.onLaunch = undefined;
         nativeTerminal.autoExit = true;
