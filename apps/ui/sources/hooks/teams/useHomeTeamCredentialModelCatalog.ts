@@ -48,8 +48,10 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
     // Embed model choices come from the admitted grant/options projection, never Account Team discovery.
     const enabled = input.enabled && !isEmbedWindowContext();
     const serverId = input.serverId?.trim() ?? '';
+    const loadDeclarations = input.declarationProjection === undefined && enabled && Boolean(input.agentTargetKey && input.machineId);
+    const [declarationRefreshKey, setDeclarationRefreshKey] = React.useState(0);
     const declarationState = useDaemonMergedProjectionInputs({ machineId: input.machineId, serverId,
-        enabled: input.declarationProjection === undefined && enabled && Boolean(input.agentTargetKey && input.machineId),
+        enabled: loadDeclarations, refreshKey: declarationRefreshKey,
         sections: PROVIDER_DECLARATION_CONTEXT_SECTIONS });
     const projection = input.declarationProjection !== undefined ? input.declarationProjection
         : declarationState.phase === 'ready' ? declarationState.inputs?.pluginProjectionV2 ?? null : null;
@@ -137,6 +139,13 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
         const projected = projectHomeCatalogSnapshots(pages, demand, unavailable?.reason === 'offline');
         current = current && projected.current;
         const { resources, resourceStatusByKey } = projected;
+        if ((!condition || condition.reason === 'loading')
+            && (declarationState.phase === 'error' || declarationState.phase === 'unsupported')) {
+            const kind = declarationState.phase === 'unsupported' ? 'unsupported'
+                : declarationState.failureReason === 'access-denied' || declarationState.failureReason === 'authentication-required'
+                    ? 'forbidden' : 'unknown';
+            condition = teamsUnavailableReason({ kind, retryable: kind === 'unknown', code: declarationState.failureReason ?? null });
+        }
         return Object.freeze({
             resources: resources.length > 0 ? Object.freeze(resources) : EMPTY_RESOURCES,
             teamNameById: Object.freeze(teamNameById),
@@ -148,7 +157,7 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
         });
         // snapshotVersion is the scoped store change signal.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [directory.kind, directory.partial, directory.unavailableHomes, enabled, demand, reloadHomeCatalog, demandsKey, scope?.accountId, scope?.serverId, serverId, snapshotVersion]);
+    }, [directory.kind, directory.partial, directory.unavailableHomes, declarationState.phase, declarationState.failureReason, enabled, demand, reloadHomeCatalog, demandsKey, scope?.accountId, scope?.serverId, serverId, snapshotVersion]);
 
     const needsMachineProjection = Boolean(input.agentTargetKey && executionMachineId
         && discovered.resources.some(resource => resource.providerModels.length > 0));
@@ -164,9 +173,10 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
     });
     const refreshModels = modelProjection.refreshWithResult;
     const reload = React.useCallback(async () => {
+        if (loadDeclarations && declarationState.phase === 'error') setDeclarationRefreshKey(key => key + 1);
         await reloadHomeCatalog();
         if (needsMachineProjection) await refreshModels(false);
-    }, [needsMachineProjection, refreshModels, reloadHomeCatalog]);
+    }, [declarationState.phase, loadDeclarations, needsMachineProjection, refreshModels, reloadHomeCatalog]);
 
     return React.useMemo(() => {
         if (!needsMachineProjection) {

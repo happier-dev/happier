@@ -10,9 +10,10 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
 
 import { createProviderModelProjectionFixture, createProviderModelProjectionGroupFixture, createProviderSettingsAccountHarness,
-    createProviderSettingsHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
+    createProviderSettingsHarness, installProviderSettingsRpcBoundary, installBundledProviderDeclarationsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpc/errors';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -110,13 +111,51 @@ describe('useProviderModelProjection', () => {
         });
     });
 
+    it('preserves a failed Machine declaration projection instead of reporting model catalog loading', async () => {
+        await account.reset();
+        serverId = (await account.restore({ features: createRootLayoutFeaturesResponse({ features: {
+            providers: { enabled: true }, teams: { enabled: true, credentialResources: { enabled: true, externalApi: { enabled: false } } },
+        } }) })).serverId;
+        account.home.answer(serverId, '/v1/teams/list', { body: { items: [], nextCursor: null } });
+        rpc.intercept(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, () => {
+            throw new RpcError('Machine transport unavailable', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE);
+        });
+        const { useHomeTeamCredentialModelCatalog } = await import('@/hooks/teams/useHomeTeamCredentialModelCatalog');
+        const { useDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/useDaemonMergedProjectionInputs');
+        const hook = await renderHook(() => ({
+            projection: useDaemonMergedProjectionInputs({ serverId, machineId: 'machine-a', sections: 'complete' }),
+            catalog: useHomeTeamCredentialModelCatalog({ serverId, enabled: true, machineId: 'machine-a',
+                agentTargetKey: 'agent:happier.agent.codex/codex' }),
+        }));
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().projection).toMatchObject({
+                phase: 'error', failureReason: 'transport-unavailable',
+            }));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().catalog.condition).toMatchObject({
+                reason: 'error', retryable: true,
+            }));
+            expect(hook.getCurrent().catalog.current).toBe(false);
+            installBundledProviderDeclarationsRpcBoundary(rpc);
+            await act(async () => { await hook.getCurrent().catalog.reload(); });
+            await waitForHomeGovernance(() => expect(hook.getCurrent().catalog).toMatchObject({
+                current: true, condition: null,
+            }));
+        } finally { await hook.unmount(); }
+    });
+
     it('renders the existing delivery owner batch from Home discovery and never falls back when an older Machine omits it', async () => {
         await account.reset();
         serverId = (await account.restore({ features: createRootLayoutFeaturesResponse({ features: {
             providers: { enabled: true }, teams: { enabled: true, credentialResources: { enabled: true, externalApi: { enabled: false } } },
         } }) })).serverId;
         const { readAccountAgentProviderRequirements, readAccountProviderDeclarations } = await import('@/providers/catalog/accountProviderDeclarations');
+        const { getBundledAgentDeclaration } = await import('@/agents/registry/registryCore');
+        const { qualifyPluginContributionReferenceV1 } = await import('@happier-dev/protocol/plugins/contribution-identity');
         const agentTargetKey = 'agent:happier.agent.codex/codex';
+        const agentDeclaration = getBundledAgentDeclaration('codex')!;
+        const connectedAccounts = agentDeclaration.connectedAccounts.map(purpose => ({ ...purpose,
+            service: qualifyPluginContributionReferenceV1(purpose.service, agentDeclaration.identity.pluginId),
+        }));
         const requirements = readAccountAgentProviderRequirements(agentTargetKey, { kind: 'account' })!;
         const declarations = readAccountProviderDeclarations({ kind: 'account' });
         const applications = projectAgentProviderBrokerApplications({ agentTargetKey, acceptedProtocols: requirements.acceptsProtocols,
@@ -132,7 +171,8 @@ describe('useProviderModelProjection', () => {
                 && parsed.identity.localId === application.implementationIdentity.localId;
         })!;
         const declarationProjection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
-            agentsById: { codex: { id: 'codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' }, providerRequirements: requirements } },
+            agentsById: { codex: { id: 'codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                providerRequirements: requirements, connectedAccounts } },
             familiesById: { providers: { family: 'providers', entriesById: { [declaration.contributionKey]: {
                 id: declaration.contributionKey, pluginId: application.implementationIdentity.pluginId,
                 provenance: declaration.provenance, sourceKind: 'path', definition: declaration.definition,
@@ -142,7 +182,7 @@ describe('useProviderModelProjection', () => {
             deliveryPolicy: { preferredAllowedModes: ['vendor-native', 'brokered'] }, allowedRoutes: ['vendor-native', 'brokered'],
             readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', connectedServiceSelections: [],
-            sourcePresentation: { kind: 'provider', provider: { identity: application.implementationIdentity, definitionRevision: 1 } },
+            sourcePresentation: { kind: 'connected_service', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } },
             providerModels: [{ descriptor: { id: 'model-a', name: 'Shared model' }, sourceRevision: 'source-1', application, availability: 'available',
                 selection: { kind: 'team_credential_provider_model', teamId: 'team-1', resourceId: 'shared', expectedResourceRevision: 1,
                     deliveryMode: 'brokered', agentTargetKey, modelId: 'model-a' } }],
@@ -204,6 +244,32 @@ describe('useProviderModelProjection', () => {
         await waitForHomeGovernance(() => expect(hook.getCurrent().current).toBe(true));
         expect(hook.getCurrent().resources).toEqual([]);
         expect(hook.getCurrent().resourceStatusByKey?.size).toBe(0);
+
+        const restored = TeamCredentialResourceCatalogEntryV1Schema.parse({ ...raw, resourceRevision: 3,
+            providerModels: rawBasis.providerModels.map(row => ({ ...row,
+                selection: { ...row.selection, expectedResourceRevision: 3 },
+            })),
+        });
+        account.home.answer(serverId, '/v1/teams/credential-resources/entitled/discover', {
+            body: { resources: [restored], nextCursor: null, failures: [] },
+        });
+        describeProviderModels.mockResolvedValue({ ...projection(), teamCredentialResources: [restored] });
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } = await import('@happier-dev/protocol/changes');
+        await act(async () => { publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]); });
+        await waitForHomeGovernance(() => {
+            expect(hook.getCurrent().current).toBe(true);
+            expect(hook.getCurrent().resources[0]?.resourceRevision).toBe(3);
+        });
+        const { buildTeamCredentialModelPickerSections } = await import('@/components/sessions/modelPicker/buildTeamCredentialModelPickerSections');
+        const sections = buildTeamCredentialModelPickerSections({
+            declarationContext: { kind: 'machine', projection: declarationProjection },
+            agentTargetKey, nativeModels: [], providerGroups: [], hiddenNativeModelKeys: new Set<string>(),
+            providerProjectionAuthoritative: true, teamCredentialResources: hook.getCurrent().resources,
+            teamCredentialResourceStatusByKey: hook.getCurrent().resourceStatusByKey,
+        });
+        expect(sections[0]?.options[0]).toMatchObject({ availability: 'available',
+            value: { resourceId: restored.id, expectedResourceRevision: 3 } });
     });
 
     it('projects a gathered Team catalog once on the exact execution Machine and withdraws it on target change', async () => {
