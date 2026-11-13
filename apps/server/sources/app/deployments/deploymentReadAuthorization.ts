@@ -18,6 +18,9 @@ import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_
     DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol';
 import type { ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 
+type DeploymentTargetAuthorization = Readonly<{ ok: true; artifactIds: readonly string[] }>
+    | Readonly<{ ok: false; code: 'source_changed' }> | null;
+
 /** Registry demand selects current metadata only; the Environment remains its private-content authority. */
 export async function readRegistryAppUpdateAuthorizationInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     authentication: DeploymentAuthentication = {},
@@ -77,7 +80,7 @@ export async function readAdmittedDeploymentReadScopeInTx(tx: Tx,
 /** Resource reads remain Source-authorized. Native occurrence and private builder custody stay with the installed owner. */
 export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     admission: DeploymentReadAdmissionV1, authentication: DeploymentAuthentication = {},
-): Promise<Readonly<{ artifactIds: readonly string[] }> | null> {
+): Promise<DeploymentTargetAuthorization> {
     if ('action' in admission) {
         if (binding.actionId !== admission.actionId || binding.target.kind !== 'machine'
             || binding.target.machineId !== binding.machineId) return null;
@@ -88,7 +91,7 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
             installationId: binding.installationId, revokedAt: null, replacedByMachineId: null }, select: { id: true } });
         if (!controller) return null;
         const scope = await readAdmittedDeploymentReadScopeInTx(tx, admission);
-        return scope ? { artifactIds: scope.artifactContents.map(reference => reference.contentArtifactId) } : null;
+        return scope ? { ok: true, artifactIds: scope.artifactContents.map(reference => reference.contentArtifactId) } : null;
     }
     if (admission.actionId !== binding.actionId || binding.target.kind !== 'machine'
         || binding.target.machineId !== binding.machineId || admission.machineId !== binding.machineId
@@ -106,7 +109,7 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
             const failures = await admitDeploymentStoredContentsInTx(tx, binding.accountId, source.owner, reads);
             return failures.some(failure => failure !== null) ? null : reads.map(read => read.reference.contentArtifactId);
         }));
-        return contents.some(content => content === null) ? null : { artifactIds: contents.flatMap(content => content ?? []) };
+        return contents.some(content => content === null) ? null : { ok: true, artifactIds: contents.flatMap(content => content ?? []) };
     }
     const loaded = await loadDeploymentEnvironmentInTx(tx, binding.accountId, binding.serverIdentityId,
         admission.environmentId, authentication);
@@ -122,7 +125,7 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
     admission: Exclude<DeploymentReadAdmissionV1, { actionId: ProjectReadinessActionIdV1 | typeof ACTION_INVOKE_ACTION_ID_V1 }> | DeploymentRestartNativeAdmissionV1
         | DeploymentRestoreNativeAdmissionV1 | Omit<DeploymentRestoreNativeAdmissionV1, 'expectedRevision'> | DeploymentBackupNativeAdmissionV1,
     contentAdmission?: Readonly<{ actorAccountId: string; owner: ProjectSourceOwnerV1 }>,
-): Promise<Readonly<{ artifactIds: readonly string[] }> | null> {
+): Promise<DeploymentTargetAuthorization> {
     const scope = getActionSpec(admission.actionId).deploymentReadScope;
     if (scope?.target === 'current_health') {
         const link = await tx.deploymentTargetLink.findFirst({ where: {
@@ -132,7 +135,7 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
             || environment.runtimeTargetLinkId !== link.id
             || link.deletedAt || link.detachedAt || link.role !== 'runtime'
             || link.targetKind !== 'ownServer') return null;
-        return { artifactIds: [] };
+        return { ok: true, artifactIds: [] };
     }
     if (!scope || !('deploymentId' in admission)) return null;
     const [link, receipt] = await Promise.all([
@@ -148,10 +151,9 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
             || link.role !== 'runtime' || link.sourceKind !== 'host' || link.targetKind !== 'ownServer'
             || scope.target !== 'restore_receipt' && link.activeDeploymentId !== receipt.id
             || !copy && !link.machines.some(member => member.machineId === admission.machineId
-                && member.installationId === admission.installationId && member.state === 'active')
-            || ('expectedRevision' in admission && scope.requireEnvironmentRevision)
-                && admission.expectedRevision !== environment.revision) return null;
+                && member.installationId === admission.installationId && member.state === 'active')) return null;
     }
+    let artifactIds = [environment.contentArtifactId, link.contentArtifactId, receipt.contentArtifactId];
     if (scope.target === 'restore_receipt') {
         const active = link.activeDeploymentId ? await tx.deployment.findFirst({ where: { id: link.activeDeploymentId,
             environmentId: environment.id, targetLinkId: link.id },
@@ -165,12 +167,14 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
             ]);
             if (failures.some(failure => failure !== null)) return null;
         }
-        return { artifactIds: [environment.contentArtifactId, link.contentArtifactId,
-            ...(copy ? [] : [receipt.contentArtifactId]), active.contentArtifactId] };
+        artifactIds = [environment.contentArtifactId, link.contentArtifactId,
+            ...(copy ? [] : [receipt.contentArtifactId]), active.contentArtifactId];
     }
     // Historical logs deliberately do not infer captured build placement from
     // today's builder or active head. Their native owner proves that private fact.
-    return { artifactIds: [environment.contentArtifactId, link.contentArtifactId, receipt.contentArtifactId] };
+    if (scope.target !== 'historical_receipt' && 'expectedRevision' in admission && scope.requireEnvironmentRevision
+        && admission.expectedRevision !== environment.revision) return { ok: false, code: 'source_changed' };
+    return { ok: true, artifactIds };
 }
 
 /** An admitted Project read selects current content membership without repeating Source authority. */

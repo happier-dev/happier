@@ -622,7 +622,7 @@ class AuthModule {
             const environment = await admitDeploymentNativeRootEnvironmentInTx(db, input, nativeAdmission, 'authentication' in input
                 ? input.authentication.evidence : mintApiTokenPrincipal?.authenticationEvidence);
             if (!environment.ok) {
-                throw new ApiTokenOperationError('credential_scope_denied', undefined,
+                throw new ApiTokenOperationError(environment.code ?? 'credential_scope_denied', undefined,
                     environment.placement?.details, environment.placement?.failureCause);
             }
             nativeSource = environment.source;

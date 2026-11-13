@@ -2350,7 +2350,7 @@ describe('deployment children retain their controller Action authority', () => {
             expect(authorization.binding.deploymentCandidatePublication).toBeUndefined();
             await expect(mint(input, other.account.id)).rejects.toMatchObject({ code: 'credential_scope_denied' });
             await expect(mint({ ...input, deploymentId: other.receipt.id })).rejects.toMatchObject({ code: 'credential_scope_denied' });
-            await expect(mint({ ...input, expectedRevision: f.environmentRevision - 1 })).rejects.toMatchObject({ code: 'credential_scope_denied' });
+            await expect(mint({ ...input, expectedRevision: f.environmentRevision - 1 })).rejects.toMatchObject({ code: 'source_changed' });
             const headers = (method: string, path: string, body?: unknown, effectActionId: string = actionId) => ({
                 ...currentAccountStoredContentCompatibilityHeaders,
                 [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,

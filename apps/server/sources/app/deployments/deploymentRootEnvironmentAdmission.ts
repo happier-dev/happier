@@ -36,7 +36,7 @@ import { readDeploymentPreparationAuthorizationInTx, readDeploymentLinkAdmission
 
 export type DeploymentRootEnvironmentAdmission =
   | Readonly<{ ok: true; source?: Readonly<{ id: string; revision: number }> }>
-  | Readonly<{ ok: false; placement?: ActionExecuteFailure }>;
+  | Readonly<{ ok: false; code?: 'source_changed'; placement?: ActionExecuteFailure }>;
 
 /**
  * The one Environment admission for a native deployment root. Mint runs it once
@@ -114,11 +114,12 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
         source.row,
         {
           ...sourceAdmission,
+          source: { kind: 'repository', snapshotId: nativeAdmission.source.snapshotId },
           environmentId: source.row.id,
           targetLinkId: nativeAdmission.source.origin.targetLinkId,
         },
         { actorAccountId: root.accountId, owner: source.admission.owner },
-      ))
+      ))?.ok
     )
       return { ok: false };
   }
@@ -166,8 +167,9 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
       !('kind' in nativeAdmission) ||
       (nativeAdmission.kind !== 'restart' &&
         nativeAdmission.kind !== 'restore' &&
-        nativeAdmission.kind !== 'backup') ||
-      !(await readDeploymentTargetAuthorizationInTx(
+        nativeAdmission.kind !== 'backup')
+    ) return { ok: false };
+    const selected = await readDeploymentTargetAuthorizationInTx(
         tx,
         environment.row,
         nativeAdmission,
@@ -179,9 +181,9 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
               owner: environment.admission.owner,
             }
           : undefined,
-      ))
-    )
-      return { ok: false };
+      );
+    if (!selected) return { ok: false };
+    if (!selected.ok) return selected;
   }
   return root.actionId !== 'action.operations.get' &&
     !ingressUpdateRoot &&
@@ -246,10 +248,11 @@ export async function admitDeploymentRootBindingInTx(
   }
   const managedDataRead = binding.actionId === ACTION_INVOKE_ACTION_ID_V1
     && binding.deploymentReadAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1;
-  if ((isDeploymentReadAdmissionActionIdV1(binding.actionId) || managedDataRead)
-    && (!binding.deploymentReadAdmission
-      || !await readDeploymentReadAuthorizationInTx(tx, binding, binding.deploymentReadAdmission, authentication))) {
-    return { ok: false };
+  if (isDeploymentReadAdmissionActionIdV1(binding.actionId) || managedDataRead) {
+    if (!binding.deploymentReadAdmission) return { ok: false };
+    const selected = await readDeploymentReadAuthorizationInTx(tx, binding, binding.deploymentReadAdmission, authentication);
+    if (!selected) return { ok: false };
+    if (!selected.ok) return selected;
   }
   return deploymentLinkAdmission ? { ok: true, deploymentLinkAdmission } : { ok: true };
 }
@@ -265,8 +268,10 @@ export async function readCurrentDeploymentRootEnvironmentAdmissionInTx(
   nativeAdmission: DeploymentNativeAdmissionV1 | undefined,
   authenticationEvidence: readonly AuthTokenAuthenticationEvidenceV1[] | undefined,
 ): Promise<DeploymentRootBindingAdmission> {
-  if (nativeAdmission
-    && !(await admitDeploymentNativeRootEnvironmentInTx(tx, root, nativeAdmission, authenticationEvidence)).ok) return { ok: false };
+  if (nativeAdmission) {
+    const environment = await admitDeploymentNativeRootEnvironmentInTx(tx, root, nativeAdmission, authenticationEvidence);
+    if (!environment.ok) return environment;
+  }
   const recordedLink = root.deploymentLinkAdmission;
   const admitted = await admitDeploymentRootBindingInTx(tx, root, {
     ...(recordedLink ? { linkEnvironmentId: recordedLink.environmentId } : {}),

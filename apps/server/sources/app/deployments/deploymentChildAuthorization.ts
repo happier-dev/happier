@@ -100,7 +100,7 @@ export async function readDeploymentChildAdmissionInTx(tx: Tx, binding: External
             actionId: deploymentActionIds.DEPLOYMENT_DATA_QUERY_ACTION_ID_V1, environmentId: routing.input.environmentId,
             expectedRevision: routing.input.expectedRevision, deploymentId: routing.deploymentId,
             targetLinkId: routing.targetLinkId, machineId: routing.machineId, installationId: routing.installationId });
-        if (!selected || await admitDeploymentMachinesInTx(tx, loaded.admission.owner, [
+        if (!selected?.ok || await admitDeploymentMachinesInTx(tx, loaded.admission.owner, [
             { machineId: binding.machineId, installationId: binding.installationId, role: 'controller' },
             { machineId: routing.machineId, installationId: routing.installationId, role: 'target' },
         ])) return null;
