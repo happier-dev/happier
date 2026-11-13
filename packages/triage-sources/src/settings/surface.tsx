@@ -310,7 +310,7 @@ export function createTriageSourceSettingsSurface(
       const { row, control } = edit;
       let input: TriageSourceAdministrationActionInputV1;
       if (control === 'add') {
-        input = { v: 1, kind: 'create', draft };
+        input = { v: 1, kind: 'create', source: { pluginId: identity.pluginId, localId: identity.sourceLocalId }, draft };
       } else {
         if (row.sourceInstanceId === null) return;
         input = control === 'restore'
@@ -319,7 +319,7 @@ export function createTriageSourceSettingsSurface(
       }
       const outcome = await submit(row.key, input);
       if (isSettledConfigurationSuccess(outcome)) setDraftEdit(null);
-    }, [submit]);
+    }, [identity.pluginId, identity.sourceLocalId, submit]);
 
     const runControl = React.useCallback((
       row: TriageSourceSettingsRowV1,
@@ -340,27 +340,8 @@ export function createTriageSourceSettingsSurface(
         setDraftEdit({ row, control });
         return;
       }
-      if (control === 'add') {
-        void submit(row.key, { v: 1, kind: 'create', draft: row.draft });
-        return;
-      }
-      if (row.sourceInstanceId === null) return;
-      if (control === 'restore') {
-        void submit(row.key, {
-          v: 1,
-          kind: 'reactivate',
-          sourceInstanceId: row.sourceInstanceId,
-          draft: row.draft,
-        });
-        return;
-      }
-      void submit(row.key, {
-        v: 1,
-        kind: 'reconfigure',
-        sourceInstanceId: row.sourceInstanceId,
-        draft: row.draft,
-      });
-    }, [DraftEditor, submit]);
+      void submitDraft({ row, control }, row.draft);
+    }, [DraftEditor, submit, submitDraft]);
 
     const discoveredRead = readTriageSourceDiscovery(discovery.execution);
     // A settled host refusal has no discovery request to fail. Present the

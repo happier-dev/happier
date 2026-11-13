@@ -403,7 +403,7 @@ describe('the mounted PRs & Issues source settings page', () => {
     await act(async () => { await page.press(await page.getByRole('checkbox', { name: 'Third team' })); });
     await act(async () => { await page.press(await page.getByRole('checkbox', { name: 'Fourth team' })); });
     await pressControl(page, 'Save selection');
-    expect(harness.administrations()).toMatchObject([{ kind: 'create', draft: {
+    expect(harness.administrations()).toMatchObject([{ kind: 'create', source: { pluginId: PLUGIN_ID, localId: SOURCE_LOCAL_ID }, draft: {
       configuration: { token: JSON.stringify({ v: 1, selection: { kind: 'selected', unitIds: ['unit-3', 'unit-4'] } }) },
       localInstanceKey: 'Other workspace', binding: binding('account-1'),
     } }]);
@@ -468,7 +468,7 @@ describe('the mounted PRs & Issues source settings page', () => {
     const page = await mountSettings(harness, { 'example.nativeLogin': 'Translated machine login', 'example.nativeRepair': 'Translated native repair' }, surface);
     await expect(page.getByText('Translated native repair')).resolves.toBeDefined();
     await pressControl(page, 'Add Translated machine login to PRs & Issues');
-    expect(harness.administrations()).toEqual([{ v: 1, kind: 'create', draft: nativeDraft }]);
+    expect(harness.administrations()).toEqual([{ v: 1, kind: 'create', source: { pluginId: PLUGIN_ID, localId: SOURCE_LOCAL_ID }, draft: nativeDraft }]);
     await expect(page.queryByRole('button', { name: 'Reconnect' })).resolves.toBeUndefined();
     expect(harness.connectedAccountsRequests).toEqual([]);
   });
@@ -527,6 +527,7 @@ describe('the mounted PRs & Issues source settings page', () => {
     expect(harness.administrations()).toEqual([
       expect.objectContaining({
         kind: 'create',
+        source: { pluginId: PLUGIN_ID, localId: SOURCE_LOCAL_ID },
         draft: expect.objectContaining({ localInstanceKey: 'acme/api-configured' }),
       }),
     ]);
@@ -614,6 +615,7 @@ describe('the mounted PRs & Issues source settings page', () => {
     expect(administrations[0]).toMatchObject({
       v: 1,
       kind: 'create',
+      source: { pluginId: PLUGIN_ID, localId: SOURCE_LOCAL_ID },
       draft: { binding: binding('account-1'), localInstanceKey: 'acme/api' },
     });
     await expect(page.getByText('Added to PRs & Issues.'))
