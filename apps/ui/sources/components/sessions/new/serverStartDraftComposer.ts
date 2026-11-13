@@ -55,8 +55,8 @@ export type SessionServerStartDraftTarget = Readonly<{
     machineId: string;
 }>;
 
-export type SessionServerStartDraftPresentation = Readonly<{
-    result: Promise<unknown | null>;
+export type SessionServerStartDraftPresentation<Result = unknown> = Readonly<{
+    result: Promise<Result | null>;
     /** Closes the transient composer without creating or dispatching a Session. */
     close: () => void;
 }>;
@@ -65,7 +65,7 @@ export type SessionServerStartDraftComposerOutcome =
     | Readonly<{ kind: 'submitted'; draft: SessionServerStartSpawnDraftV1 }>
     | Readonly<{ kind: 'cancelled' }>
     | Readonly<{ kind: 'invalid'; reason: 'draft_invalid' | 'settlement_invalid' }>
-    | Readonly<{ kind: 'unavailable'; reason: 'aborted' | 'draft_too_large' | 'presentation_unavailable' }>
+    | Readonly<{ kind: 'unavailable'; reason: 'aborted' | 'draft_too_large' | 'presentation_unavailable' | 'host_unavailable' }>
     | Readonly<{ kind: 'stale'; reason: 'host_retired' }>;
 
 function isWithinDraftByteLimit(value: unknown): boolean {
@@ -153,7 +153,12 @@ export async function composeSessionServerStartDraft(params: Readonly<{
     draft?: PluginUiJsonObjectV1;
     signal?: AbortSignal;
     isCurrent: () => boolean;
-    target: SessionServerStartDraftTarget;
+    target?: SessionServerStartDraftTarget;
+    selectPlacement?: (candidates: readonly PluginUiSessionPlacementCandidateV1[]) =>
+        | SessionServerStartDraftPresentation<PluginUiSessionPlacementCandidateV1>
+        | Promise<SessionServerStartDraftPresentation<PluginUiSessionPlacementCandidateV1>>;
+    selectTarget?: () => SessionServerStartDraftPresentation<SessionServerStartDraftTarget>
+        | Promise<SessionServerStartDraftPresentation<SessionServerStartDraftTarget>>;
     present: (params: Readonly<{
         seed: SessionServerStartDraftSeed;
         /**
@@ -168,25 +173,46 @@ export async function composeSessionServerStartDraft(params: Readonly<{
     }
     const read = readSeed(params.draft);
     if (!read) return { kind: 'invalid', reason: 'draft_invalid' };
-    const target = read.executionTarget ?? resolveDraftTarget(params.target);
     if (params.signal?.aborted) return { kind: 'unavailable', reason: 'aborted' };
     if (!isCurrent(params.isCurrent)) return { kind: 'stale', reason: 'host_retired' };
 
-    let presentation: SessionServerStartDraftPresentation;
-    try {
-        presentation = params.present({ seed: read.seed, target });
-    } catch {
-        return { kind: 'unavailable', reason: 'presentation_unavailable' };
-    }
-
+    let presentation: SessionServerStartDraftPresentation | undefined;
     let aborted = params.signal?.aborted === true;
     const onAbort = () => {
         aborted = true;
-        presentation.close();
+        presentation?.close();
     };
     params.signal?.addEventListener('abort', onAbort, { once: true });
 
     try {
+        let target = read.executionTarget ?? (params.target ? resolveDraftTarget(params.target) : undefined);
+        const seed = { ...read.seed };
+        if (!target) {
+            let initialSelection: SessionServerStartDraftPresentation<SessionServerStartDraftTarget | PluginUiSessionPlacementCandidateV1>;
+            if (seed.candidates?.length && params.selectPlacement) {
+                initialSelection = await params.selectPlacement(seed.candidates);
+            } else if (params.selectTarget) {
+                initialSelection = await params.selectTarget();
+            } else {
+                return { kind: 'unavailable', reason: 'host_unavailable' };
+            }
+            presentation = initialSelection;
+            if (aborted) initialSelection.close();
+            const selected = await initialSelection.result;
+            if (aborted || params.signal?.aborted) return { kind: 'unavailable', reason: 'aborted' };
+            if (!isCurrent(params.isCurrent)) {
+                initialSelection.close();
+                return { kind: 'stale', reason: 'host_retired' };
+            }
+            if (selected === null) return { kind: 'cancelled' };
+            target = { serverId: selected.serverId, machineId: selected.machineId };
+            if ('rootPath' in selected) {
+                seed.directory = selected.rootPath;
+                delete seed.directoryIntent;
+            }
+        }
+        presentation = params.present({ seed, target });
+        if (aborted) presentation.close();
         const settled = await presentation.result;
         if (aborted || params.signal?.aborted) {
             return { kind: 'unavailable', reason: 'aborted' };

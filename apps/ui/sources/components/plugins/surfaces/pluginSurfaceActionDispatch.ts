@@ -102,7 +102,9 @@ import {
     type PluginUiProjectionModel,
     createPluginUiProjectedActionResolver,
 } from '@/sync/domains/plugins/ui/projection';
+import { buildV2PluginProjectionById } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { loadDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { selectPluginUiTargetedContributionOperationV1 } from '@happier-dev/protocol/plugins/ui/targetedContributions';
 import { createSelectedActionInputCustody } from '../hostApi/selectedActionInputCustody';
 import { createPluginActionInputSelector } from './pluginActionInputSelectionHostApi';
 import { createPluginOpenAutomationEventHandler } from './pluginOpenAutomationEventHostApi';
@@ -696,6 +698,7 @@ function clientActionExecuteAction(
     selection: ClientContributedActionSelection,
     invocationSignal: AbortSignal,
     selectedInputs: ReturnType<typeof createSelectedActionInputCustody>,
+    selectedExecutionTarget: () => Readonly<{ machineId: string; serverId?: string }> | undefined,
 ): PluginUiHostApi['executeAction'] {
     // Dynamic dispatch validates each selected Action's input schema; the SDK
     // generic result relationship is restored at this host boundary.
@@ -719,7 +722,7 @@ function clientActionExecuteAction(
             // outer adapter may supply a transport implementation, never the
             // machine/generation of a different ambient projection.
             const registeredAuthority = selection.registration.authority;
-            const authority = registeredAuthority && 'machineId' in registeredAuthority ? registeredAuthority : undefined;
+            const authority = registeredAuthority && 'machineId' in registeredAuthority ? registeredAuthority : selectedExecutionTarget();
             const execute = selection.binding.execute ?? input.contributedAction?.execute;
             const contributedAction = authority ? {
                 ...input.contributedAction,
@@ -773,19 +776,21 @@ function createClientActionUi(
     input: DispatchPluginSurfaceActionInput,
     selection: ClientContributedActionSelection,
     signal: AbortSignal,
-    accountContext?: PluginClientActionUi['context'],
+    accountContext?: (options?: Parameters<PluginClientActionUi['context']>[0],
+        machine?: Readonly<{ machineId: string; serverId?: string }>) => ReturnType<PluginClientActionUi['context']>,
 ) {
     const selectedInputs = createSelectedActionInputCustody();
     const registeredAuthority = selection.registration.authority;
-    const authority = registeredAuthority && 'machineId' in registeredAuthority ? registeredAuthority
-        : accountContext ? input.contributedAction : undefined;
+    let authority: Readonly<{ machineId: string; serverId?: string }> | undefined =
+        registeredAuthority && 'machineId' in registeredAuthority ? registeredAuthority
+            : accountContext ? input.contributedAction : undefined;
     const accountLifetime = selection.registration.accountLifetime;
     const resolvedSessionTargets = input.hostAction?.context?.sessionTargetsV1;
     const hasSessionScope = () => !!accountLifetime && (!resolvedSessionTargets
         || resolvedSessionTargets.targets.every(target => areServerProfileIdentifiersEquivalent(
             target.serverId, accountLifetime.scope.serverId,
         )));
-    const executeAction = clientActionExecuteAction(input, selection, signal, selectedInputs);
+    const executeAction = clientActionExecuteAction(input, selection, signal, selectedInputs, () => authority);
     const isCurrent = () => selection.isCurrent() && !signal.aborted;
     const sessionReader = accountLifetime ? createPluginSurfaceSessionHandlers({
         accountScope: accountLifetime.scope, accountLifetime, isCurrent,
@@ -798,7 +803,7 @@ function createClientActionUi(
     }
     const context: PluginClientActionUi['context'] = async (options) => {
         assertCurrent();
-        if (accountContext) return await accountContext(options);
+        if (accountContext) return await accountContext(options, authority);
         if (!authority || !accountLifetime) return { targetedContributions: null,
             ...(accountLifetime ? { accountScope: accountLifetime.scope } : {}) };
         const cancellation = mergeAbortSignals([signal, options?.signal]);
@@ -884,7 +889,25 @@ function createClientActionUi(
             const cancellation = mergeAbortSignals([signal, options?.signal]);
             try {
                 const targeted = 'operation' in parsed.data ? await context({ signal: cancellation.signal }) : null;
-                const projection = 'operation' in parsed.data && authority && accountLifetime
+                // The Account reference names a declared role. Once a Machine is
+                // selected, the canonical declaration merge supplies that role's
+                // process-local occurrence rather than its portable Account id.
+                const requestedOperation = 'operation' in parsed.data ? parsed.data.operation : undefined;
+                const operation = requestedOperation && accountContext && authority && targeted?.targetedContributions
+                    ? selectPluginUiTargetedContributionOperationV1(targeted.targetedContributions, {
+                        pointId: requestedOperation.point.pointId, protocol: requestedOperation.point.protocol,
+                        contributor: requestedOperation.contributor, role: requestedOperation.role,
+                    }) : requestedOperation;
+                if (requestedOperation && (!operation || operation.action.pluginId !== requestedOperation.action.pluginId
+                    || operation.action.localId !== requestedOperation.action.localId)) {
+                    throw new PluginError(createPluginSurfaceHostApiPluginErrorData('stale_surface', ['action_retired']));
+                }
+                const selectionRequest = 'operation' in parsed.data && operation ? { ...parsed.data, operation } : parsed.data;
+                const accountDeclarations = 'operation' in parsed.data && accountContext && accountLifetime
+                    ? readPluginAccountAvailability(accountLifetime.scope).readAccountUiProjection() : null;
+                const accountProjection = 'operation' in parsed.data && accountDeclarations?.actionsById[
+                    buildQualifiedPluginContributionKey(parsed.data.operation.action)] ? accountDeclarations : null;
+                const projection = 'operation' in parsed.data && !accountProjection && authority && accountLifetime
                     ? await loadDaemonMergedProjectionCacheEntry({ machineId: authority.machineId,
                         serverId: authority.serverId, accountLifetime, signal: cancellation.signal, reuseFreshReady: false,
                         sections: ['actionsById', 'familiesById.inputTypes', 'familiesById.pluginUi',
@@ -892,8 +915,16 @@ function createClientActionUi(
                     })
                     : null;
                 assertCurrent();
-                if ('operation' in parsed.data && projection?.kind !== 'ready') throw new PluginError({ code: 'plugin_action_input_selection_unavailable' });
-                const selectionInputs = projection?.kind === 'ready' ? projection.inputs : null;
+                if ('operation' in parsed.data && !accountProjection && projection?.kind !== 'ready') {
+                    const cause = projection?.kind === 'error' ? projection.reason
+                        : projection?.kind === 'unsupported' ? 'daemon_projection_unsupported' : 'host_unavailable';
+                    throw new PluginError(createPluginSurfaceHostApiPluginErrorData(
+                        'plugin_action_input_selection_unavailable', [cause],
+                    ));
+                }
+                const selectionInputs = accountProjection
+                    ? { pluginUiProjection: accountProjection, pluginProjectionById: buildV2PluginProjectionById(accountProjection) }
+                    : projection?.kind === 'ready' ? projection.inputs : null;
                 const selectionProjection = selectionInputs?.pluginUiProjection ?? null;
                 const select = createPluginActionInputSelector({
                     anchor: input.actionInputAnchor,
@@ -914,13 +945,18 @@ function createClientActionUi(
                     },
                     isCurrent,
                 });
-                const result = await select(parsed.data, { signal: cancellation.signal });
+                const result = await select(selectionRequest, { signal: cancellation.signal });
                 const failure = readPluginSurfaceHostApiErrorPayload(result);
                 if (failure) throw new PluginError(createPluginSurfaceHostApiPluginErrorData(failure.code, failure.diagnostics, failure.message, failure));
                 const selected = PluginUiSelectActionInputResultV1Schema.safeParse(result);
                 if (!selected.success) throw new PluginError({ code: 'plugin_action_input_selection_invalid' });
-                if (selected.data.kind === 'submitted' && 'operation' in parsed.data) {
-                    selectedInputs.retain(parsed.data.operation, selected.data, options?.signal);
+                // Account Actions have no mounted Machine. The host picker's result
+                // supplies the target for the subsequent selection and execution.
+                if (accountContext && selected.data.kind === 'sessionPlacement') {
+                    authority = { machineId: selected.data.candidate.machineId, serverId: selected.data.candidate.serverId };
+                }
+                if (selected.data.kind === 'submitted' && operation && requestedOperation) {
+                    selectedInputs.retain(operation, selected.data, options?.signal, requestedOperation);
                 }
                 return selected.data;
             } finally {
@@ -960,7 +996,7 @@ function createClientActionUi(
                     const requestId = randomUUID();
                     const executionOptions = {
                         ...(operationOptions?.signal ? { signal: operationOptions.signal } : {}),
-                        ...(retained ? { selectedActionInput: retained.carrier, consumeSelectedActionInput: true } : {}),
+                        ...(retained ? { selectedActionInput: options?.preparedReviewWorkspace, consumeSelectedActionInput: true } : {}),
                     };
                     const executePrepared = clientActionExecuteAction({
                         ...input,
@@ -968,7 +1004,7 @@ function createClientActionUi(
                         onDaemonActionOperationAdmitted: () => {
                             operationOptions?.onDaemonActionOperationAdmitted?.(requestId);
                         },
-                    }, selection, signal, selectedInputs);
+                    }, selection, signal, selectedInputs, () => authority);
                     return await executePrepared(payload.action, payload.input, executionOptions);
                 },
             });
@@ -1742,14 +1778,14 @@ async function executeClientContributedAction(
                     },
                 }) : null;
                 const accountUiContext = accountCapability && accountOrigin && accountLifetime
-                    ? async (options?: Readonly<{ signal?: AbortSignal }>) => {
+                    ? async (options?: Readonly<{ signal?: AbortSignal }>, machine?: Readonly<{ machineId: string; serverId?: string }>) => {
                         const cancellation = mergeAbortSignals([accountCapability.signal, options?.signal]);
                         try {
-                            await resolveAccountMachine();
+                            if (!machine) await resolveAccountMachine();
                             const { targetedContributions } = await readAccountTargetedContributionSnapshot({
                                 pluginId: current.action.pluginId, accountLifetime, signal: cancellation.signal,
                                 isCurrent, origin: accountOrigin,
-                                ...(input.contributedAction ? { machine: input.contributedAction } : {}),
+                                ...(machine || input.contributedAction ? { machine: machine ?? input.contributedAction } : {}),
                             });
                             return { accountScope: accountLifetime.scope, targetedContributions };
                         } finally { cancellation.dispose(); }

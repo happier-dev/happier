@@ -63,6 +63,7 @@ function selectionFailure(
         case 'connected_account_ambiguous':
         case 'host_unavailable':
         case 'submission_in_flight':
+        case 'action_not_loaded':
             return errorPayload('unavailable', outcome.reason);
     }
 }
@@ -88,23 +89,13 @@ function readBoundedSelectionResult(value: unknown): PluginUiJsonValueV1 {
 }
 
 export type PluginSessionServerStartDraftComposer = (params: Readonly<{
+    serverId: string;
     draft?: PluginUiJsonObjectV1;
     signal?: AbortSignal;
     isCurrent: () => boolean;
-    target: SessionServerStartDraftTarget;
+    target?: SessionServerStartDraftTarget;
     anchor?: PopoverAnchor;
 }>) => Promise<SessionServerStartDraftComposerOutcome>;
-
-function readSessionServerStartDraftTarget(
-    host: PluginContributedActionHostFacts,
-): SessionServerStartDraftTarget | null {
-    const machineId = typeof host.machineId === 'string' ? host.machineId.trim() : '';
-    const serverId = resolveServerProfileScopeIdForIdentifier(host.serverId);
-    const accountServerId = resolveServerProfileScopeIdForIdentifier(host.accountLifetime?.scope.serverId);
-    return machineId && serverId && serverId === accountServerId
-        ? { machineId, serverId }
-        : null;
-}
 
 function sessionComposerFailure(
     outcome: Exclude<SessionServerStartDraftComposerOutcome, Readonly<{ kind: 'submitted' | 'cancelled' }>>,
@@ -126,6 +117,18 @@ async function composeDefaultSessionServerStartDraft(params: Parameters<PluginSe
             signal: params.signal,
             isCurrent: params.isCurrent,
             target: params.target,
+            selectTarget: async () => {
+                const { presentSessionServerStartDraftMachineSelection } = await import(
+                    '@/components/sessions/new/serverStartDraftMachineSelection'
+                );
+                return presentSessionServerStartDraftMachineSelection(params.serverId, params.anchor);
+            },
+            selectPlacement: async candidates => {
+                const { presentNewSessionPlacementSelection } = await import(
+                    '@/components/sessions/new/presentNewSessionPlacementSelection'
+                );
+                return presentNewSessionPlacementSelection(candidates, params.anchor);
+            },
             // The machine the composition is FOR, which the seed may have
             // named — not the one this surface is mounted on.
             present: ({ seed, target }) => presentSessionServerStartDraftComposer({ seed, target, anchor: params.anchor }),
@@ -252,15 +255,21 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
                             signal?.removeEventListener('abort', cancel);
                         }
                     }
-                    const target = readSessionServerStartDraftTarget(input.host);
-                    if (!target) return errorPayload('unavailable', 'host_unavailable');
+                    const lifetime = input.host.accountLifetime;
+                    const serverId = resolveServerProfileScopeIdForIdentifier(input.host.serverId);
+                    if (!lifetime || !serverId
+                        || serverId !== resolveServerProfileScopeIdForIdentifier(lifetime.scope.serverId)) {
+                        return errorPayload('unavailable', 'host_unavailable');
+                    }
+                    const machineId = typeof input.host.machineId === 'string' ? input.host.machineId.trim() : '';
                     const composer = input.composeSessionServerStartDraft ?? composeDefaultSessionServerStartDraft;
                     const draft = 'draft' in parsed.data ? parsed.data.draft : undefined;
                     const outcome = await composer({
+                        serverId,
                         ...(draft === undefined ? {} : { draft }),
                         ...(signal ? { signal } : {}),
                         isCurrent: input.isCurrent,
-                        target,
+                        ...(machineId ? { target: { serverId, machineId } } : {}),
                         anchor: input.anchor,
                     });
                     if (outcome.kind === 'submitted') {

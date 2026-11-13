@@ -5573,6 +5573,186 @@ describe('plugin-surface action branch selection', () => {
         } finally { nestedActionConfirmation.onShow = null; await activation.composition.unload(); }
     });
 
+    it.each(['invalid draft', 'prepared execution'] as const)('selects a daemon review operation on the checkout chosen by an Account Action (%s)', async mode => {
+        const { DaemonPluginUiTargetedContributionsReadResponseSchema, DaemonPluginStructuredMessageActionExecuteResponseSchema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+        const { PLUGIN_MANIFEST: triage } = await import('../../../../../../packages/plugins/triage/src/manifest');
+        const { PLUGIN_MANIFEST: github } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
+        const { createTriageSourceV1Fixture } = await import('@happier-dev/triage-protocol/testing/v1');
+        const { TriageSourceCredentialInputsV1 } = await import('@happier-dev/triage-protocol/v1');
+        const lifetime = clientAccountLifetime();
+        const manifests = [triage, github].map(manifest => {
+            const parsed = ingestPluginManifestV2(manifest);
+            if (!parsed.ok) throw new Error('Canonical manifest must ingest');
+            return parsed.manifest;
+        });
+        const graphs = new Map(manifests.filter(manifest => manifest.id === triage.id).map(manifest => {
+            const declaration = manifest.contributes.actions.find(action => action.id ===
+                (manifest.id === triage.id ? 'actions/read-v1' : 'triage/prepare-github-review-workspace'))!;
+            if (declaration.execution.target !== 'account') throw new Error('Expected Account Action');
+            const artifactId = declaration.execution.account.artifactId;
+            return [manifest.id, { declaration, graph: { ...CLIENT_ACTION_ARTIFACT_GRAPH, artifactId,
+                entry: `react-native/${artifactId}/entry.cjs.bundle`,
+                files: CLIENT_ACTION_ARTIFACT_GRAPH.files.map(file => ({ ...file,
+                    relativePath: `react-native/${artifactId}/entry.cjs.bundle` })),
+                executable: { exports: [declaration.execution.account.exportName] } } }];
+        }));
+        replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
+            availabilityCursor: 1, materializations: [], snapshots: [], intentReads: manifests.map(manifest => ({
+                pluginId: manifest.id, response: { availabilityCursor: 1, hostingCapability: { enabled: false },
+                    packageAssets: [], uiArtifacts: [], intent: { pluginId: manifest.id, desiredVersion: manifest.version,
+                        enabled: true, offlineUiHosting: 'disabled', writableCollections: [], revision: 'one' },
+                    release: { ref: { pluginId: manifest.id, version: manifest.version },
+                        archiveDigestSha256: `sha256:${'a'.repeat(64)}`, normalizedManifest: manifest,
+                        collectionContracts: [], uiSlots: graphs.has(manifest.id) ? [{ contributionId: graphs.get(manifest.id)!.declaration.id,
+                            tier: 'reactNative', platform: 'web', artifactId: graphs.get(manifest.id)!.graph.artifactId,
+                            artifactDigest: graphs.get(manifest.id)!.graph.digest,
+                            hostUiApiRange: graphs.get(manifest.id)!.graph.hostUiApiRange, artifactGraph: graphs.get(manifest.id)!.graph }] : [], packageAssetArchive: {
+                            archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } },
+                },
+            })),
+        } });
+        const selected = readPluginAccountAvailability(lifetime.scope).readCurrentAccountExecution(triage.id);
+        if (selected.kind !== 'available') throw new Error('Expected Triage Account execution');
+        const declaration = manifests[0]!.contributes.actions.find(action => action.id === 'actions/read-v1')!;
+        if (declaration.execution.target !== 'account') throw new Error('Expected Account Action');
+        const { Modal } = await import('@/modal');
+        const serverId = resolveServerProfileScopeIdForIdentifier(lifetime.scope.serverId);
+        const candidate = { projectKey: { id: 'review-project' }, serverId, machineId: 'chosen-review-machine',
+            rootPath: '/review', reachable: true, worktrees: [] };
+        vi.spyOn(Modal, 'show').mockImplementation(config => {
+            if (config.props && 'form' in config.props) {
+                const form = config.props.form as import('@/components/plugins/actions/pluginContributedActionController').PluginContributedActionSelectionForm;
+                queueMicrotask(() => { form.replaceInput(validDraft); void form.submit(); });
+                return 'review-input';
+            }
+            if (config.props && 'onConfirm' in config.props && typeof config.props.onConfirm === 'function') {
+                const confirm = config.props.onConfirm;
+                queueMicrotask(() => confirm());
+                return 'review-current-intent';
+            }
+            const props = config.props as import('@/components/ui/selectionList').SelectionListProps;
+            const section = props.rootStep?.sections[0];
+            if (section?.kind !== 'static') throw new Error('Expected placement picker');
+            queueMicrotask(() => section.options[0]?.onSelect?.());
+            return 'review-placement';
+        });
+        const githubDeclaration = manifests[1]!.contributes.actions.find(action => action.id === 'triage/prepare-github-review-workspace')!;
+        clientActionSchemasByQualifiedId.set(`${github.id}/${githubDeclaration.id}`, { inputSchema: githubDeclaration.inputSchema });
+        const reviewOccurrenceId = `${github.id}:75`;
+        const githubContributions = manifests[1]!.contributes.targetedPluginContributions.filter(contribution => contribution.target.pluginId === triage.id);
+        const targetedActionIds = new Set(githubContributions.flatMap(contribution => Object.values(contribution.operations)));
+        const targetedRendererIds = new Set(githubContributions.flatMap(contribution => Object.values(contribution.surfaces ?? {})
+            .flatMap(surface => [surface.renderer, ...(surface.fallbackRenderers ?? [])])));
+        const targetedResponse = DaemonPluginUiTargetedContributionsReadResponseSchema.parse({
+            status: 'sourceDeclarations', pluginId: triage.id, sourceDeclarations: [{
+                occurrenceId: reviewOccurrenceId,
+                sourceCustody: { kind: 'development', registeredRootId: 'chosen-github-root' },
+                manifest: { id: github.id, contributes: {
+                    actions: manifests[1]!.contributes.actions.filter(action => targetedActionIds.has(action.id)),
+                    pluginContributionPoints: [], targetedPluginContributions: githubContributions,
+                    ui: { renderers: manifests[1]!.contributes.ui.renderers.filter(renderer => targetedRendererIds.has(renderer.id)) },
+                } },
+            }],
+        });
+        const fixtureDraft = createTriageSourceV1Fixture().prepareReviewWorkspaceInput;
+        const nativeService = { pluginId: github.id, localId: 'github-account' };
+        const validDraft = TriageSourceCredentialInputsV1.prepareReviewWorkspace.parse({ ...fixtureDraft,
+            instance: { ...fixtureDraft.instance, instance: { ...fixtureDraft.instance.instance,
+                source: { pluginId: github.id, localId: 'github-forge' } },
+                binding: { purpose: 'github-connected-account', source: 'native', service: nativeService } },
+            workspace: { serverId, machineId: candidate.machineId, rootPath: candidate.rootPath },
+        });
+        const githubAction = PluginProjectedActionV2Schema.parse({ ...resolveDaemonTargetAction({ pluginId: github.id, localId: githubDeclaration.id }),
+            title: githubDeclaration.title, execution: githubDeclaration.execution,
+            scopes: githubDeclaration.scopes, surfaces: githubDeclaration.surfaces,
+            dangerLevel: githubDeclaration.dangerLevel, confirmation: githubDeclaration.confirmation,
+            readOnly: githubDeclaration.readOnly, sessionTarget: githubDeclaration.sessionTarget,
+            ...(mode === 'prepared execution' ? { inputHints: githubDeclaration.inputHints } : {}),
+            confirmationWhen: githubDeclaration.confirmationWhen,
+            occurrenceId: reviewOccurrenceId });
+        let chosenProjectionReads = 0;
+        network.setRpcResponder(async request => {
+            const schemas = answerActionSchemasRead(request);
+            if (schemas !== undefined) return schemas;
+            if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) return targetedResponse;
+            if (request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_FORM_CONNECTED_ACCOUNT_OPTIONS_RESOLVE) {
+                return { ok: true, options: [{ value: nativeService, label: 'GitHub CLI', nativeServicePath: 'instance.binding.service' }] };
+            }
+            if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) {
+                return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({ ok: false, code: 'unavailable',
+                    message: 'Fixture daemon preparation unavailable' });
+            }
+            if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                chosenProjectionReads++;
+                return { protocolVersion: 1, projectionDigest: 'review-source', projection: {
+                    v: 2, generation: 1, familiesById: {}, installedPackagesById: { [github.id]: {
+                        id: github.id, displayName: 'GitHub', version: github.version, enabled: true,
+                        source: { kind: 'localPath', locator: 'github' } } },
+                    actionsById: { [`${github.id}/${githubDeclaration.id}`]: githubAction },
+                } };
+            }
+            throw new Error(`Unexpected RPC ${request.method}`);
+        });
+        const activation = createClientActionActivation({ pluginId: triage.id, localId: declaration.id,
+            accountPlacement: true, accountLifetime: lifetime,
+            accountManifest: { ...manifests[0]!, contributes: { ...manifests[0]!.contributes,
+                actions: [declaration], resources: [], connectedAccountDescriptors: [] } },
+            accountActionDeclaration: declaration, occurrenceId: selected.custodyId,
+            artifactGraph: { ...CLIENT_ACTION_ARTIFACT_GRAPH, artifactId: declaration.execution.account.artifactId,
+                entry: `react-native/${declaration.execution.account.artifactId}/entry.cjs.bundle`,
+                files: CLIENT_ACTION_ARTIFACT_GRAPH.files.map(file => ({ ...file,
+                    relativePath: `react-native/${declaration.execution.account.artifactId}/entry.cjs.bundle` })),
+                executable: { exports: [declaration.execution.account.exportName] } },
+            // Keep the real target declaration, input selector and schema owners.
+            // Exercise schema refusal and prepared execution through the same canonical source identity.
+            inputSchema: {}, accountHandler: async (_value, context) => {
+                const snapshot = await context.ui!.context();
+                const operation = snapshot.targetedContributions?.points.flatMap(point => point.protocols)
+                    .flatMap(protocol => protocol.contributions).flatMap(contribution => contribution.operations)
+                    .find(operation => operation.role === 'prepareReviewWorkspace' && operation.action.pluginId === github.id);
+                if (!operation) throw new Error('Expected real GitHub review operation');
+                expect(operation.contributor.occurrenceId).not.toBe(reviewOccurrenceId);
+                await context.ui!.selectActionInput({ hostAction: { action: 'session.spawn_new', projection: 'sessionPlacement' }, candidates: [candidate] });
+                try {
+                    const result = await context.ui!.selectActionInput({ operation, draft: mode === 'invalid draft' ? {} : validDraft });
+                    if (mode === 'invalid draft' || result.kind !== 'submitted') return result;
+                    await context.ui!.openNewSession({ checkoutIntent: 'preparedReviewWorkspace' }, {
+                        preparedReviewWorkspace: { operation, result },
+                    });
+                    return null;
+                }
+                catch (error) {
+                    if (!isPluginError(error)) throw error;
+                    return { code: error.code, data: error.data };
+                }
+            } });
+        await activation.composition.unload();
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            const outcome = await dispatchPluginSurfaceAction({ action: { pluginId: triage.id, localId: declaration.id },
+                input: { v: 1 }, pluginUiProjection: activation.projection,
+                resolveContributedAction: identity => identity.pluginId === github.id
+                    ? githubAction : resolveExactClientAction(activation.action)(identity), clientAction: {},
+            });
+            expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true, result: {
+                ...(mode === 'invalid draft'
+                    ? { code: 'invalid_payload', data: { diagnostics: [expect.objectContaining({ code: 'invalid_draft' })] } }
+                    : { code: 'unavailable' }),
+            } });
+            if (mode === 'prepared execution') {
+                expect(network.requests.filter(request => request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE), JSON.stringify(outcome))
+                    .toEqual([expect.objectContaining({ targetId: candidate.machineId, payload: expect.objectContaining({
+                        expectedContributorOccurrenceId: reviewOccurrenceId, input: validDraft,
+                    }) })]);
+            }
+            expect(chosenProjectionReads).toBeGreaterThan(0);
+            expect(network.requests.filter(request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
+                .map(request => request.targetId)).toEqual([candidate.machineId]);
+            expect(network.requests.filter(request => request.method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ)
+                .map(request => request.targetId)).toEqual([candidate.machineId]);
+        } finally { await activation.composition.unload(); lifetime.retire(); }
+    });
+
     it('selects an Account Session through a registered Account Action without Machine authority', async () => {
         const { Modal } = await import('@/modal');
         const { createTriageConfiguredActionHost } = await import('../../../../../../packages/plugins/triage/src/actions/configuredActionHost');

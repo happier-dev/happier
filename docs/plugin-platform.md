@@ -8318,6 +8318,18 @@ Machine-bound client Actions retain their daemon projection path. Projection
 refusals carry the unavailable source or daemon failure reason in the existing
 PluginError diagnostics.
 
+For Account Actions, targeted input selection uses Account Availability for
+Account-owned declarations. Selecting a Session checkout retains its Machine for
+daemon-owned input selection and the prepared operation's execution. The existing
+targeted-declaration merger resolves portable Account role references to that
+Machine's occurrence, retained with the selected input by the host. A bound
+Machine client Action keeps its registered authority. Projection refusals carry
+the daemon failure reason or missing host in the existing PluginError diagnostics.
+The Session draft composer can also use a configured draft's explicit target
+when the invoking Account surface has no mounted Machine. Without one, it asks
+for a saved project or a Machine through New Session's existing pickers before
+opening the target-bound recipe; dismissing either creates no Session.
+
 In 0.3 development source, that capability also exposes `readSession`,
 `readComposer` and `applyComposer` through the incumbent Account and Composer
 owners. Composer operations require the exact mounted draft in the invoking
