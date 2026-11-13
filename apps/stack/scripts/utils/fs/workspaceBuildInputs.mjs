@@ -154,6 +154,8 @@ export async function readSourceComponentBuildInputs({ repoDir, component }) {
       excludeGeneratedPluginArtifacts: path.startsWith('packages/plugins/'),
       sourceRoots: component === 'daemon' && path === 'apps/ui' ? ['scripts'] : SOURCE_ROOTS,
       additionalInputPaths: root === repoDir ? ['apps/cli/scripts/buildPublication.mjs',
+        // Captured Stack tooling imports this shared CLI admission policy.
+        'apps/cli/scripts/vitestPreparation.mjs',
         'apps/cli/scripts/build-owned/bundledPluginMembership.ts',
         ...(component === 'expo' ? ['patches'] : []),
         // This collector imports the generator's path owner even when the

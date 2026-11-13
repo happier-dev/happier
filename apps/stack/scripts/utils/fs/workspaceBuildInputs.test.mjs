@@ -148,6 +148,19 @@ test('source build inputs capture and watch pnpm dependency resolution and polic
   }
 });
 
+test('source component tooling captures and watches the CLI test preparation policy', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-tool-policy-inputs-' });
+  await writeFile(fixture.path('package.json'), '{}');
+  const policy = 'apps/cli/scripts/vitestPreparation.mjs';
+  await mkdir(dirname(fixture.path(policy)), { recursive: true });
+  await writeFile(fixture.path(policy), 'export const policy = true;');
+  for (const component of ['expo', 'server', 'daemon']) {
+    const inputs = await readSourceComponentBuildInputs({ repoDir: fixture.root, component });
+    assert.ok(inputs.files.includes(policy), `${component} tooling imports the CLI test preparation policy`);
+    assert.ok(inputs.watchPaths.includes(fixture.path(policy)), `${component} observes policy edits`);
+  }
+});
+
 test('workspace observation retains manifest corrections while build input admission rejects malformed JSON', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-malformed-watch-inputs-' });
   await mkdir(fixture.path('src'));

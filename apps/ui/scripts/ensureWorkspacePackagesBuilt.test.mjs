@@ -11,7 +11,8 @@ import { computeSourceDevSharedDepsSignature } from '../../cli/scripts/buildShar
 import { resolveBundledPluginUiArtifactsOutputPath } from './generateBundledPluginUiArtifacts.mjs';
 import { captureSourceWebBuildInputs } from '../../stack/scripts/build/build_source_runtime.mjs';
 import { createTempFixture } from '../../stack/scripts/testkit/core/temp_fixture.mjs';
-import { SOURCE_UI_ASSET_OUTPUT_PATHS } from './sourceUiAssetPaths.mjs';
+import { runNodeCapture } from '../../stack/scripts/testkit/core/run_node_capture.mjs';
+import { sourceBuildNodeArgs } from '../../stack/scripts/utils/proc/runSourceBuildCommand.mjs';
 
 test('a failed dependency publication does not strand later source inventory refreshes', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-ui-refresh-recovery-' });
@@ -77,6 +78,18 @@ test('source preparation retains last-green assets while refreshing healthy plug
   await cp(join(sourceRepo, 'apps/ui/tools'), join(repoRoot, 'apps/ui/tools'), { recursive: true });
   await cp(join(sourceRepo, 'apps/stack/bin'), join(repoRoot, 'apps/stack/bin'), { recursive: true });
   const uiPackageDir = join(repoRoot, 'apps/ui');
+  // Enter the captured checkout through its source-tool authority, as live
+  // Expo does. Importing it into this test process would resolve excluded dist.
+  const preflight = join(repoRoot, 'apps/stack/scripts/ui_asset_retention_preflight.mjs');
+  await writeFile(preflight, String.raw`
+  import assert from 'node:assert/strict';
+  import { mock } from 'node:test';
+  import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+  import { join } from 'node:path';
+  import { pathToFileURL } from 'node:url';
+  import { SOURCE_UI_ASSET_OUTPUT_PATHS } from '../../ui/scripts/sourceUiAssetPaths.mjs';
+  const repoRoot = ${JSON.stringify(repoRoot)};
+  const uiPackageDir = ${JSON.stringify(uiPackageDir)};
   const cliManifestPath = join(repoRoot, 'apps/cli/package.json');
   const cliManifest = JSON.parse(await readFile(cliManifestPath, 'utf8'));
   for (const output of Object.values(SOURCE_UI_ASSET_OUTPUT_PATHS)) {
@@ -91,7 +104,7 @@ test('source preparation retains last-green assets while refreshing healthy plug
   const env = { ...process.env,
     HAPPIER_UI_VENDOR_WEB_ASSETS: '0',
     HAPPIER_STACK_DEV_AUTO_REFRESH_DEPS: '1',
-    HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: fixture.path('consumer/inventory.js'),
+    HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: ${JSON.stringify(fixture.path('consumer/inventory.js'))},
   };
   delete env.HAPPIER_WORKSPACE_BUILD_MODE;
   delete env.HAPPIER_STACK_DEV_READ_ONLY_DEPENDENCIES;
@@ -128,7 +141,7 @@ test('source preparation retains last-green assets while refreshing healthy plug
   await writeFile(join(repoRoot, 'packages/brand/atmosphere.mjs'), 'export const brokenAsset = ;\n');
   await writeFile(pluginSource, 'export function renderSurface() { return "healthy-plugin-after"; }\n');
   const diagnostics = [];
-  context.mock.method(console, 'warn', (...args) => diagnostics.push(args.join(' ')));
+  mock.method(console, 'warn', (...args) => diagnostics.push(args.join(' ')));
   // An explicit strict mode and publication lifecycle must still reject the
   // real compiler error even when a usable previous source asset exists.
   for (const overrides of [{ HAPPIER_WORKSPACE_BUILD_MODE: 'strict' }, { npm_lifecycle_event: 'prepack' }]) {
@@ -165,6 +178,9 @@ test('source preparation retains last-green assets while refreshing healthy plug
   assert.ok(pluginEntry, 'the inventory must retain its compiled plugin entry');
   await rm(pluginEntry);
   assert.equal(await startupIsUsable(), false, 'an inventory without its consumed asset graph is not last-green');
+  `);
+  const result = await runNodeCapture(sourceBuildNodeArgs({ repoDir: repoRoot, scriptPath: preflight }), { cwd: repoRoot });
+  assert.equal(result.code, 0, result.stderr);
 });
 
 test('workspace startup admits Metro inputs independently of workspace dist publication', async () => {
