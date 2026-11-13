@@ -1,4 +1,9 @@
-import { expect, it } from 'vitest';
+import { createNativeFilesystemMemberFixture, resetNativeFilesystemMemberBoundary } from '@/api/machine/filesystemMemberReceiver.testkit';
+import { expect, it, onTestFinished, vi } from 'vitest';
+import { ApiMachineClient } from '@/api/apiMachine';
+import * as machineSocketTransport from '@/api/machine/connection/createMachineSocketTransport';
+import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createSocketTransportAdapter } from '@happier-dev/sync-client';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerDaemonMachineAgentIsolationRpcHandlers } from '@/rpc/handlers/daemonMachineAgentIsolation';
 import { MachineAgentIsolationPreviewResultV1Schema, MachineAgentIsolationStatusV1Schema, type MachineAgentIsolationStatusV1, type MachineAdminAccessV1 } from '@happier-dev/protocol';
@@ -17,32 +22,47 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 it.skipIf(process.platform !== 'linux').each(['machines.agentIsolation.status', 'machines.agentIsolation.preview', 'machines.agentIsolation.set'] as const)(
   'returns the qualified member result through the declared %s Action output', async actionId => {
-    const target = { serverId: 'home', machineId: 'machine', installationId: 'installation', custodianAccountId: 'owner' };
+    resetNativeFilesystemMemberBoundary();
+    onTestFinished(resetNativeFilesystemMemberBoundary);
+    const native = await createNativeFilesystemMemberFixture({ accountId: 'requester' });
+    const target = { serverId: native.serverId, machineId: native.machineId,
+      installationId: native.installation.installationId, custodianAccountId: 'requester' };
     const policy = { enabled: true, memberProvisioning: 'linuxUsersV1' as const };
     const status = { kind: 'effective' as const, platform: 'linux' as const, agentUser: 'happier-agent' as const };
-    const native = createAgentIsolationEffectsBoundary({ installationId: target.installationId,
+    const setup = createAgentIsolationEffectsBoundary({ installationId: target.installationId,
       installedCli: '/opt/happier/cli/current/happier', readRoots: () => [], readSessionsToReplace: () => 0,
       publishStatus: async () => {}, backend: {
-        observe: async step => ({ stepId: step.id, status: 'satisfied', facts: {} }),
+        // The Machine's base setup already exists. Member user observation
+        // retains the native fixture's UID/GID/home facts for the real inspector.
+        observe: async (step, ...rest) => step.kind === 'user' && step.username === native.identity.username
+          ? native.preparation.effects.backend!.observe(step, ...rest)
+          : { stepId: step.id, status: 'satisfied', facts: {} },
         apply: async () => { throw new Error('Existing native isolation must not be applied again'); },
       } });
-    const manager = new RpcHandlerManager({ scopePrefix: target.machineId, localMachineId: target.machineId,
-      encryptionMode: 'plain', logger() {}, authorizeRequest: async () => ({ ok: true }) });
-    const { createHostActionOperationRuntime } = await import('@/daemon/actionOperations');
-    registerDaemonMachineAgentIsolationRpcHandlers(manager, { target: () => target,
-      readCanonicalHomeServerIdentityId: () => target.serverId, read: () => ({ ...policy, status }), effects: native.effects,
-      runActionOperation: createHostActionOperationRuntime({ serverId: target.serverId, machineId: target.machineId,
-        resolveAccountId: async () => target.custodianAccountId }).runActionOperation,
-      captureMetadataPort: () => ({ read: async () => ({ status: 'ready', metadata: { agentIsolation: policy }, metadataVersion: 10 }),
-        compareAndSwap: async () => { throw new Error('Unchanged isolation must not write metadata'); } }),
-      // Native own-status observation is the OS boundary; custody, placement,
-      // preview planning, mutation settlement and Action projection stay real.
-      inspectOwn: async () => ({ protection: 'member_separated', status: { kind: 'effective', platform: 'linux' } }),
+    const socket = createApiSessionSocketStub();
+    vi.spyOn(machineSocketTransport, 'createMachineSocketTransport').mockReturnValue({
+      // The shared socket stub substitutes the genuine Home network boundary.
+      socket: socket as unknown as ReturnType<typeof machineSocketTransport.createMachineSocketTransport>['socket'],
+      transport: createSocketTransportAdapter(socket),
     });
+    const machine = new ApiMachineClient(native.bootstrap.credentials.token, { id: target.machineId,
+      encryptionMode: 'plain', metadata: { host: 'output-host', platform: 'linux', happyCliVersion: 'test',
+        homeDir: '/home/happier', happyHomeDir: '/home/happier/.happier', agentIsolation: policy }, metadataVersion: 10,
+      daemonState: { runtimeId: 'qualified-output-runtime', agentIsolation: status }, daemonStateVersion: 0 },
+      { runtimeId: 'qualified-output-runtime' }, { resolveCurrentServerIdentityId: () => native.homeServerIdentityId });
+    onTestFinished(() => machine.shutdown());
+    // Use the real own-status inspector, retained member binding and readiness
+    // frame. The native fixture supplies only OS identity/permission observations.
+    machine.registerMachineAgentIsolationRoutes({ ...setup.effects,
+      nativeReadiness: native.preparation.effects.nativeReadiness });
+    machine.connect();
+    await vi.waitFor(() => expect(socket.connected).toBe(true));
+    const manager: unknown = Reflect.get(machine, 'rpcHandlerManager');
+    if (!(manager instanceof RpcHandlerManager)) throw new Error('Missing Machine RPC receiver');
     const rpcContext = { signal: new AbortController().signal, callerAuthority: 'present_user' as const,
       verifyMachineAdmissionCurrent: async () => true, transportRequestId: `qualified-${actionId}`,
-      machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
-        installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const } };
+      machineAdmission: { actorAccountId: target.custodianAccountId, custodianAccountId: target.custodianAccountId,
+        machineId: target.machineId, installationId: target.installationId, role: 'manage' as const, encryptionMode: 'plain' as const } };
     const reviewed = await manager.invokeLocal('machines.agentIsolation.preview', { machineId: target.machineId, ...policy }, { rpcContext });
     if (!reviewed || typeof reviewed !== 'object' || !('plan' in reviewed) || !reviewed.plan || typeof reviewed.plan !== 'object'
       || !('planDigest' in reviewed.plan)) throw new Error('Native isolation preview unavailable');
@@ -63,6 +83,8 @@ it.skipIf(process.platform !== 'linux').each(['machines.agentIsolation.status', 
     if (!result.ok) throw new Error(result.errorCode);
     expect(getActionSpec(actionId).outputSchema!.safeParse(result.result).success).toBe(true);
     expect(result.result).not.toHaveProperty('status.agentUser');
+    if (actionId === 'machines.agentIsolation.status') expect(result.result).toMatchObject({
+      protection: 'member_separated', directories: { home: native.identity.home, workspace: native.identity.workspaceRoot } });
     // A person's qualified result is not the daemon's global launch proof.
     expect(MachineAgentIsolationStatusV1Schema.safeParse({ kind: 'effective', platform: 'linux' }).success).toBe(false);
   });

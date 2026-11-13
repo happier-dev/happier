@@ -34,6 +34,8 @@ import { createStablePluginHttpHost } from '@/plugins/runtime/fetch/service';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { createActionExecutor, type ActionExecutorDeps, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { ApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { projectSettledApprovalExecution } from '@happier-dev/protocol/actions/executor/approvalResults';
 import { PluginConnectedAccountAuthenticationV2Schema, type JsonValue } from '@happier-dev/protocol';
 import type { PluginServices, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -1012,6 +1014,55 @@ it('reads a managed Machine using portable Home authority rather than the HTTP p
     current = false;
     await expect(readManagedMachine(request)).rejects.toMatchObject({ code: 'workspace_sync_child_unavailable' });
     expect(reads).toEqual([{ homeId, managedId: retained.id }]);
+});
+it('returns the observed native resize through the controller Action output contract', async () => {
+    const homeId = 'srv_resize_output_contract';
+    const size = { cpuCores: 2, memoryBytes: 4 * 1024 ** 3, diskBytes: 10 * 1024 ** 3 };
+    let resized = false;
+    const native = nativeFixture({ credentialPurposes: [], nativeRoleResults: {
+        resize: () => { resized = true; return { kind: 'confirmed' }; },
+        inspect: () => ({ observedAt: 1, availability: 'present', power: 'running', size: resized ? size : { ...size, memoryBytes: 2 * 1024 ** 3 } }),
+    } });
+    const provisioner = native.runtimeRegistry.contributes.machineProvisioners?.[0]?.definition;
+    if (!provisioner) throw new Error('Native fixture must publish its provisioner');
+    const retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'bound',
+        resource: { contributionRef: machine.launch.provider, schemaVersion: 1, value: {} } });
+    const reports: unknown[] = [];
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+        if (String(url).endsWith('/controller/admit-control')) return { status: 200,
+            data: { machine: retained, replayed: false, resizeProvisioner: provisioner } };
+        if (String(url).endsWith('/controller/report-resize')) {
+            reports.push(body);
+            return { status: 200, data: { machine: retained } };
+        }
+        throw new Error(`Unexpected resize HTTP boundary: ${String(url)}`);
+    });
+    const homeTarget = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
+        canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] },
+        authority: 'current_connection' });
+    const driver = createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId,
+        controller, runtimeRegistry: native.runtimeRegistry, ...accountInputs, homeTarget });
+    const operations = createHostActionOperationRuntime({ machineId: controller.machineId,
+        resolveAccountId: async () => 'owner', generateOperationId: () => 'resize-operation' });
+    const executor = createActionExecutor({ runActionOperation: operations.runActionOperation,
+        managedMachineAction: request => driver.execute(request.actionId, request.input,
+        { requestId: 'resize-contract', context: request.context, signal: request.signal }) });
+    const value = await executor.execute('machines.managed.resize', { homeId, managedId: retained.id, size },
+        { surface: 'cli', authority: 'present_user', bypassApprovals: true, actionRequestId: 'resize-contract' });
+    expect(value, JSON.stringify(value)).toMatchObject({ ok: true, result: {
+        result: { kind: 'confirmed' }, observation: { availability: 'present', power: 'running', size },
+    } });
+    expect(reports).toEqual([{ homeId, managedId: retained.id, requestId: 'resize-contract',
+        result: { kind: 'confirmed' }, observation: { observedAt: 1, availability: 'present', power: 'running', size } }]);
+    const approval = ApprovalRequestV1Schema.parse({ v: 1, status: 'approved', createdAtMs: 1, updatedAtMs: 2,
+        createdBy: { surface: 'cli' }, actionId: 'machines.managed.resize',
+        actionArgs: { homeId, managedId: retained.id, size }, summary: 'Resize managed machine',
+        decision: { kind: 'approve', decidedAtMs: 2 } });
+    const settled = projectSettledApprovalExecution({ request: approval, actionId: 'machines.managed.resize',
+        exec: value, dispatchEffectAttempted: true, executedAtMs: 3 });
+    expect(settled.exec).toEqual(value);
+    expect(settled.request).toMatchObject({ status: 'executed', execution: { ok: true,
+        result: { result: { kind: 'confirmed' }, observation: { size } } } });
 });
 it('reports an admitted resize with its signed root after requester source custody changes', async () => {
     const homeId = 'srv_resize_source';
