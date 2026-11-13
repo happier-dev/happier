@@ -33,6 +33,15 @@ export { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetProviderId
 
 import { deploymentStoredContentV1Schema } from './storedContent.js';
 import { DeploymentIdentifierV1Schema as id } from './ids.js';
+import type { DeploymentSourceMethodV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+
+/** An invocation can override its link's authored choice; older links retain the Git default. */
+export function resolveDeploymentSourceMethodV1(input: Readonly<{
+    explicit?: DeploymentSourceMethodV1;
+    recorded?: DeploymentSourceMethodV1;
+}>): DeploymentSourceMethodV1 {
+    return input.explicit ?? input.recorded ?? 'gitIntegration';
+}
 
 export const DeploymentActionRefV1Schema = z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('host'), actionId: ActionIdSchema }),

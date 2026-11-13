@@ -14,6 +14,9 @@ import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRu
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { configuration } from '@/configuration';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
+import { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { readCompactPendingDeploymentRecovery } from './pendingDeploymentRecovery';
 import { createDaemonDeploymentActionDeps } from './createDaemonDeploymentActionDeps';
 import { createOwnServerDockerBoundary } from './targets/ownServer/ownServerDeployment.testkit';
 import { createOwnServerDeploymentRuntimeForHost } from './targets/ownServer/ownServerDeploymentHostRuntime';
@@ -21,7 +24,7 @@ import { createOwnServerDeploymentRuntimeForHost } from './targets/ownServer/own
 it.each([
     { sourceMethod: undefined, requestedSourceMethod: undefined, admittedMachineRole: 'manage', expectedError: 'deployment_conflict' },
     { sourceMethod: 'upload', requestedSourceMethod: 'upload', admittedMachineRole: 'use', expectedError: 'action_forbidden' },
-    { sourceMethod: 'upload', requestedSourceMethod: undefined, admittedMachineRole: 'manage', expectedError: 'deployment_conflict' },
+    { sourceMethod: 'upload', requestedSourceMethod: undefined, admittedMachineRole: 'manage', expectedError: 'unsupported_action' },
     { sourceMethod: 'upload', requestedSourceMethod: 'gitIntegration', admittedMachineRole: 'manage', expectedError: 'deployment_conflict' },
     { sourceMethod: 'gitIntegration', requestedSourceMethod: undefined, admittedMachineRole: 'manage', expectedError: 'unsupported_action' },
 ] as const)('opens the retained compact source before candidate publication instead of preparing the latest stored definition (captured=$sourceMethod requested=$requestedSourceMethod)', async ({ sourceMethod, requestedSourceMethod, admittedMachineRole, expectedError }) => {
@@ -47,6 +50,12 @@ it.each([
     };
     let retained = document('registry.invalid/app:retained', 1);
     let current = document('registry.invalid/app:latest', 2);
+    const readMetadata = () => ({ ok: true, environment, secretScope: detail.secretScope,
+        targetLinks: [{ ...link, machines: [machineId], members: [{ ...link.members[0]!, machineId, installationId }] }],
+        pendingDeploy: { t: 'plain', v: { sourceIntent: retained, requestKey: input.requestKey,
+            targetLinkId: link.id, actionOperationId: operationId, ...(sourceMethod ? { sourceMethod } : {}) } },
+        pendingAdmission: { requesterAccountId: accountId, serverId, requestKey: input.requestKey,
+            actionOperationId: operationId, controller: { machineId, installationId }, environmentRevision: environment.revision } });
     const fixture = await createActionOperationCancellationFixture({ mode: 'plain', accountId, actionId: 'deployments.deploy', actionInput: input,
         admittedMachineRole,
         deploymentCandidateSource: { id: environment.projectSourceId, revision: 1 },
@@ -62,15 +71,7 @@ it.each([
                     body: encodePlainArtifactStoredContent({ body: JSON.stringify(isEnvironment ? { ...detail.content, definition: current } : {}) }),
                     headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } };
             }
-            if (request.method === 'GET' && path === `/v1/deployments/environments/${environment.id}`) return { status: 200, data: {
-                ok: true, environment, secretScope: detail.secretScope,
-                targetLinks: [{ ...link, machines: [machineId], members: [{ ...link.members[0]!, machineId, installationId }] }],
-                pendingDeploy: { t: 'plain', v: { sourceIntent: retained, requestKey: input.requestKey,
-                    targetLinkId: link.id, actionOperationId: operationId,
-                    ...(sourceMethod ? { sourceMethod } : {}) } },
-                pendingAdmission: { requesterAccountId: accountId, serverId, requestKey: input.requestKey,
-                    actionOperationId: operationId, controller: { machineId, installationId }, environmentRevision: environment.revision },
-            } };
+            if (request.method === 'GET' && path === `/v1/deployments/environments/${environment.id}`) return { status: 200, data: readMetadata() };
             if (request.method === 'GET' && path.endsWith('/deployments')) return { status: 200, data: { ok: true, items: [], nextCursor: null } };
             if (request.method === 'POST' && path === '/v1/artifacts') {
                 candidatePublications.push(readCarrierMutation(request.body));
@@ -92,6 +93,9 @@ it.each([
         const latestImage = await docker.registerImage('app', 'latest');
         retained = document(selectedImage.registryReference!, 1);
         current = document(latestImage.registryReference!, 2);
+        // With the same Source, omission must retain the admitted Upload choice;
+        // this native target then refuses Upload at its own method boundary.
+        if (sourceMethod === 'upload' && requestedSourceMethod === undefined) current = retained;
         vi.stubEnv('PATH', `${directory}${delimiter}${previousPath ?? ''}`);
         fresh = await fixture.prepareRoot();
         expect(fresh, JSON.stringify(fixture.diagnostics)).not.toBeNull();
@@ -109,6 +113,18 @@ it.each([
             serverHttpBaseUrl: requester.serverHttpBaseUrl, machineId, runtime });
         const context: ActionExecutorContext = { authority: 'present_user', actionCaller: { kind: 'ui' }, serverId,
             externalActionExecutionAuthorization: fresh.authorization, originalActionEnvelope: fixture.envelope };
+        if (sourceMethod === undefined) {
+            const artifacts = createAccountArtifactStore({ credentials: requester.credentials,
+                getAccountEncryptionMode: async () => 'plain' });
+            // Read the real retained envelope through its Account Artifact codec;
+            // native recovery must preserve absence rather than invent platform Git.
+            const recovered = await readCompactPendingDeploymentRecovery({ input, context,
+                scope: { accountId, machineId }, custody: { serverId, installationId }, read: async () => readMetadata(),
+                readResource: id => runWithServerHttpBaseUrl(requester.serverHttpBaseUrl, () => artifacts.readForUpdate(id,
+                    { prepareRecipients: false, includeSharedAudience: false })), assertCurrent: async () => {} });
+            expect(recovered).toMatchObject({ captured: { sourceIntent: retained } });
+            expect(recovered?.captured.sourceMethod).toBeUndefined();
+        }
         const result = await deps.prepareDeploymentAction({ actionId: 'deployments.deploy', input, context });
         expect(candidatePublications).toEqual([]);
         // Manage reaches retained-pin correspondence and the native method

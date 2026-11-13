@@ -20,6 +20,7 @@ import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-prot
 import { act, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
 import type { DeploymentReadLogs } from './useDeploymentStepLog';
+import type { InvestigationAgentActionButtonModel } from '@/components/inbox/detail/InvestigationAgentActionButtons';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -102,7 +103,7 @@ it('lets a refused backup press request a fresh review from its failure banner',
   function BackupRecovery() {
     const change = useDeploymentChangePress(review, settled);
     return <>
-      <SectionActionButton testID="backup.run" title="Back up now" onPress={() => change.press(run)} />
+      <SectionActionButton testID="backup.run" title="Back up now" destination onPress={() => change.press(run)} />
       {change.outcome ? <DeployOutcomeBanner controller={change.banner}
         machine="Backup machine" copy="setting" /> : null}
     </>;
@@ -562,8 +563,9 @@ describe('Project deployments page', () => {
       await waitForContent(screen, 'project-deployments.move');
       const confirm = () => screen!.findAllByType(RoundButton).find(button => button.props.testID === 'project-deployments.move.confirm')!;
       expect(confirm().props.disabled).toBe(true);
-      const picker = screen.findAllByType(DropdownMenu).find(menu => menu.props.testID === 'project-deployments.move.destination')!;
-      await act(async () => { picker.props.onSelect('destination'); });
+      const { SessionMachineField } = await import('@/components/sessions/new/placement/SessionPlacementChips');
+      const picker = screen.findAllByType(SessionMachineField).find(field => field.props.testID === 'project-deployments.move.destination')!;
+      await act(async () => { picker.props.onSelectMachine(picker.props.machines.find((machine: { id: string }) => machine.id === 'destination')); });
       expect(confirm().props.disabled).toBe(true);
       const choice = screen.findAllByType(Switch).find(control => control.props.value === false)!;
       await act(async () => { choice.props.onValueChange(true); });
@@ -647,8 +649,9 @@ describe('Project deployments page', () => {
       await waitForContent(screen, 'project-deployments.environment.menu.move');
       await screen.pressByTestIdAsync('project-deployments.environment.menu.move');
       await waitForContent(screen, 'project-deployments.move');
-      const picker = screen.findAllByType(DropdownMenu).find(menu => menu.props.testID === 'project-deployments.move.destination')!;
-      await act(async () => { picker.props.onSelect('destination'); });
+      const { SessionMachineField } = await import('@/components/sessions/new/placement/SessionPlacementChips');
+      const picker = screen.findAllByType(SessionMachineField).find(field => field.props.testID === 'project-deployments.move.destination')!;
+      await act(async () => { picker.props.onSelectMachine(picker.props.machines.find((machine: { id: string }) => machine.id === 'destination')); });
       const choice = screen.findAllByType(Switch).find(control => control.props.value === false)!;
       await act(async () => { choice.props.onValueChange(true); });
       await screen.pressByTestIdAsync('project-deployments.move.confirm');
@@ -658,10 +661,11 @@ describe('Project deployments page', () => {
         await screen.pressByTestIdAsync('project-deployments.environment.settings.servers-build.manage');
         await waitForContent(screen, 'project-deployments.fleet');
         if (operation === 'Add server') {
-          const destination = screen.findAllByType(DropdownMenu).find(menu => menu.props.testID === 'project-deployments.fleet.destination')!;
-          await act(async () => { destination.props.onSelect('destination'); });
-          const ingress = screen.findAllByType(DropdownMenu).find(menu => menu.props.testID === 'project-deployments.environment.settings.servers-build.ingress')!;
-          await act(async () => { ingress.props.onSelect('tunnel'); });
+          const { SessionMachineField } = await import('@/components/sessions/new/placement/SessionPlacementChips');
+          const destination = screen.findAllByType(SessionMachineField).find(field => field.props.testID === 'project-deployments.fleet.destination')!;
+          await act(async () => { destination.props.onSelectMachine(destination.props.machines.find((machine: { id: string }) => machine.id === 'destination')); });
+          const ingress = screen.findAllByType(SessionMachineField).find(field => field.props.testID === 'project-deployments.environment.settings.servers-build.ingress')!;
+          await act(async () => { ingress.props.defaultChoice.onChoose(); });
         } else await screen.pressByTestIdAsync('project-deployments.fleet.remove.existing-member');
         await screen.pressByTestIdAsync('project-deployments.fleet.confirm');
       }
@@ -1483,7 +1487,7 @@ describe('Project deployments page', () => {
         onOpenReceipt={() => {}} />);
       // First paint already holds "Set it up", waiting, so its later answer never pushes the page down.
       const first = screen.findAllByType(InvestigationAgentActionButtons)
-        .flatMap(buttons => buttons.props.actions.map(action => action.label));
+        .flatMap(buttons => buttons.props.actions.map((action: InvestigationAgentActionButtonModel) => action.label));
       expect(first).toContain('Set it up');
     } finally { controller.retire(); }
   });
@@ -1966,6 +1970,63 @@ describe('Project deployments page', () => {
     } finally { await act(async () => { controller.retire(); }); }
   });
 
+  it.each(['upload', undefined] as const)('reopens a protected platform method before Send (recorded=%s)', async recorded => {
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+    const { createDeploymentTargetsTestPlugin, DEPLOYMENT_TARGETS_TEST_EXECUTION } = await import('./deploymentPlatformTargetPlugin.testFixture');
+    const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
+    const authored = createDeploymentTargetsTestPlugin('com.example.retained-method', undefined, { upload: true });
+    scope.serverId = await homes.addHome({ name: 'Retained method', serverUrl: 'https://retained-method.test',
+      serverIdentityId: 'srv_retained_method', accountId: scope.accountId, currentAccount: true });
+    const context = await captureLazyActionAccountContext(scope.serverId);
+    const installed = await installPortableAccountPluginReleaseForTest({ manifest: authored.manifest,
+      activate: api => authored.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account),
+      accountLifetime: context.accountLifetime, publishProjection: true });
+    const base = environmentDetailForHome();
+    const detail = { ...base, targetLinks: base.targetLinks.map(row => ({ ...row,
+      targetLink: { ...row.targetLink, activeDeploymentId: undefined,
+        source: { kind: 'plugin' as const, contribution: { pluginId: authored.manifest.id, localId: 'beta' } },
+        targetKind: 'beta', machines: [], members: [] },
+      content: { credentialPrincipal: { kind: 'account' as const, accountId: scope.accountId,
+        purpose: { consumer: { pluginId: authored.manifest.id, localId: 'inspect-beta' }, purpose: 'beta.manage' },
+        target: { kind: 'account' as const, account: { service: { pluginId: 'com.example.cloud', localId: 'cloud-account' }, accountId: 'selected' } } },
+        providerIdentity: { providerAccountId: 'cloud', providerResourceId: 'site', providerEnvironment: 'production' },
+        providerEnvironment: { kind: 'production' as const }, ...(recorded ? { sourceMethod: recorded } : {}) },
+    })) };
+    await context.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
+      header: { kind: 'deployment-environment.v1', title: detail.content.name }, body: JSON.stringify(detail.content) });
+    for (const row of detail.targetLinks) await context.createArtifactDocument({ artifactId: row.targetLink.contentArtifactId,
+      header: { kind: 'deployment-target-link.v1', title: 'Upload site' }, body: JSON.stringify(row.content) });
+    homes.answer(scope.serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
+      environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink) } });
+    homes.answer(scope.serverId, `GET /v1/deployments/environments/${detail.environment.id}/deployments`,
+      { body: { ok: true, items: [], nextCursor: null } });
+    const beforeRead = homes.requests.length;
+    const controller = createDeploymentReadControllerV1({ scope, transport: createDeploymentReadTransport(context.accountLifetime) });
+    const deploy = vi.fn(async () => { throw Object.assign(new Error('content unavailable'), { code: 'deployment_content_unavailable' }); });
+    const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+      demand={shown} lifetime={context.accountLifetime} accountId={scope.accountId} serverId={scope.serverId}
+      phone={false} deploy={deploy} review={noReview} onOpenReceipt={() => {}} />);
+    try {
+      await waitForContent(screen, 'project-deployments.environment.sourceMethod');
+      await screen.pressByTestIdAsync('project-deployments.environment.deploy');
+      expect(deploy).toHaveBeenLastCalledWith({ environmentId: detail.environment.id,
+        targetLinkId: detail.environment.runtimeTargetLinkId, sourceMethod: recorded ?? 'gitIntegration' });
+      expect(homes.requests.slice(beforeRead).filter(request => request.path === '/v1/artifacts/read'
+        && JSON.stringify(request.input).includes(detail.environment.contentArtifactId)).map(request => request.input))
+        .toEqual([{ artifactIds: [detail.environment.contentArtifactId, detail.targetLinks[0]!.targetLink.contentArtifactId] }]);
+      if (recorded) {
+        const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
+        const choice = screen.root.findByType(SegmentedChoiceItem);
+        await act(async () => choice.props.onChange('gitIntegration'));
+        await vi.waitFor(() => expect(screen.root.findByType(SegmentedChoiceItem).props.value).toBe('gitIntegration'));
+        await screen.pressByTestIdAsync('project-deployments.environment.deploy');
+        await vi.waitFor(() => expect(deploy).toHaveBeenLastCalledWith({ environmentId: detail.environment.id,
+          targetLinkId: detail.environment.runtimeTargetLinkId, sourceMethod: 'gitIntegration' }));
+      }
+    } finally { await screen.unmount(); controller.retire(); await installed.dispose(); }
+  });
+
   it('deploys a linked platform target through the same Action input, and shows the target\'s typed refusal', async () => {
     const base = environmentDetailForHome();
     const plugin = environmentDetailForHome({
@@ -2362,6 +2423,10 @@ describe('Deployment receipt step logs', () => {
   } as const;
   const page = (text: string) => ({ kind: 'page' as const, page: { sourceRevision: 'source-a', text,
     nextCursor: { sourceRevision: 'source-a', token: String(text.length) }, truncated: false } });
+  /** The admitted Logs read echoes the read target it was asked for. */
+  const logsRead = (input: Parameters<DeploymentReadLogs>[0], text: string) => ({ ok: true as const, kind: 'build' as const,
+    environmentId: input.environmentId, deploymentId: input.deploymentId, targetLinkId: input.targetLinkId,
+    machineId: input.machineId, installationId: input.installationId, logs: page(text) });
   /** A native receipt whose sink recorded each step's range in the one masked operation file (DEP-43). */
   const withStepLogs = (state: 'failed' | 'running') => {
     const base = createDeploymentReceiptDetailV1();
@@ -2399,7 +2464,7 @@ describe('Deployment receipt step logs', () => {
       targetLink: { ...row.targetLink, activeDeploymentId: undefined } })) };
     const receipt = withStepLogs('running');
     const { controller } = controllerFor({ detail, receipt, history: [receipt] });
-    const readLogs = vi.fn<DeploymentReadLogs>(async () => ({ ok: true as const, logs: page('current deploy output') }));
+    const readLogs = vi.fn<DeploymentReadLogs>(async input => logsRead(input, 'current deploy output'));
     try {
       const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller}
         environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
@@ -2425,7 +2490,7 @@ describe('Deployment receipt step logs', () => {
     });
     for (const readable of [true, false]) {
       const { controller, detail } = controllerFor({ receipt });
-      const readLogs = readable ? async () => ({ ok: true as const, logs: page('retained log') }) : null;
+      const readLogs = readable ? async (input: Parameters<DeploymentReadLogs>[0]) => logsRead(input, 'retained log') : null;
       try {
         const screen = await renderScreen(<DeploymentReceiptDetail controller={controller} {...receiptProps}
           environmentId={detail.environment.id} deploymentId={receipt.deployment.id} readLogs={readLogs} />);

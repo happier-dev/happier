@@ -32,7 +32,8 @@ export async function createRuntimeTargetForHost(input: DeploymentTargetLinkCrea
     const [child] = prepareRuntimeTargetCreateForHost(input, target).children;
     const created = await context.hostReviewedChild.invoke(child!);
     if (!created.ok) return created;
-    const provider = DeploymentTargetLinkProviderContentV1Schema.parse(created.result);
+    const provider = { ...DeploymentTargetLinkProviderContentV1Schema.parse(created.result),
+        ...(input.providerCreate.sourceMethod !== undefined ? { sourceMethod: input.providerCreate.sourceMethod } : {}) };
     const { providerCreate: _create, ...intent } = input;
     const recovery = DeploymentTargetLinkProviderIntentInputV1Schema.parse({ ...intent, provider, provisioned: true });
     const retained = DeploymentTargetLinkProvisionedResultV1Schema.parse({ ok: false, error: 'deployment_link_incomplete', recovery });

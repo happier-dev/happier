@@ -1,5 +1,6 @@
 import { showDeploymentMoveSheet } from './DeploymentMoveSheet';
 import * as React from 'react';
+import { resolveDeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { useProjectSource } from '@/components/projects/sources/useProjectSources';
 import { View } from 'react-native';
@@ -305,8 +306,11 @@ export const DeploymentEnvironmentDetail = React.memo(
         ? failurePolicyDraft.value : DEFAULT_DEPLOYMENT_ON_FAILURE_V1
       : undefined;
     const sourceMethod = platform?.sourceMethods.includes('upload')
-      ? selectedMethod?.targetLinkId === runtime?.id && platform.sourceMethods.includes(selectedMethod.value)
-        ? selectedMethod.value : platform.sourceMethods[0]
+      ? resolveDeploymentSourceMethodV1({
+        explicit: selectedMethod?.targetLinkId === runtime?.id && platform.sourceMethods.includes(selectedMethod.value)
+          ? selectedMethod.value : undefined,
+        recorded: detail?.targetLinks.find(row => row.targetLink.id === runtime?.id)?.content?.sourceMethod,
+      })
       : undefined;
     // Its Triggers run where it is deployed (OPS-AUTOMATIONS-1102 D2), or on its controller before anything is.
     const triggerMachineId = machineIds[0] ?? controllerMachineId;

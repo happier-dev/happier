@@ -89,6 +89,7 @@ export const DeploymentTargetLinkProviderContentV1Schema = lazyZodSchema(() => z
     credentialPrincipal: DeploymentTargetCredentialPrincipalV1Schema,
     providerIdentity: DeploymentTargetProviderIdentityV1Schema,
     providerEnvironment: DeploymentTargetProviderEnvironmentV1Schema,
+    sourceMethod: z.optional(DeploymentSourceMethodV1Schema),
     repositoryAccess: z.optional(DeploymentTargetRepositoryAccessV1Schema),
     preparedNative: z.optional(DeploymentTargetPreparedNativeV1Schema),
     ownedVariables: z.optional(z.array(DeploymentTargetOwnedVariableV1Schema)),

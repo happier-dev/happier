@@ -4,7 +4,7 @@ import { DeploymentDeployInputV1Schema, DeploymentReceiptObserveInputV1Schema, D
 import type { HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1,
     type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { DeploymentPlatformContentV1Schema, type DeploymentPlatformContentV1,
+import { DeploymentPlatformContentV1Schema, resolveDeploymentSourceMethodV1, type DeploymentPlatformContentV1,
     type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1,
     type DeploymentReceiptFailureV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentExecutionFailureDetailsV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
@@ -157,7 +157,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
     async function prepareCandidate(request: DaemonDeploymentCandidateRequest & { targetLinkId: string },
         environment: DeploymentEnvironmentDetailV1): Promise<DaemonDeploymentCandidateResult> {
         if (request.onFailure !== undefined) return failure('unsupported_action');
-        const sourceMethod = request.sourceMethod ?? 'gitIntegration';
+        const sourceMethod = resolveDeploymentSourceMethodV1({ explicit: request.sourceMethod,
+            recorded: environment.targetLinks.find(row => row.targetLink.id === request.targetLinkId)?.content?.sourceMethod });
         return withRole(request, environment, deployRole(sourceMethod), async scope => {
             await scope.admit(scope.common, 'preparation');
             const assertCurrent = scope.assertCurrent;

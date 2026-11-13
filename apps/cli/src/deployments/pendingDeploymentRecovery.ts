@@ -71,8 +71,8 @@ export async function readCompactPendingDeploymentRecovery(request: Omit<Pending
     const pendingDeploy = retained.current.pendingDeploy;
     const captured = await readPendingDeploymentIntentForHost({ environment: retained.current.environment, pendingDeploy }, request);
     const input = request.input;
-    // Omission retains the Git default, never an explicitly captured upload.
-    const sourceMethod = input.sourceMethod ?? (captured.sourceMethod === 'gitIntegration' ? 'gitIntegration' : undefined);
+    // Recovery consumes the admitted pin, including native intents without a platform method.
+    const sourceMethod = input.sourceMethod ?? captured.sourceMethod;
     const refuse = (code: string): never => { throw new RpcError(code, code); };
     if (captured.triggerOccurrence) return refuse('unsupported_action');
     if (captured.actionOperationId !== retained.admission.actionOperationId || captured.requestKey !== input.requestKey

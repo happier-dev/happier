@@ -20,7 +20,7 @@ import { captureLazyActionAccountContext, type LazyActionAccountContext } from '
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { HappyError } from '@/utils/errors/errors';
 import { domainHealthObserver, environmentHealthObserver } from './observeEnvironmentHealth';
-import { projectDeploymentReceiptHistoryEntryV1, readDeploymentDatabaseSizesV1 } from '@happier-dev/deployments';
+import { projectDeploymentReceiptHistoryEntryV1, readDeploymentDatabaseSizesV1, selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
 
 function failure(code: string, retryable = false): Extract<DeploymentReadResultV1<never>, { ok: false }> {
     return { ok: false, failure: { code, retryable } };
@@ -232,9 +232,13 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             const metadata = await readEnvironmentMetadata(scope, environmentId, options);
             if (!metadata.ok) return metadata;
             const detail = metadata.value;
-            // The selected page consumes Environment content and custody headers,
-            // not private bodies from every retained TargetLink.
-            const [artifact] = await account.readArtifactContents([detail.environment.contentArtifactId], { signal: options.signal,
+            const targetLinks: DeploymentEnvironmentDetailV1['targetLinks'] = detail.targetLinks.map(targetLink => ({ targetLink }));
+            const runtime = selectDeploymentRuntimeTargetLinkV1({ environment: detail.environment, targetLinks });
+            const platformLink = runtime?.source.kind === 'plugin' ? runtime : undefined;
+            // Send consumes its selected platform's authored method. Open that
+            // link in the Environment batch, leaving retained link bodies closed.
+            const [artifact, linkArtifact] = await account.readArtifactContents([detail.environment.contentArtifactId,
+                ...(platformLink ? [platformLink.contentArtifactId] : [])], { signal: options.signal,
                 ...(detail.pendingDeploy ? { includeAssociatedContentOpener: true } : {}) });
             if (!artifact || artifact.status === 'rejected') return failure('deployment_content_unavailable');
             const environment = readDeploymentEnvironmentArtifactV1(detail.environment, artifact.value);
@@ -254,7 +258,13 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     pendingDeployment = { status: 'unavailable', reason: 'deployment_content_unavailable' };
                 }
             }
-            const targetLinks = detail.targetLinks.map(targetLink => ({ targetLink }));
+            if (platformLink) {
+                const opened = readDeploymentTargetLinkArtifactV1(platformLink,
+                    linkArtifact?.status === 'fulfilled' ? linkArtifact.value : null);
+                if (!opened.ok) return failure(opened.error);
+                const row = targetLinks.find(row => row.targetLink.id === platformLink.id);
+                if (row) row.content = opened.content;
+            }
             return { ok: true, value: { environment: detail.environment, content: environment.content, targetLinks,
                 ...(pendingDeployment === undefined ? {} : { pendingDeployment }),
                 ...(detail.savedSecretRevisions === undefined ? {} : { savedSecretRevisions: detail.savedSecretRevisions }),

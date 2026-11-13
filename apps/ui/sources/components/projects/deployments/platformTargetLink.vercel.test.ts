@@ -6,7 +6,7 @@ import { activateAccount } from '../../../../../../packages/plugins/deploy-verce
 import { patchHappierActionInputPath } from '@happier-dev/plugin-ui/presentation';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import { applyPlatformFieldPatch, buildPlatformTargetDraft, readDeploymentPlatformTargets, readPlatformInspectOutcome }
+import { applyPlatformFieldPatch, buildPlatformTargetDraft, buildPlatformTargetLinkInput, readDeploymentPlatformTargets, readPlatformInspectOutcome }
   from './platformTargetLink';
 
 it.each(['daemon-root', 'portable-account'] as const)('admits pre-Save sheet choices without a caller-normalized identity through %s', async target => {
@@ -38,7 +38,14 @@ it.each(['daemon-root', 'portable-account'] as const)('admits pre-Save sheet cho
     expect(result).toMatchObject({ providerIdentity: { providerAccountId: project.accountId,
       providerResourceId: project.id, providerEnvironment: 'production' }, repositoryAccess: { status: 'needsGitAccess' } });
     expect(readPlatformInspectOutcome({ ok: true, value: result })).toMatchObject({ kind: 'needsGitAccess' });
-    expect(requests.map(request => new URL(request.url).pathname)).toEqual([`/v9/projects/${project.id}`]);
+    const uploadDraft = { ...draft, sourceMethod: 'upload' };
+    const uploadResult = await kit.invokeAction('targets-inspect-v1', uploadDraft as JsonValue);
+    const inspected = readPlatformInspectOutcome({ ok: true, value: uploadResult }, 'upload');
+    expect(inspected).toMatchObject({ kind: 'ready', provider: { sourceMethod: 'upload' } });
+    if (inspected.kind !== 'ready') throw new Error('Expected the reviewed Upload target');
+    expect(buildPlatformTargetLinkInput({ target: platform, environment: { id: 'environment', revision: 1 },
+      provider: inspected.provider })).toMatchObject({ provider: { sourceMethod: 'upload' } });
+    expect(requests.map(request => new URL(request.url).pathname)).toEqual([`/v9/projects/${project.id}`, `/v9/projects/${project.id}`]);
   } finally { await kit.dispose(); }
 });
 

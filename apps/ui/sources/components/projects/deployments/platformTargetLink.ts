@@ -216,6 +216,7 @@ export function readPlatformInspectOutcome(
   result:
     | Readonly<{ ok: true; value: unknown }>
     | Readonly<{ ok: false; code: string }>,
+  sourceMethod?: DeploymentSourceMethodV1,
 ): PlatformInspectOutcome {
   if (!result.ok) return readDeploymentRefusal(result.code);
   const parsed = DeploymentTargetLinkProviderContentV1Schema.safeParse(
@@ -223,14 +224,15 @@ export function readPlatformInspectOutcome(
   );
   if (!parsed.success)
     return readDeploymentRefusal('provider_response_invalid');
-  const access = parsed.data.repositoryAccess;
+  const provider = { ...parsed.data, ...(sourceMethod !== undefined ? { sourceMethod } : {}) };
+  const access = provider.repositoryAccess;
   return access?.status === 'needsGitAccess'
     ? {
         kind: 'needsGitAccess',
-        provider: parsed.data,
+        provider,
         grantUrl: access.grantUrl ?? null,
       }
-    : { kind: 'ready', provider: parsed.data };
+    : { kind: 'ready', provider };
 }
 
 /**
