@@ -688,6 +688,31 @@ describe('automation history-gap recovery status', () => {
 });
 
 describe('AutomationHistoryGapRecoveryAction', () => {
+    it('exposes source attention and recovery from the workflow trigger History', async () => {
+        const { WorkflowTriggerSection } = await import('@/components/workflows/triggers/WorkflowTriggerSection');
+        const { WorkflowTriggerSetV1Schema } = await import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1');
+        const { EMPTY_WORKFLOW_TRIGGER_DRAFT } = await import('@/components/workflows/triggers/workflowTriggerDraft');
+        const { act } = await import('react-test-renderer');
+        const set = WorkflowTriggerSetV1Schema.parse({
+            automationId: AUTOMATION_ID, revision: 1, enabled: true, health: 'available',
+            triggers: [{ ...eventTrigger(), triggerDefinitionEnvelope: 'sealed-private' }],
+        });
+        const screen = await renderScreen(React.createElement(WorkflowTriggerSection, {
+            testIDPrefix: 'gap-workflow', set, draft: EMPTY_WORKFLOW_TRIGGER_DRAFT,
+            onChangeDraft: () => {}, status: 'ready', onRetry: () => {},
+            stepsUnsaved: false, whereTarget: null, whereSummary: null, inputs: [],
+        }));
+        await screen.pressByTestIdAsync(`gap-workflow-trigger:saved:${TRIGGER_ID}-more`);
+        await screen.pressByTestIdAsync(`gap-workflow-trigger:saved:${TRIGGER_ID}-history`);
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('History gap needs attention'));
+        await waitForHomeGovernance(() => expect(screen.findAll(row =>
+            row.props.title === 'History gap needs attention' && typeof row.props.onPress === 'function').length).toBeGreaterThan(0));
+        const recovery = screen.find(row => row.props.title === 'History gap needs attention' && typeof row.props.onPress === 'function');
+        await act(async () => { recovery.props.onPress(); });
+        await waitForHomeGovernance(() => expect(actionRequests).toHaveLength(1));
+        expect(actionRequests[0]?.action).toEqual({ pluginId: PLUGIN_ID, localId: ACTION_LOCAL_ID });
+    });
+
     it('keeps an unavailable recovery visible, announced, and retryable while source status remains authoritative', async () => {
         const currentAutomation = automationForScreen();
         actionResult = { ok: false, code: 'plugin_action_failed', message: 'do-not-disclose' };

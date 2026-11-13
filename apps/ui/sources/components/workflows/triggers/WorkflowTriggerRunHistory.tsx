@@ -13,6 +13,10 @@ import { formatNextScheduledRun, formatNextScheduledRunAccessibilityLabel, readN
 import { readOnceScheduleState, type OnceScheduleSource } from './triggerSchedule';
 
 import { useReportTriggerHistoryRuns } from './SessionTriggerHistoryScope';
+import { AutomationHistoryGapRecoveryAction } from '@/components/automations/screens/AutomationHistoryGapRecoveryAction';
+import { useAutomation } from '@/sync/domains/state/storage';
+import { sync } from '@/sync/sync';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 
 /** Mounted only for the expanded trigger; the shared Run window owns reads and pagination. */
 export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunHistory(props: Readonly<{
@@ -27,6 +31,8 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
     trigger?: OnceScheduleSource;
 }>) {
     const read = useWorkflowRunWindow(`trigger:${props.triggerId}`, { accountLifetime: props.accountLifetime });
+    const automation = useAutomation(props.automationId, { serverId: props.accountLifetime?.scope.serverId });
+    const isCurrentRoute = useEventCallback(() => read.accountLifetime?.isCurrent() === true);
     useReportTriggerHistoryRuns(props.automationId, read.runIds);
     const serverId = read.serverId;
     const nextRunAt = props.nextRunAt ?? null;
@@ -34,6 +40,8 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
     const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefresh, nextRunAt !== null);
     const once = props.trigger ? readOnceScheduleState(props.trigger, read.rows[0]?.summary?.state) : null;
     return <View testID={`session-work-trigger-history:${props.automationId}`}>
+        {automation ? <AutomationHistoryGapRecoveryAction automation={automation} triggerId={props.triggerId}
+            isCurrentRoute={isCurrentRoute} rereadAutomationStatus={sync.refreshAutomations} /> : null}
         {nextRunAt !== null ? <Item title={formatNextScheduledRun(nextRunAt, true, nowMs)} mode="info"
             accessibilityLabel={formatNextScheduledRunAccessibilityLabel(nextRunAt, true, nowMs)} /> : null}
         {once === 'done' || once === 'missed' ? <Item testID={`session-work-trigger-history:${props.automationId}-once`} mode="info"
