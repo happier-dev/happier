@@ -1,4 +1,5 @@
 import { z } from '../../zodRuntimePolicy.js';
+import { MachineRoleDeclarationV1Schema } from '../../machines/roles/machineRolesV1.js';
 import { HealthCheckKindContributionV1Schema, validateHealthCheckKindContributionsV1 } from './healthCheckKinds.js';
 import { PluginStoreKindContributionV1Schema, validatePluginStoreKindContributionsV1 } from './storeKinds.js';
 export * from './storeKinds.js';
@@ -973,6 +974,8 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.voiceModelPacks, schema: PluginVoiceModelPackContributionV2Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.voiceProviders, schema: VoiceProviderContributionSchema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.backgroundServices, schema: BackgroundServiceContributionSchema }),
+  // Machine roles (OWNER-RULINGS 2026-11-12): the same declaration shape as the core role catalog.
+  definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.machineRoles, schema: MachineRoleDeclarationV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.captureSources, schema: PluginCaptureSourceContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.secretSources, schema: PluginSecretSourceContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.projectNativeAdapters, schema: PluginProjectNativeAdapterContributionV1Schema }),

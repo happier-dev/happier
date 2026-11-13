@@ -46,6 +46,7 @@ export const PluginContributionFamilyV2Schema = z.enum([
   'voiceModelPacks',
   'voiceProviders',
   'backgroundServices',
+  'machineRoles',
   'captureSources',
   'secretSources',
   'projectNativeAdapters',

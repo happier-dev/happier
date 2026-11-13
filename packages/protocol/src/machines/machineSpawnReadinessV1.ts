@@ -1,6 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { isMachineReplaced } from './identity/canonicalMachineId.js';
+import { isMachineRoleActiveV1 } from './roles/machineRolesV1.js';
 
 const machineId = z.string().check(z.trim(), z.minLength(1));
 export const MachineSpawnReadinessV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
@@ -12,6 +13,8 @@ export const MachineSpawnReadinessV1Schema = lazyZodSchema(() => z.discriminated
   z.strictObject({ status: z.literal('rpcUnavailable'), machineId }),
   z.strictObject({ status: z.literal('keyUnavailable'), machineId }),
   z.strictObject({ status: z.literal('replaced'), machineId, replacedByMachineId: machineId }),
+  /** The Machine's owner turned its Sessions role off; it refuses spawns, so it is never a launch target. */
+  z.strictObject({ status: z.literal('roleInactive'), machineId, roleId: z.literal('sessions') }),
 ]));
 export type MachineSpawnReadinessV1 = z.infer<typeof MachineSpawnReadinessV1Schema>;
 export type MachineReadinessProbeStateV1 = boolean | 'unknown' | null | undefined;
@@ -20,7 +23,9 @@ export type MachineReadinessProbeStateV1 = boolean | 'unknown' | null | undefine
 export function resolveMachineSpawnReadinessV1(input: Readonly<{
   selectedMachineId?: string | null;
   machine?: Readonly<{ id: string; revokedAt?: number | null; replacedByMachineId?: string | null;
-    availability?: Readonly<{ kind: 'available' | 'locked' }> | null }> | null;
+    availability?: Readonly<{ kind: 'available' | 'locked' }> | null;
+    /** Opened Machine metadata; its role set is read by the one roles owner. */
+    metadata?: unknown }> | null;
   machineReachable: boolean;
   rpcAvailable?: MachineReadinessProbeStateV1;
   keyAvailable?: MachineReadinessProbeStateV1;
@@ -31,6 +36,7 @@ export function resolveMachineSpawnReadinessV1(input: Readonly<{
   if (!id || !machine) return { status: 'missing' };
   if (typeof machine.revokedAt === 'number' && Number.isFinite(machine.revokedAt) && machine.revokedAt > 0) return { status: 'revoked', machineId: id };
   if (isMachineReplaced(machine)) return { status: 'replaced', machineId: id, replacedByMachineId: machine.replacedByMachineId!.trim() };
+  if (machine.metadata != null && !isMachineRoleActiveV1(machine.metadata, 'sessions')) return { status: 'roleInactive', machineId: id, roleId: 'sessions' };
   if (!input.machineReachable) return { status: 'offline', machineId: id };
   if (machine.availability?.kind === 'locked') return { status: 'keyUnavailable', machineId: id };
   if (input.requireExactSpawnReadiness && (input.keyAvailable === undefined || input.rpcAvailable === undefined)) return { status: 'unknown', machineId: id };

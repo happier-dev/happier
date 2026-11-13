@@ -14,6 +14,7 @@ import { MachineFinitePolicyV1Schema } from './machineFinitePolicyV1.js';
 import { MachineAgentIsolationPolicyV1Schema, MachineAgentIsolationStatusV1Schema } from './agentIsolationV1.js';
 import { MachineAdminAccessV1Schema, MachineAdminAccessObservationV1Schema, StoredMachineAdminAccessObservationV1Schema } from './adminAccessV1.js';
 import { MachineResourcesPolicyV1Schema } from './resources/machineResourcesPolicyV1.js';
+import { MachinePublishedMachineRolesV1Schema, MachineRolesPolicyV1Schema } from './roles/machineRolesV1.js';
 import { MachinePublishedResourceSummaryV1Schema } from './resources/machineResourceSummaryV1.js';
 import { MachineSetupObservationV1Schema } from './setup/machineSetupObservationV1.js';
 import { MachineSetupDesiredV1Schema } from './setup/machineSetupSourcesV1.js';
@@ -37,6 +38,7 @@ export const MachinePublishedMetadataV1Schema = lazyZodSchema(() => z.strictObje
   agentIsolation: z.optional(MachineAgentIsolationPolicyV1Schema),
   adminAccess: z.optional(MachineAdminAccessV1Schema),
   resourcesPolicyV1: z.optional(MachineResourcesPolicyV1Schema),
+  rolesV1: z.optional(MachineRolesPolicyV1Schema),
   serviceWatchesV1: z.optional(MachineServiceWatchesV1Schema),
   reachabilityPosture: z.optional(MachineReachabilityPostureV1Schema),
   accessProviderSelections: z.optional(z.array(AccessProviderSelectionV1Schema)),
@@ -129,6 +131,7 @@ export const MachinePublishedDaemonStateV1Schema = lazyZodSchema(() => z.strictO
   localServices: z.optional(LocalServiceMachineSummaryV1Schema),
   resources: z.optional(MachinePublishedResourceSummaryV1Schema),
   managedActivity: z.optional(ActivityDecisionV1Schema),
+  machineRoles: z.optional(MachinePublishedMachineRolesV1Schema),
 }));
 
 /** Persistence readers discard additive/retired fields; these are not disclosure proofs. */
@@ -142,6 +145,7 @@ export const StoredMachinePublishedDaemonStateV1Schema = lazyZodSchema(() => z.e
   agentIsolation: z.catch(z.optional(createStoredReadSchema(MachineAgentIsolationStatusV1Schema)), undefined),
   // Optional service presentation failures cannot erase unrelated daemon facts.
   localServices: z.catch(z.optional(createStoredReadSchema(LocalServiceMachineSummaryV1Schema)), undefined),
+  machineRoles: z.catch(z.optional(createStoredReadSchema(MachinePublishedMachineRolesV1Schema)), undefined),
 }));
 
 export type MachinePublishedMetadataV1 = z.infer<typeof MachinePublishedMetadataV1Schema>;

@@ -171,6 +171,32 @@ export function matchesManagedMachineEnrollmentRolesV1(target: Readonly<{
 
 /** A plugin's admitted `machineRoles` declarations, qualified by plugin id. */
 export type PluginMachineRoleDeclarationV1 = Readonly<{ pluginId: string; declaration: MachineRoleDeclarationV1 }>;
+export const PluginMachineRoleDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
+  pluginId: z.string().check(z.minLength(1), z.maxLength(256)),
+  declaration: MachineRoleDeclarationV1Schema,
+}));
+
+/**
+ * Daemon state `machineRoles`: the plugin role declarations this Machine admitted (from the plugin
+ * summary, whether or not the role is on). Account readers list them beside the core roles.
+ */
+export const MachinePublishedMachineRolesV1Schema = lazyZodSchema(() => z.strictObject({
+  plugins: z.array(PluginMachineRoleDeclarationV1Schema),
+}));
+export type MachinePublishedMachineRolesV1 = z.infer<typeof MachinePublishedMachineRolesV1Schema>;
+
+/** The daemon's publication, ordered so an unchanged catalog publishes identical content. */
+export function projectPublishedMachineRolesV1(plugins: readonly PluginMachineRoleDeclarationV1[]): MachinePublishedMachineRolesV1 {
+  return { plugins: [...plugins].map(({ pluginId, declaration }) => ({ pluginId, declaration: { ...declaration } }))
+    .sort((left, right) => `${left.pluginId}/${left.declaration.id}`.localeCompare(`${right.pluginId}/${right.declaration.id}`)) };
+}
+
+/** Plugin roles from synced (opened) daemon state; anything unreadable lists core roles only. */
+export function readPublishedPluginMachineRolesV1(daemonState: unknown): PluginMachineRoleDeclarationV1[] {
+  const value = daemonState && typeof daemonState === 'object' ? (daemonState as { machineRoles?: unknown }).machineRoles : undefined;
+  const parsed = MachinePublishedMachineRolesV1Schema.safeParse(value);
+  return parsed.success ? parsed.data.plugins : [];
+}
 export function machineRoleCatalogFromPluginsV1(plugins: readonly PluginMachineRoleDeclarationV1[]): MachineRoleCatalogEntryV1[] {
   return plugins.map(({ pluginId, declaration }) => ({ id: `${pluginId}/${declaration.id}`,
     ...(declaration.requires ? { requires: declaration.requires } : {}),
