@@ -37,7 +37,7 @@ import {
 
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBlockHeading';
-import { workflowEditorStyles } from './workflowEditorStyles';
+import { useWorkflowDocumentGridStyles, workflowEditorStyles } from './workflowEditorStyles';
 import { WorkflowStepDataEditor } from './WorkflowStepDataEditor';
 import { formatWorkflowIssueText } from './workflowIssueText';
 import { useWorkflowStepOptionsChip } from './WorkflowStepOptionsChip';
@@ -212,6 +212,7 @@ export function WorkflowStepEditor(props: Readonly<{
     } = props;
 
     const editable = props.editable !== false;
+    const grid = useWorkflowDocumentGridStyles();
     const inputRef = React.useRef<ScopedAuthoringComposerHandle>(null);
     const custody = props.composerCustody.entryFor(step.id);
     // The prompt's handlers close over the current document through a ref, so
@@ -332,6 +333,7 @@ export function WorkflowStepEditor(props: Readonly<{
 
             {/* A Session carried onto the step binds its conversation. The
                 zone always wraps the prompt so enabling it never remounts the composer. */}
+            <View style={grid.blockCard}>
             <WorkflowStepSessionDropZone
                 stepId={step.id}
                 label={displayName}
@@ -359,6 +361,7 @@ export function WorkflowStepEditor(props: Readonly<{
                     />
                 </View>
             </WorkflowStepSessionDropZone>
+            </View>
 
             {props.slots?.reviewedCard ?? null}
 

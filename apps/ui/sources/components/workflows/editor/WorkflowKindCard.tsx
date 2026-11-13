@@ -6,7 +6,7 @@ import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { Text } from '@/components/ui/text/Text';
 
 import { WorkflowKindCardLabelTrack } from './WorkflowStepDataEditor';
-import { workflowEditorStyles } from './workflowEditorStyles';
+import { useWorkflowDocumentGridStyles, workflowEditorStyles } from './workflowEditorStyles';
 
 /**
  * A typed step's card (lab `.uwe-kind`, `editor-S6`): the frame an Action and a
@@ -37,6 +37,7 @@ export function WorkflowKindCard(props: Readonly<{
     // One label track for every row of this card: the widest label's natural width (bounded by the
     // row's own min/max), so values start on one column (lab S6).
     const { theme } = useUnistyles();
+    const grid = useWorkflowDocumentGridStyles();
     const [trackWidth, setTrackWidth] = React.useState<number | null>(null);
     const reported = React.useRef(new Map<string, number>());
     const track = React.useMemo(() => ({
@@ -53,7 +54,7 @@ export function WorkflowKindCard(props: Readonly<{
             the card group, the composer finish, its input fill), so an Action card and an Agent step's
             card are one surface, not a white card beside a tinted one. */}
         <GlassSurface testID={props.testID} surfaceGroup="card" nested solidColor={theme.colors.input.background}
-            finishRole="composer" style={workflowEditorStyles.kindCard}>
+            finishRole="composer" style={[workflowEditorStyles.kindCard, grid.blockCard]}>
             {props.header === false ? null : <View style={workflowEditorStyles.kindCardHeader}>
                 <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{props.mark}</View>
                 <Text testID={`${props.testID}-title`} numberOfLines={1} style={workflowEditorStyles.headingName}>{props.title}</Text>

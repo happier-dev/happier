@@ -27,6 +27,7 @@ import { ListPresentationProvider } from '@/components/ui/lists/listPresentation
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
+import { PhoneSheetPushContext, usePhoneSheetPush, type PhoneSheetPushStack } from '@/components/ui/popover/phoneSheetPush';
 import { Text } from '@/components/ui/text/Text';
 import { resolveWorkflowProblemPresentation, type WorkflowProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
@@ -121,7 +122,7 @@ type TriggerPopoverBaseProps = Readonly<{
     /** A retained Automation that cannot be edited remains visible with its owner's refusal. */
     submitRefusal?: string;
     /** A pushed host editor shares this shell and preserves the trigger draft underneath it. */
-    pushedPage?: Readonly<{ title: string; onBack: () => void; content: React.ReactNode }>;
+    pushedPage?: TriggerPopoverPushedPage;
     /** Reviewed legacy edit: opening never writes; the disclosure stays above the rows. */
     submitNotice?: string;
     /** Explicit consent uses Save rather than the usual Done; a new one that creates a Workflow says Create. */
@@ -531,18 +532,19 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
             autoFocusOnOpen
             onRequestClose={props.onRequestClose}
         >
-            {({ maxHeight, placement, presentation }) => props.pushedPage ? (
+            {({ maxHeight, placement, presentation }) => <TriggerPushedPageHost page={props.pushedPage} presentation={presentation}
+                renderPage={(page, sheetHeaderBack) => (
                 <FloatingOverlay maxHeight={maxHeight} scrollEnabled surfaceChrome="theme" arrow={placement ? { placement } : false}>
                     <ListPresentationProvider value="page">
                         <View style={styles.surface}>
-                            <View style={styles.back}><ToolbarButton testID={`${props.testID}-back`}
-                                label={t('common.back')} onPress={props.pushedPage.onBack} /></View>
+                            {sheetHeaderBack ? null : <View style={styles.back}><ToolbarButton testID={`${props.testID}-back`}
+                                label={t('common.back')} onPress={page.onBack} /></View>}
                             {/* A phone sheet already names the pushed page in its header; the section repeats no title. */}
-                            <ItemGroup title={presentation === 'sheet' ? undefined : props.pushedPage.title} surface="none">{props.pushedPage.content}</ItemGroup>
+                            <ItemGroup title={presentation === 'sheet' ? undefined : page.title} surface="none">{page.content}</ItemGroup>
                         </View>
                     </ListPresentationProvider>
                 </FloatingOverlay>
-            ) : eventEditing && when.kind === 'pluginEvent' ? (
+            )}>{eventEditing && when.kind === 'pluginEvent' ? (
                 <TriggerPluginEventRows testID={props.testID} when={when} onChange={setWhen}
                     machineId={props.machineId ?? null} serverId={props.serverId ?? null} initialEventSeed={props.initialEventSeed}
                     initialEventEditSeed={props.initialEventEditSeed}
@@ -732,9 +734,44 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                     </View>
                     </ListPresentationProvider>
                 </FloatingOverlay>
-            )}
+            )}</TriggerPushedPageHost>}
         </Shell>
     );
+}
+
+type TriggerPopoverPushedPage = Readonly<{ title: string; onBack: () => void; content: React.ReactNode }>;
+
+/**
+ * A page pushed over the trigger form (its History, its roles). In a phone sheet it pushes into the
+ * sheet's own stack, so the sheet's header leads with Back and names it, and the form stays mounted
+ * under it; an anchored popover shows it in place of the form, under a Back row.
+ */
+function TriggerPushedPageHost(props: Readonly<{
+    page: TriggerPopoverPushedPage | undefined;
+    presentation: 'sheet' | 'popover';
+    renderPage: (page: TriggerPopoverPushedPage, sheetHeaderBack: boolean) => React.ReactNode;
+    children: React.ReactNode;
+}>): React.ReactElement {
+    const stack = React.useContext(PhoneSheetPushContext);
+    if (props.presentation === 'sheet' && stack !== null) return <TriggerSheetPushedPage {...props} stack={stack} />;
+    return <>{props.page === undefined ? props.children : props.renderPage(props.page, false)}</>;
+}
+
+function TriggerSheetPushedPage(props: Readonly<{
+    page: TriggerPopoverPushedPage | undefined;
+    stack: PhoneSheetPushStack;
+    renderPage: (page: TriggerPopoverPushedPage, sheetHeaderBack: boolean) => React.ReactNode;
+    children: React.ReactNode;
+}>): React.ReactElement {
+    const { page, renderPage } = props;
+    usePhoneSheetPush({
+        stack: props.stack,
+        open: page !== undefined,
+        title: page?.title,
+        onRequestClose: page?.onBack,
+        render: () => page === undefined ? null : renderPage(page, true),
+    });
+    return <>{props.children}</>;
 }
 
 /** Repeat · Day · At, or the expression a schedule was written with when it is not a simple one. */

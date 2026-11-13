@@ -154,6 +154,13 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         bottom: -theme.space.s20,
     },
     /**
+     * On a phone a block's card runs under its number (`blockCard`), so its spine leaves from the
+     * block's end rather than from under the mark: it links the block to the next mark through the gap.
+     */
+    spineFromBlockEnd: {
+        top: '100%',
+    },
+    /**
      * One lane's label (lab `.uwe-ll`, round 1106 F1): on the lane's name column, with the lane
      * forking off its container's spine beside it. The caret hangs on the name's first line, so a long
      * name that wraps keeps it level with its first words (DESIGN-7 M1 d).
@@ -300,6 +307,10 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
     blockBody: {
         flex: 1,
         gap: theme.space.s8,
+    },
+    /** A block's card (an Agent step's composer, a typed step's card): on the name column on the wide grid. */
+    blockCard: {
+        minWidth: 0,
     },
     /**
      * A block heading (lab `.uwe-sh`, `.uwe-ch`): ordinal, then the name line, then `⋯`, each on the
@@ -811,6 +822,9 @@ const compactDocumentGrid = StyleSheet.create({
     laneFork: { left: COMPACT_LANE_LEFT_PX, width: COMPACT_GUTTER_PX - LANE_BEND },
     laneJoinBend: { left: COMPACT_LANE_LEFT_PX, width: COMPACT_GUTTER_PX + SPINE_WIDTH },
     heading: { gap: COMPACT_ORDINAL_GAP_PX, marginLeft: -COMPACT_GUTTER_PX },
+    // A phone gives a block's card the whole width: it runs under the number column (FIN 2026-11-13),
+    // so its value boxes are not squeezed by the gutter; the name keeps its column.
+    blockCard: { marginLeft: -COMPACT_GUTTER_PX },
 });
 /** The grid-dependent rows of the wide document, named one by one from the authored styles. */
 const WIDE_GRID_STYLES = {
@@ -824,6 +838,7 @@ const WIDE_GRID_STYLES = {
     laneFork: workflowEditorStyles.laneFork,
     laneJoinBend: workflowEditorStyles.laneJoinBend,
     heading: workflowEditorStyles.heading,
+    blockCard: workflowEditorStyles.blockCard,
 };
 /**
  * The same rows with the compact overrides layered on, key for key (the compiler checks every key). Each pair is a
@@ -840,6 +855,7 @@ const COMPACT_GRID_STYLES: { readonly [Key in keyof typeof WIDE_GRID_STYLES]: [(
     laneFork: [workflowEditorStyles.laneFork, compactDocumentGrid.laneFork],
     laneJoinBend: [workflowEditorStyles.laneJoinBend, compactDocumentGrid.laneJoinBend],
     heading: [workflowEditorStyles.heading, compactDocumentGrid.heading],
+    blockCard: [workflowEditorStyles.blockCard, compactDocumentGrid.blockCard],
 };
 
 /** The grid-dependent document styles for the grid the editor publishes (stable per grid). */

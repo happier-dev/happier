@@ -27,6 +27,8 @@ export type WorkflowSpineReach = 'next' | 'end' | 'endPastInserter';
 /** The spine below one block's mark, in its ordinal column. Drawing only: hidden from assistive technology. */
 export function WorkflowSpineSegment(props: Readonly<{
     reach: WorkflowSpineReach;
+    /** The block's card runs under its mark (a phone's grid), so the segment starts at the block's end. */
+    fromBlockEnd?: boolean;
     testID?: string;
 }>): React.ReactElement {
     return (
@@ -39,6 +41,7 @@ export function WorkflowSpineSegment(props: Readonly<{
                 workflowEditorStyles.spineSegment,
                 props.reach === 'next' ? workflowEditorStyles.spineToNext
                     : props.reach === 'end' ? workflowEditorStyles.spineToEnd : workflowEditorStyles.spineToEndPastInserter,
+                props.fromBlockEnd === true ? workflowEditorStyles.spineFromBlockEnd : null,
             ]}
         />
     );

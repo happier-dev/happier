@@ -95,7 +95,7 @@ import {
 } from './workflowRowEngagement';
 import { duplicateWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import {
-  useWorkflowDocumentGridStyles, workflowEditorStyles,
+  useWorkflowDocumentGridStyles, WorkflowDocumentGridContext, workflowEditorStyles,
 } from './workflowEditorStyles';
 import type { WorkflowDocumentPresentation } from './workflowDocumentPresentation';
 import { WorkflowAgentChangeTint } from './WorkflowAgentChangeTint';
@@ -593,6 +593,7 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
   }>,
 ): React.ReactElement {
   const grid = useWorkflowDocumentGridStyles();
+  const compactGrid = React.useContext(WorkflowDocumentGridContext) === 'compact';
   const props = row.owner.current;
   const draft = row.definition ?? props.draft;
   const validation = row.validation ?? props.validation;
@@ -822,6 +823,9 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
         : editable
           ? 'endPastInserter'
           : 'end';
+  // On a phone a leaf's card runs under its number (`blockCard`); its spine then links its end to the next mark.
+  const cardUnderNumber = compactGrid && (block.kind === 'action' || block.kind === 'workflow'
+    || (block.kind === 'step' && row.summary === null));
   const SummaryRowFrame = Platform.OS === 'web' ? View : React.Fragment;
 
   return (
@@ -877,6 +881,7 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
         {spineReach === null ? null : (
           <WorkflowSpineSegment
             reach={spineReach}
+            fromBlockEnd={cardUnderNumber}
             testID={`${testIDPrefix}-${block.id}-spine`}
           />
         )}

@@ -1,7 +1,7 @@
-import { defineHappierScene, HAPPIER_STATE_LINE_METRICS, HAPPIER_STATE_SIZE_METRICS, HappierDisclosureToggle, HappierSurfaceState, HappierSurfaceStateLiveLine, resolveHappierStateFailureGlyph, resolveHappierSurfaceStateQuiet, type HappierSceneInput, type HappierStateSize, type HappierSurfaceStateAction, type HappierSurfaceStateBindings, type HappierSurfaceStateKind, type HappierSurfaceStateLive } from '@happier-dev/plugin-ui/presentation';
+import { defineHappierScene, HappierBodyEdgeContext, HAPPIER_STATE_LINE_METRICS, HAPPIER_STATE_SIZE_METRICS, HappierDisclosureToggle, HappierSurfaceState, HappierSurfaceStateLiveLine, resolveHappierStateFailureGlyph, resolveHappierSurfaceStateQuiet, type HappierSceneInput, type HappierStateSize, type HappierSurfaceStateAction, type HappierSurfaceStateBindings, type HappierSurfaceStateKind, type HappierSurfaceStateLive } from '@happier-dev/plugin-ui/presentation';
 import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import * as React from 'react';
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
@@ -12,6 +12,8 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { DisclosedCodeText, useCoreDisclosureToggleBinding } from '@/components/ui/lists/DisclosureCaret';
+import { BareSectionRowsContext, useListPresentation } from '@/components/ui/lists/listPresentation';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { t } from '@/text';
 
 import { useSurfaceStateCardSize, useSurfaceStateQuietActions } from './surfaceStateSize';
@@ -72,6 +74,10 @@ export const STILL_WAITING_AFTER_MS = 5_000;
 export type SurfaceStateLive = HappierSurfaceStateLive;
 
 const stylesheet = StyleSheet.create((theme) => ({
+    /** A line among a bare page section's rows: on their text edge (the rows' own padding). */
+    bareSectionLine: {
+        paddingHorizontal: PAGE_LIST_METRICS.rowPaddingHorizontalPx,
+    },
     detail: {
         ...Typography.variant('meta'),
         color: theme.colors.text.tertiary,
@@ -192,6 +198,8 @@ export function SurfaceStateCard(props: Readonly<{
     const [contentKey] = React.useState(() => Symbol('surface-state'));
     const containerSize = useSurfaceStateCardSize();
     const size = props.size ?? containerSize;
+    const listPresentation = useListPresentation();
+    const bareSectionRows = React.useContext(BareSectionRowsContext) && listPresentation === 'page';
     const reportedEmpty = props.kind === 'empty' && props.body === undefined;
     React.useEffect(() => {
         if (!props.replacesContent || !reportContent) return;
@@ -252,7 +260,7 @@ export function SurfaceStateCard(props: Readonly<{
         ) : props.icon ?? (lineIconName
             ? <Icon name={lineIconName} size={HAPPIER_STATE_LINE_METRICS.glyphPx} color={lineTint} />
             : undefined);
-        return (
+        const line = (
             <HappierSurfaceState
                 {...shared}
                 size="line"
@@ -262,6 +270,11 @@ export function SurfaceStateCard(props: Readonly<{
                 lineText={<>{props.titleContent ?? props.title}{props.reason ? (props.reasonContent != null ? <>{' · '}{props.reasonContent}</> : ` · ${props.reason}`) : null}</>}
             />
         );
+        // Among a bare page section's rows (no sheet, so no page-section row inset) the line stands on the rows'
+        // own text edge, not on a collection list's inset: a section's words then start on one edge.
+        return bareSectionRows && !props.replacesContent && props.lineDensity === undefined
+            ? <View style={stylesheet.bareSectionLine}><HappierBodyEdgeContext.Provider value>{line}</HappierBodyEdgeContext.Provider></View>
+            : line;
     }
 
     const metrics = size ? HAPPIER_STATE_SIZE_METRICS[size] : null;
