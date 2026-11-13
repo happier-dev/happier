@@ -82,7 +82,8 @@ import type { ExternalActionDaemonDispatchRequest, ExternalActionRequestEnvelope
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import type { DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import type { DeploymentBackupConfigureInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
-import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_BACKUP_ACTION_IDS_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_BACKUP_ACTION_IDS_V1, DEPLOYMENT_DATA_QUERY_ACTION_ID_V1,
+    DEPLOYMENT_DRIFT_READ_ACTION_ID_V1, DEPLOYMENT_HEALTH_READ_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { buildDeploymentBackupActionInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -1604,6 +1605,59 @@ describe('deployment children retain their controller Action authority', () => {
         } finally { stop(); }
         expect(queries.filter(model => ['Account', 'ApiToken', 'TeamMembership', 'ProjectSource'].includes(model)),
             'no authority re-evaluation on either admitted hop').toEqual([]);
+    });
+
+    it.each([DEPLOYMENT_DATA_QUERY_ACTION_ID_V1, DEPLOYMENT_DRIFT_READ_ACTION_ID_V1,
+        DEPLOYMENT_HEALTH_READ_ACTION_ID_V1])('K2 retains finite %s metadata and content after withdrawal, refusing new work', async actionId => {
+        const f = await fixture('team', 'account', { separateMemberCustodian: true });
+        await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded' } });
+        await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { activeDeploymentId: f.receipt.id } });
+        const references = { serverId, environmentId: f.environment.id, targetLinkId: f.link.id,
+            deploymentId: f.receipt.id, machineId: f.member.id, installationId: f.member.installationId };
+        const input = getActionSpec(actionId).inputSchema.parse(actionId === DEPLOYMENT_DATA_QUERY_ACTION_ID_V1
+            ? { ...references, expectedRevision: f.environmentRevision, service: 'database', sql: 'select 1', params: {} }
+            : { ...references, ...(actionId === DEPLOYMENT_DRIFT_READ_ACTION_ID_V1
+                ? { expectedRevision: f.environmentRevision } : {}),
+                service: { kind: 'deployment', machineId: f.member.id, environmentId: f.environment.id,
+                    environmentInstanceId: 'instance', composeService: 'database', serviceId: 'instance/database' } });
+        const target = { kind: 'machine' as const, machineId: f.member.id };
+        const mint = () => {
+            const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+            return auth.mintExternalActionExecutionAuthorization({ accountId: f.account.id,
+                serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+                actionId, machineId: f.member.id, target, requestId: envelope.requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, input) });
+        };
+        const authorization = await mint();
+        const read = (effectActionId: string, path: string, routeInput?: unknown) =>
+            verifyExternalActionDomainExecutionRequest({ authorizationToken: authorization.token,
+                effectActionId, encodedTarget: encodeExternalActionResolvedTargetV1(target),
+                method: 'GET', path, body: undefined, routeInput,
+                machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId, target, installationId: f.member.installationId,
+                    requestId: authorization.binding.requestId, method: 'GET', path, privateKey: f.member.keys.secretKey }) });
+        const hops = [
+            { effect: 'deployments.environments.get', path: `/v1/deployments/environments/${f.environment.id}?serverId=${serverId}`,
+                input: { serverId, environmentId: f.environment.id } },
+            { effect: actionId, path: `/v1/artifacts/${f.environment.contentArtifactId}`, input: undefined },
+            { effect: actionId, path: `/v1/artifacts/${f.link.contentArtifactId}`, input: undefined },
+            { effect: actionId, path: `/v1/artifacts/${f.receipt.contentArtifactId}`, input: undefined },
+        ];
+        for (const hop of hops) expect(await read(hop.effect, hop.path, hop.input), hop.path).not.toBeNull();
+        await db.teamMembership.update({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.member.accountId } },
+            data: { role: 'owner' } });
+        expect(await inTx(tx => removeTeamMemberForActorInTx(tx, { teamId: f.team!.id, actorAccountId: f.account.id })))
+            .toMatchObject({ ok: true });
+        await expect(mint()).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        const queries: string[] = [];
+        const stop = observeSqliteRequests({ before: query => { queries.push(query.model ?? query.action); } });
+        try {
+            for (const hop of hops) expect.soft(await read(hop.effect, hop.path, hop.input), hop.path).not.toBeNull();
+        } finally { stop(); }
+        expect(queries.filter(model => ['Account', 'ApiToken', 'TeamMembership', 'ProjectSource'].includes(model)),
+            'finite metadata and content hops must not re-evaluate admitted authority').toEqual([]);
+        expect(await read(actionId, `/v1/artifacts/${crypto.randomUUID()}`), 'unadmitted content remains refused').toBeNull();
     });
 
     it('retains finite health read custody through the resource route after Team withdrawal', async () => {
