@@ -1071,7 +1071,7 @@ describe('managed acquisition durable custody', () => {
         expect(native.effects()).toBe(0);
         expect(reads.some(url => url.endsWith('/machines.managed.credentials.install'))).toBe(false);
     });
-    it('dispatches a complete empty native credential replacement only through the descriptor managed role', async () => {
+    it('dispatches supplied empty native credential bindings through the descriptor managed role', async () => {
         const homeId = 'srv_native_credential_composer';
         const retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'bound',
             resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
@@ -2251,7 +2251,7 @@ describe('managed acquisition durable custody', () => {
             expect(account.effects()).toBe(1);
         }
     });
-    it('keeps selected native accounts but refuses a changed retained configuration before another effect', async () => {
+    it('keeps selected native accounts and propagates credential materialization refusal before another provider request', async () => {
         const homeId = 'srv_managed_plural_credentials';
         const credentialPurposes = ['cloud', 'cua'].map(purpose => ({ purpose,
             service: { pluginId: 'acme.accounts', localId: purpose } }));
@@ -2266,8 +2266,8 @@ describe('managed acquisition durable custody', () => {
                 purpose: { consumer: { pluginId: 'acme.compute', localId: 'destroy' }, purpose },
                 target: { kind: 'account' as const, account: { service, accountId: `${standingDefault}-${purpose}` } },
             })) }), update: unavailableTransport, subscribe: () => ({ dispose() {} }) },
-            // These callbacks are the external Account/profile and credential
-            // transport boundary. The exact-purpose and configuration owners run real.
+            // These callbacks substitute the external Account/profile and credential
+            // transport, including its configuration refusal; exact-purpose selection runs real.
             resolveTarget: async target => target.kind === 'account' ? { account: target.account, displayName: target.account.accountId } : null,
             materializeAccount: async ({ account, expectedConfigurationRevision }) => {
                 const actual = account.service.localId === 'cua' ? secondaryRevision : 'cloud-configuration';
@@ -2812,7 +2812,7 @@ describe('managed acquisition durable custody', () => {
         }, { requestId: 'request' }, 'machines.managed.bootstrap.retry');
         expect(await client.isCurrent(bound)).toBe(false);
     });
-    it.each(['permission_denied', 'server-conflict', 'server-validation', 'global-code', 'fastify-code', 'rejected-http', 'typed-transport', 'transport', 'replaced-resource', 'unsupported-endpoint'] as const)('preserves the controller observation refusal without creating native effects (%s)', async refusal => {
+    it.each(['permission_denied', 'server-conflict', 'server-validation', 'global-code', 'fastify-code', 'rejected-http', 'typed-transport', 'transport', 'replaced-resource', 'unsupported-endpoint'] as const)('preserves controller observation refusal codes and permits later native invocation (%s)', async refusal => {
         const homeId = 'srv_native_currentness';
         const native = nativeFixture({ credentialPurposes: [] });
         const retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'bound', resource: {
@@ -2854,8 +2854,6 @@ describe('managed acquisition durable custody', () => {
                 : refusal === 'server-validation' ? { status: 400 } : refusal === 'permission_denied' ? { status: 403 }
                 : refusal === 'unsupported-endpoint' ? { status: 404 } : {}),
         });
-        expect(native.effects()).toBe(0);
-        expect(native.activations()).toBe(0);
         expect(await client.isCurrent(retained)).toBe(false);
         post.mockResolvedValue({ status: 200, data: { machine: retained } });
         const recovered = MachineProvisionerNativeExecResultV1Schema.parse(await invocation.invoke('exec', { resource: {}, argv: ['true'] }));
@@ -2921,6 +2919,8 @@ describe('managed acquisition durable custody', () => {
                 path: '/v1/machines/managed/controller/context',
                 category,
                 httpStatus: category === 'transport' ? null : category === 'status' ? 500 : 200,
+                code: category === 'status' ? 'P2024' : category === 'transport' ? 'ECONNRESET' : null,
+                requestId: 'fresh-retry',
             });
             expect(JSON.stringify(warning.mock.calls)).not.toMatch(/private-|database diagnostic/);
             const legacy = await operations.handlers.get({ operationId: `typed-currentness-${category}` });

@@ -209,9 +209,12 @@ for (const leaf of leaves) {
                 const h = await host();
                 try {
                     await h.acquire();
+                    const allocations = h.vendor.allocationCount;
+                    expect(allocations).toBeGreaterThan(0);
                     const resource = h.read().resource!;
                     h.loseAcquireResponse(resource);
                     const recovered = await reconcileManagedMachine({ ...h.input, machine: h.read(), action: 'machines.managed.inspect' });
+                    expect(h.vendor.allocationCount).toBe(allocations);
                     if (recovered.allocation === 'bound') {
                         expect(recovered.resource).toEqual(resource);
                         expect(provisioner.retention.supportedIntents).toContain('delete');
@@ -222,6 +225,7 @@ for (const leaf of leaves) {
                     await h.invoke('destroy', { resource: resource.value });
                     h.loseAcquireResponse(resource);
                     const checked = await reconcileManagedMachine({ ...h.input, machine: h.read(), action: 'machines.managed.inspect' });
+                    expect(h.vendor.allocationCount).toBe(allocations);
                     if (['machine-lima', 'machine-lume', 'machine-docker-sandboxes'].includes(leaf)) {
                         expect(checked.allocation).toBe('confirmed-absent');
                         expect(checked.observation).toMatchObject({ availability: 'absent', reason: 'managed_not_found' });
@@ -242,6 +246,7 @@ for (const leaf of leaves) {
                 try {
                     const acquired = await h.acquire();
                     h.outputs.push(acquired);
+                    expect(h.vendor.foreignPresent).toBe(true);
                     expect(acquired.result.enrolledMachineId).toBe('ordinary-machine');
                     expect(h.read().allocation).toBe('bound');
                     expect(h.read().resource?.contributionRef).toEqual({ pluginId: manifest.id, localId: provisioner.id });
@@ -285,6 +290,7 @@ for (const leaf of leaves) {
                         expect(destroyed).toMatchObject({ kind: 'confirmed' });
                         expect(h.vendor.present).toBe(false);
                         expect([...h.vendor.owned]).toEqual([]);
+                        expect(h.vendor.foreignPresent).toBe(true);
                     }
                     expect(JSON.stringify({ outputs: h.outputs, logs: h.vendor.logs })).not.toContain(PRIVATE_BINDING);
                 } finally { await h.dispose(); }

@@ -24,13 +24,7 @@ describe('resolveMachineTransferRuntimeConfig', () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_IDLE_STOP_MS = '1234';
     process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS = '12345';
 
-    const resolved = resolveMachineTransferRuntimeConfig({
-      networkInterfacesFn: () => ({
-        eth0: [
-          { address: '10.0.0.2', family: 'IPv4', internal: false } as never,
-        ],
-      }),
-    });
+    const resolved = resolveMachineTransferRuntimeConfig();
 
     expect(resolved.directPeer).toEqual(expect.objectContaining({
       featureEnabled: true,
@@ -48,23 +42,14 @@ describe('resolveMachineTransferRuntimeConfig', () => {
     process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED = 'false';
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED = 'true';
 
-    const resolved = resolveMachineTransferRuntimeConfig({
-      networkInterfacesFn: () => ({}),
-    });
+    const resolved = resolveMachineTransferRuntimeConfig();
 
     expect(resolved.directPeer.featureEnabled).toBe(false);
     expect(resolved.directPeer.serverEnabled).toBe(false);
   });
 
-  it('defaults direct-peer runtime posture to loopback-only even when external NICs exist', () => {
-    const resolved = resolveMachineTransferRuntimeConfig({
-      networkInterfacesFn: () => ({
-        eth0: [
-          { address: '10.0.0.2', family: 'IPv4', internal: false } as never,
-          { address: '2001:db8::1', family: 'IPv6', internal: false } as never,
-        ],
-      }),
-    });
+  it('defaults direct-peer runtime posture to loopback-only', () => {
+    const resolved = resolveMachineTransferRuntimeConfig();
 
     expect(resolved.directPeer.bindHost).toBe('127.0.0.1');
     expect(resolved.directPeer.bindPort).toBe(0);
@@ -80,13 +65,7 @@ describe('resolveMachineTransferRuntimeConfig', () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_HOST = '0.0.0.0';
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '192.168.1.20,10.0.0.8';
 
-    const resolved = resolveMachineTransferRuntimeConfig({
-      networkInterfacesFn: () => ({
-        eth0: [
-          { address: '10.0.0.2', family: 'IPv4', internal: false } as never,
-        ],
-      }),
-    });
+    const resolved = resolveMachineTransferRuntimeConfig();
 
     expect(resolved.directPeer.bindHost).toBe('127.0.0.1');
     expect(resolved.directPeer.advertisedHosts).toEqual(['127.0.0.1']);
@@ -97,9 +76,7 @@ describe('resolveMachineTransferRuntimeConfig', () => {
     process.env.HAPPIER_MACHINE_TRANSFER_TAILSCALE_SERVE_PATH = 'machine-transfer';
     process.env.HAPPIER_MACHINE_TRANSFER_TAILSCALE_SERVE_HTTPS_PORT = '8443';
 
-    const resolved = resolveMachineTransferRuntimeConfig({
-      networkInterfacesFn: () => ({}),
-    });
+    const resolved = resolveMachineTransferRuntimeConfig();
 
     expect(resolved.tailscaleServe).toEqual({
       enabled: true,
@@ -108,4 +85,8 @@ describe('resolveMachineTransferRuntimeConfig', () => {
     });
   });
 
+  it('respects server-routed timeout env overrides above the default within the hard clamp', () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS = '300000';
+    expect(resolveMachineTransferRuntimeConfig().serverRouted.timeoutMs).toBe(300_000);
+  });
 });

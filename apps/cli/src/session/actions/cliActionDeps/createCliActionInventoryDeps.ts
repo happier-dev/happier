@@ -45,7 +45,7 @@ import type { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot
 import type { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { projectSpawnMcpServersPreviewInventory } from './resolveSpawnMcpServersPreviewInventory';
 import type { createCliSettingsCatalogServices } from '../settingsCatalogServices';
-import { encodeScmDiffSummaryModelOverride, ScmDiffSummaryModelCatalogObservationV1Schema } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
+import { encodeScmDiffSummaryModelOverride, readScmDiffSummaryRunnerCatalogId, readScmDiffSummaryRunnerChoice, ScmDiffSummaryModelCatalogObservationV1Schema } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
 import {
   type SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -139,12 +139,6 @@ function limitItems<T>(items: readonly T[], limit?: number): readonly T[] {
   return items.slice(0, limit);
 }
 
-type AgentProbeInventoryDeps = Readonly<{
-  probeAgentModelsBestEffort: (args: unknown) => Promise<unknown>;
-  probeAgentModesBestEffort: (args: unknown) => Promise<unknown>;
-  probeAgentConfigOptionsBestEffort: (args: unknown) => Promise<unknown>;
-}>;
-
 function readBackendTargetKey(args: Readonly<{ backendTargetKey?: unknown }>): string {
   return typeof args.backendTargetKey === 'string' ? args.backendTargetKey.trim() : '';
 }
@@ -201,7 +195,6 @@ async function probeActionModelsBestEffort(params: Readonly<{
   credentials: StoredCredentials | null;
   acpCatalogSnapshot?: AcpCatalogSnapshotV1;
   savedSecretOperationContext?: SavedSecretOperationContextV1;
-  probeDeps?: AgentProbeInventoryDeps;
 }>): Promise<ProbedAgentModelsResult | null> {
   const probeAgentId = await resolveProbeAgentId({
     agentId: params.agentId,
@@ -218,8 +211,7 @@ async function probeActionModelsBestEffort(params: Readonly<{
   const probe = params.args.probe;
   const cwd = normalizeStringValue(probe?.cwd) || normalizeStringValue(params.rawSession?.path) || process.cwd();
   try {
-    const probeAgentModelsBestEffort = params.probeDeps?.probeAgentModelsBestEffort
-      ?? (await import('./resolveAgentProbeInventoryDeps')).probeAgentModelsBestEffort;
+    const { probeAgentModelsBestEffort } = await import('./resolveAgentProbeInventoryDeps');
     return await probeAgentModelsBestEffort({
       agentId: probeAgentId,
       ...(params.backendTarget ? { backendTarget: convertBackendTargetRefV2ToV1(params.backendTarget) } : {}),
@@ -231,7 +223,7 @@ async function probeActionModelsBestEffort(params: Readonly<{
       credentials: params.credentials,
       acpCatalogSnapshot: params.acpCatalogSnapshot,
       savedSecretOperationContext: params.savedSecretOperationContext,
-    }) as ProbedAgentModelsResult;
+    });
   } catch (error) {
     const { AcpCatalogUnavailableError } = await import("@/agent/acp/catalog/configured/resolveBackend");
     if (error instanceof AcpCatalogUnavailableError) throw error;
@@ -252,7 +244,6 @@ async function probeActionModesBestEffort(params: Readonly<{
   credentials: StoredCredentials | null;
   acpCatalogSnapshot?: AcpCatalogSnapshotV1;
   savedSecretOperationContext?: SavedSecretOperationContextV1;
-  probeDeps?: AgentProbeInventoryDeps;
 }>): Promise<ProbedAgentModesResult | null> {
   const probeAgentId = await resolveProbeAgentId({
     agentId: params.agentId,
@@ -270,8 +261,7 @@ async function probeActionModesBestEffort(params: Readonly<{
   const probe = params.args.probe;
   const cwd = normalizeStringValue(probe?.cwd) || normalizeStringValue(params.rawSession?.path) || process.cwd();
   try {
-    const probeAgentModesBestEffort = params.probeDeps?.probeAgentModesBestEffort
-      ?? (await import('./resolveAgentProbeInventoryDeps')).probeAgentModesBestEffort;
+    const { probeAgentModesBestEffort } = await import('./resolveAgentProbeInventoryDeps');
     return await probeAgentModesBestEffort({
       agentId: probeAgentId,
       ...(params.backendTarget ? { backendTarget: convertBackendTargetRefV2ToV1(params.backendTarget) } : {}),
@@ -282,7 +272,7 @@ async function probeActionModesBestEffort(params: Readonly<{
       credentials: params.credentials,
       acpCatalogSnapshot: params.acpCatalogSnapshot,
       savedSecretOperationContext: params.savedSecretOperationContext,
-    }) as ProbedAgentModesResult;
+    });
   } catch (error) {
     const { AcpCatalogUnavailableError } = await import("@/agent/acp/catalog/configured/resolveBackend");
     if (error instanceof AcpCatalogUnavailableError) throw error;
@@ -303,7 +293,6 @@ async function probeActionConfigOptionsBestEffort(params: Readonly<{
   credentials: StoredCredentials | null;
   acpCatalogSnapshot?: AcpCatalogSnapshotV1;
   savedSecretOperationContext?: SavedSecretOperationContextV1;
-  probeDeps?: AgentProbeInventoryDeps;
 }>): Promise<ProbedAgentConfigOptionsResult | null> {
   const probeAgentId = await resolveProbeAgentId({
     agentId: params.agentId,
@@ -320,8 +309,7 @@ async function probeActionConfigOptionsBestEffort(params: Readonly<{
   const probe = params.args.probe;
   const cwd = normalizeStringValue(probe?.cwd) || normalizeStringValue(params.rawSession?.path) || process.cwd();
   try {
-    const probeAgentConfigOptionsBestEffort = params.probeDeps?.probeAgentConfigOptionsBestEffort
-      ?? (await import('./resolveAgentProbeInventoryDeps')).probeAgentConfigOptionsBestEffort;
+    const { probeAgentConfigOptionsBestEffort } = await import('./resolveAgentProbeInventoryDeps');
     return await probeAgentConfigOptionsBestEffort({
       agentId: probeAgentId,
       ...(params.backendTarget ? { backendTarget: convertBackendTargetRefV2ToV1(params.backendTarget) } : {}),
@@ -332,7 +320,7 @@ async function probeActionConfigOptionsBestEffort(params: Readonly<{
       credentials: params.credentials,
       acpCatalogSnapshot: params.acpCatalogSnapshot,
       savedSecretOperationContext: params.savedSecretOperationContext,
-    }) as ProbedAgentConfigOptionsResult;
+    });
   } catch (error) {
     const { AcpCatalogUnavailableError } = await import("@/agent/acp/catalog/configured/resolveBackend");
     if (error instanceof AcpCatalogUnavailableError) throw error;
@@ -361,8 +349,6 @@ export function createCliActionInventoryDeps(params: Readonly<{
   }> | null;
   readCurrentSessionMetadata?: () => Promise<Record<string, unknown> | null>;
   resolveTransportForSession?: Parameters<typeof createCliBoundSessionMetadataReader>[0]['resolveTransportForSession'];
-  accountProfile?: AccountProfile | null;
-  probeDeps?: AgentProbeInventoryDeps;
   /** Existing exact-Machine transport, backed by the daemon's retained Provider services. */
   callMachineAction?: (input: Readonly<{
     machineId: string;
@@ -382,6 +368,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
   | 'serversList'
   | 'reviewEnginesList'
   | 'agentsBackendsList'
+  | 'agentsConnectedDefaultRoutesRead'
   | 'readAccountAcpCatalog'
   | 'agentsModelsList'
   | 'sessionModesList'
@@ -481,9 +468,6 @@ export function createCliActionInventoryDeps(params: Readonly<{
   };
 
   const readAccountProfile = async (): Promise<AccountProfile | null> => {
-    if (params.accountProfile !== undefined) {
-      return params.accountProfile ?? null;
-    }
     if (!params.credentials?.token) return null;
     if (!accountProfilePromise) {
       accountProfilePromise = (async () => {
@@ -650,7 +634,29 @@ export function createCliActionInventoryDeps(params: Readonly<{
       await captured.assertCurrent();
       return { items };
     },
+    agentsConnectedDefaultRoutesRead: async ({ agentIds, signal }, context) => {
+      const settings = await readAccountSettings();
+      if (!settings) return {};
+      const { readAgentConnectedDefaultRoutes } = await import('@/session/services/agentConnectedDefaultRoutes');
+      const { dispositions } = await readAgentConnectedDefaultRoutes({ settings, agentIds,
+        credentials: params.savedSecretOperationContext?.credentials ?? params.credentials,
+        operationContext: params.savedSecretOperationContext,
+        authorizeRequest: params.authorizeConnectedAccountRequest
+          ? request => params.authorizeConnectedAccountRequest!(context, request) : undefined,
+        ...(signal ? { signal } : {}) });
+      return Object.fromEntries([...dispositions].map(([agentId, disposition]) => [agentId, disposition.kind]));
+    },
     agentsModelsList: async (args, context) => {
+      if (args.purpose === 'llm_task_runner') {
+        if (!args.task || !args.machineId || args.machineId !== params.localMachineId) return { items: [], source: 'unavailable' };
+        const { resolveLlmTaskRunnerOnThisMachine } = await import('@/agent/executionRuns/tasks/llmTaskRunner');
+        const { projectLlmTaskRunnerResolutionWireV1 } = await import('@happier-dev/protocol/llm/tasks/llmTaskRunnerSelection');
+        // Exactly the read a task run makes on this machine, so "Auto — currently X" is what runs.
+        const resolution = await resolveLlmTaskRunnerOnThisMachine({ task: args.task, choice: args.choice,
+          ...(args.sessionAgentTargetKey ? { sessionAgentTargetKey: args.sessionAgentTargetKey } : {}),
+          credentials: params.credentials, ...(args.signal ? { signal: args.signal } : {}) });
+        return { items: [], llmTaskRunner: projectLlmTaskRunnerResolutionWireV1(resolution) };
+      }
       if (args.purpose === 'scm_diff_summary') {
         if (!args.machineId || args.machineId !== params.localMachineId) return { items: [], source: 'unavailable' };
         const settings = await readAccountSettings();
@@ -663,7 +669,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
             ? request => params.authorizeConnectedAccountRequest!(context, request) : undefined,
           serverId: args.serverId ?? params.serverId, signal: args.signal });
         const catalog = await services.readScmDiffSummaryCatalog!(settings,
-          args.modelSelector ? encodeScmDiffSummaryModelOverride(args.modelSelector) : settings['scm.diffSummary.modelProfileOverride'],
+          args.modelSelector ? encodeScmDiffSummaryModelOverride(args.modelSelector) : readScmDiffSummaryRunnerCatalogId(readScmDiffSummaryRunnerChoice(settings)),
           { includeConfigured: true, discoveryTargetKey: args.discoveryTargetKey });
         const current = await readAccountSettings();
         if (!catalog || !current || !catalog.isCurrent(current) || !await services.isCurrent()) return { items: [], source: 'unavailable' };
@@ -730,7 +736,6 @@ export function createCliActionInventoryDeps(params: Readonly<{
         credentials: params.savedSecretOperationContext?.credentials ?? params.credentials ?? null,
         acpCatalogSnapshot: captured?.catalog,
         savedSecretOperationContext: params.savedSecretOperationContext,
-        probeDeps: params.probeDeps,
       });
       if (probeResult && 'ok' in probeResult) return probeResult;
       await captured?.assertCurrent();
@@ -788,7 +793,6 @@ export function createCliActionInventoryDeps(params: Readonly<{
         credentials: params.savedSecretOperationContext?.credentials ?? params.credentials ?? null,
         acpCatalogSnapshot: captured?.catalog,
         savedSecretOperationContext: params.savedSecretOperationContext,
-        probeDeps: params.probeDeps,
       });
       await captured?.assertCurrent();
       const probedItems = probeResult ? modeInventoryItemsFromProbeResult(probeResult) : [];
@@ -816,7 +820,6 @@ export function createCliActionInventoryDeps(params: Readonly<{
         credentials: params.savedSecretOperationContext?.credentials ?? params.credentials ?? null,
         acpCatalogSnapshot: captured?.catalog,
         savedSecretOperationContext: params.savedSecretOperationContext,
-        probeDeps: params.probeDeps,
       };
       const probeResult = usesMachineProbe
         ? await probeMachineInventory({ args, context, agentId: probeAgentId, backendTarget,
@@ -903,8 +906,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
         const { ConnectedServicesDefaultUnavailableError } = await import("@/session/services/spawnConnectedServicesDefaults");
         throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable');
       }
-      const accountProfile = params.accountProfile !== undefined ? params.accountProfile
-        : await runWithServerHttpBaseUrl(store.serverHttpBaseUrl, () => fetchAccountProfile({ token: credentials.token,
+      const accountProfile = await runWithServerHttpBaseUrl(store.serverHttpBaseUrl, () => fetchAccountProfile({ token: credentials.token,
           signal: context?.signal, authorizeRequest }));
       await assertCurrent();
       const accountSettings = includeDefaults ? await readAccountSettings() : null;

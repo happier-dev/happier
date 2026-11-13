@@ -230,7 +230,7 @@ async function setupReboot(options: Readonly<{ busyStartup?: boolean; spawn?: Ma
             },
             fileSystem: { lstat: async () => { throw Object.assign(new Error('Absent'), { code: 'ENOENT' }); },
                 readFile: async () => { throw new Error('Absent sudoers is not read'); } },
-            readTailscaledOperator: async () => ({ authorization: 'unknown' }),
+            tailscale: { tailscaleBin: 'tailscale' },
         });
         const admin = createMachineAdminAccessHost({ installationId: installation.installationId, installedCli: '/managed/happier',
             readPolicy: async () => ({ version: 1, mode: 'ask', administratorUsername: 'operator' }),

@@ -217,11 +217,13 @@ describe('firewall through the same P10 installed root invocation', () => {
         expect(metadata.reachabilityPosture.management.publicSsh).toEqual({ kind: 'closed' });
     });
 
-    it.each(['ask', 'preauthorized'] as const)('retains Caddy and private workload permits from the same %s protected CHECK', async mode => {
+    it.each(['ask', 'preauthorized'] as const)('retains Caddy and another workload when withdrawing a publication through the %s protected CHECK', async mode => {
         const f = await fixture(mode);
         await f.setFirewallFacts({ interfaces: {
             ens18: [{ address: '10.10.0.4', netmask: '255.255.255.0', family: 'IPv4',
                 mac: '00:00:00:00:00:01', internal: false, cidr: '10.10.0.4/24' }],
+            tun42: [{ address: '100.96.0.4', netmask: '255.255.0.0', family: 'IPv4',
+                mac: '00:00:00:00:00:02', internal: false, cidr: '100.96.0.4/16' }],
         } });
         const container = { Id: 'owned-caddy', Name: '/happier-caddy',
             Config: { Image: nativeCaddyImage, Cmd: ['caddy', 'run', '--resume', '--config', '/etc/caddy/happier.json'],
@@ -231,7 +233,7 @@ describe('firewall through the same P10 installed root invocation', () => {
             State: { Running: false }, NetworkSettings: { Networks: {}, Ports: null } };
         f.setDocker(async command => {
             // Genuine OS boundary: Docker is readable only inside the admitted root invocation.
-            if (f.launches.length !== 1) return { code: 1, stdout: '', stderr: 'daemon Docker permission denied' };
+            if (!f.launches.length) return { code: 1, stdout: '', stderr: 'daemon Docker permission denied' };
             if (command.args[0] === 'container' && command.args[1] === 'ls')
                 return { code: 0, stdout: JSON.stringify(container.Id), stderr: '' };
             if (command.args[0] === 'container' && command.args[1] === 'inspect')
@@ -240,23 +242,39 @@ describe('firewall through the same P10 installed root invocation', () => {
         });
         const metadata = { reachabilityPosture: { revision: 0,
             management: { providers: [], publicSsh: { kind: 'closed' } }, defaultServiceIngress: { kind: 'none' } } };
-        await machineNativeEffectAdmission.run({ operation: { operationId: 'private-workload', kind: 'deployments.deploy' },
+        const publication = (environmentId: string, hostPort: number) => MachineFirewallTransitionIntentV1Schema.parse({
+            v: 1, kind: 'preserveSsh', caddy: {}, publicSsh: { kind: 'closed' }, privateWorkloadBindings: { environmentId, bindings: [{
+                exposure: { requirementId: 'database', exposure: 'privateNetwork', providerId: 'selected-provider',
+                    networkIdentity: 'selected-network', hostAddress: '100.96.0.4', hostPort, containerPort: 5432, protocol: 'tcp' },
+                interfaceName: 'tun42', sourceRanges: ['100.96.0.0/16'],
+            }] },
+        }).privateWorkloadBindings!;
+        const settle = (privateWorkloadBindings: ReturnType<typeof publication>) => machineNativeEffectAdmission.run({
+            operation: { operationId: `workload-${privateWorkloadBindings.environmentId}-${privateWorkloadBindings.bindings.length}`, kind: 'deployments.deploy' },
             keys: [{ kind: 'machineSetup' }] }, native => settleMachinePrivateWorkloadFirewallForHost({
             machineId: 'machine', installationId: 'installation', operationId: native.operation.operationId, native,
             basis: { kind: 'setup', machineId: 'machine', desiredRevision: 0 },
             port: { read: async () => ({ status: 'ready', metadata, metadataVersion: 1 }),
                 compareAndSwap: async () => { throw new Error('Unchanged workload posture cannot write metadata'); } },
-            elevation: f.deps, privateNetworks: [], privateWorkloadBindings: { environmentId: 'withdrawn-environment', bindings: [] },
+            elevation: f.deps, privateNetworks: [], privateWorkloadBindings,
             readDaemonProof: () => observeOwnDaemonReachability({ client: {
                 isMachineControlRegistrationReady: () => true, callConnectedClientRpc: async () => ({ ok: true, result: {} }),
             } }),
         }));
+        await settle(publication('retained-environment', 25432));
+        await settle(publication('withdrawn-environment', 25433));
+        expect(f.readTable()).toContain('tcp dport 25432 accept');
+        expect(f.readTable()).toContain('tcp dport 25433 accept');
+        await settle({ environmentId: 'withdrawn-environment', bindings: [] });
         expect(f.boundaryFailures).toEqual([]);
-        expect(f.launches).toHaveLength(1);
-        expect(f.prompt).toHaveBeenCalledTimes(mode === 'ask' ? 1 : 0);
+        expect(f.launches).toHaveLength(3);
+        expect(f.prompt).toHaveBeenCalledTimes(mode === 'ask' ? 3 : 0);
         expect(f.frames.filter(frame => frame && typeof frame === 'object' && 'mode' in frame)
-            .map(frame => Reflect.get(frame as object, 'mode'))).toEqual(['check', 'apply']);
+            .map(frame => Reflect.get(frame as object, 'mode'))).toEqual(['check', 'apply', 'check', 'apply', 'check', 'apply']);
         expect(f.readTable()).toContain('tcp dport 80 accept');
+        expect(f.readTable()).toContain('tcp dport 25432 accept');
+        expect(f.readTable()).toContain('ct original proto-dst 25432 accept');
+        expect(f.readTable()).not.toContain('25433');
         expect(metadata.reachabilityPosture.management.publicSsh).toEqual({ kind: 'closed' });
     });
 

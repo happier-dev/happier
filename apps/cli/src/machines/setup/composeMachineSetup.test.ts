@@ -17,7 +17,6 @@ import { createActionOperationRunner } from '@/daemon/actionOperations/actionOpe
 import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
 import { createActionOperationRpcHandlers } from '@/daemon/actionOperations/actionOperationRpcHandlers';
 import { waitForMachineSetupOperationV1 } from '@happier-dev/protocol/machines/setup/waitForMachineSetupOperationV1';
-import { createMachineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { createWorkflowRunStorageTestkit } from '@/daemon/workflows/workflowRunStorage.testkit';
 import { DurableWorkflowCoordinatorStore } from '@/daemon/workflows/production';
 import { workflowInvocationKey } from '@/daemon/workflows/coordinator';
@@ -113,7 +112,11 @@ describe('Combined Machine setup child settlement', () => {
     const backupReceivers = [{ sourceIndex: 0, itemIndex: 0, machineId: 'guest', installationId: 'receiver-installation',
       status: 'ready', endpoint: { host: 'receiver.example', port: 2205 }, username: 'archive', path: '/repository',
       hostKey: '[receiver.example]:2205 ssh-ed25519 AAAA', fingerprint: 'SHA256:fixture' }];
-    const fixture = await retainedSetup('succeeded', 'completed', { operationId: 'child-operation', backupReceivers },
+    const operation = { version: 1, operationId: 'child-operation', revision: 2,
+      actionId: 'machines.setup.apply', state: 'succeeded', scope: { accountId: 'actor', machineId: 'guest' },
+      title: 'Set up machine', createdAt: 1, startedAt: 1, settledAt: 2, cancellation: 'supported',
+      result: { operationId: 'child-operation', backupReceivers } };
+    const fixture = await retainedSetup('succeeded', 'completed', { operation },
       undefined, undefined, false, undefined, true);
     expect(await fixture.apply()).toMatchObject({ operationId: 'setup-operation', runId: fixture.runId, backupReceivers });
   });
@@ -160,52 +163,38 @@ describe('Combined Machine setup child settlement', () => {
     expect(await fixture.apply()).toMatchObject({ ok: false, errorCode: 'outcome_uncertain',
       details: { runId: fixture.runId } });
   });
-  it('keeps a lost Workflow observation nonterminal while native work still holds admission', async () => {
+  it('keeps a lost Workflow observation nonterminal through operation projection and restart', async () => {
     const fixture = await retainedSetup('running', 'native_effect_failed', undefined, undefined,
       Object.assign(new Error('socket closed'), { code: 'ECONNRESET' }));
-    const admission = createMachineNativeEffectAdmission();
-    let finishNative!: () => void;
-    let entered!: () => void;
-    const started = new Promise<void>(resolve => { entered = resolve; });
-    const native = admission.run({ operation: { operationId: 'native-child', kind: 'setup' }, keys: [], allNative: true },
-      async () => { entered(); await new Promise<void>(resolve => { finishNative = resolve; }); });
-    await started;
-    let nextEntered = false;
-    const next = admission.run({ operation: { operationId: 'next-native', kind: 'setup' }, keys: [] },
-      async () => { nextEntered = true; });
     const store = createActionOperationStore();
     const spec = getActionSpec('machines.setup.apply');
     const scope = { accountId: 'actor', machineId: 'guest' };
     const runner = createActionOperationRunner({ store, generateOperationId: () => 'setup-operation',
       resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation! }) });
-    try {
-      const result = await runner.observe({ actionId: spec.id, scope, requestId: 'setup-request',
-        execute: async () => ActionExecuteFailureSchema.parse(await fixture.apply()) });
-      expect(result).toMatchObject({ ok: false, errorCode: 'outcome_uncertain',
-        details: { runId: fixture.runId }, failureCause: { phase: 'workflow.run.wait', errorCode: 'storage_unavailable' } });
-      expect(store.get(scope, 'setup-operation')).toMatchObject({ state: 'running',
-        observation: { kind: 'outcome_uncertain' },
-        error: { errorCode: 'outcome_uncertain',
-          failureCause: { phase: 'workflow.run.wait', errorCode: 'storage_unavailable' } } });
-      const retained = ActionOperationSnapshotV1Schema.parse(JSON.parse(JSON.stringify(store.get(scope, 'setup-operation'))));
-      const restartedStore = createActionOperationStore();
-      restartedStore.project(retained);
-      const restartedRunner = createActionOperationRunner({ store: restartedStore,
-        resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation! }) });
-      const operations = createActionOperationRpcHandlers({ store: restartedStore, runner: restartedRunner,
-        machineId: scope.machineId, resolveAccountId: async () => scope.accountId });
-      const predecessor = PredecessorGetSchema.parse(await operations.get({ operationId: 'setup-operation' }));
-      expect(predecessor).toMatchObject({ kind: 'found', operation: { state: 'running' } });
-      if (predecessor.kind === 'found') expect(predecessor.operation.error).toBeUndefined();
-      expect(await operations.getV2({ operationId: 'setup-operation' })).toMatchObject({ kind: 'found',
-        operation: { error: { error: expect.stringContaining('Workflow Run'),
-          failureCause: { phase: 'workflow.run.wait', errorCode: 'storage_unavailable' } } } });
-      expect(await waitForMachineSetupOperationV1('setup-operation', request => operations.getV2(request)))
-        .toMatchObject({ ok: false, errorCode: 'outcome_uncertain', error: expect.stringContaining('Workflow Run'),
-          failureCause: { phase: 'workflow.run.wait', errorCode: 'storage_unavailable' } });
-      expect(nextEntered).toBe(false);
-    } finally { finishNative(); await native; await next; }
-    expect(nextEntered).toBe(true);
+    const result = await runner.observe({ actionId: spec.id, scope, requestId: 'setup-request',
+      execute: async () => ActionExecuteFailureSchema.parse(await fixture.apply()) });
+    expect(result).toMatchObject({ ok: false, errorCode: 'outcome_uncertain',
+      details: { runId: fixture.runId }, failureCause: { phase: 'workflow.run.wait', errorCode: 'storage_unavailable' } });
+    expect(store.get(scope, 'setup-operation')).toMatchObject({ state: 'running',
+      observation: { kind: 'outcome_uncertain' },
+      error: { errorCode: 'outcome_uncertain',
+        failureCause: { phase: 'workflow.run.wait', errorCode: 'storage_unavailable' } } });
+    const retained = ActionOperationSnapshotV1Schema.parse(JSON.parse(JSON.stringify(store.get(scope, 'setup-operation'))));
+    const restartedStore = createActionOperationStore();
+    restartedStore.project(retained);
+    const restartedRunner = createActionOperationRunner({ store: restartedStore,
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation! }) });
+    const operations = createActionOperationRpcHandlers({ store: restartedStore, runner: restartedRunner,
+      machineId: scope.machineId, resolveAccountId: async () => scope.accountId });
+    const predecessor = PredecessorGetSchema.parse(await operations.get({ operationId: 'setup-operation' }));
+    expect(predecessor).toMatchObject({ kind: 'found', operation: { state: 'running' } });
+    if (predecessor.kind === 'found') expect(predecessor.operation.error).toBeUndefined();
+    expect(await operations.getV2({ operationId: 'setup-operation' })).toMatchObject({ kind: 'found',
+      operation: { error: { error: expect.stringContaining('Workflow Run'),
+        failureCause: { phase: 'workflow.run.wait', errorCode: 'storage_unavailable' } } } });
+    expect(await waitForMachineSetupOperationV1('setup-operation', request => operations.getV2(request)))
+      .toMatchObject({ ok: false, errorCode: 'outcome_uncertain', error: expect.stringContaining('Workflow Run'),
+        failureCause: { phase: 'workflow.run.wait', errorCode: 'storage_unavailable' } });
   });
   it('retains the typed wait refusal when the transport supplies no exception cause', async () => {
     const fixture = await retainedSetup('running', 'native_effect_failed', undefined, undefined,

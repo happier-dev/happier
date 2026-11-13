@@ -1,6 +1,5 @@
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { networkInterfaces } from 'node:os';
 import * as fsPromises from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import type { LiveWorkProducerV1, LiveWorkInventoryV1, LiveWorkItemV1 } from '@/daemon/lifecycle/managedActivity';
@@ -81,10 +80,6 @@ const DIRECT_TRANSFER_CORS_ALLOW_HEADERS = [
   'content-type',
   DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER,
 ].join(',');
-
-function readAdvertisedHosts(networkInterfacesFn: typeof networkInterfaces): string[] {
-  return resolveDirectPeerAdvertisedHosts(networkInterfacesFn);
-}
 
 function readDirectPeerTtlMs(): number {
   return resolveDirectPeerTransferTtlMs();
@@ -236,12 +231,10 @@ function retainFilesystemSourceAuthority(source: TransferPayloadSource, scope?: 
 export function createDirectPeerTransferRegistry(params: Readonly<{
   advertisedPort: number;
   now?: () => number;
-  networkInterfacesFn?: typeof networkInterfaces;
   onPublishedTransfersChanged?: () => void;
   beforeDisposePayloadSource?: (transferToken: string) => Promise<void>;
 }>) {
   const now = params.now ?? Date.now;
-  const networkInterfacesFn = params.networkInterfacesFn ?? networkInterfaces;
   const publishedTransfers = new Map<string, StoredPublishedTransfer>();
   const onDemandScopesByToken = new Map<string, StoredOnDemandScope>();
   const inFlightOnDemandTransfers = new Map<string | Promise<TransferPayloadFileResult>,
@@ -376,7 +369,7 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
     const transferToken = randomBytes(24).toString('base64url');
     const expiresAt = now() + readDirectPeerTtlMs();
     const endpointPath = buildDirectPeerTransferEndpointPath(input.transferId);
-    const httpEndpointCandidates = filterDirectTransferEndpointCandidatesForAdvertisement(readAdvertisedHosts(networkInterfacesFn)
+    const httpEndpointCandidates = filterDirectTransferEndpointCandidatesForAdvertisement(resolveDirectPeerAdvertisedHosts()
       .map((host) => ({
         kind: 'http' as const,
         url: `http://${formatCandidateHost(host)}:${params.advertisedPort}${endpointPath}`,

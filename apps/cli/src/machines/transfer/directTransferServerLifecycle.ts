@@ -89,11 +89,6 @@ type StartDirectPeerTransferServer = (
   & Partial<Pick<RunningDirectPeerTransferServer, 'cleanupExpiredImportSessions' | 'getNextImportSessionExpiryAt' | 'activity' | 'releasePublishedTransferHandles'>>
 >;
 type DirectPeerTransferRegistry = ReturnType<typeof createDirectPeerTransferRegistry>;
-type CreateDirectPeerTransferRegistry = (
-  params: Parameters<typeof createDirectPeerTransferRegistry>[0],
-) =>
-  Omit<DirectPeerTransferRegistry, 'cleanupExpiredPublishedTransfers' | 'getNextPublishedTransferExpiryAt' | 'activity' | 'retainPayloadFileRequest'>
-  & Partial<Pick<DirectPeerTransferRegistry, 'cleanupExpiredPublishedTransfers' | 'getNextPublishedTransferExpiryAt' | 'activity' | 'retainPayloadFileRequest'>>;
 type RequestDirectPeerTransferToFile = typeof requestDirectPeerTransferToFile;
 
 function stripTrailingSlashes(value: string): string {
@@ -166,7 +161,6 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
   advertisedHosts?: readonly string[];
   idleStopMs?: number;
   now?: () => number;
-  createRegistry?: CreateDirectPeerTransferRegistry;
   startServer?: StartDirectPeerTransferServer;
   requestPayloadFile?: RequestDirectPeerTransferToFile;
   onStateChange?: (state: DirectTransferServerLifecycleState) => void | Promise<void>;
@@ -175,7 +169,6 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
 }>): DirectTransferServerLifecycle {
   const now = params.now ?? Date.now;
   const idleStopMs = Math.max(0, Math.floor(params.idleStopMs ?? 30_000));
-  const createRegistry = params.createRegistry ?? createDirectPeerTransferRegistry;
   const startServer = params.startServer ?? startDirectPeerTransferServer;
   const requestPayloadFile = params.requestPayloadFile ?? requestDirectPeerTransferToFile;
   const bindHost = resolveDirectPeerTransferBindHost(params.bindHost);
@@ -194,7 +187,6 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
 
   let server: Awaited<ReturnType<StartDirectPeerTransferServer>> | null = null;
   let startPromise: Promise<Awaited<ReturnType<StartDirectPeerTransferServer>>> | null = null;
-  let registry!: ReturnType<CreateDirectPeerTransferRegistry>;
   let lifecycleTimer: ReturnType<typeof setTimeout> | null = null;
   let idleDeadlineAt: number | null = null;
   let shouldStopWhenStarted = false;
@@ -349,7 +341,7 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
     lifecycleTimer.unref?.();
   };
 
-  registry = createRegistry({
+  const registry: DirectPeerTransferRegistry = createDirectPeerTransferRegistry({
     // The same registry survives lazy listener restarts; port zero is only a bind request.
     get advertisedPort() { return server?.port ?? params.bindPort; },
     now,
@@ -395,12 +387,6 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
         return started;
       }
       server = started;
-      if (!registry) {
-        registry = createRegistry({
-          advertisedPort: started.port,
-          now,
-        });
-      }
       await emitState('running');
       scheduleLifecycleTimer();
       if (shouldStopWhenStarted && !registry.hasPublishedTransfers()) {

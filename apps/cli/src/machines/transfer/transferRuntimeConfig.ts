@@ -1,5 +1,3 @@
-import { networkInterfaces } from 'node:os';
-
 import { parseBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
 
 import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
@@ -64,9 +62,8 @@ export function resolveDirectPeerServerEnabled(): boolean {
     && parseBooleanEnv(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED, true);
 }
 
-export function resolveDirectPeerAdvertisedHosts(_networkInterfacesFn: typeof networkInterfaces = networkInterfaces): string[] {
-  // Plain HTTP transfer is loopback-only. Legacy LAN advertisement inputs remain accepted by
-  // callers but cannot alter the current listener/advertisement posture.
+export function resolveDirectPeerAdvertisedHosts(): string[] {
+  // Plain HTTP transfer is loopback-only, including legacy LAN advertisement configuration.
   return [DEFAULT_DIRECT_PEER_BIND_HOST];
 }
 
@@ -188,9 +185,7 @@ export function resolveServerRoutedTransferOpenPayloadMaxBytes(): number {
   return Math.min(configured, resolveInMemoryTransferMaxBytes(), TRANSFER_OPEN_PAYLOAD_HARD_MAX_BYTES);
 }
 
-export function resolveMachineTransferRuntimeConfig(options?: Readonly<{
-  networkInterfacesFn?: typeof networkInterfaces;
-}>): Readonly<{
+export function resolveMachineTransferRuntimeConfig(): Readonly<{
   directPeer: Readonly<{
     advertisedHosts: string[];
     ttlMs: number;
@@ -217,10 +212,9 @@ export function resolveMachineTransferRuntimeConfig(options?: Readonly<{
     openPayloadMaxBytes: number;
   }>;
 }> {
-  const networkInterfacesFn = options?.networkInterfacesFn ?? networkInterfaces;
   return {
     directPeer: {
-      advertisedHosts: resolveDirectPeerAdvertisedHosts(networkInterfacesFn),
+      advertisedHosts: resolveDirectPeerAdvertisedHosts(),
       ttlMs: resolveDirectPeerTransferTtlMs(),
       requestTimeoutMs: resolveDirectPeerTransferRequestTimeoutMs(),
       bindPort: resolveDirectPeerTransferBindPort(),

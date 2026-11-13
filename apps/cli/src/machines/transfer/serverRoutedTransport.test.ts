@@ -1,9 +1,25 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile, type FileHandle } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { MachineTransferReceiveEnvelope, MachineTransferSendEnvelope } from '@happier-dev/protocol';
+import { MachineTransferSendEnvelopeSchema } from '@happier-dev/protocol/machines/transfer/transferStream';
+
+let observeTransferFileOpened: ((path: string, handle: FileHandle) => void) | undefined;
+
+// Observe real OS reads and writes while keeping transfer, hashing, and crypto owners intact.
+vi.mock('node:fs/promises', async () => {
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  return {
+    ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args);
+      observeTransferFileOpened?.(String(args[0]), handle);
+      return handle;
+    },
+  };
+});
 
 type Listener = (payload: MachineTransferReceiveEnvelope) => void;
 type MachineTransferSendOpenEnvelope = Extract<MachineTransferSendEnvelope['envelope'], { kind: 'open' }>;
@@ -86,21 +102,12 @@ function createLoopbackChannels(options?: Readonly<{
 
 describe('server routed machine transfer', () => {
   afterEach(() => {
+    observeTransferFileOpened = undefined;
+    vi.restoreAllMocks();
     delete process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS;
     delete process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_CHUNK_BYTES;
     delete process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES;
     delete process.env.HAPPIER_FILES_READ_MAX_BYTES;
-  });
-
-  it('keeps the request surface file-backed (no whole-buffer requestServerRoutedTransferPayload export)', async () => {
-    const mod = await import('./serverRoutedTransport');
-    expect('requestServerRoutedTransferPayload' in mod).toBe(false);
-  });
-
-  it('does not use Buffer.concat inside serverRoutedTransport.ts (large payloads must not assemble whole buffers)', async () => {
-    const sourcePath = new URL('./serverRoutedTransport.ts', import.meta.url);
-    const source = await readFile(sourcePath, 'utf8');
-    expect(source).not.toContain('Buffer.concat');
   });
 
   it('fails closed for oversized/unserializable request openBody without JSON.stringify and does not leak .part files', async () => {
@@ -552,28 +559,30 @@ describe('server routed machine transfer', () => {
     const payload = Buffer.from('payload', 'utf8');
 
     const { registerServerRoutedTransferResponder } = await import('./serverRoutedTransport');
+    let payloadLoads = 0;
 
     const unregister = registerServerRoutedTransferResponder({
       machineTransferChannel: source,
-      loadTransferPayloadSource: ({ transferId }) => (
-        transferId === 'transfer_invalid_recipient_key'
+      loadTransferPayloadSource: ({ transferId }) => {
+        payloadLoads += 1;
+        return transferId === 'transfer_invalid_recipient_key'
           ? { kind: 'buffer', payload, sizeBytes: payload.length }
-          : null
-      ),
+          : null;
+      },
       chunkBytes: 4,
     });
 
     try {
-      target.sendEnvelope({
+      target.sendEnvelope(MachineTransferSendEnvelopeSchema.parse({
         targetMachineId: 'machine_source',
         envelope: {
           transferId: 'transfer_invalid_recipient_key',
           kind: 'open',
           manifestHash: 'sha256:test',
-          // Base64-decodes to far more than a Curve25519 public key; must be rejected without attempting to encrypt.
-          recipientPublicKeyBase64: 'A'.repeat(2048),
+          // Valid protocol base64, but one byte larger than the required Curve25519 key.
+          recipientPublicKeyBase64: Buffer.alloc(33).toString('base64'),
         },
-      });
+      }));
 
       await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -583,7 +592,7 @@ describe('server routed machine transfer', () => {
             entry.targetMachineId === 'machine_target'
             && entry.envelope.kind === 'abort'
             && entry.envelope.transferId === 'transfer_invalid_recipient_key'
-            && entry.envelope.reason === 'invalid_open_request:recipient_public_key_too_long',
+            && entry.envelope.reason === 'invalid_open_request:recipient_public_key_invalid',
         ),
       ).toBe(true);
       expect(
@@ -594,6 +603,7 @@ describe('server routed machine transfer', () => {
             && entry.envelope.transferId === 'transfer_invalid_recipient_key',
         ),
       ).toBe(false);
+      expect(payloadLoads).toBe(0);
     } finally {
       unregister();
     }
@@ -604,20 +614,22 @@ describe('server routed machine transfer', () => {
     const { registerServerRoutedTransferResponder } = await import('./serverRoutedTransport');
     const { deriveBoxPublicKeyFromSeed } = await import('@happier-dev/protocol');
 
-    const pathologicalTransferId = 'x'.repeat(2048);
+    const pathologicalTransferId = 'x'.repeat(257);
+    let payloadLoads = 0;
     const recipientSecretKeySeed = new Uint8Array(32).fill(7);
     const recipientPublicKeyBase64 = Buffer.from(deriveBoxPublicKeyFromSeed(recipientSecretKeySeed)).toString('base64');
 
     const unregister = registerServerRoutedTransferResponder({
       machineTransferChannel: source,
       loadTransferPayloadSource: (_request) => {
+        payloadLoads += 1;
         throw new Error('Expected pathological open request to fail before loading payload');
       },
       chunkBytes: 4,
     });
 
     try {
-      target.sendEnvelope({
+      target.sendEnvelope(MachineTransferSendEnvelopeSchema.parse({
         targetMachineId: 'machine_source',
         envelope: {
           transferId: pathologicalTransferId,
@@ -625,7 +637,7 @@ describe('server routed machine transfer', () => {
           manifestHash: 'sha256:test',
           recipientPublicKeyBase64,
         },
-      });
+      }));
 
       await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -639,8 +651,9 @@ describe('server routed machine transfer', () => {
       if (!abort || abort.envelope.kind !== 'abort') {
         throw new Error('Expected abort envelope');
       }
-      expect(abort.envelope.reason).toContain('invalid_open_request');
+      expect(abort.envelope.reason).toBe('invalid_open_request:transfer_id_out_of_range');
       expect(abort.envelope.reason).not.toContain(pathologicalTransferId);
+      expect(payloadLoads).toBe(0);
     } finally {
       unregister();
     }
@@ -694,7 +707,7 @@ describe('server routed machine transfer', () => {
     }
   });
 
-  it('fails closed before decoding when a sender pads openPayloadBase64 beyond the encoded envelope bound', async () => {
+  it('rejects a locally delivered noncanonical padded open payload without loading source bytes', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_OPEN_PAYLOAD_MAX_BYTES = '16';
     const { source, target, sentEnvelopes } = createLoopbackChannels();
     const { registerServerRoutedTransferResponder } = await import('./serverRoutedTransport');
@@ -807,14 +820,15 @@ describe('server routed machine transfer', () => {
     const unregister = source.onEnvelope((payload) => {
       if (payload.envelope.kind !== 'open') return;
       if (payload.envelope.transferId !== 'transfer_oversized_finish_manifest') return;
-      source.sendEnvelope({
+      source.sendEnvelope(MachineTransferSendEnvelopeSchema.parse({
         targetMachineId: payload.sourceMachineId,
         envelope: {
           transferId: payload.envelope.transferId,
           kind: 'finish',
-          manifestHash: `sha256:${'a'.repeat(5000)}`,
+          // The protocol accepts this length; the CLI manifest guard rejects it.
+          manifestHash: `sha256:${'a'.repeat(122)}`,
         },
-      });
+      }));
     });
 
     try {
@@ -917,9 +931,10 @@ describe('server routed machine transfer', () => {
     }
   });
 
-  it('streams a payload directly to a destination file with verified manifest metadata', async () => {
+  it('streams bounded file chunks to disk before reading more, with verified bytes and manifest metadata', async () => {
     // File-backed transfers must not be constrained by the small-only in-memory transfer cap.
     process.env.HAPPIER_FILES_READ_MAX_BYTES = '8';
+    process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_CHUNK_BYTES = '64';
 
     const { source, target } = createLoopbackChannels();
     const payload = Buffer.from('handoff-payload-file-'.repeat(64), 'utf8');
@@ -934,6 +949,25 @@ describe('server routed machine transfer', () => {
     } = await import('./serverRoutedTransport');
     const { createFileTransferPayloadSource } = await import('./transferPayloadSource');
     const { createTransferManifestHash } = await import('@happier-dev/transfers/node');
+    const { resolveServerRoutedTransferChunkBytes } = await import('./transferRuntimeConfig');
+    const chunkBytes = resolveServerRoutedTransferChunkBytes();
+    const readObservations: Array<() => Array<{ order: number; bytes: number }>> = [];
+    const writeObservations: Array<() => Array<{ order: number; bytes: number }>> = [];
+    observeTransferFileOpened = (path, handle) => {
+      if (path === sourcePath) {
+        const reads = vi.spyOn(handle, 'read');
+        readObservations.push(() => reads.mock.calls.map((args, index) => ({
+          order: reads.mock.invocationCallOrder[index],
+          bytes: Number((args as readonly unknown[])[2]),
+        })));
+      } else if (path.startsWith(`${destinationPath}.`) && path.endsWith('.part')) {
+        const writes = vi.spyOn(handle, 'write');
+        writeObservations.push(() => writes.mock.calls.map((args, index) => ({
+          order: writes.mock.invocationCallOrder[index],
+          bytes: Number((args as readonly unknown[])[2]),
+        })));
+      }
+    };
 
     const unregister = registerServerRoutedTransferResponder({
       machineTransferChannel: source,
@@ -941,7 +975,6 @@ describe('server routed machine transfer', () => {
         transferId === 'transfer_to_file'
           ? createFileTransferPayloadSource({ filePath: sourcePath })
           : null,
-      chunkBytes: 64,
     });
 
     try {
@@ -958,7 +991,20 @@ describe('server routed machine transfer', () => {
         sizeBytes: payload.length,
       });
       await expect(readFile(destinationPath)).resolves.toEqual(payload);
+      const reads = readObservations.flatMap(observe => observe()).sort((left, right) => left.order - right.order);
+      const writes = writeObservations.flatMap(observe => observe());
+      expect(reads.length).toBeGreaterThan(1);
+      expect(writes.length).toBeGreaterThan(1);
+      expect(reads.every(read => read.bytes > 0 && read.bytes <= chunkBytes)).toBe(true);
+      expect(writes.every(write => write.bytes > 0 && write.bytes <= chunkBytes)).toBe(true);
+      expect(reads.reduce((total, read) => total + read.bytes, 0)).toBe(payload.length);
+      expect(writes.reduce((total, write) => total + write.bytes, 0)).toBe(payload.length);
+      for (let index = 1; index < reads.length; index += 1) {
+        expect(writes.some(write => write.order > reads[index - 1].order && write.order < reads[index].order)).toBe(true);
+      }
+      expect((await readdir(tempDir)).some(path => path.endsWith('.part'))).toBe(false);
     } finally {
+      observeTransferFileOpened = undefined;
       unregister();
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -1078,13 +1124,6 @@ describe('server routed machine transfer', () => {
       unregister();
       await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     }
-  });
-
-  it('respects timeout env overrides above the default (within the hard clamp)', async () => {
-    process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS = '300000';
-    const { resolveServerRoutedTransferTimeoutMs } = await import('./serverRoutedTransport');
-    expect(resolveServerRoutedTransferTimeoutMs()).toBe(300_000);
-    delete process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_TIMEOUT_MS;
   });
 
   it('hard-clamps oversized timeout env overrides and still cleans up responder state on timeout', async () => {
@@ -1592,7 +1631,7 @@ describe('server routed machine transfer', () => {
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   });
 
-  it('fails closed before decrypting when a source pads payloadBase64 beyond the encoded envelope bound', async () => {
+  it('rejects a locally delivered noncanonical padded chunk and removes its partial file', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_SERVER_ROUTED_CHUNK_BYTES = '8';
 
     type Listener = (payload: MachineTransferReceiveEnvelope) => void;

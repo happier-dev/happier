@@ -110,10 +110,6 @@ function readTransferTimeoutMs(): number {
   return resolveServerRoutedTransferTimeoutMsConfig();
 }
 
-export function resolveServerRoutedTransferTimeoutMs(): number {
-  return readTransferTimeoutMs();
-}
-
 function readTransferMaxActiveTransfers(): number {
   return resolveServerRoutedTransferMaxActiveTransfers();
 }

@@ -16,7 +16,6 @@ export type MachineAdminAccessNativeDependencies = Readonly<{
     lstat: (path: string) => Promise<Pick<Stats, 'uid' | 'gid' | 'mode' | 'isFile' | 'isSymbolicLink'>>;
     readFile: (path: string, encoding: 'utf8') => Promise<string>;
   }>;
-  readTailscaledOperator?: () => Promise<MachineAdminAccessObservationV1['tailscaledOperator']>;
   tailscale?: Readonly<{ tailscaleBin?: string; socketPath?: string }>;
 }>;
 
@@ -117,7 +116,6 @@ export async function observeMachineAdminAccess(dependencies: MachineAdminAccess
   };
   const readOperator = async (daemonUsername: string | null): Promise<MachineAdminAccessObservationV1['tailscaledOperator']> => {
     try {
-      if (dependencies.readTailscaledOperator) return await dependencies.readTailscaledOperator();
       if (platform !== 'linux') return { authorization: 'unknown' };
       return await runTailscaleOperatorObservation({ ...dependencies.tailscale, daemonUsername }, dependencies.execFile ? {
         runCommand: async request => {

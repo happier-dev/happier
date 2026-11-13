@@ -16,6 +16,7 @@ describe('pre-daemon check and apply on retained bootstrap admission', () => {
         const response = await fixture.invoke([fixture.request, fixture.credential]);
         expect(response.result).toMatchObject({ status: 'applied' });
         expect(fixture.established()).toBe(!present);
+        expect(fixture.mutations.includes('useradd')).toBe(!present);
         expect(response.code).toBe(0);
         expect(response.text).not.toContain(fixture.credential.password);
         expect(JSON.stringify(fixture.plan)).not.toContain(fixture.credential.password);
@@ -25,7 +26,7 @@ describe('pre-daemon check and apply on retained bootstrap admission', () => {
 
     it('rejects missing, duplicate, mismatched and trailing credential frames before any native effect', async () => {
         vi.spyOn(process as NodeJS.Process & { getuid: () => number }, 'getuid').mockReturnValue(0);
-        const fixture = await administratorFixture();
+        const fixture = await administratorFixture(false);
         const onlinePlan = machineSetup.createMachineSetupEffectPlan({ basis: { kind: 'setup', machineId: 'machine-a', desiredRevision: 1 },
             steps: fixture.plan.steps, nativeFacts: fixture.plan.nativeFacts });
         for (const frames of [
@@ -45,6 +46,7 @@ describe('pre-daemon check and apply on retained bootstrap admission', () => {
             expect(response.result).toMatchObject({ status: 'unavailable', completedStepIds: [] });
             expect(response.text).not.toContain(fixture.credential.password);
             expect(fixture.established()).toBe(false);
+            expect(fixture.mutations).toEqual([]);
         }
     });
 
@@ -107,18 +109,20 @@ async function administratorFixture(present = true) {
     await writeFile(policyPath, '%sudo ALL=(ALL:ALL) ALL\n');
     let established = false;
     let consumedBytes: Uint8Array | undefined;
+    const mutations: string[] = [];
     const password = 'transient-🔐-test-password';
     const runNative = async (command: machineSetup.MachineSetupNativeCommand): Promise<machineSetup.MachineSetupNativeCommandResult> => {
         if (command.executable === 'getent' && command.args.includes('group')) return { code: 0, stdout: 'sudo:x:27:\n', stderr: '' };
         if (command.executable === 'getent') return present
             ? { code: 0, stdout: 'operator:x:1100:1100::/home/operator:/bin/bash\n', stderr: '' }
             : { code: 2, stdout: '', stderr: '' };
-        if (command.executable === 'useradd') { present = true; return { code: 0, stdout: '', stderr: '' }; }
+        if (command.executable === 'useradd') { mutations.push(command.executable); present = true; return { code: 0, stdout: '', stderr: '' }; }
         if (command.executable === 'visudo') {
             expect(command.args).toEqual(['-c']);
             return { code: 0, stdout: `${policyPath}: parsed OK\n`, stderr: '' };
         }
         if (command.executable === 'usermod') {
+            mutations.push(command.executable);
             expect(command.args).toEqual(['--append', '--groups', 'sudo', '--', 'operator']);
             return { code: 0, stdout: '', stderr: '' };
         }
@@ -128,6 +132,7 @@ async function administratorFixture(present = true) {
         }
         if (command.executable === 'passwd') return { code: 0, stdout: 'operator P 01/01/2026 0 99999 7 -1\n', stderr: '' };
         if (command.executable === '/usr/sbin/chpasswd') {
+            mutations.push(command.executable);
             expect(command.args).toEqual([]);
             expect(JSON.stringify(command.env ?? {})).not.toContain(password);
             // Only the native process boundary is substituted. Do not retain a
@@ -148,7 +153,7 @@ async function administratorFixture(present = true) {
     const administrator = { stepId: 'administrator', username: 'operator' };
     const request = { v: 1, mode: 'apply', plans: [{ plan }], administrator };
     const credential = { type: 'administrator.establish', operationId: basis.operationId, planDigest: plan.planDigest, ...administrator, password };
-    return { plan, request, credential, established: () => established, consumedBytes: () => consumedBytes,
+    return { plan, request, credential, mutations, established: () => established, consumedBytes: () => consumedBytes,
         invoke: async (frames: unknown[]) => {
             const stdin = new PassThrough(), stdout = new PassThrough();
             let pipeError: Error | undefined;

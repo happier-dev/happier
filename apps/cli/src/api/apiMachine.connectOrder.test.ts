@@ -27,6 +27,8 @@ import { createDaemonAgentIsolationEffects } from '@/daemon/agentIsolation/creat
 import { createMachineAdminAccessObserver } from '@/machines/adminAccess/observeMachineAdminAccess';
 import { createDaemonMachineAdminAccessRoutes } from '@/machines/adminAccess/createDaemonMachineAdminAccessRoutes';
 import type { RpcHandlerManager } from './rpc/RpcHandlerManager';
+import { MACHINE_ROLE_RPC_NAMESPACES } from '@/daemon/roles/machineRoleRpcNamespaces';
+import { activateSessionsRoleForMachineClient } from '@/daemon/testkit/sessionsRole.testkit';
 import { startPeerMediationLoopback } from '@/daemon/peer/mediation/rpc/startLoopback';
 import { createManagedActivityInventory } from '@/daemon/lifecycle/managedActivity';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
@@ -158,7 +160,7 @@ describe('ApiMachineClient connect ordering', () => {
           }
           throw Object.assign(new Error('Native command unavailable'), { code: 'ENOENT' });
         },
-        readTailscaledOperator: async () => ({ authorization: 'unavailable' }),
+        tailscale: { tailscaleBin: 'tailscale' },
         fileSystem: { lstat: async () => { throw Object.assign(new Error('Absent'), { code: 'ENOENT' }); },
           readFile: async () => { throw Object.assign(new Error('Absent'), { code: 'ENOENT' }); } },
       },
@@ -188,7 +190,7 @@ describe('ApiMachineClient connect ordering', () => {
       expect(states.at(-1)?.adminAccess).toMatchObject({ daemonUid: 1001, daemonIdentity: 'nonRoot',
         passwordlessSudoToRoot: 'denied', groupMembership: { state: 'current' } });
       expect(presentMachineAuthorityV1(client.getMachineAdminAccessRights()).hostAuthority).toBe('ordinary');
-      expect(nativeCommands.every(file => ['id', 'sudo', 'getent', 'passwd'].includes(file))).toBe(true);
+      expect(nativeCommands.every(file => ['id', 'sudo', 'getent', 'passwd', 'tailscale'].includes(file))).toBe(true);
       const settled = states.length;
       // Repeated registration receipts and readers do not re-observe or republish.
       await acknowledge(first);
@@ -719,13 +721,13 @@ describe('ApiMachineClient connect ordering', () => {
       daemonState: null,
       daemonStateVersion: 0,
     });
-    client.setRPCHandlers({
+    await activateSessionsRoleForMachineClient(client, client.setRPCHandlers({
       spawnSession: async () => ({ type: 'success', sessionId: 'session-1' }),
       sessionSpawnV1OutcomeRequired: true,
       resolveSpawnSessionByNonce: async () => ({ status: 'success', sessionId: 'session-1' }),
       stopSession: async () => true,
       requestShutdown: () => {},
-    });
+    }));
     const rpcHandlerManager = Reflect.get(client, 'rpcHandlerManager') as RpcHandlerManager;
     const readiness = createDeferred<{ status: 'ready' }>();
     vi.spyOn(rpcHandlerManager, 'waitForRegisteredHandlers').mockReturnValue(readiness.promise);
@@ -786,12 +788,12 @@ describe('ApiMachineClient connect ordering', () => {
       daemonState: null,
       daemonStateVersion: 0,
     });
-    client.setRPCHandlers({
+    await activateSessionsRoleForMachineClient(client, client.setRPCHandlers({
       spawnSession: async () => ({ type: 'success', sessionId: 'session-1' }),
       resolveSpawnSessionByNonce: async () => ({ status: 'success', sessionId: 'session-1' }),
       stopSession: async () => true,
       requestShutdown: () => {},
-    });
+    }));
     const rpcHandlerManager = Reflect.get(client, 'rpcHandlerManager') as RpcHandlerManager;
     vi.spyOn(rpcHandlerManager, 'waitForRegisteredHandlers').mockResolvedValue({ status: 'ready' });
 
@@ -802,6 +804,55 @@ describe('ApiMachineClient connect ordering', () => {
       expect(capabilityPayloads).toEqual([
         { machineId: 'machine-1', capabilities: {} },
       ]);
+    } finally {
+      await client.shutdown();
+    }
+  }, 5_000);
+
+  it('publishes running without session spawn on a Machine whose sessions role is off', async () => {
+    vi.stubEnv('HAPPY_ENABLE_V2_CHANGES', 'false');
+    const capabilityPayloads: unknown[] = [];
+    const statePayloads: unknown[] = [];
+    const socket = createApiSessionSocketStub({
+      id: 'machine-socket-1',
+      emitWithAck: (event, payload) => {
+        if (event === MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1) {
+          capabilityPayloads.push(payload);
+          return { v: 1, result: 'success', revision: capabilityPayloads.length };
+        }
+        if (event === 'machine-update-state') {
+          statePayloads.push(payload);
+          return { result: 'success', version: statePayloads.length, daemonState: (payload as { daemonState: string }).daemonState };
+        }
+        return { result: 'success', version: 1 };
+      },
+    });
+    bindApiSessionSocketSequenceMock(ioMock, [socket]);
+    const client = new ApiMachineClient('token', {
+      id: 'machine-1', encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'legacy',
+      metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+    });
+    // Machine core only: the sessions role is off, so its new-Session family is never registered
+    // and the role runtime has marked its namespaces inactive.
+    client.setRPCHandlers({
+      spawnSession: async () => ({ type: 'success', sessionId: 'session-1' }),
+      sessionSpawnV1OutcomeRequired: true,
+      resolveSpawnSessionByNonce: async () => ({ status: 'success', sessionId: 'session-1' }),
+      stopSession: async () => true,
+      requestShutdown: () => {},
+    });
+    const rpcHandlerManager = Reflect.get(client, 'rpcHandlerManager') as RpcHandlerManager;
+    rpcHandlerManager.setInactiveRoleNamespaces(MACHINE_ROLE_RPC_NAMESPACES.sessions.map(prefix => [prefix, 'sessions'] as const));
+    vi.spyOn(rpcHandlerManager, 'waitForRegisteredHandlers').mockResolvedValue({ status: 'ready' });
+
+    try {
+      client.connect();
+      await vi.waitFor(() => expect(statePayloads).toHaveLength(1));
+      expect(rpcHandlerManager.waitForRegisteredHandlers).toHaveBeenCalledWith(
+        expect.not.arrayContaining([RPC_METHODS.SPAWN_HAPPY_SESSION]), expect.any(Object));
+      const published = capabilityPayloads.at(-1) as { capabilities: Record<string, unknown> };
+      expect(published.capabilities).not.toHaveProperty('sessionSpawn');
+      expect(published.capabilities).toHaveProperty('sessionInputAdmission');
     } finally {
       await client.shutdown();
     }
@@ -919,13 +970,13 @@ describe('ApiMachineClient connect ordering', () => {
       daemonState: null,
       daemonStateVersion: 0,
     });
-    client.setRPCHandlers({
+    await activateSessionsRoleForMachineClient(client, client.setRPCHandlers({
       spawnSession: async () => ({ type: 'success', sessionId: 'session-1' }),
       sessionSpawnV1OutcomeRequired: true,
       resolveSpawnSessionByNonce: async () => ({ status: 'success', sessionId: 'session-1' }),
       stopSession: async () => true,
       requestShutdown: () => {},
-    });
+    }));
     const rpcHandlerManager = Reflect.get(client, 'rpcHandlerManager') as RpcHandlerManager;
     const waitForRegisteredHandlers = rpcHandlerManager.waitForRegisteredHandlers.bind(rpcHandlerManager);
     vi.spyOn(rpcHandlerManager, 'waitForRegisteredHandlers')
@@ -1178,13 +1229,13 @@ describe('ApiMachineClient connect ordering', () => {
       daemonState: null,
       daemonStateVersion: 0,
     });
-    client.setRPCHandlers({
+    await activateSessionsRoleForMachineClient(client, client.setRPCHandlers({
       spawnSession: async () => ({ type: 'success', sessionId: 'session-1' }),
       sessionSpawnV1OutcomeRequired: true,
       resolveSpawnSessionByNonce: async () => ({ status: 'success', sessionId: 'session-1' }),
       stopSession: async () => true,
       requestShutdown: () => {},
-    });
+    }));
     const rpcHandlerManager = Reflect.get(client, 'rpcHandlerManager') as RpcHandlerManager;
     registerRequiredMachineControlHandlers(rpcHandlerManager);
     vi.spyOn(rpcHandlerManager, 'waitForRegisteredHandlers').mockResolvedValue({

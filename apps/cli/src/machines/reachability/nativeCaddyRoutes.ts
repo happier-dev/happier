@@ -5,7 +5,7 @@ import { nativeCaddyDnsResult, readNativeCaddyDnsResolution, readNativeCaddyDnsC
 import tweetnacl from 'tweetnacl';
 import { type NativeCaddyAdminExchange, type NativeCaddyObservationResult } from '@happier-dev/cli-common/machineSetup';
 export { createNativeCaddyAdminExchange, type NativeCaddyAdminExchange } from '@happier-dev/cli-common/machineSetup';
-import { nativeCaddyRemovalSigningBytes as removalBytes, verifyNativeCaddyRemovalProofV1, nativeCaddyDomainRouteIdsV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { nativeCaddyRemovalSigningBytes as removalBytes, nativeCaddyDomainRouteIdsV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { NativeCaddyRoutePlacement, NativeCaddyRemoval, DeploymentDomainNetworkExposureV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import type { DeploymentDomainCaddyFailureV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
@@ -168,16 +168,6 @@ function foreignHostRoute(value: unknown, material: Pick<CaddyDomainRouteMateria
             return ownPaths === undefined || ownPaths.some(left => paths.some(right => pathsOverlap(left, right)));
         }) === true;
     });
-}
-
-/** DTEAR consumes this proof, then uses its existing installation-signed settlement writer. */
-export function verifyNativeCaddyRemoval(result: NativeCaddyRemoval, expected: NativeCaddyRoutePlacement,
-    expectedRoute: CaddyDomainRouteRemovalInput, publicKey: Uint8Array): boolean {
-    if (expectedRoute.domainId !== expected.domainId) return false;
-    try {
-        return verifyNativeCaddyRemovalProofV1(result, expected,
-            nativeCaddyDomainRouteIdsV1(expectedRoute.domainId, expectedRoute.listener).removalIds, publicKey);
-    } catch { return false; }
 }
 
 /** One finite native admission. DNS, TLS observation, app health and Home authorization retain their owners. */

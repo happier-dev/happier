@@ -74,7 +74,7 @@ describe.skipIf(process.platform !== 'linux')('native requester identity observa
         return { stdout: ({ '-u': '1001', '-un': 'alice', '-gn': 'engineers', '-Gn': 'engineers' } as Record<string, string>)[args[0]!] ?? '' };
       },
       fileSystem: { lstat: async () => { throw Object.assign(new Error('Absent drop-in'), { code: 'ENOENT' }); }, readFile: async () => '' },
-      readTailscaledOperator: async () => ({ authorization: 'unknown' }),
+      tailscale: { tailscaleBin: 'tailscale' },
     });
     const setup = { daemonUsername: daemonObservation.daemonUsername ?? '', daemonPrimaryGroup: daemonObservation.daemonPrimaryGroup ?? null,
       binaryPath: '/opt/happier/cli/current/happier', requesterIdentity: requester };

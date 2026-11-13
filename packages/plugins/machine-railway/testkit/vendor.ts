@@ -9,7 +9,7 @@ export function railwayVendor() {
   const calls: { query: string; variables: Record<string, unknown> }[] = [];
   const sockets: { url: string; protocols: string[]; closed: boolean }[] = [];
   const writes: { path: string; parentMode: number }[] = [];
-  let present = false, failure = false, loseCreate = false, status = 'RUNNING', badFile = false, timedOut = false;
+  let present = false, foreignPresent = true, failure = false, loseCreate = false, status = 'RUNNING', badFile = false, timedOut = false;
   let abortFile: (() => void) | undefined;
   const dto = () => ({ id: 'sandbox-one', environmentId: 'environment-one', status: present ? status : 'DESTROYED', idleTimeoutMinutes: 0, region: 'us-west2', networkIsolation: 'ISOLATED', domains: [], createdAt: '2026-11-01T00:00:00Z' });
   const request: typeof fetch = async (_url, init) => {
@@ -20,7 +20,11 @@ export function railwayVendor() {
     let data: unknown;
     if (failure) return Response.json({ errors: [{ message: 'private-token', extensions: { code: 'INTERNAL_SERVER_ERROR' } }] });
     if (query.includes('sandboxCreate(')) { present = true; data = { sandboxCreate: dto() }; if (loseCreate) throw new Error('lost create'); }
-    else if (query.includes('sandboxDestroy(')) { present = false; data = { sandboxDestroy: dto() }; }
+    else if (query.includes('sandboxDestroy(')) {
+      if (variables.id === 'sandbox-foreign') { foreignPresent = false; data = { sandboxDestroy: { ...dto(), id: 'sandbox-foreign', status: 'DESTROYED' } }; }
+      else if (variables.id === 'sandbox-one') { present = false; data = { sandboxDestroy: dto() }; }
+      else data = { sandboxDestroy: null };
+    }
     else if (query.includes('sandboxExec(')) {
       const command = String(variables.command);
       const result = spawnSync('sh', ['-c', command], { env: { ...process.env, HOME: home } });
@@ -28,7 +32,9 @@ export function railwayVendor() {
       const commandTimedOut = timedOut && command.includes('2>');
       data = { sandboxExec: { exitCode: commandTimedOut ? -1 : result.status ?? 1, stdout: result.stdout.toString(), stderr: result.stderr.toString(), truncated: false, timedOut: commandTimedOut } };
     } else if (query.includes('generateShellToken(')) data = { generateShellToken: 'scoped-files-token' };
-    else if (query.includes('sandbox(')) data = { sandbox: present ? dto() : null };
+    else if (query.includes('sandbox(')) data = { sandbox: variables.id === 'sandbox-foreign'
+      ? foreignPresent ? { ...dto(), id: 'sandbox-foreign', status: 'RUNNING' } : null
+      : variables.id === 'sandbox-one' && present ? dto() : null };
     else if (query.includes('me')) data = { me: { id: 'account-one', name: 'Railway account', email: 'owner@example.test' } };
     else throw new Error('Unrecognized GraphQL boundary');
     return Response.json({ data });
@@ -87,7 +93,7 @@ export function railwayVendor() {
   const original = Object.getOwnPropertyDescriptor(globalThis, 'WebSocket');
   Object.defineProperty(globalThis, 'WebSocket', { configurable: true, writable: true, value: Socket });
   return { home, request, calls, sockets, writes, dto,
-    get present() { return present; }, setFailure(v: boolean) { failure = v; }, loseCreate() { loseCreate = true; },
+    get present() { return present; }, get foreignPresent() { return foreignPresent; }, setFailure(v: boolean) { failure = v; }, loseCreate() { loseCreate = true; },
     abortFiles(callback: () => void) { abortFile = callback; }, setStatus(v: string) { status = v; }, badFile(v: boolean) { badFile = v; }, timeout(v: boolean) { timedOut = v; },
     cleanup() { if (original) Object.defineProperty(globalThis, 'WebSocket', original); else Reflect.deleteProperty(globalThis, 'WebSocket'); rmSync(home, { recursive: true, force: true }); } };
 }

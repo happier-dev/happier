@@ -5,10 +5,10 @@ const statePath = process.env.PROVIDER_CONFORMANCE_STATE;
 const read = () => JSON.parse(readFileSync(statePath, 'utf8'));
 const write = value => writeFileSync(statePath, JSON.stringify(value));
 function available() { if (read().failure) throw new Error(process.env.MODAL_TOKEN_SECRET); }
-const sandbox = {
-    sandboxId: 'sb-conformance',
-    async poll() { available(); return read().present ? null : 0; },
-    async terminate() { available(); write({ ...read(), present: false }); },
+const sandbox = (sandboxId = 'sb-conformance') => ({
+    sandboxId,
+    async poll() { available(); return read()[sandboxId === 'sb-foreign' ? 'foreignPresent' : 'present'] ? null : 0; },
+    async terminate() { available(); write({ ...read(), [sandboxId === 'sb-foreign' ? 'foreignPresent' : 'present']: false }); },
     filesystem: { async writeBytes(bytes, path) { available(); writeFileSync(path, bytes); } },
     async exec(argv) {
         available();
@@ -34,16 +34,22 @@ const sandbox = {
             async wait() { finish(); await done; return completed.status; },
         };
     },
-};
+});
 export class ModalClient {
     constructor() {
         this.profile = { serverUrl: process.env.MODAL_SERVER_URL, tokenId: process.env.MODAL_TOKEN_ID, tokenSecret: process.env.MODAL_TOKEN_SECRET };
         this.apps = { async fromName() { available(); return { appId: 'ap-conformance' }; } };
         this.images = { fromRegistry() { available(); return { imageId: 'im-conformance' }; } };
         this.sandboxes = {
-            async create() { available(); write({ ...read(), present: true }); return sandbox; },
-            async fromId() { available(); return sandbox; },
-            async *list() { available(); if (read().present) yield sandbox; },
+            async create(_app, _image, input) { available(); write({ ...read(), present: true, tags: input?.tags ?? {}, allocations: read().allocations + 1 }); return sandbox(); },
+            async fromId(id) { available(); if (!['sb-conformance', 'sb-foreign'].includes(id)) throw new Error(`Unknown sandbox: ${id}`); return sandbox(id); },
+            async *list(input) {
+                available();
+                if (input?.appId && input.appId !== 'ap-conformance') return;
+                const matches = tags => Object.entries(input?.tags ?? {}).every(([key, value]) => tags[key] === value);
+                if (read().present && matches(read().tags ?? {})) yield sandbox();
+                if (read().foreignPresent && matches({ 'happier.managed-id': 'foreign-managed-id' })) yield sandbox('sb-foreign');
+            },
         };
     }
     version() { return '0.11.0'; }

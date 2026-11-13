@@ -506,7 +506,7 @@ describe('Machine setup current-copy plan entry', () => {
     expect(await prepareMachineSetupPlanV1({ input: { homeId: 'home', machineId: 'guest', mode: 'effects' }, current: empty }))
       .toMatchObject({ desiredRevision: 0, recipePlans: [] });
   });
-  it('admits a managed child current read but never a proposed-source read under that creation proof', async () => {
+  it('admits a managed child current read while refusing proposed sources without effects prerequisites', async () => {
     let reads = 0;
     const plan = createMachineSetupPlanAction({ machineId: 'guest', homeId: 'home',
       apiMachine: { getMachineSetupDesiredSnapshot: () => getMachineSetupDesiredV1({
@@ -583,7 +583,9 @@ describe('Machine setup current-copy plan entry', () => {
     expect(await prepareMachineSetupPlanV1(params)).toMatchObject({ sources: params.input.sources });
     expect(await prepareMachineSetupPlanV1({ ...params, input: input('2', { family: 'dejavu' }) }))
       .toMatchObject({ ok: false, errorCode: 'machine_recipe_unavailable' });
-    expect(await prepareMachineSetupPlanV1({ ...params, input: input('3', { family: 'unreviewed', secret: 'not-allowed' }) }))
+    expect(await prepareMachineSetupPlanV1({ ...params, input: input('3', { family: 'unreviewed' }) }))
+      .toMatchObject({ ok: false, errorCode: 'invalid_machine_recipe_inputs' });
+    expect(await prepareMachineSetupPlanV1({ ...params, input: input('3', { family: 'dejavu', secret: 'not-allowed' }) }))
       .toMatchObject({ ok: false, errorCode: 'invalid_machine_recipe_inputs' });
   });
 

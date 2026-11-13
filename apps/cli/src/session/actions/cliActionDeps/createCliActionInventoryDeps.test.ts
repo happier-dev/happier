@@ -1,4 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { withTempDir } from '@/testkit/fs/tempDir';
+import { writeExecutableShim } from '@/testkit/fs/executableShim';
 import { McpServerCatalogV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import type { DetectProviderMcpServersResult } from '@/mcp/providerDetection/detectProviderMcpServers';
 import axios from 'axios';
@@ -9,15 +16,9 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 
 const {
   fetchSessionById,
-  probeAgentConfigOptionsBestEffort,
-  probeAgentModesBestEffort,
-  probeAgentModelsBestEffort,
   resolveAvailableAccountSettings,
 } = vi.hoisted(() => ({
   fetchSessionById: vi.fn(),
-  probeAgentConfigOptionsBestEffort: vi.fn(),
-  probeAgentModesBestEffort: vi.fn(),
-  probeAgentModelsBestEffort: vi.fn(),
   resolveAvailableAccountSettings: vi.fn(),
 }));
 
@@ -29,24 +30,24 @@ vi.mock('@/settings/accountSettings/resolveAvailableAccountSettings', () => ({
   resolveAvailableAccountSettings,
 }));
 
+
 import { createCliActionInventoryDeps } from './createCliActionInventoryDeps';
 import { resolveSessionMcpPreview } from '@/mcp/preview/resolveSessionMcpPreview';
 
 describe('createCliActionInventoryDeps', () => {
-  afterEach(() => { vi.restoreAllMocks(); });
+  let admitted: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
+  beforeAll(async () => {
+    admitted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+      runtimeOptions: { pluginIds: ['happier.agent.codex'],
+        scopedActionRuntime: { credentials: null, actionsSettingsProvider: createActionSettingsProvider() } },
+    });
+  });
+  afterAll(async () => { await admitted?.dispose(); });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
   beforeEach(() => {
     fetchSessionById.mockReset();
-    probeAgentConfigOptionsBestEffort.mockReset();
-    probeAgentModesBestEffort.mockReset();
-    probeAgentModelsBestEffort.mockReset();
     resolveAvailableAccountSettings.mockReset();
     resolveAvailableAccountSettings.mockResolvedValue(null);
-  });
-
-  const createProbeDeps = () => ({
-    probeAgentModelsBestEffort,
-    probeAgentModesBestEffort,
-    probeAgentConfigOptionsBestEffort,
   });
 
   it('preserves a machine preflight refusal in the public models Action', async () => {
@@ -58,6 +59,7 @@ describe('createCliActionInventoryDeps', () => {
     expect(await executor.execute('agents.models.list', { agentId: 'codex', machineId: 'worker', probe: { cwd: '/repo' } },
       { surface: 'cli', authority: 'present_user' })).toMatchObject({ ok: false, errorCode: 'connected-service-preflight-failed' });
   });
+
 
   it('offers distinguishable canonical machine names through daemon input discovery without changing target identities', async () => {
     const codec = createMachineContentCodec({ encryptionMode: 'plain' });
@@ -90,208 +92,101 @@ describe('createCliActionInventoryDeps', () => {
     })) } });
   });
 
+  async function withNativeInventory(
+    run: (fixture: Readonly<{ directory: string; callsPath: string }>) => Promise<void>,
+    unavailable = false,
+  ) {
+    await withTempDir('cli-action-native-inventory-', async directory => {
+      const callsPath = join(directory, 'requests.jsonl');
+      const script = join(directory, 'native.cjs');
+      // Replace the vendor executable only: real plugin admission, catalog,
+      // command resolution, JSON-RPC transport and inventory projection stay real.
+      await writeFile(script, `
+        const fs = require('node:fs');
+        if (process.argv.includes('--version')) { console.log('codex-cli 0.162.1'); process.exit(0); }
+        require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
+          const request = JSON.parse(line);
+          if (request.id === undefined) return;
+          fs.appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify({ method: request.method, cwd: process.cwd() }) + '\\n');
+          if (${JSON.stringify(unavailable)}) { process.exit(1); }
+          const result = request.method === 'model/list' ? { data: [{
+            id: 'fixture-model', displayName: 'Native Model',
+            defaultReasoningEffort: 'secret-current-value',
+            supportedReasoningEfforts: [{ reasoningEffort: 'medium' }, { reasoningEffort: 'xhigh', description: 'Maximum reasoning' }],
+          }] } : request.method === 'collaborationMode/list' ? { data: [
+            { id: 'plan', name: 'Plan', description: 'Native planning mode' },
+            { id: 'build', name: 'Build', description: 'Can edit files' },
+          ] } : {};
+          process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n');
+        });
+      `);
+      const quote = (value: string) => `'${value.replace(/'/g, `'\''`)}'`;
+      const executable = await writeExecutableShim({ dir: directory,
+        fileName: process.platform === 'win32' ? 'codex-fixture.cmd' : 'codex-fixture',
+        contents: process.platform === 'win32'
+          ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`
+          : `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)} "$@"\n`,
+      });
+      vi.stubEnv('HAPPIER_CODEX_PATH', executable);
+      vi.stubEnv('HAPPIER_JS_RUNTIME_PATH', process.execPath);
+      await run({ directory, callsPath });
+    });
+  }
+
   it('lists unscoped built-in backend models through the canonical local dynamic probe', async () => {
-    probeAgentModelsBestEffort.mockResolvedValue({
-      provider: 'opencode',
-      availableModels: [
-        { id: 'default', name: 'Default' },
-        { id: 'opencode/deepseek-v4-flash-free', name: 'DeepSeek V4 Flash Free' },
-      ],
-      supportsFreeform: true,
-      source: 'dynamic',
+    await withNativeInventory(async ({ directory, callsPath }) => {
+      const deps = createCliActionInventoryDeps({ token: 'token', sessionId: 'sess-1', mode: 'plain', ctx: null,
+        rawSession: { host: 'local-machine', path: directory, metadata: {} } });
+      await expect(deps.agentsModelsList!({ agentId: 'codex',
+        backendTargetKey: 'agent:happier.agent.codex/codex', limit: 10,
+      })).resolves.toEqual({ agentId: 'codex', items: [
+        { id: 'default', label: 'Default' }, { id: 'fixture-model', label: 'Native Model' },
+      ], supportsFreeform: false, source: 'dynamic' });
+      expect((await readFile(callsPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line)))
+        .toContainEqual({ method: 'model/list', cwd: directory });
     });
-
-    const deps = createCliActionInventoryDeps({
-      token: 'token',
-      sessionId: 'sess-1',
-      probeDeps: createProbeDeps(),
-      mode: 'plain',
-      ctx: null,
-      rawSession: {
-        host: 'local-machine',
-        path: '/repo',
-        metadata: {},
-      },
-    });
-
-    await expect(deps.agentsModelsList({
-      agentId: 'opencode',
-      backendTargetKey: 'agent:happier.agent.opencode/opencode',
-      limit: 10,
-    })).resolves.toEqual({
-      agentId: 'opencode',
-      items: [
-        { id: 'default', label: 'Default' },
-        { id: 'opencode/deepseek-v4-flash-free', label: 'DeepSeek V4 Flash Free' },
-      ],
-      supportsFreeform: true,
-      source: 'dynamic',
-    });
-
-    expect(probeAgentModelsBestEffort).toHaveBeenCalledWith(expect.objectContaining({
-      agentId: 'opencode',
-      backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
-      cwd: '/repo',
-      accountSettings: null,
-    }));
   });
 
   it('keeps unscoped session metadata models when a local probe is unavailable', async () => {
-    probeAgentModelsBestEffort.mockResolvedValue({
-      provider: 'opencode',
-      availableModels: [],
-      supportsFreeform: false,
-      source: 'unavailable',
-    });
+    await withNativeInventory(async ({ directory, callsPath }) => {
+      const deps = createCliActionInventoryDeps({ token: 'token', sessionId: 'sess-1', mode: 'plain', ctx: null,
+        rawSession: { host: 'local-machine', path: directory, metadata: {
+          sessionModelsV1: { provider: 'codex', availableModels: [{ id: 'metadata-model', name: 'Metadata Model' }] },
+        } } });
+      await expect(deps.agentsModelsList!({ agentId: 'codex',
+        backendTargetKey: 'agent:happier.agent.codex/codex', limit: 10,
+      })).resolves.toEqual({ agentId: 'codex', items: [
+        { id: 'default', label: 'Default' }, { id: 'metadata-model', label: 'Metadata Model' },
+      ], supportsFreeform: false, source: 'session_metadata' });
+      expect(await readFile(callsPath, 'utf8')).toContain('initialize');
+    }, true);
+  });
 
-    const deps = createCliActionInventoryDeps({
-      token: 'token',
-      sessionId: 'sess-1',
-      probeDeps: createProbeDeps(),
-      mode: 'plain',
-      ctx: null,
-      rawSession: {
-        host: 'local-machine',
-        path: '/repo',
-        metadata: {
-          sessionModelsV1: {
-            provider: 'opencode',
-            availableModels: [{ id: 'metadata-model', name: 'Metadata Model' }],
-          },
-        },
-      },
-    });
-
-    await expect(deps.agentsModelsList({
-      agentId: 'opencode',
-      backendTargetKey: 'agent:happier.agent.opencode/opencode',
-      limit: 10,
-    })).resolves.toEqual({
-      agentId: 'opencode',
-      items: [
-        { id: 'default', label: 'Default' },
-        { id: 'metadata-model', label: 'Metadata Model' },
-      ],
-      supportsFreeform: false,
-      source: 'session_metadata',
+  it('limits agent session modes read through the canonical runtime/plugin probe', async () => {
+    await withNativeInventory(async ({ directory }) => {
+      const deps = createCliActionInventoryDeps({ token: 'token', sessionId: 'sess-1', mode: 'plain', ctx: null,
+        rawSession: { host: 'local-machine', path: directory, metadata: {} } });
+      await expect(deps.agentsSessionModesList!({ agentId: 'codex',
+        backendTargetKey: 'agent:happier.agent.codex/codex', machineId: 'local-machine', limit: 1,
+      })).resolves.toEqual({ agentId: 'codex', items: [
+        { id: 'plan', label: 'Plan', description: 'Native planning mode' },
+      ], source: 'dynamic' });
     });
   });
 
-  it('lists agent session modes through the canonical runtime/plugin probe', async () => {
-    probeAgentModesBestEffort.mockResolvedValue({
-      provider: 'codex',
-      availableModes: [
-        { id: 'plan', name: 'Plan' },
-        { id: 'build', name: 'Build', description: 'Can edit files' },
-      ],
-      source: 'dynamic',
+  it('lists unscoped model config definitions without returning native current values', async () => {
+    await withNativeInventory(async ({ directory, callsPath }) => {
+      const deps = createCliActionInventoryDeps({ token: 'token', sessionId: 'sess-1', mode: 'plain', ctx: null,
+        rawSession: { host: 'local-machine', path: directory, metadata: {} } });
+      const result = await deps.agentsConfigOptionsList!({ agentId: 'codex',
+        backendTargetKey: 'agent:happier.agent.codex/codex', modelId: 'fixture-model', limit: 10 });
+      expect(result).toEqual({ agentId: 'codex', items: [{ id: 'reasoning_effort', label: 'Thinking', type: 'select',
+        options: [{ value: 'medium', label: 'Medium' }, { value: 'xhigh', label: 'XHigh', description: 'Maximum reasoning' }],
+      }], source: 'dynamic' });
+      expect(JSON.stringify(result)).not.toContain('secret-current-value');
+      expect(JSON.stringify(result)).not.toContain('currentValue');
+      expect(await readFile(callsPath, 'utf8')).toContain('model/list');
     });
-
-    const deps = createCliActionInventoryDeps({
-      token: 'token',
-      sessionId: 'sess-1',
-      probeDeps: createProbeDeps(),
-      mode: 'plain',
-      ctx: null,
-      rawSession: {
-        host: 'local-machine',
-        path: '/repo',
-        metadata: {},
-      },
-    }) as any;
-
-    await expect(deps.agentsSessionModesList({
-      agentId: 'codex',
-      backendTargetKey: 'agent:happier.agent.codex/codex',
-      machineId: 'local-machine',
-      limit: 1,
-    })).resolves.toEqual({
-      agentId: 'codex',
-      items: [{ id: 'plan', label: 'Plan' }],
-      source: 'dynamic',
-    });
-
-    expect(probeAgentModesBestEffort).toHaveBeenCalledWith(expect.objectContaining({
-      agentId: 'codex',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-      cwd: '/repo',
-      accountSettings: null,
-    }));
-  });
-
-  it('lists unscoped config option definitions through the canonical local probe without returning current or secret values', async () => {
-    probeAgentConfigOptionsBestEffort.mockResolvedValue({
-      provider: 'claude',
-      source: 'dynamic',
-      configOptions: [
-        {
-          id: 'reasoning_effort',
-          name: 'Thinking',
-          description: 'How much reasoning to use',
-          type: 'select',
-          currentValue: 'secret-current-value',
-          options: [
-            { value: 'medium', name: 'Medium' },
-            { value: 'xhigh', name: 'X High', description: 'Maximum reasoning' },
-          ],
-        },
-        {
-          id: 'ultracode',
-          name: 'UltraCode',
-          type: 'boolean',
-          currentValue: true,
-        },
-      ],
-    });
-
-    const deps = createCliActionInventoryDeps({
-      token: 'token',
-      sessionId: 'sess-1',
-      probeDeps: createProbeDeps(),
-      mode: 'plain',
-      ctx: null,
-      rawSession: {
-        host: 'local-machine',
-        path: '/repo',
-        metadata: {},
-      },
-    }) as any;
-
-    const result = await deps.agentsConfigOptionsList({
-      agentId: 'claude',
-      backendTargetKey: 'agent:happier.agent.claude/claude',
-      modelId: 'claude-opus-4-8',
-      limit: 10,
-    });
-
-    expect(result).toEqual({
-      agentId: 'claude',
-      items: [
-        {
-          id: 'reasoning_effort',
-          label: 'Thinking',
-          description: 'How much reasoning to use',
-          type: 'select',
-          options: [
-            { value: 'medium', label: 'Medium' },
-            { value: 'xhigh', label: 'X High', description: 'Maximum reasoning' },
-          ],
-        },
-        {
-          id: 'ultracode',
-          label: 'UltraCode',
-          type: 'boolean',
-        },
-      ],
-      source: 'dynamic',
-    });
-    expect(JSON.stringify(result)).not.toContain('secret-current-value');
-    expect(probeAgentConfigOptionsBestEffort).toHaveBeenCalledWith(expect.objectContaining({
-      agentId: 'claude',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-      cwd: '/repo',
-      accountSettings: null,
-    }));
   });
 
   it('previews MCP spawn options through the existing MCP preview owner without returning secret env', async () => {
@@ -311,7 +206,6 @@ describe('createCliActionInventoryDeps', () => {
       token: credentials.token,
       credentials,
       sessionId: 'sess-1',
-      probeDeps: createProbeDeps(),
       mode: 'plain',
       ctx: null,
       rawSession: {
@@ -388,7 +282,6 @@ describe('createCliActionInventoryDeps', () => {
     const deps = createCliActionInventoryDeps({
       token: 'token',
       sessionId: 'sess-1',
-      probeDeps: createProbeDeps(),
       mode: 'plain',
       ctx: null,
       rawSession: { host: 'local-machine', path: '/repo', metadata: {} },

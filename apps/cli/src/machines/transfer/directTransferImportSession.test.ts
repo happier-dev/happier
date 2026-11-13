@@ -80,14 +80,15 @@ describe('direct transfer import session manager', () => {
     } finally { await manager.close(); await rm(root, { recursive: true, force: true }); }
   });
 
-  it.each(['present_user', 'account_automation'] as const)('rechecks retained %s owner custody without accepting refused bytes', async callerAuthority => {
+  it.each(['present_user', 'account_automation'] as const)('completes admitted %s owner imports without reauthorizing finite work', async callerAuthority => {
     const root = await mkdtemp(join(tmpdir(), 'happier-import-custody-phase-'));
     const manager = createDirectTransferImportSessionManager();
-    let current = true;
+    let authorityReads = 0;
     const admission = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home' });
     const context = { signal: new AbortController().signal, callerAuthority,
       machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
-        installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const }, verifyMachineAdmissionCurrent: async () => current };
+        installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const },
+      verifyMachineAdmissionCurrent: async () => { authorityReads++; return false; } };
     const scope = { rootPath: root, requesterAccountId: 'requester', assertCurrentAuthority: async () => {
       const failure = await admission.rpc(context);
       if (failure) throw Object.assign(new Error(failure.error), { errorCode: failure.errorCode });
@@ -99,24 +100,13 @@ describe('direct transfer import session manager', () => {
       const uploadId = prepared.response.uploadId;
       const envelope = (text: string) => createEncryptedTransferChunkEnvelope({ transferId: uploadId, sequence: 0,
         payload: Buffer.from(text), recipientPublicKeyBase64: prepared.response.recipientPublicKeyBase64 });
-      const rejected = envelope('deny');
-      current = false;
-      await expect(manager.writeImportTransferChunk({ uploadId, index: 0,
-        payloadBase64: rejected.payloadBase64, encryptedDataKeyEnvelopeBase64: rejected.encryptedDataKeyEnvelopeBase64 }))
-        .resolves.toMatchObject({ success: false, errorCode: 'filesystem_identity_custody_unavailable' });
-      current = true;
       const accepted = envelope('good');
       await expect(manager.writeImportTransferChunk({ uploadId, index: 0,
         payloadBase64: accepted.payloadBase64, encryptedDataKeyEnvelopeBase64: accepted.encryptedDataKeyEnvelopeBase64 }))
         .resolves.toEqual({ success: true });
-      current = false;
-      await expect(manager.finalizeImportTransferSession({ uploadId })).resolves.toMatchObject({
-        success: false, errorCode: 'filesystem_identity_custody_unavailable',
-      });
-      await expectPathMissing(join(root, 'accepted.dat'));
-      current = true;
       await expect(manager.finalizeImportTransferSession({ uploadId })).resolves.toMatchObject({ success: true });
       expect(await readFile(join(root, 'accepted.dat'), 'utf8')).toBe('good');
+      expect(authorityReads).toBe(0);
     } finally { await manager.close(); await rm(root, { recursive: true, force: true }); }
   });
 
@@ -185,7 +175,7 @@ describe('direct transfer import session manager', () => {
       expect(manager.countActiveImportSessions()).toBe(0);
     } finally { await app.close(); await manager.close(); await rm(root, { recursive: true, force: true }); }
   });
-  it('keeps the original prepared requester authority through finalization and refuses retirement during the destination observation before commit', async () => {
+  it('preserves incumbent bytes when the retained custody callback refuses during destination observation before commit', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-import-current-owner-'));
     const path = join(root, 'binary.dat');
     const incumbent = Buffer.from([0, 255, 128]);
@@ -374,7 +364,7 @@ describe('direct transfer import session manager', () => {
     }
   });
 
-  it('retains staged upload custody when cleanup fails before destination publication', async () => {
+  it('retries retained staged bytes after cleanup fails before destination publication', async () => {
     let now = 1_000;
     const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-finalize-recovery-'));
@@ -424,6 +414,11 @@ describe('direct transfer import session manager', () => {
       });
       expect(await readFile(destinationPath, 'utf8')).toBe('original');
       expect(manager.countActiveImportSessions()).toBe(1);
+      await expect(manager.finalizeImportTransferSession({
+        uploadId: opened.response.uploadId,
+      })).resolves.toMatchObject({ success: true });
+      expect(await readFile(destinationPath)).toEqual(payload);
+      expect(manager.countActiveImportSessions()).toBe(0);
     } finally {
       nowSpy.mockRestore();
       await manager.close();
@@ -765,6 +760,23 @@ describe('direct transfer import session manager', () => {
         success: false,
         error: 'Import session open authorization required',
       });
+      expect(manager.countActiveImportSessions()).toBe(0);
+
+      const targetAuthorization = manager.issueImportOpenAuthorizationToken(request);
+      const mismatchedTargetRequest = { ...request, executionTarget: { ...executionTarget, machineId: 'other-machine' } };
+      await expect(manager.openImportSession({
+        ...mismatchedTargetRequest,
+        authorizationToken: targetAuthorization.authorizationToken,
+      })).resolves.toEqual({ success: false, error: 'Import session open authorization required' });
+      expect(manager.countActiveImportSessions()).toBe(0);
+
+      // Even a token matching the request cannot stage media on a different daemon target.
+      const wrongDaemonAuthorization = manager.issueImportOpenAuthorizationToken(mismatchedTargetRequest);
+      await expect(manager.openImportSession({
+        ...mismatchedTargetRequest,
+        authorizationToken: wrongDaemonAuthorization.authorizationToken,
+      })).resolves.toEqual({ success: false, error: 'Composer media stage target does not match target daemon' });
+      expect(manager.countActiveImportSessions()).toBe(0);
 
       const authorization = manager.issueImportOpenAuthorizationToken(
         request as unknown as Parameters<typeof manager.issueImportOpenAuthorizationToken>[0],

@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, copyFile, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
 import { createDirectPeerTransferApp } from './directPeerTransport';
 import { createDirectTransferImportSessionManager } from './directTransferImportSession';
+import { resolveDirectPeerTransferOpenBodyMaxBytes } from './transferRuntimeConfig';
 import type { DirectTransferImportOpenRequest, DirectTransferImportSessionManager } from './directTransferImportSession';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
@@ -368,6 +369,17 @@ describe('direct transfer import endpoints', () => {
 
     try {
       await app.ready();
+      const oversizedOpen = await app.inject({
+        method: 'POST',
+        url: '/machine-transfers/direct/imports/open',
+        headers: {
+          authorization: `Bearer ${openAuthorization.authorizationToken}`,
+          'content-type': 'application/json',
+        },
+        payload: JSON.stringify(request).padEnd(resolveDirectPeerTransferOpenBodyMaxBytes() + 1, ' '),
+      });
+      expect(oversizedOpen.statusCode).toBe(413);
+
       const open = await app.inject({
         method: 'POST',
         url: '/machine-transfers/direct/imports/open',
@@ -782,49 +794,27 @@ describe('direct transfer import endpoints', () => {
   });
 
   it('maps finalize recovery failures to an exact application/json 500 response', async () => {
-    const importSessionManager = {
-      ...createDirectTransferImportSessionManager(),
-      issueImportOpenAuthorizationToken: () => ({
-        authorizationToken: 'unused-token',
-        expiresAt: 1_000,
-      }),
-      openTrustedImportSession: async () => ({
-        success: true as const,
-        response: {
-          uploadId: 'unused-upload-id',
-          destDisplayPath: 'unused.txt',
-          expectedSizeBytes: 1,
-          chunkSizeBytes: 1,
-          recipientPublicKeyBase64: 'recipient-public-key',
-          expiresAt: 1_000,
-        },
-      }),
-      openImportSession: async () => ({
-        success: true as const,
-        response: {
-          uploadId: 'unused-upload-id',
-          destDisplayPath: 'unused.txt',
-          expectedSizeBytes: 1,
-          chunkSizeBytes: 1,
-          recipientPublicKeyBase64: 'recipient-public-key',
-          expiresAt: 1_000,
-        },
-      }),
-      writeImportTransferChunk: async () => ({ success: true as const }),
-      finalizeImportTransferSession: async () => ({
-        success: false as const,
-        error: 'Destination recovery requires operator action',
-        errorCode: 'TRANSFER_FINALIZE_RECOVERY_REQUIRED' as const,
-        keepSession: true as const,
-        expiresAt: 9_000,
-      }),
-      abortImportTransferSession: async () => {},
-      cleanupExpiredImportSessions: () => {},
-      getNextImportSessionExpiryAt: () => null,
-      countActiveImportSessions: () => 1,
-      close: async () => {},
-    };
-
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-recovery-'));
+    const destinationPath = join(tempDir, 'payload.bin');
+    const payload = Buffer.from('retained-recovery-payload');
+    let stagedPath = '';
+    const importSessionManager = createDirectTransferImportSessionManager({
+      ttlMs: 10_000,
+      // Fail only OS cleanup; the real finalize, session and HTTP owners classify recovery.
+      finalizeFileOperations: ({ tempPath, destPath }) => {
+        stagedPath = tempPath;
+        return {
+          copyFile,
+          rename,
+          rm: async (path, options) => {
+            if (path === tempPath || path === destPath) {
+              throw Object.assign(new Error('simulated filesystem cleanup failure'), { code: 'EPERM' });
+            }
+            await rm(path, options);
+          },
+        };
+      },
+    });
     const app = createDirectPeerTransferApp({
       readPublishedTransfer: () => null,
       importSessionManager,
@@ -832,25 +822,58 @@ describe('direct transfer import endpoints', () => {
 
     try {
       await app.ready();
+      const request = {
+        t: 'session_file_upload_v1' as const,
+        workingDirectory: tempDir,
+        path: destinationPath,
+        sizeBytes: payload.length,
+        overwrite: false,
+      };
+      const authorization = importSessionManager.issueImportOpenAuthorizationToken(request);
+      const open = await app.inject({
+        method: 'POST',
+        url: '/machine-transfers/direct/imports/open',
+        headers: { authorization: `Bearer ${authorization.authorizationToken}` },
+        payload: request,
+      });
+      expect(open.statusCode).toBe(200);
+      const opened = open.json() as { uploadId: string; recipientPublicKeyBase64: string };
+      const chunk = await app.inject({
+        method: 'PUT',
+        url: `/machine-transfers/direct/imports/${opened.uploadId}/chunks/0`,
+        payload: createEncryptedTransferChunkEnvelope({
+          transferId: opened.uploadId,
+          sequence: 0,
+          payload,
+          recipientPublicKeyBase64: opened.recipientPublicKeyBase64,
+        }),
+      });
+      expect(chunk.statusCode).toBe(200);
 
       const finalize = await app.inject({
         method: 'POST',
-        url: '/machine-transfers/direct/imports/upload-recovery/finalize',
+        url: `/machine-transfers/direct/imports/${opened.uploadId}/finalize`,
       });
       expect(finalize.statusCode).toBe(500);
       expect(finalize.headers['content-type']).toMatch(/^application\/json\b/);
-      expect(finalize.headers['x-happier-transfer-session-expires-at']).toBe('9000');
+      const expiresAt = importSessionManager.getNextImportSessionExpiryAt();
+      expect(expiresAt).toEqual(expect.any(Number));
+      expect(finalize.headers['x-happier-transfer-session-expires-at']).toBe(String(expiresAt));
       expect(finalize.headers['access-control-expose-headers']).toContain(
         'x-happier-transfer-session-expires-at',
       );
       expect(finalize.json()).toEqual({
         success: false,
-        error: 'Destination recovery requires operator action',
+        error: expect.any(String),
         errorCode: 'TRANSFER_FINALIZE_RECOVERY_REQUIRED',
         keepSession: true,
       });
+      expect(importSessionManager.countActiveImportSessions()).toBe(1);
+      await expect(readFile(stagedPath)).resolves.toEqual(payload);
+      await expect(readFile(destinationPath)).resolves.toEqual(payload);
     } finally {
       await app.close();
+      await rm(tempDir, { recursive: true, force: true });
     }
   });
 });

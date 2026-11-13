@@ -52,7 +52,7 @@ vi.mock('node:fs/promises', async importOriginal => {
 const ref = { pluginId: 'happier.machine.recipes', recipeId: 'docker-engine', revision: '1' };
 const ok = (stdout = ''): MachineSetupNativeCommandResult => ({ code: 0, stdout, stderr: '' });
 
-it('discloses vendor host-port exclusivity in the public Plan and pre-approval changes', async () => {
+it('carries authored vendor install review descriptions from the public Plan into pre-approval changes', async () => {
   const f = await fixture('ubuntu', 'ready');
   try {
     f.grant();
@@ -69,7 +69,7 @@ it('discloses vendor host-port exclusivity in the public Plan and pre-approval c
     const plan = MachineSetupPlanResultV1Schema.parse(result.result);
     const installers = plan.recipePlans?.flatMap(recipe => recipe.plan.steps.filter(step => step.id === 'install')) ?? [];
     expect(installers).toHaveLength(2);
-    for (const install of installers) expect(install.review?.description).toEqual(expect.any(String));
+    for (const install of installers) expect(install.review?.description?.trim()).toBeTruthy();
     const commands = groupMachineSetupChanges([{ homeId: 'home', machineId: 'machine',
       desiredRevision: plan.desiredRevision, sources: plan.sources, recipePlans: plan.recipePlans ?? [] }])
       .find(group => group.kind === 'commands')?.lines.map(line => line.operand).join('\n');

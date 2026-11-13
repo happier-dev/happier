@@ -705,24 +705,29 @@ describe('direct peer machine transfer', () => {
     try {
       await app.ready();
 
+      const headers = {
+        authorization: `Bearer ${published.transferToken}`,
+        'x-happier-transfer-recipient-public-key': recipientPublicKeyBase64,
+      };
+      expect((await app.inject({ method: 'POST', url: buildDirectPeerOpenUrl(published.transferId), headers })).statusCode).toBe(200);
+      expect((await app.inject({ method: 'GET', url: buildDirectPeerChunkUrl(published.transferId, 0), headers })).statusCode).toBe(200);
+
       const open = await app.inject({
         method: 'POST',
-        url: `/machine-transfers/direct/transfer_query_token/open?token=${published.transferToken}`,
+        url: `${buildDirectPeerOpenUrl(published.transferId)}?token=${published.transferToken}`,
         headers: {
           'x-happier-transfer-recipient-public-key': recipientPublicKeyBase64,
         },
       });
-      expect(open.statusCode).toBe(404);
-      expect(open.json()).toEqual({ ok: false, error: 'Direct peer transfer not available' });
-
       const chunk = await app.inject({
         method: 'GET',
-        url: `/machine-transfers/direct/transfer_query_token/chunks/0?token=${published.transferToken}`,
+        url: `${buildDirectPeerChunkUrl(published.transferId, 0)}?token=${published.transferToken}`,
         headers: {
           'x-happier-transfer-recipient-public-key': recipientPublicKeyBase64,
         },
       });
-      expect(chunk.statusCode).toBe(404);
+      expect([open.statusCode, chunk.statusCode]).toEqual([404, 404]);
+      expect(open.json()).toEqual({ ok: false, error: 'Direct peer transfer not available' });
       expect(chunk.json()).toEqual({ ok: false, error: 'Direct peer transfer not available' });
     } finally {
       await app.close();
@@ -1265,7 +1270,7 @@ describe('direct peer machine transfer', () => {
     }
   });
 
-  it('fails closed without hashing when a direct-peer request omits the auth token (does not call published/on-demand resolvers)', async () => {
+  it('rejects a route request without an auth token before calling transfer lookup callbacks', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
 
     const {
@@ -1315,7 +1320,7 @@ describe('direct peer machine transfer', () => {
     }
   });
 
-  it('fails closed without hashing when a direct-peer request uses an oversized auth token (does not call published/on-demand resolvers)', async () => {
+  it('rejects a route request with an oversized auth token before calling transfer lookup callbacks', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
 
     const {
@@ -1368,7 +1373,7 @@ describe('direct peer machine transfer', () => {
     }
   });
 
-  it('fails closed before resolving on-demand transfers when the recipient public key is invalid (avoids wasted work)', async () => {
+  it('rejects an invalid recipient public key before calling route transfer lookup callbacks', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
 
     const {
@@ -1404,7 +1409,7 @@ describe('direct peer machine transfer', () => {
     }
   });
 
-  it('responds with a retryable 503 when an on-demand direct-peer transfer is not ready yet', async () => {
+  it('maps a constructed on-demand resolver not-ready rejection to a retryable 503 response', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
 
     const { createDirectPeerTransferApp } = await import('./directPeerTransport');
@@ -1467,306 +1472,81 @@ describe('direct peer machine transfer', () => {
     })).toBeNull();
   });
 
-  it('does not accumulate streamed JSON chunks in memory when content-length is provided (preallocated read)', async () => {
-    const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
+  it.each(['provided', 'incorrect', 'omitted'] as const)('does not retain streamed JSON chunks in an array when content-length is %s', async (contentLength) => {
     const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
-
-    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-json-prealloc-'));
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-json-read-'));
     const destinationPath = join(tempDir, 'payload-destination.bin');
-
-    const payload = Buffer.from('payload-with-preallocated-json-read', 'utf8');
+    const transferId = 'transfer_streamed_json';
+    const payload = Buffer.from('payload-with-streamed-json-read', 'utf8');
     let recipientPublicKeyBase64 = '';
-
+    const responseChunks = new WeakSet<object>();
+    let deliveredChunks = 0;
     const encoder = new TextEncoder();
-    const streamJson = (value: unknown, chunkSize: number): ReadableStream<Uint8Array> => {
+    const streamJson = (value: unknown): Response => {
       const bytes = encoder.encode(JSON.stringify(value));
       let offset = 0;
-      return new ReadableStream<Uint8Array>({
+      const body = new ReadableStream<Uint8Array>({
         pull(controller) {
-          if (offset >= bytes.length) {
+          if (offset === bytes.length) {
             controller.close();
             return;
           }
-          const end = Math.min(bytes.length, offset + chunkSize);
-          controller.enqueue(bytes.slice(offset, end));
-          offset = end;
+          const chunk = bytes.slice(offset, ++offset);
+          responseChunks.add(chunk);
+          deliveredChunks += 1;
+          controller.enqueue(chunk);
+        },
+      });
+      return new Response(body, {
+        headers: {
+          'content-type': 'application/json',
+          ...(contentLength === 'omitted' ? {} : {
+            'content-length': contentLength === 'incorrect' ? '1' : String(bytes.byteLength),
+          }),
         },
       });
     };
-
-    const fetchFn: typeof fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const fetchFn: typeof fetch = async (input, init) => {
       const headers = init?.headers as Record<string, string> | undefined;
-      const url = String(input);
-      if (url.endsWith('/open')) {
+      if (String(input).endsWith('/open')) {
         recipientPublicKeyBase64 = headers?.['x-happier-transfer-recipient-public-key'] ?? '';
-        const openBody = {
-          transferId: 'transfer_prealloc_json',
-          manifestHash: createTransferManifestHash(payload),
-          totalChunks: 1,
-        };
-        const openText = JSON.stringify(openBody);
-        return new Response(streamJson(openBody, 1), {
-          status: 200,
-          headers: {
-            'content-type': 'application/json',
-            'content-length': String(encoder.encode(openText).byteLength),
-          },
+        return streamJson({ transferId, manifestHash: createTransferManifestHash(payload), totalChunks: 1 });
+      }
+      if (String(input).endsWith('/chunks/0')) {
+        return streamJson({ transferId, kind: 'chunk', sequence: 0,
+          ...createEncryptedTransferChunkEnvelope({ transferId, sequence: 0, payload, recipientPublicKeyBase64,
+            randomBytes: length => new Uint8Array(length).fill(9) }),
         });
       }
-      if (url.endsWith('/chunks/0')) {
-        const chunkBody = {
-          transferId: 'transfer_prealloc_json',
-          kind: 'chunk',
-          sequence: 0,
-          ...createEncryptedTransferChunkEnvelope({
-            transferId: 'transfer_prealloc_json',
-            sequence: 0,
-            payload,
-            recipientPublicKeyBase64,
-            randomBytes: (length) => new Uint8Array(length).fill(9),
-          }),
-        };
-        const chunkText = JSON.stringify(chunkBody);
-        return new Response(streamJson(chunkBody, 1), {
-          status: 200,
-          headers: {
-            'content-type': 'application/json',
-            'content-length': String(encoder.encode(chunkText).byteLength),
-          },
-        });
-      }
-      throw new Error(`Unexpected fetch URL: ${url}`);
-    });
-
-    const originalPush = Array.prototype.push;
-    Array.prototype.push = function (...args: unknown[]) {
-      const stack = new Error().stack ?? '';
-      if (stack.includes('readJsonResponseWithBodyLimit') && stack.includes('directPeerTransport.ts')) {
-        throw new Error('readJsonResponseWithBodyLimit should not push streamed chunks when content-length is provided');
-      }
-      return originalPush.apply(this, args as any);
+      throw new Error(`Unexpected fetch URL: ${String(input)}`);
     };
 
+    // Observe actual transport chunks, independent of the consumer's function or file names.
+    const originalPush = Array.prototype.push;
+    Array.prototype.push = function (...args: unknown[]) {
+      if (args.some(value => typeof value === 'object' && value !== null && responseChunks.has(value))) {
+        throw new Error('Response chunks must not be retained in an array');
+      }
+      return originalPush.apply(this, args);
+    };
     try {
-      await requestDirectPeerTransferToFile({
-        transferId: 'transfer_prealloc_json',
-        endpointCandidates: [{
-          kind: 'http',
-          url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_prealloc_json',
-          authorizationToken: 'test-token',
-          expiresAt: 10_000,
-        }],
-        fetchFn,
-        now: () => 5_000,
-        destinationPath,
+      const controlChunk = new Uint8Array([1]);
+      responseChunks.add(controlChunk);
+      expect(() => [].push(controlChunk)).toThrow('Response chunks must not be retained in an array');
+      await requestDirectPeerTransferToFile({ transferId,
+        endpointCandidates: [{ kind: 'http', url: `http://127.0.0.1:46001/machine-transfers/direct/${transferId}`,
+          authorizationToken: 'test-token', expiresAt: 10_000 }],
+        fetchFn, now: () => 5_000, destinationPath,
       });
-
+      expect(deliveredChunks).toBeGreaterThan(payload.byteLength);
       await expect(readFile(destinationPath)).resolves.toEqual(payload);
     } finally {
       Array.prototype.push = originalPush;
-      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+      await rm(tempDir, { recursive: true, force: true });
     }
   });
 
-  it('does not accumulate streamed JSON chunks in memory when a peer lies about content-length (bounded growing buffer)', async () => {
-    const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
-
-    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-json-lie-len-'));
-    const destinationPath = join(tempDir, 'payload-destination.bin');
-
-    const payload = Buffer.from('payload-with-content-length-lie', 'utf8');
-    let recipientPublicKeyBase64 = '';
-
-    const encoder = new TextEncoder();
-    const streamJson = (value: unknown, chunkSize: number): ReadableStream<Uint8Array> => {
-      const bytes = encoder.encode(JSON.stringify(value));
-      let offset = 0;
-      return new ReadableStream<Uint8Array>({
-        pull(controller) {
-          if (offset >= bytes.length) {
-            controller.close();
-            return;
-          }
-          const end = Math.min(bytes.length, offset + chunkSize);
-          controller.enqueue(bytes.slice(offset, end));
-          offset = end;
-        },
-      });
-    };
-
-    const fetchFn: typeof fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      const headers = init?.headers as Record<string, string> | undefined;
-      const url = String(input);
-      if (url.endsWith('/open')) {
-        recipientPublicKeyBase64 = headers?.['x-happier-transfer-recipient-public-key'] ?? '';
-        const openBody = {
-          transferId: 'transfer_json_lie_len',
-          manifestHash: createTransferManifestHash(payload),
-          totalChunks: 1,
-        };
-        return new Response(streamJson(openBody, 1), {
-          status: 200,
-          headers: {
-            'content-type': 'application/json',
-            // Intentionally lie (too small) to force the mismatch branch.
-            'content-length': '1',
-          },
-        });
-      }
-      if (url.endsWith('/chunks/0')) {
-        const chunkBody = {
-          transferId: 'transfer_json_lie_len',
-          kind: 'chunk',
-          sequence: 0,
-          ...createEncryptedTransferChunkEnvelope({
-            transferId: 'transfer_json_lie_len',
-            sequence: 0,
-            payload,
-            recipientPublicKeyBase64,
-            randomBytes: (length) => new Uint8Array(length).fill(9),
-          }),
-        };
-        return new Response(streamJson(chunkBody, 1), {
-          status: 200,
-          headers: {
-            'content-type': 'application/json',
-            // Intentionally lie (too small) to force the mismatch branch.
-            'content-length': '1',
-          },
-        });
-      }
-      throw new Error(`Unexpected fetch URL: ${url}`);
-    });
-
-    const originalPush = Array.prototype.push;
-    Array.prototype.push = function (...args: unknown[]) {
-      const stack = new Error().stack ?? '';
-      if (stack.includes('readJsonResponseWithBodyLimit') && stack.includes('directPeerTransport.ts')) {
-        throw new Error('readJsonResponseWithBodyLimit should not push streamed chunks when content-length is incorrect');
-      }
-      return originalPush.apply(this, args as any);
-    };
-
-    try {
-      await requestDirectPeerTransferToFile({
-        transferId: 'transfer_json_lie_len',
-        endpointCandidates: [{
-          kind: 'http',
-          url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_json_lie_len',
-          authorizationToken: 'test-token',
-          expiresAt: 10_000,
-        }],
-        fetchFn,
-        now: () => 5_000,
-        destinationPath,
-      });
-
-      await expect(readFile(destinationPath)).resolves.toEqual(payload);
-    } finally {
-      Array.prototype.push = originalPush;
-      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
-    }
-  });
-
-  it('does not accumulate streamed JSON chunks in memory when content-length is omitted (bounded growing buffer)', async () => {
-    const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
-    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
-
-    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-json-grow-'));
-    const destinationPath = join(tempDir, 'payload-destination.bin');
-
-    const payload = Buffer.from('payload-with-growing-json-read', 'utf8');
-    let recipientPublicKeyBase64 = '';
-
-    const encoder = new TextEncoder();
-    const streamJson = (value: unknown, chunkSize: number): ReadableStream<Uint8Array> => {
-      const bytes = encoder.encode(JSON.stringify(value));
-      let offset = 0;
-      return new ReadableStream<Uint8Array>({
-        pull(controller) {
-          if (offset >= bytes.length) {
-            controller.close();
-            return;
-          }
-          const end = Math.min(bytes.length, offset + chunkSize);
-          controller.enqueue(bytes.slice(offset, end));
-          offset = end;
-        },
-      });
-    };
-
-    const fetchFn: typeof fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      const headers = init?.headers as Record<string, string> | undefined;
-      const url = String(input);
-      if (url.endsWith('/open')) {
-        recipientPublicKeyBase64 = headers?.['x-happier-transfer-recipient-public-key'] ?? '';
-        const openBody = {
-          transferId: 'transfer_grow_json',
-          manifestHash: createTransferManifestHash(payload),
-          totalChunks: 1,
-        };
-        return new Response(streamJson(openBody, 1), {
-          status: 200,
-          headers: {
-            'content-type': 'application/json',
-          },
-        });
-      }
-      if (url.endsWith('/chunks/0')) {
-        const chunkBody = {
-          transferId: 'transfer_grow_json',
-          kind: 'chunk',
-          sequence: 0,
-          ...createEncryptedTransferChunkEnvelope({
-            transferId: 'transfer_grow_json',
-            sequence: 0,
-            payload,
-            recipientPublicKeyBase64,
-            randomBytes: (length) => new Uint8Array(length).fill(9),
-          }),
-        };
-        return new Response(streamJson(chunkBody, 1), {
-          status: 200,
-          headers: {
-            'content-type': 'application/json',
-          },
-        });
-      }
-      throw new Error(`Unexpected fetch URL: ${url}`);
-    });
-
-    const originalPush = Array.prototype.push;
-    Array.prototype.push = function (...args: unknown[]) {
-      const stack = new Error().stack ?? '';
-      if (stack.includes('readJsonResponseWithBodyLimit') && stack.includes('directPeerTransport.ts')) {
-        throw new Error('readJsonResponseWithBodyLimit should not push streamed chunks when content-length is omitted');
-      }
-      return originalPush.apply(this, args as any);
-    };
-
-    try {
-      await requestDirectPeerTransferToFile({
-        transferId: 'transfer_grow_json',
-        endpointCandidates: [{
-          kind: 'http',
-          url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_grow_json',
-          authorizationToken: 'test-token',
-          expiresAt: 10_000,
-        }],
-        fetchFn,
-        now: () => 5_000,
-        destinationPath,
-      });
-
-      await expect(readFile(destinationPath)).resolves.toEqual(payload);
-    } finally {
-      Array.prototype.push = originalPush;
-      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
-    }
-  });
-
-  it('fails closed before serializing an oversized direct-peer /open request body (avoids whole-buffer JSON assembly)', async () => {
+  it('rejects an oversized direct-peer open body before whole-object JSON serialization or fetch', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_OPEN_BODY_MAX_BYTES = '32';
 
     const openBody = {
@@ -1779,14 +1559,7 @@ describe('direct peer machine transfer', () => {
       throw new Error('fetch should not be called');
     });
 
-    const originalObjectKeys = Object.keys;
     const originalStringify = JSON.stringify;
-    Object.keys = ((value: object) => {
-      if (value === openBody) {
-        throw new Error('Object.keys should not be called for an oversized open body');
-      }
-      return originalObjectKeys(value);
-    }) as typeof Object.keys;
     JSON.stringify = ((value: unknown, replacer?: unknown, space?: unknown) => {
       if (value === openBody) {
         throw new Error('JSON.stringify should not be called for an oversized open body');
@@ -1798,6 +1571,7 @@ describe('direct peer machine transfer', () => {
     const destinationPath = join(tempDir, 'payload-destination.bin');
 
     try {
+      expect(() => JSON.stringify(openBody)).toThrow('JSON.stringify should not be called for an oversized open body');
       await expect(requestDirectPeerTransferToFile({
         transferId: 'transfer_open_body_client_guard',
         endpointCandidates: [{
@@ -1814,7 +1588,6 @@ describe('direct peer machine transfer', () => {
 
       expect(fetchFn).not.toHaveBeenCalled();
     } finally {
-      Object.keys = originalObjectKeys;
       JSON.stringify = originalStringify;
       await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     }
@@ -2009,7 +1782,7 @@ describe('direct peer machine transfer', () => {
     }
   });
 
-  it('sends direct-peer /open request bodies as bytes rather than re-encoding a JSON string for fetch', async () => {
+  it('sends a direct-peer open body as exact JSON accepted by the Fetch Request consumer', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
 
     const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
@@ -2021,14 +1794,15 @@ describe('direct peer machine transfer', () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-open-body-bytes-'));
     const destinationPath = join(tempDir, 'payload-destination.bin');
 
-    let capturedOpenBody: unknown = null;
+    let capturedOpenBodyText: string | undefined;
     let recipientPublicKeyBase64 = '';
     const emptyManifestHash = createTransferManifestHash(Buffer.alloc(0));
     const fetchFn: typeof fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url =
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : String((input as Request).url ?? '');
       if (url.endsWith('/open')) {
-        capturedOpenBody = init?.body;
+        capturedOpenBodyText = await new Request(url, init).text();
+        expect(JSON.parse(capturedOpenBodyText)).toEqual(openBody);
         const headers = init?.headers as Record<string, string> | undefined;
         recipientPublicKeyBase64 = headers?.['x-happier-transfer-recipient-public-key'] ?? '';
         return new Response(JSON.stringify({
@@ -2079,9 +1853,8 @@ describe('direct peer machine transfer', () => {
         openBody,
       });
 
-      expect(capturedOpenBody).toBeInstanceOf(Uint8Array);
-      const openBodyText = Buffer.from(capturedOpenBody as Uint8Array).toString('utf8');
-      expect(JSON.parse(openBodyText)).toEqual(openBody);
+      expect(capturedOpenBodyText).toBe(JSON.stringify(openBody));
+      await expect(readFile(destinationPath)).resolves.toEqual(Buffer.alloc(0));
     } finally {
       await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     }
@@ -2105,7 +1878,6 @@ describe('direct peer machine transfer', () => {
     registry = createDirectPeerTransferRegistry({
       advertisedPort: server.port,
       now: () => 3_000,
-      networkInterfacesFn: () => ({}),
     });
 
     const tokenCarrierTransferId = 'scope_carrier';
@@ -2164,6 +1936,7 @@ describe('direct peer machine transfer', () => {
       createDirectPeerTransferRegistry,
     } = await import('./directPeerTransport');
     const { deriveBoxPublicKeyFromSeed } = await import('@happier-dev/protocol');
+    const { decryptEncryptedTransferChunkEnvelope } = await import('@happier-dev/transfers/node');
     const { createBufferTransferPayloadSource } = await import('./transferPayloadSource');
 
     const registry = createDirectPeerTransferRegistry({
@@ -2183,22 +1956,31 @@ describe('direct peer machine transfer', () => {
       readPublishedTransfer: registry.readPublishedTransfer,
       resolveOnDemandTransfer: registry.resolveOnDemandTransferOnOpen,
     });
-    const openWithFreshKey = async (transferId: string, seedByte: number) => await app.inject({
-      method: 'POST',
-      url: buildDirectPeerOpenUrl(transferId),
-      headers: {
+    const downloadWithFreshKey = async (transferId: string, seedByte: number) => {
+      const recipientSecretKeySeed = new Uint8Array(32).fill(seedByte);
+      const headers = {
         authorization: `Bearer ${published.transferToken}`,
         'x-happier-transfer-recipient-public-key': Buffer.from(
-          deriveBoxPublicKeyFromSeed(new Uint8Array(32).fill(seedByte)),
+          deriveBoxPublicKeyFromSeed(recipientSecretKeySeed),
         ).toString('base64'),
-      },
-    });
+      };
+      const open = await app.inject({ method: 'POST', url: buildDirectPeerOpenUrl(transferId), headers });
+      expect(open.statusCode).toBe(200);
+      const response = await app.inject({ method: 'GET', url: buildDirectPeerChunkUrl(transferId, 0), headers });
+      expect(response.statusCode).toBe(200);
+      const envelope = response.json();
+      const decrypt = (seed: Uint8Array) => decryptEncryptedTransferChunkEnvelope({ transferId, sequence: 0,
+        payloadBase64: envelope.payloadBase64, encryptedDataKeyEnvelopeBase64: envelope.encryptedDataKeyEnvelopeBase64,
+        recipientSecretKeySeed: seed });
+      expect(decrypt(recipientSecretKeySeed)).toEqual(Buffer.from(transferId, 'utf8'));
+      expect(() => decrypt(new Uint8Array(32).fill(11))).toThrow();
+    };
 
     try {
       await app.ready();
-      expect((await openWithFreshKey('dynamic:fresh-key:manifest', 3)).statusCode).toBe(200);
-      expect((await openWithFreshKey('dynamic:fresh-key:pack', 5)).statusCode).toBe(200);
-      expect((await openWithFreshKey('dynamic:fresh-key:manifest', 7)).statusCode).toBe(200);
+      await downloadWithFreshKey('dynamic:fresh-key:manifest', 3);
+      await downloadWithFreshKey('dynamic:fresh-key:pack', 5);
+      await downloadWithFreshKey('dynamic:fresh-key:manifest', 7);
     } finally {
       await app.close();
     }
@@ -2281,85 +2063,59 @@ describe('direct peer machine transfer', () => {
     }
   });
 
-  it('does not use Buffer.concat while fetching a direct-peer payload (small-only API must stay bounded)', async () => {
-    const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
+  it('writes each direct-peer chunk before requesting the next and resets partial bytes on candidate fallback', async () => {
     const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
-
-    const payload = Buffer.from('payload-without-buffer-concat', 'utf8');
-    let recipientPublicKeyBase64 = '';
-
-    const fetchFn: typeof fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      const headers = init?.headers as Record<string, string> | undefined;
-      if (String(input).endsWith('/open')) {
-        recipientPublicKeyBase64 = headers?.['x-happier-transfer-recipient-public-key'] ?? '';
-        return new Response(JSON.stringify({
-          transferId: 'transfer_no_concat',
-          manifestHash: createTransferManifestHash(payload),
-          totalChunks: 1,
-        }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      if (String(input).endsWith('/chunks/0')) {
-        if (String(input).includes('transfer_no_concat/chunks/0')) {
-          return new Response('nope', { status: 500 });
-        }
-        return new Response(JSON.stringify({
-          transferId: 'transfer_no_concat',
-          kind: 'chunk',
-          sequence: 0,
-          ...createEncryptedTransferChunkEnvelope({
-            transferId: 'transfer_no_concat',
-            sequence: 0,
-            payload,
-            recipientPublicKeyBase64,
-            randomBytes: (length) => new Uint8Array(length).fill(9),
-          }),
-        }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      throw new Error(`Unexpected fetch URL: ${String(input)}`);
-    });
-
-    const originalConcat = Buffer.concat;
-    Buffer.concat = ((chunks: readonly Uint8Array[], totalLength?: number) => {
-      const stack = new Error().stack ?? '';
-      const callerLine = stack.split('\n')[2] ?? '';
-      if (callerLine.includes('directPeerTransport.ts')) {
-        throw new Error('Buffer.concat should not be used');
-      }
-      return originalConcat(chunks as any, totalLength as any);
-    }) as unknown as typeof Buffer.concat;
-
-    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-no-concat-'));
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-incremental-'));
     const destinationPath = join(tempDir, 'payload-destination.bin');
-
-    try {
-      await requestDirectPeerTransferToFile({
-        transferId: 'transfer_no_concat',
-        endpointCandidates: [{
-          kind: 'http',
-          url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_no_concat',
-          authorizationToken: 'test-token',
-          expiresAt: 10_000,
-        }, {
-          kind: 'http',
-          url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_no_concat_fallback',
-          authorizationToken: 'test-token',
-          expiresAt: 10_000,
-        }],
-        fetchFn,
-        now: () => 5_000,
-        destinationPath,
+    const transferId = 'transfer_incremental';
+    const chunks = [Buffer.from('first-chunk'), Buffer.from('second-chunk')];
+    const payload = Buffer.concat(chunks);
+    let recipientPublicKeyBase64 = '';
+    let firstChunkCommitted = false;
+    const requestedChunks: string[] = [];
+    const fetchFn: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const candidate = url.includes('/fallback/') ? 'fallback' : 'initial';
+      if (url.endsWith('/open')) {
+        const headers = init?.headers as Record<string, string>;
+        recipientPublicKeyBase64 = headers['x-happier-transfer-recipient-public-key'] ?? '';
+        firstChunkCommitted = false;
+        return Response.json({ transferId, manifestHash: createTransferManifestHash(payload), totalChunks: chunks.length });
+      }
+      const sequence = Number(url.slice(url.lastIndexOf('/') + 1));
+      requestedChunks.push(`${candidate}:${sequence}`);
+      if (sequence === 1) {
+        // A whole-transfer accumulator or a detached sink write cannot satisfy this real disk boundary.
+        expect(firstChunkCommitted).toBe(true);
+        const partialFiles = await readdir(tempDir);
+        expect(partialFiles).toHaveLength(1);
+        expect(await readFile(join(tempDir, partialFiles[0]!))).toEqual(chunks[0]);
+        if (candidate === 'initial') return new Response('unavailable', { status: 500 });
+      }
+      return Response.json({ transferId, kind: 'chunk', sequence,
+        ...createEncryptedTransferChunkEnvelope({ transferId, sequence, payload: chunks[sequence]!, recipientPublicKeyBase64,
+          randomBytes: length => new Uint8Array(length).fill(9) }),
       });
-
+    };
+    try {
+      await requestDirectPeerTransferToFile({ transferId,
+        endpointCandidates: ['initial', 'fallback'].map(candidate => ({ kind: 'http' as const,
+          url: `http://127.0.0.1:46001/${candidate}/machine-transfers/direct/${transferId}`,
+          authorizationToken: 'test-token', expiresAt: 10_000 })),
+        fetchFn, now: () => 5_000, destinationPath,
+        onProgress: async receivedBytes => {
+          if (receivedBytes === chunks[0]!.length) {
+            const partialFiles = await readdir(tempDir);
+            expect(await readFile(join(tempDir, partialFiles[0]!))).toEqual(chunks[0]);
+            firstChunkCommitted = true;
+          }
+        },
+      });
+      expect(requestedChunks).toEqual(['initial:0', 'initial:1', 'fallback:0', 'fallback:1']);
       await expect(readFile(destinationPath)).resolves.toEqual(payload);
+      expect(await readdir(tempDir)).toEqual(['payload-destination.bin']);
     } finally {
-      Buffer.concat = originalConcat;
-      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+      await rm(tempDir, { recursive: true, force: true });
     }
   });
 
@@ -2436,6 +2192,7 @@ describe('direct peer machine transfer', () => {
 
     const payload = Buffer.from(new Uint8Array(2048).fill(7));
     let recipientPublicKeyBase64 = '';
+    const largeChunkFields = new Set<string>();
 
     const fetchFn: typeof fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const headers = init?.headers as Record<string, string> | undefined;
@@ -2451,7 +2208,7 @@ describe('direct peer machine transfer', () => {
         });
       }
       if (String(input).endsWith('/chunks/0')) {
-        return new Response(JSON.stringify({
+        const chunkBody = {
           transferId: 'transfer_no_large_trim',
           kind: 'chunk',
           sequence: 0,
@@ -2462,9 +2219,11 @@ describe('direct peer machine transfer', () => {
             recipientPublicKeyBase64,
             randomBytes: (length) => new Uint8Array(length).fill(8),
           }),
-        }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
+        };
+        largeChunkFields.add(chunkBody.payloadBase64);
+        expect(() => chunkBody.payloadBase64.trim()).toThrow('String.prototype.trim should not be used for large direct-peer chunk fields');
+        return new Response(JSON.stringify(chunkBody), {
+          status: 200, headers: { 'content-type': 'application/json' },
         });
       }
       throw new Error(`Unexpected fetch URL: ${String(input)}`);
@@ -2473,9 +2232,7 @@ describe('direct peer machine transfer', () => {
     const originalTrim = String.prototype.trim;
     String.prototype.trim = function () {
       const value = String(this);
-      const stack = new Error().stack ?? '';
-      const callerLine = stack.split('\n')[2] ?? '';
-      if (value.length > 1024 && callerLine.includes('directPeerTransport.ts')) {
+      if (largeChunkFields.has(value)) {
         throw new Error('String.prototype.trim should not be used for large direct-peer chunk fields');
       }
       return originalTrim.call(this);
@@ -2832,11 +2589,17 @@ describe('direct peer machine transfer', () => {
     const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('@happier-dev/transfers/node');
 
     const payload = Buffer.from('payload-for-streamed-open-body', 'utf8');
+    const digests = Array.from({ length: 128 }, (_, index) => `sha256:${String(index).padStart(64, '0')}`);
+    let digestReads = 0;
     const openBody = {
       t: 'direct_peer_streamed_open_body',
       packId: 'pack_streamed_open_body',
-      digests: Array.from({ length: 128 }, (_, index) => `sha256:${String(index).padStart(64, '0')}`),
+      get digests() {
+        digestReads += 1;
+        return digests;
+      },
     };
+    const expectedBody = JSON.stringify({ t: openBody.t, packId: openBody.packId, digests });
     let recipientPublicKeyBase64 = '';
     const observedBodyKinds: string[] = [];
 
@@ -2846,9 +2609,25 @@ describe('direct peer machine transfer', () => {
       if (url.endsWith('/open')) {
         observedBodyKinds.push(Object.prototype.toString.call(init?.body));
         recipientPublicKeyBase64 = headers?.['x-happier-transfer-recipient-public-key'] ?? '';
-        const rawBody = await new Response(init?.body as never).text();
-        expect(rawBody).toContain('"pack_streamed_open_body"');
-        expect(rawBody).toContain('"sha256:');
+        expect(init?.body).toBeInstanceOf(ReadableStream);
+        const body = init?.body as ReadableStream<Uint8Array>;
+        const reader = body.getReader();
+        const decoder = new TextDecoder();
+        const readsBeforeConsumption = digestReads;
+        let rawBody = '';
+        let chunkCount = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (chunkCount === 0) expect(digestReads).toBe(readsBeforeConsumption);
+          expect(value.byteLength).toBeLessThan(Buffer.byteLength(expectedBody));
+          rawBody += decoder.decode(value, { stream: true });
+          chunkCount += 1;
+        }
+        rawBody += decoder.decode();
+        expect(chunkCount).toBeGreaterThan(1);
+        expect(digestReads).toBeGreaterThan(readsBeforeConsumption);
+        expect(JSON.parse(rawBody)).toEqual(JSON.parse(expectedBody));
         return new Response(JSON.stringify({
           transferId: 'transfer_streamed_open_body',
           manifestHash: createTransferManifestHash(payload),
@@ -2878,17 +2657,6 @@ describe('direct peer machine transfer', () => {
       throw new Error(`Unexpected fetch URL: ${url}`);
     });
 
-    const originalStringify = JSON.stringify;
-    const stringifyCalls: unknown[] = [];
-    JSON.stringify = ((...args: Parameters<typeof JSON.stringify>) => {
-      const stack = new Error().stack ?? '';
-      const callerLine = stack.split('\n')[2] ?? '';
-      if (callerLine.includes('directPeerTransport.ts')) {
-        stringifyCalls.push(args[0]);
-      }
-      return originalStringify(...args);
-    }) as typeof JSON.stringify;
-
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-streamed-open-body-'));
     const destinationPath = join(tempDir, 'payload-destination.bin');
 
@@ -2910,10 +2678,8 @@ describe('direct peer machine transfer', () => {
       });
 
       expect(observedBodyKinds).toEqual(['[object ReadableStream]']);
-      expect(stringifyCalls).toHaveLength(0);
       await expect(readFile(destinationPath)).resolves.toEqual(payload);
     } finally {
-      JSON.stringify = originalStringify;
       await rm(tempDir, { recursive: true }).catch(() => undefined);
     }
   });
@@ -2971,16 +2737,11 @@ describe('direct peer machine transfer', () => {
     };
 
     const originalUint8Array = globalThis.Uint8Array;
-    const helperAllocationArgs: Array<number> = [];
+    const allocationSizes: Array<number> = [];
     const guardedUint8Array = new Proxy(originalUint8Array, {
       construct(target, args, newTarget) {
-        const stack = new Error().stack ?? '';
-        if (stack.includes('readJsonResponseWithBodyLimit') && stack.includes('directPeerTransport.ts')) {
-          const first = args[0];
-          if (typeof first === 'number') {
-            helperAllocationArgs.push(first);
-          }
-        }
+        const first = args[0];
+        if (typeof first === 'number') allocationSizes.push(first);
         return Reflect.construct(target, args, newTarget);
       },
     });
@@ -3013,7 +2774,12 @@ describe('direct peer machine transfer', () => {
       expect(chunkContentLength).toBeGreaterThan(0);
       // We should never preallocate a buffer exactly equal to an untrusted content-length for
       // large bodies; this is a memory spike footgun.
-      expect(helperAllocationArgs).not.toContain(chunkContentLength);
+      expect(allocationSizes.length).toBeGreaterThan(0);
+      const transferAllocationSizes = allocationSizes.slice();
+      // Positive sensitivity control: the observer must see the allocation this contract forbids.
+      new Uint8Array(chunkContentLength);
+      expect(allocationSizes.slice(transferAllocationSizes.length)).toEqual([chunkContentLength]);
+      expect(transferAllocationSizes).not.toContain(chunkContentLength);
       await expect(readFile(destinationPath)).resolves.toEqual(payload);
     } finally {
       Object.defineProperty(globalThis, 'Uint8Array', {
@@ -3448,14 +3214,6 @@ describe('direct peer machine transfer', () => {
     const registry = createDirectPeerTransferRegistry({
       advertisedPort: 46006,
       now: () => 1_000,
-      networkInterfacesFn: () => ({
-        eth0: [
-          { address: '10.0.0.2', family: 'IPv4', internal: false } as any,
-          { address: '2001:db8::1', family: 'IPv6', internal: false } as any,
-          // Zone-qualified addresses must not be advertised because they produce invalid URLs.
-          { address: 'fe80::1%en0', family: 'IPv6', internal: false } as any,
-        ],
-      }),
     });
 
     const published = registry.publishTransfer({
@@ -3479,13 +3237,6 @@ describe('direct peer machine transfer', () => {
     const registry = createDirectPeerTransferRegistry({
       advertisedPort: 46007,
       now: () => 1_000,
-      networkInterfacesFn: () => ({
-        eth0: [
-          { address: '10.0.0.2', family: 'IPv4', internal: false } as any,
-          { address: '2001:db8::1', family: 'IPv6', internal: false } as any,
-          { address: 'fe80::1%en0', family: 'IPv6', internal: false } as any,
-        ],
-      }),
     });
 
     const published = registry.publishTransfer({
@@ -3519,7 +3270,6 @@ describe('direct peer machine transfer', () => {
     registry = createDirectPeerTransferRegistry({
       advertisedPort: server.port,
       now: () => 3_000,
-      networkInterfacesFn: () => ({}),
     });
 
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-advertised-http-'));
@@ -3571,7 +3321,6 @@ describe('direct peer machine transfer', () => {
     registry = createDirectPeerTransferRegistry({
       advertisedPort: server.port,
       now: () => 3_000,
-      networkInterfacesFn: () => ({}),
     });
 
     try {
@@ -4027,7 +3776,7 @@ describe('direct peer machine transfer', () => {
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   });
 
-  it('accepts a predecessor open response without sizeBytes while enforcing the published commitment', async () => {
+  it('accepts a constructed open response without sizeBytes while enforcing the supplied commitment', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-expiry-skew-'));
     const destinationPath = join(tempDir, 'payload-destination.bin');
 

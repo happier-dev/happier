@@ -3,7 +3,8 @@ import tweetnacl from 'tweetnacl';
 import { materializeCaddyDomainRouteV1, type CaddyDomainRouteInput } from '@/deployments/targets/ownServer/caddyRouteMaterialization';
 import { caddyPublicHttpServerId, materializeCaddyInitialConfigV1 } from '@/deployments/targets/ownServer/caddyRouteMaterialization';
 import { nativeCaddyDomainRouteIdsV1, DeploymentDomainNetworkExposureV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { createNativeCaddyRoutes, verifyNativeCaddyRemoval, type NativeCaddyAdminExchange,
+import { verifyNativeCaddyRemovalProofV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { createNativeCaddyRoutes, type NativeCaddyAdminExchange,
     type NativeCaddyRoutePlacement } from './nativeCaddyRoutes';
 import { createNativeCaddyStartFirstRoutes } from './nativeCaddyStartFirst';
 import type { NativeComposeRoutingGeneration } from '@/daemon/local/services/launch/nativeComposeStartFirst';
@@ -166,7 +167,8 @@ describe('native Caddy Domain placement owner', () => {
         const removed = await native.owner.remove({ placement, route: captured });
         expect(removed.kind).toBe('removed');
         if (removed.kind !== 'removed') throw new Error('Topologyless removal did not settle');
-        expect(verifyNativeCaddyRemoval(removed, placement, captured, native.keys.publicKey)).toBe(true);
+        expect(verifyNativeCaddyRemovalProofV1(removed, placement,
+            nativeCaddyDomainRouteIdsV1(captured.domainId, captured.listener).removalIds, native.keys.publicKey)).toBe(true);
         expect(native.server.errors.routes).toEqual([]);
         const count = native.writes.length;
         expect((await native.owner.remove({ placement, route: captured })).kind).toBe('removed');
@@ -259,7 +261,8 @@ describe('native Caddy Domain placement owner', () => {
         expect(removed.kind).toBe('removed');
         if (removed.kind !== 'removed') throw new Error('Public removal did not settle');
         expect(removed.routeIds).toEqual(nativeCaddyDomainRouteIdsV1(publicRoute.domainId, 'public').removalIds);
-        expect(verifyNativeCaddyRemoval(removed, publicPlacement, withoutSecrets, keys.publicKey)).toBe(true);
+        expect(verifyNativeCaddyRemovalProofV1(removed, publicPlacement,
+            nativeCaddyDomainRouteIdsV1(withoutSecrets.domainId, withoutSecrets.listener).removalIds, keys.publicKey)).toBe(true);
         expect(tls.certificates.load_pem).toEqual([foreign]);
         expect(await owner.observe({ placement: publicPlacement, route: publicRoute })).toEqual({ kind: 'absent' });
     });
@@ -300,12 +303,15 @@ describe('native Caddy Domain placement owner', () => {
         if (removed.kind !== 'removed') throw new Error('Native removal did not settle');
         expect(native.server.routes).toEqual([native.foreign]);
         expect(native.server.errors.routes).toEqual([]);
-        expect(verifyNativeCaddyRemoval(removed, placement, route, native.keys.publicKey)).toBe(true);
+        expect(verifyNativeCaddyRemovalProofV1(removed, placement,
+            nativeCaddyDomainRouteIdsV1(route.domainId, route.listener).removalIds, native.keys.publicKey)).toBe(true);
         for (const changed of [{ environmentId: 'other' }, { domainId: 'other' }, { requestId: 'other' },
             { actionOperationId: 'other' }, { machineId: 'other' }, { installationId: 'other' }]) {
-            expect(verifyNativeCaddyRemoval(removed, { ...placement, ...changed }, route, native.keys.publicKey)).toBe(false);
+            expect(verifyNativeCaddyRemovalProofV1(removed, { ...placement, ...changed },
+                nativeCaddyDomainRouteIdsV1(route.domainId, route.listener).removalIds, native.keys.publicKey)).toBe(false);
         }
-        expect(verifyNativeCaddyRemoval(removed, placement, route, tweetnacl.sign.keyPair().publicKey)).toBe(false);
+        expect(verifyNativeCaddyRemovalProofV1(removed, placement,
+            nativeCaddyDomainRouteIdsV1(route.domainId, route.listener).removalIds, tweetnacl.sign.keyPair().publicKey)).toBe(false);
     });
 
     it('refuses a valid absence proof for the wrong listener while the intended leg remains installed', async () => {
@@ -314,10 +320,12 @@ describe('native Caddy Domain placement owner', () => {
         const wrongLeg = await native.owner.remove({ placement, route: { ...route, listener: 'public' } });
         if (wrongLeg.kind !== 'removed') throw new Error('Expected a signed absence for the other listener');
         expect((await native.owner.observe({ placement, route })).kind).toBe('active');
-        expect(verifyNativeCaddyRemoval(wrongLeg, placement, route, native.keys.publicKey)).toBe(false);
+        expect(verifyNativeCaddyRemovalProofV1(wrongLeg, placement,
+            nativeCaddyDomainRouteIdsV1(route.domainId, route.listener).removalIds, native.keys.publicKey)).toBe(false);
         const removed = await native.owner.remove({ placement, route });
         if (removed.kind !== 'removed') throw new Error('Expected removal of the intended listener');
-        expect(verifyNativeCaddyRemoval(removed, placement, route, native.keys.publicKey)).toBe(true);
+        expect(verifyNativeCaddyRemovalProofV1(removed, placement,
+            nativeCaddyDomainRouteIdsV1(route.domainId, route.listener).removalIds, native.keys.publicKey)).toBe(true);
     });
 
     it('permits distinct paths on the same host while refusing an overlapping health or app path', async () => {

@@ -182,95 +182,40 @@ describe('createDirectTransferServerLifecycle', () => {
 
   it('starts the transfer server lazily on first publish and idles it down after the registry becomes empty', async () => {
     vi.useFakeTimers();
-
     const stop = vi.fn(async () => {});
-    const startServer = vi.fn(async () => ({
-      port: 46001,
-      stop,
-      requestPreparedTransfer: async () => ({ status: 404, body: '' }),
-      issueImportOpenAuthorizationToken: vi.fn(() => ({
-        authorizationToken: 'unused-import-open-token',
-        expiresAt: 2_000,
-      })),
-      openTrustedImportSession: vi.fn(async () => ({
-        success: true as const,
-        response: {
-          uploadId: 'unused-upload-id',
-          destDisplayPath: 'unused.bin',
-          expectedSizeBytes: 1,
-          chunkSizeBytes: 1,
-          recipientPublicKeyBase64: 'unused-recipient-key',
-          expiresAt: 2_000,
-        },
-      })),
-      waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
-      abortImportTransferSession: vi.fn(async () => {}),
-    }));
-
-    let publishedTransfers = 0;
-    const createRegistry = vi.fn(() => ({
-      publishTransfer: vi.fn((input: { transferId: string; payloadSource?: unknown; payload?: Buffer }) => {
-        publishedTransfers += 1;
-        return {
-          transferId: input.transferId,
-          transferToken: 'transfer-token',
-          endpointCandidates: [
-            {
-              kind: 'http' as const,
-              url: 'http://127.0.0.1:46001/machine-transfers/direct/Y29tbWFuZA/open',
-              authorizationToken: 'transfer-token',
-              expiresAt: 2_000,
-            },
-          ],
-          expiresAt: 2_000,
-        };
-      }),
-      readPublishedTransfer: vi.fn(() => null),
-      resolveOnDemandTransferOnOpen: vi.fn(async () => null),
-      completeFilesystemExport: async () => ({ success: false as const, error: "unused" }),
-      waitForFilesystemExportSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
-      clearPublishedTransfer: vi.fn(() => {
-        publishedTransfers = Math.max(0, publishedTransfers - 1);
-        return true;
-      }),
-      dispose: vi.fn(async () => {
-        publishedTransfers = 0;
-      }),
-      hasPublishedTransfers: vi.fn(() => publishedTransfers > 0),
-      countPublishedTransfers: vi.fn(() => publishedTransfers),
-    }));
-
+    // Listener startup and shutdown are the network boundary; publication custody stays real.
+    const startServer = vi.fn(async () => createStubDirectTransferServer(stop));
     const lifecycle = createDirectTransferServerLifecycle({
-      bindPort: 46001,
+      bindPort: 0,
       listenerClasses: ['loopback_http'],
       idleStopMs: 1_000,
       startServer,
-      createRegistry,
-      requestPayloadFile: vi.fn(async () => ({ destinationPath: '/tmp/payload.bin', manifestHash: 'sha256:test', sizeBytes: 0 })),
     });
 
-    expect(startServer).not.toHaveBeenCalled();
-
-    const published = await lifecycle.publishTransfer({
-      transferId: 'direct_lazy_1',
-      payload: Buffer.from('payload', 'utf8'),
-      payloadSource: createBufferTransferPayloadSource(Buffer.from('payload', 'utf8')),
-    });
-
-    expect(startServer).toHaveBeenCalledTimes(1);
-    expect(createRegistry).toHaveBeenCalledTimes(1);
-    expect(published.endpointCandidates).toEqual([
-      expect.objectContaining({
+    try {
+      expect(startServer).not.toHaveBeenCalled();
+      const published = await lifecycle.publishTransferWhenReady({
+        transferId: 'direct_lazy_1',
+        payloadSource: createBufferTransferPayloadSource(Buffer.from('payload', 'utf8')),
+      });
+      expect(startServer).toHaveBeenCalledTimes(1);
+      expect(lifecycle.getState().publishedTransferCount).toBe(1);
+      expect(published.transferToken).not.toBe('');
+      expect(published.endpointCandidates).toEqual([{
         kind: 'http',
-        authorizationToken: 'transfer-token',
-      }),
-    ]);
+        url: 'http://127.0.0.1:46001/machine-transfers/direct/ZGlyZWN0X2xhenlfMQ',
+        authorizationToken: published.transferToken,
+        expiresAt: published.expiresAt,
+      }]);
 
-    lifecycle.clearPublishedTransfer('direct_lazy_1');
-    expect(stop).not.toHaveBeenCalled();
-
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(stop).toHaveBeenCalledTimes(1);
+      lifecycle.clearPublishedTransfer('direct_lazy_1');
+      expect(lifecycle.getState().publishedTransferCount).toBe(0);
+      expect(stop).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(stop).toHaveBeenCalledTimes(1);
+    } finally {
+      await lifecycle.stop();
+    }
   });
 
   it('prunes an unrequested expired publication and idles the listener without another registry request', async () => {
@@ -1157,231 +1102,116 @@ describe('createDirectTransferServerLifecycle', () => {
   });
 
   it('adds tailscale serve https endpoint candidates to published direct exports', async () => {
-    const stop = vi.fn(async () => {});
-    const startServer = vi.fn(async () => ({
-      port: 46001,
-      stop,
-      requestPreparedTransfer: async () => ({ status: 404, body: '' }),
-      issueImportOpenAuthorizationToken: vi.fn(() => ({
-        authorizationToken: 'unused-import-open-token',
-        expiresAt: 2_000,
-      })),
-      openTrustedImportSession: vi.fn(async () => ({
-        success: true as const,
-        response: {
-          uploadId: 'unused-upload-id',
-          destDisplayPath: 'unused.bin',
-          expectedSizeBytes: 1,
-          chunkSizeBytes: 1,
-          recipientPublicKeyBase64: 'unused-recipient-key',
-          expiresAt: 2_000,
-        },
-      })),
-      waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
-      abortImportTransferSession: vi.fn(async () => {}),
-    }));
-
-    const createRegistry = vi.fn(() => ({
-      publishTransfer: vi.fn((input: { transferId: string }) => ({
-        transferId: input.transferId,
-        transferToken: 'transfer-token',
-        endpointCandidates: [
-          {
-            kind: 'http' as const,
-            url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_1',
-            authorizationToken: 'transfer-token',
-            expiresAt: 2_000,
-          },
-        ],
-        expiresAt: 2_000,
-      })),
-      readPublishedTransfer: vi.fn(() => null),
-      resolveOnDemandTransferOnOpen: vi.fn(async () => null),
-      completeFilesystemExport: async () => ({ success: false as const, error: "unused" }),
-      waitForFilesystemExportSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
-      clearPublishedTransfer: vi.fn(() => true),
-      dispose: vi.fn(async () => undefined),
-      hasPublishedTransfers: vi.fn(() => true),
-      countPublishedTransfers: vi.fn(() => 1),
-    }));
-
     const lifecycle = createDirectTransferServerLifecycle({
-      bindPort: 46001,
+      bindPort: 0,
       listenerClasses: ['loopback_http', 'tailscale_serve_https'],
-      startServer,
-      createRegistry,
+      startServer: async () => createStubDirectTransferServer(async () => {}),
       resolveTailscaleServeHttpsBaseUrl: () => 'https://example.ts.net/__happier/transfer',
     });
 
-    const published = lifecycle.publishTransfer({
-      transferId: 'transfer_1',
-      payloadSource: createBufferTransferPayloadSource(Buffer.from('payload', 'utf8')),
-    });
-
-    expect(published.endpointCandidates).toEqual([
-      expect.objectContaining({
-        kind: 'http',
-        authorizationToken: 'transfer-token',
-      }),
-      {
-        kind: 'https',
-        url: 'https://example.ts.net/__happier/transfer/machine-transfers/direct/dHJhbnNmZXJfMQ',
-        authorizationToken: 'transfer-token',
-        expiresAt: 2_000,
-      },
-    ]);
-  });
-
-  it('rejects explicit nonloopback advertised hosts instead of rewriting them to loopback', async () => {
-    const stop = vi.fn(async () => {});
-    const openTrustedImportSession = vi.fn(async () => ({
-      success: true as const,
-      response: {
-        uploadId: 'upload-lan-filtered',
-        destDisplayPath: 'payload.bin',
-        expectedSizeBytes: 4,
-        chunkSizeBytes: 8,
-        recipientPublicKeyBase64: 'recipient-key',
-        expiresAt: 5_000,
-      },
-    }));
-    const startServer = vi.fn(async () => ({
-      port: 46001,
-      stop,
-      requestPreparedTransfer: async () => ({ status: 404, body: '' }),
-      issueImportOpenAuthorizationToken: vi.fn(() => ({
-        authorizationToken: 'unused-import-open-token',
-        expiresAt: 5_000,
-      })),
-      openTrustedImportSession,
-      waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
-      abortImportTransferSession: vi.fn(async () => {}),
-    }));
-    const createRegistry = vi.fn(() => ({
-      publishTransfer: vi.fn((input: { transferId: string }) => ({
-        transferId: input.transferId,
-        transferToken: 'transfer-token',
-        endpointCandidates: [{
-          kind: 'http' as const,
-          url: 'http://192.168.1.20:46001/machine-transfers/direct/transfer_lan_filtered',
-          authorizationToken: 'transfer-token',
-          expiresAt: 5_000,
-        }],
-        expiresAt: 5_000,
-      })),
-      readPublishedTransfer: vi.fn(() => null),
-      resolveOnDemandTransferOnOpen: vi.fn(async () => null),
-      completeFilesystemExport: async () => ({ success: false as const, error: "unused" }),
-      waitForFilesystemExportSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
-      clearPublishedTransfer: vi.fn(() => true),
-      dispose: vi.fn(async () => undefined),
-      hasPublishedTransfers: vi.fn(() => true),
-      countPublishedTransfers: vi.fn(() => 1),
-    }));
-    const lifecycle = createDirectTransferServerLifecycle({
-      bindPort: 46001,
-      listenerClasses: ['tailscale_serve_https'],
-      advertisedHosts: ['192.168.1.20'],
-      startServer,
-      createRegistry,
-      resolveTailscaleServeHttpsBaseUrl: () => 'https://example.ts.net/__happier/transfer',
-    });
-
-    expect(lifecycle.publishTransfer({
-      transferId: 'transfer_lan_filtered',
-      payloadSource: createBufferTransferPayloadSource(Buffer.from('payload', 'utf8')),
-    }).endpointCandidates).toEqual([{
-      kind: 'https',
-      url: 'https://example.ts.net/__happier/transfer/machine-transfers/direct/dHJhbnNmZXJfbGFuX2ZpbHRlcmVk',
-      authorizationToken: 'transfer-token',
-      expiresAt: 5_000,
-    }]);
-
-    await expect(lifecycle.prepareImportSession({
-      t: 'session_file_upload_v1',
-      workingDirectory: '/repo',
-      path: 'payload.bin',
-      sizeBytes: 4,
-      overwrite: true,
-    })).resolves.toMatchObject({
-      endpointCandidates: [
+    try {
+      const published = await lifecycle.publishTransferWhenReady({
+        transferId: 'transfer_1',
+        payloadSource: createBufferTransferPayloadSource(Buffer.from('payload', 'utf8')),
+      });
+      expect(published.transferToken).not.toBe('');
+      expect(published.endpointCandidates).toEqual([
+        {
+          kind: 'http',
+          url: 'http://127.0.0.1:46001/machine-transfers/direct/dHJhbnNmZXJfMQ',
+          authorizationToken: published.transferToken,
+          expiresAt: published.expiresAt,
+        },
         {
           kind: 'https',
-          url: 'https://example.ts.net/__happier/transfer/machine-transfers/direct/imports/upload-lan-filtered',
-          expiresAt: 5_000,
+          url: 'https://example.ts.net/__happier/transfer/machine-transfers/direct/dHJhbnNmZXJfMQ',
+          authorizationToken: published.transferToken,
+          expiresAt: published.expiresAt,
         },
-      ],
+      ]);
+    } finally {
+      await lifecycle.stop();
+    }
+  });
+
+  it('rejects explicit nonloopback import hosts without changing canonical loopback exports', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-transfer-advertised-hosts-'));
+    const manager = createDirectTransferImportSessionManager({
+      accessPolicy: { kind: 'restrictedRoots', roots: [root] },
     });
+    const lifecycle = createDirectTransferServerLifecycle({
+      bindPort: 0,
+      listenerClasses: ['tailscale_serve_https'],
+      advertisedHosts: ['192.168.1.20'],
+      startServer: async () => ({
+        ...createStubDirectTransferServer(async () => { await manager.close(); }),
+        activity: manager.activity,
+        openTrustedImportSession: manager.openTrustedImportSession,
+        abortImportTransferSession: manager.abortImportTransferSession,
+        waitForImportTransferSettlement: manager.waitForImportTransferSettlement,
+      }),
+      resolveTailscaleServeHttpsBaseUrl: () => 'https://example.ts.net/__happier/transfer',
+    });
+
+    try {
+      const published = await lifecycle.publishTransferWhenReady({
+        transferId: 'transfer_lan_filtered',
+        payloadSource: createBufferTransferPayloadSource(Buffer.from('payload', 'utf8')),
+      });
+      expect(published.endpointCandidates).toEqual([
+        {
+          kind: 'http',
+          url: 'http://127.0.0.1:46001/machine-transfers/direct/dHJhbnNmZXJfbGFuX2ZpbHRlcmVk',
+          authorizationToken: published.transferToken,
+          expiresAt: published.expiresAt,
+        },
+        {
+          kind: 'https',
+          url: 'https://example.ts.net/__happier/transfer/machine-transfers/direct/dHJhbnNmZXJfbGFuX2ZpbHRlcmVk',
+          authorizationToken: published.transferToken,
+          expiresAt: published.expiresAt,
+        },
+      ]);
+      const prepared = await lifecycle.prepareImportSession({
+        t: 'session_file_upload_v1',
+        workingDirectory: root,
+        path: 'payload.bin',
+        sizeBytes: 4,
+        overwrite: true,
+      });
+      expect(prepared.endpointCandidates).toEqual([{
+        kind: 'https',
+        url: `https://example.ts.net/__happier/transfer/machine-transfers/direct/imports/${prepared.uploadId}`,
+        expiresAt: prepared.expiresAt,
+      }]);
+    } finally {
+      await lifecycle.stop();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('does not append tailscale serve https endpoint candidates when the listener class is not enabled', async () => {
-    const stop = vi.fn(async () => {});
-    const startServer = vi.fn(async () => ({
-      port: 46001,
-      stop,
-      requestPreparedTransfer: async () => ({ status: 404, body: '' }),
-      issueImportOpenAuthorizationToken: vi.fn(() => ({
-        authorizationToken: 'unused-import-open-token',
-        expiresAt: 2_000,
-      })),
-      openTrustedImportSession: vi.fn(async () => ({
-        success: true as const,
-        response: {
-          uploadId: 'unused-upload-id',
-          destDisplayPath: 'unused.bin',
-          expectedSizeBytes: 1,
-          chunkSizeBytes: 1,
-          recipientPublicKeyBase64: 'unused-recipient-key',
-          expiresAt: 2_000,
-        },
-      })),
-      waitForImportTransferSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
-      abortImportTransferSession: vi.fn(async () => {}),
-    }));
-
-    const createRegistry = vi.fn(() => ({
-      publishTransfer: vi.fn((input: { transferId: string }) => ({
-        transferId: input.transferId,
-        transferToken: 'transfer-token',
-        endpointCandidates: [
-          {
-            kind: 'http' as const,
-            url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_1',
-            authorizationToken: 'transfer-token',
-            expiresAt: 2_000,
-          },
-        ],
-        expiresAt: 2_000,
-      })),
-      readPublishedTransfer: vi.fn(() => null),
-      resolveOnDemandTransferOnOpen: vi.fn(async () => null),
-      completeFilesystemExport: async () => ({ success: false as const, error: "unused" }),
-      waitForFilesystemExportSettlement: async () => ({ success: false as const, error: "unused", errorCode: "indeterminate" }),
-      clearPublishedTransfer: vi.fn(() => true),
-      dispose: vi.fn(async () => undefined),
-      hasPublishedTransfers: vi.fn(() => true),
-      countPublishedTransfers: vi.fn(() => 1),
-    }));
-
     const lifecycle = createDirectTransferServerLifecycle({
-      bindPort: 46001,
+      bindPort: 0,
       listenerClasses: ['loopback_http'],
-      startServer,
-      createRegistry,
+      startServer: async () => createStubDirectTransferServer(async () => {}),
       resolveTailscaleServeHttpsBaseUrl: () => 'https://example.ts.net/__happier/transfer',
     });
 
-    const published = lifecycle.publishTransfer({
-      transferId: 'transfer_1',
-      payloadSource: createBufferTransferPayloadSource(Buffer.from('payload', 'utf8')),
-    });
-
-    expect(published.endpointCandidates).toEqual([
-      expect.objectContaining({
+    try {
+      const published = await lifecycle.publishTransferWhenReady({
+        transferId: 'transfer_1',
+        payloadSource: createBufferTransferPayloadSource(Buffer.from('payload', 'utf8')),
+      });
+      expect(published.endpointCandidates).toEqual([{
         kind: 'http',
-        authorizationToken: 'transfer-token',
-      }),
-    ]);
+        url: 'http://127.0.0.1:46001/machine-transfers/direct/dHJhbnNmZXJfMQ',
+        authorizationToken: published.transferToken,
+        expiresAt: published.expiresAt,
+      }]);
+    } finally {
+      await lifecycle.stop();
+    }
   });
 
   it('disposes an active published source exactly once and clears the registry on terminal stop', async () => {
